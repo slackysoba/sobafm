@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint-cli2/main/schema/markdownlint-cli2-config-schema.json",
+  "config": {
+    // Prose is not wrapped at a fixed width.
+    "MD013": false,
+    // Repeated headings are allowed in different sections.
+    "MD024": { "siblings_only": true }
+  },
+  "gitignore": true
+}

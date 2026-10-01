@@ -15,6 +15,29 @@ Thanks for your interest in SobaFM. This guide explains how work is planned, pro
 - `task`, `bug`, `decision`, `research`, `enhancement`, and `milestone` labels give an issue's kind; `area:*` labels give the part of the system it touches; `maintainer-approval` marks work the maintainer must approve.
 - [Requirements](docs/requirements.md), [architecture](docs/architecture.md), and the [roadmap](docs/roadmap.md) live in `docs/`. Material technical choices are recorded as [architecture decision records](docs/decisions/README.md): a `decision` issue frames the question, its pull request proposes the record, and merging the pull request accepts the decision.
 
+## Development setup
+
+SobaFM needs Python 3.14 and [uv](https://docs.astral.sh/uv/getting-started/installation/), which manages the environment from `uv.lock` and installs Python 3.14 if it is missing.
+
+```sh
+uv sync                     # create .venv with the locked dependencies
+uv run pre-commit install   # run the checks on every commit
+cp .env.example .env        # then set DISCORD_TOKEN and GEMINI_API_KEY
+uv run sobafm               # start SobaFM
+```
+
+On Windows with Smart App Control enabled, install Python 3.14 from [python.org](https://www.python.org/downloads/) and point uv at it (`uv sync --python <path to python.exe>`): uv's own Python builds are unsigned, and Smart App Control blocks some of their modules.
+
+The checks, which CI also runs:
+
+```sh
+uv run ruff check                   # lint
+uv run ruff format --check          # formatting; `uv run ruff format` applies it
+uv run pyright                      # strict type checking
+uv run pytest                       # tests
+uv run pre-commit run --all-files   # every hook, including Markdown lint and secret scanning
+```
+
 ## Making a change
 
 1. **Start from an issue.** Every change is linked to one. For anything beyond a small fix, agree on the approach in the issue before writing code.
