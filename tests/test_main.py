@@ -1,12 +1,14 @@
+import asyncio
 import logging
 from pathlib import Path
+from typing import Self
 
 import discord
 import pytest
 
 import sobafm.__main__
-from sobafm.__main__ import main
-from sobafm.config import Settings
+from sobafm.__main__ import main, run
+from sobafm.config import Settings, load_settings
 
 KEY = "gemini-key-value"
 
@@ -101,3 +103,39 @@ def test_debug_logging_applies_to_sobafm_only(
 
     assert logging.getLogger("sobafm").level == logging.DEBUG
     assert logging.getLogger("websockets").getEffectiveLevel() == logging.INFO
+
+
+class NeverReady:
+    """A client whose gateway never becomes ready; `close()` ends its session."""
+
+    def __init__(self, *_: object) -> None:
+        self.closed = asyncio.Event()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        pass
+
+    async def start(self, token: str) -> None:
+        await self.closed.wait()
+
+    async def wait_until_ready(self) -> None:
+        await asyncio.Event().wait()
+
+    async def close(self) -> None:
+        self.closed.set()
+
+
+async def test_exits_when_the_gateway_is_not_ready_in_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+    monkeypatch.setattr(sobafm.__main__, "SobaFM", NeverReady)
+    monkeypatch.setattr(sobafm.__main__, "READY_TIMEOUT_S", 0.01)
+
+    with pytest.raises(SystemExit) as caught:
+        await run(load_settings(env_file=None))
+
+    assert caught.value.code == 1

@@ -5,6 +5,7 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS guild (
@@ -21,6 +22,7 @@ class Store:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,19 +42,15 @@ class Store:
             (_now(), guild_id),
         )
 
-    async def remembered_channels(self) -> dict[int, int]:
-        """Map each guild with a remembered channel to that channel's ID."""
-        rows = await self._execute(
-            "SELECT guild_id, channel_id FROM guild WHERE channel_id IS NOT NULL"
-        )
-        return {int(guild_id): int(channel_id) for guild_id, channel_id in rows}
+    async def remembered_channel(self, guild_id: int) -> int | None:
+        rows = await self._execute("SELECT channel_id FROM guild WHERE guild_id = ?", (guild_id,))
+        return int(rows[0][0]) if rows and rows[0][0] is not None else None
 
-    async def _execute(
-        self, sql: str, parameters: tuple[int | str, ...] = ()
-    ) -> list[tuple[int, int]]:
-        return await asyncio.to_thread(self._run, sql, parameters)
+    async def _execute(self, sql: str, parameters: tuple[int | str, ...] = ()) -> list[Any]:
+        async with self._lock:  # one statement at a time, so writes commit in call order
+            return await asyncio.to_thread(self._run, sql, parameters)
 
-    def _run(self, sql: str, parameters: tuple[int | str, ...]) -> list[tuple[int, int]]:
+    def _run(self, sql: str, parameters: tuple[int | str, ...]) -> list[Any]:
         with closing(sqlite3.connect(self.path)) as db, db:
             return db.execute(sql, parameters).fetchall()
 

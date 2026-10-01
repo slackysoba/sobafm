@@ -32,7 +32,7 @@ SobaFM is a self-hosted Discord bot that plays continuous AI-generated music in 
 - **PLAY-3** Playback is continuous: Lyria RealTime session limits and reconnections cause no audible gaps under normal service conditions. _(M2)_
 - **PLAY-4** A program ends 60 seconds after the last listener leaves the channel. A listener is a member who is not a bot and not deafened. _(M2)_
 - **PLAY-5** After a program ends, SobaFM stays in the channel, silent, until the next request. _(M2)_
-- **PLAY-6** SobaFM remembers its voice channel. After a restart it rejoins that channel if the channel still exists and SobaFM can connect and speak there; otherwise it forgets the channel. Programs do not resume after a restart. _(M2)_
+- **PLAY-6** SobaFM remembers its voice channel. After a restart, or after its connection to Discord is replaced, it rejoins that channel if the channel still exists and SobaFM can connect and speak there; otherwise it forgets the channel. Programs do not resume. _(M2)_
 - **PLAY-7** If an administrator moves SobaFM, it adopts the new channel. If SobaFM is disconnected or its channel is deleted, the program ends and the channel is forgotten. _(M2)_
 - **PLAY-8** Music is instrumental; wordless vocals are the only vocal option. _(M3)_
 

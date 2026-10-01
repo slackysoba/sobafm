@@ -187,7 +187,7 @@ CREATE TABLE guild (
 
 - **Program:** created by an accepted `/play` and replaced by the next one; cleared when its end time passes, by `/stop` or `/leave`, after the empty-channel grace period, or when SobaFM loses its channel. The phase shown by `/now` (idle, starting, playing, or stopping) is derived from the program and the mixer rather than stored.
 - **Deck:** `connecting`, then `generating` (paused or not), then `ended` with a reason: retired, closed with a close code, failed, or filtered. A deck is ready once it holds the pre-roll. Its generation rate is audio seconds received per unpaused wall-clock second, measured after 10 seconds.
-- **Startup:** load and validate configuration, open the store, connect to the gateway, sync commands, and rejoin remembered channels. The watchdog exits with an error if the gateway is not ready within 120 seconds, so the process supervisor restarts SobaFM.
+- **Startup:** load and validate configuration, open the store, connect to the gateway, and sync commands. Each server's remembered channel is rejoined when that server becomes available: at startup, after a new gateway session, or when an outage ends. The watchdog exits with an error if the gateway is not ready within 120 seconds, so the process supervisor restarts SobaFM.
 - **Shutdown:** on `SIGTERM`, cancel station tasks (which closes their Lyria sessions), disconnect from voice, and close the client.
 
 ## Failure behavior
@@ -201,7 +201,8 @@ CREATE TABLE guild (
 | Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills; repeated failures end the program with a notice |
 | Generation slower than real time | A second session fills another deck; remaining underruns play silence and are logged |
 | Voice reconnection | discord.py reconnects; reads pause, flow control pauses generation, and crossfades resume intact |
-| SobaFM moved, disconnected, or its channel deleted | Adopt the new channel, or end the program and forget the channel (PLAY-7) |
+| SobaFM moved, disconnected, or its channel deleted | Adopt the new channel, or end the program and forget the channel (PLAY-7). Discord reports every disconnect alike, so a voice connection that discord.py cannot restore is also forgotten |
+| New gateway session | discord.py forgets its voice clients; SobaFM closes the old connection, then rejoins the remembered channel |
 | Player thread error | `read()` returns silence; the `after` callback wakes the station, which restarts the player |
 | Gateway not ready at startup | The watchdog exits with an error and the process supervisor restarts SobaFM |
 
