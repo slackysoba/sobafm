@@ -18,7 +18,7 @@ import argparse
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -43,12 +43,12 @@ class SessionStats:
     played_at: float | None = None
     first_audio_s: float | None = None
     audio_bytes: int = 0
-    chunk_sizes: list[int] = field(default_factory=list)
-    arrivals: list[float] = field(default_factory=list)
-    filtered: list[str] = field(default_factory=list)
+    chunk_sizes: list[int] = field(default_factory=list[int])
+    arrivals: list[float] = field(default_factory=list[float])
+    filtered: list[str] = field(default_factory=list[str])
     ended_after_s: float | None = None
     end: str | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict[str, Any])
 
     def add_chunk(self, data: bytes, now: float) -> None:
         if self.first_audio_s is None and self.played_at is not None:
@@ -137,7 +137,7 @@ async def receive(session: live_music.AsyncMusicSession, stats: SessionStats) ->
 @asynccontextmanager
 async def playing_session(
     client: genai.Client, stats: SessionStats, prompt: str
-) -> AsyncIterator[tuple[live_music.AsyncMusicSession, asyncio.Task[None]]]:
+) -> AsyncGenerator[tuple[live_music.AsyncMusicSession, asyncio.Task[None]]]:
     """Connect, send the prompt and full config, start playback, and record audio."""
     async with client.aio.live.music.connect(model=MODEL) as session:
         stats.connect_s = time.monotonic() - stats.opened_at
