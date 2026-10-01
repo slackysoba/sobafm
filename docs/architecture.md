@@ -44,14 +44,11 @@ flowchart LR
     subgraph process [SobaFM process]
         commands --> station["Station (one per server)"]
         station -- "request and current plan" --> interpreter[Interpreter]
-        station --> deckA[Deck]
-        station --> deckB[Deck]
-        deckA -- "20 ms frames" --> mixer[Mixer]
-        deckB -- "20 ms frames" --> mixer
+        station -- "MusicPlan" --> decks["Decks (one or two)"]
+        decks -- "20 ms frames" --> mixer[Mixer]
     end
     interpreter <--> gemini[(Gemini API)]
-    deckA <--> lyria[(Lyria RealTime)]
-    deckB <--> lyria
+    decks <--> lyria[(Lyria RealTime)]
     mixer --> voice["discord.py voice: Opus and DAVE"]
     voice --> channel([Voice channel])
 ```
