@@ -4,19 +4,28 @@
 # ///
 """Measure Lyria RealTime session behavior for the playback engine decision (#11).
 
-Each command opens one or more sessions, plays a fixed prompt, and prints one JSON object
-per session with connection time, time to first audio, generation rate, chunk sizes, and
-how the session ended. No audio is saved. The API key is read from GEMINI_API_KEY.
+Each command opens one or more sessions, plays a fixed prompt with the default generation
+config, and prints one JSON object per session: the SDK version, connection time, time to
+first audio, generation rate, chunk sizes and MIME types, other server messages, and how
+the session ended. No audio is saved. The API key is read from GEMINI_API_KEY and passed
+to the SDK explicitly, so GOOGLE_API_KEY is ignored.
 
     uv run --env-file .env scripts/lyria_probe.py rate --sessions 2 --seconds 120
     uv run --env-file .env scripts/lyria_probe.py lifetime --max-minutes 15
     uv run --env-file .env scripts/lyria_probe.py pauses --pauses 30 120 300
-    uv run --env-file .env scripts/lyria_probe.py concurrency --max-sessions 5
+    uv run --env-file .env scripts/lyria_probe.py concurrency --max-sessions 8 --spacing 45
+
+Rates count whole 2-second chunks, so a rate over one minute is accurate to about 0.03.
+The SDK drops message fields it does not know, so such messages are reported as empty.
 """
 
 import argparse
 import asyncio
+import contextlib
+import itertools
 import json
+import os
+import sys
 import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
@@ -30,6 +39,8 @@ MODEL = "models/lyria-realtime-exp"
 BYTES_PER_SECOND = 48_000 * 2 * 2  # 48 kHz, 16-bit, stereo
 FRAME_BYTES = 3_840  # 20 ms
 DEFAULT_PROMPT = "mellow lo-fi hip hop, soft piano, warm bass, gentle drums"
+STALL_S = 30.0  # how long audio may lag real time before a session counts as stalled
+CLOSED_BY_PROBE = "closed by probe"
 
 
 @dataclass
@@ -38,24 +49,41 @@ class SessionStats:
 
     label: str
     api_version: str
-    opened_at: float = field(default_factory=time.monotonic)
-    connect_s: float | None = None
+    continuous: bool = True  # False when the probe pauses playback, which voids the rates
+    started_at: float = field(default_factory=time.monotonic)
+    connected_at: float | None = None
     played_at: float | None = None
     first_audio_s: float | None = None
+    ended_at: float | None = None
+    end: str | None = None
     audio_bytes: int = 0
     chunk_sizes: list[int] = field(default_factory=list[int])
     arrivals: list[float] = field(default_factory=list[float])
+    mime_types: set[str] = field(default_factory=set[str])
     filtered: list[str] = field(default_factory=list[str])
-    ended_after_s: float | None = None
-    end: str | None = None
+    other_messages: list[tuple[float, dict[str, Any]]] = field(
+        default_factory=list[tuple[float, dict[str, Any]]]
+    )
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
 
-    def add_chunk(self, data: bytes, now: float) -> None:
+    @property
+    def playing(self) -> bool:
+        """Whether the session has produced audio and is still open."""
+        return bool(self.chunk_sizes) and self.end is None
+
+    def add_chunk(self, chunk: types.AudioChunk, now: float) -> None:
+        data = chunk.data or b""
         if self.first_audio_s is None and self.played_at is not None:
             self.first_audio_s = now - self.played_at
         self.audio_bytes += len(data)
         self.chunk_sizes.append(len(data))
         self.arrivals.append(now)
+        self.mime_types.add(chunk.mime_type or "none")
+
+    def fail(self, error: Exception) -> None:
+        """Record an error raised on the probe's side, unless the receiver saw the real end."""
+        if self.end in (None, CLOSED_BY_PROBE):
+            self.end = describe(error)
 
     def audio_seconds_between(self, start: float, end: float) -> float:
         received = sum(
@@ -66,23 +94,31 @@ class SessionStats:
         return received / BYTES_PER_SECOND
 
     def summary(self) -> dict[str, Any]:
-        audio_s = self.audio_bytes / BYTES_PER_SECOND
         result: dict[str, Any] = {
             "label": self.label,
             "api_version": self.api_version,
-            "connect_s": _round(self.connect_s),
+            "connect_s": _elapsed(self.started_at, self.connected_at),
             "first_audio_s": _round(self.first_audio_s),
-            "chunks": len(self.chunk_sizes),
-            "audio_s": round(audio_s, 1),
-            "chunk_durations_s": sorted({round(n / BYTES_PER_SECOND, 3) for n in self.chunk_sizes}),
-            "frame_aligned": all(n % FRAME_BYTES == 0 for n in self.chunk_sizes),
-            "ended_after_s": _round(self.ended_after_s),
+            "open_s": _elapsed(self.connected_at, self.ended_at),
             "end": self.end,
+            "chunks": len(self.chunk_sizes),
+            "audio_s": round(self.audio_bytes / BYTES_PER_SECOND, 1),
+            "chunk_durations_s": sorted({round(n / BYTES_PER_SECOND, 3) for n in self.chunk_sizes}),
+            "frame_aligned": (
+                all(n % FRAME_BYTES == 0 for n in self.chunk_sizes) if self.chunk_sizes else None
+            ),
+            "mime_types": sorted(self.mime_types),
+            "other_messages": len(self.other_messages),
         }
-        if len(self.arrivals) > 1:
+        if self.other_messages:
+            result["first_other_messages"] = [
+                {"after_s": _elapsed(self.connected_at, at), "message": message}
+                for at, message in self.other_messages[:10]
+            ]
+        if self.continuous and len(self.arrivals) > 1:
             span = self.arrivals[-1] - self.arrivals[0]
             steady_audio = (self.audio_bytes - self.chunk_sizes[0]) / BYTES_PER_SECOND
-            gaps = [b - a for a, b in zip(self.arrivals, self.arrivals[1:], strict=False)]
+            gaps = [b - a for a, b in itertools.pairwise(self.arrivals)]
             result["rate"] = round(steady_audio / span, 3)
             result["chunk_interval_s"] = {
                 "mean": round(sum(gaps) / len(gaps), 2),
@@ -107,40 +143,50 @@ def _round(value: float | None) -> float | None:
     return None if value is None else round(value, 2)
 
 
+def _elapsed(start: float | None, end: float | None) -> float | None:
+    return None if start is None or end is None else round(end - start, 2)
+
+
 def describe(error: BaseException) -> str:
     if isinstance(error, errors.APIError):
-        return f"{type(error).__name__} code={error.code}: {error.message or error.status}"
+        # HTTP errors fill `message`; a WebSocket close puts its reason in the untyped `details`.
+        details: object = getattr(error, "details", None)
+        reason = error.message or error.status or details or "no reason given"
+        return f"{type(error).__name__} code={error.code}: {reason}"[:300]
     return f"{type(error).__name__}: {error}"[:300]
 
 
 async def receive(session: live_music.AsyncMusicSession, stats: SessionStats) -> None:
-    """Record audio chunks until the session ends; the end reason goes into stats."""
+    """Record server messages until the session ends; the end reason goes into stats."""
     try:
         async for message in session.receive():
             now = time.monotonic()
             content = message.server_content
-            for chunk in (content.audio_chunks or []) if content else []:
-                stats.add_chunk(chunk.data or b"", now)
-            if message.filtered_prompt:
-                prompt = message.filtered_prompt
+            chunks = (content.audio_chunks if content else None) or []
+            for chunk in chunks:
+                stats.add_chunk(chunk, now)
+            if prompt := message.filtered_prompt:
                 stats.filtered.append(f"{prompt.text!r}: {prompt.filtered_reason}")
+            elif not chunks:
+                fields = message.model_dump(mode="json", exclude_none=True)
+                stats.other_messages.append((now, fields))
         stats.end = "stream ended"
     except asyncio.CancelledError:
-        stats.end = "closed by probe"
+        stats.end = CLOSED_BY_PROBE
         raise
     except Exception as error:  # noqa: BLE001 - every end reason is a measurement
         stats.end = describe(error)
     finally:
-        stats.ended_after_s = time.monotonic() - stats.opened_at
+        stats.ended_at = time.monotonic()
 
 
 @asynccontextmanager
 async def playing_session(
     client: genai.Client, stats: SessionStats, prompt: str
 ) -> AsyncGenerator[tuple[live_music.AsyncMusicSession, asyncio.Task[None]]]:
-    """Connect, send the prompt and full config, start playback, and record audio."""
+    """Connect, send the prompt and the default config, start playback, and record messages."""
     async with client.aio.live.music.connect(model=MODEL) as session:
-        stats.connect_s = time.monotonic() - stats.opened_at
+        stats.connected_at = time.monotonic()
         receiver = asyncio.create_task(receive(session, stats))
         try:
             await session.set_weighted_prompts(
@@ -163,19 +209,23 @@ async def run_session(
         async with playing_session(client, stats, prompt) as (_, receiver):
             await asyncio.wait({receiver}, timeout=seconds)
     except Exception as error:  # noqa: BLE001 - connection failures are measurements too
-        stats.end = stats.end or describe(error)
+        stats.fail(error)
 
 
-async def wait_until(condition: Callable[[], bool], receiver: asyncio.Task[None]) -> None:
-    """Return once `condition` holds or the session has ended."""
-    while not (condition() or receiver.done()):  # noqa: ASYNC110 - polls the probe's own counters
-        await asyncio.sleep(0.05)
+async def wait_until(condition: Callable[[], bool], seconds: float) -> bool:
+    """Poll `condition` for up to `seconds`, and return its final value."""
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(seconds):
+            while not condition():  # noqa: ASYNC110 - polls the probe's own counters
+                await asyncio.sleep(0.05)
+    return condition()
 
 
-async def wait_for_audio(stats: SessionStats, receiver: asyncio.Task[None], seconds: float) -> None:
-    """Wait until `seconds` more audio has arrived or the session ends."""
+async def wait_for_audio(stats: SessionStats, receiver: asyncio.Task[None], seconds: float) -> bool:
+    """Wait for `seconds` more audio; False if the session ends or stalls first."""
     target = stats.audio_bytes + seconds * BYTES_PER_SECOND
-    await wait_until(lambda: stats.audio_bytes >= target, receiver)
+    await wait_until(lambda: stats.audio_bytes >= target or receiver.done(), seconds + STALL_S)
+    return stats.audio_bytes >= target
 
 
 async def measure_rate(client: genai.Client, args: argparse.Namespace) -> list[SessionStats]:
@@ -194,14 +244,14 @@ async def measure_lifetime(client: genai.Client, args: argparse.Namespace) -> li
 
 
 async def measure_pauses(client: genai.Client, args: argparse.Namespace) -> list[SessionStats]:
-    stats = SessionStats("pauses", args.api_version)
+    stats = SessionStats("pauses", args.api_version, continuous=False)
     results: list[dict[str, Any]] = []
     stats.extra["pauses"] = results
     try:
         async with playing_session(client, stats, args.prompt) as (session, receiver):
-            await wait_for_audio(stats, receiver, args.play_seconds)
+            played = await wait_for_audio(stats, receiver, args.play_seconds)
             for pause_s in args.pauses:
-                if receiver.done():
+                if not played:
                     break
                 await session.pause()
                 chunks_before = len(stats.chunk_sizes)
@@ -211,26 +261,32 @@ async def measure_pauses(client: genai.Client, args: argparse.Namespace) -> list
                     "chunks_during_pause": len(stats.chunk_sizes) - chunks_before,
                     "survived": not receiver.done(),
                 }
-                if not receiver.done():
-                    resumed_at = time.monotonic()
-                    chunks_at_resume = len(stats.chunk_sizes)
-                    await session.play()
-                    await wait_until(
-                        lambda n=chunks_at_resume: len(stats.chunk_sizes) > n, receiver
-                    )
-                    if len(stats.chunk_sizes) > chunks_at_resume:
-                        result["resume_latency_s"] = round(
-                            stats.arrivals[chunks_at_resume] - resumed_at, 2
-                        )
-                    await wait_for_audio(stats, receiver, args.play_seconds)
                 results.append(result)
+                if receiver.done():
+                    break
+                resumed_at = time.monotonic()
+                chunks_at_resume = len(stats.chunk_sizes)
+                await session.play()
+                await wait_until(
+                    lambda n=chunks_at_resume: len(stats.chunk_sizes) > n or receiver.done(),
+                    STALL_S,
+                )
+                if len(stats.chunk_sizes) > chunks_at_resume:
+                    result["resume_latency_s"] = round(
+                        stats.arrivals[chunks_at_resume] - resumed_at, 2
+                    )
+                played = await wait_for_audio(stats, receiver, args.play_seconds)
     except Exception as error:  # noqa: BLE001
-        stats.end = stats.end or describe(error)
+        stats.fail(error)
     return [stats]
 
 
 async def measure_concurrency(client: genai.Client, args: argparse.Namespace) -> list[SessionStats]:
-    """Open sessions one at a time until one fails or `max_sessions` are playing."""
+    """Start sessions `spacing` seconds apart until one fails or `max_sessions` play together.
+
+    A start fails when the new session has no audio within `audio_timeout`, or when an
+    earlier session ends. All playing sessions are then held together for `hold` seconds.
+    """
     stop = asyncio.Event()
     sessions: list[SessionStats] = []
     tasks: list[asyncio.Task[None]] = []
@@ -239,23 +295,36 @@ async def measure_concurrency(client: genai.Client, args: argparse.Namespace) ->
         try:
             async with playing_session(client, stats, args.prompt) as (_, receiver):
                 stopper = asyncio.create_task(stop.wait())
-                await asyncio.wait({receiver, stopper}, return_when=asyncio.FIRST_COMPLETED)
-                stopper.cancel()
+                try:
+                    await asyncio.wait({receiver, stopper}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    stopper.cancel()
         except Exception as error:  # noqa: BLE001
-            stats.end = stats.end or describe(error)
+            stats.fail(error)
 
     for index in range(args.max_sessions):
         stats = SessionStats(f"concurrent-{index + 1}", args.api_version)
         sessions.append(stats)
         tasks.append(asyncio.create_task(hold(stats)))
-        await asyncio.sleep(args.settle)
-        if not stats.chunk_sizes:
+        await wait_until(
+            lambda s=stats: bool(s.chunk_sizes or s.filtered) or s.end is not None,
+            args.audio_timeout,
+        )
+        if not all(s.playing for s in sessions):
             break
+        if index + 1 < args.max_sessions:
+            await asyncio.sleep(max(0.0, stats.started_at + args.spacing - time.monotonic()))
+    hold_start = time.monotonic()
     await asyncio.sleep(args.hold)
+    hold_end = time.monotonic()
+    playing = [s for s in sessions if s.playing]
     stop.set()
     await asyncio.gather(*tasks)
     for stats in sessions:
-        stats.extra["concurrent_peak"] = len(sessions)
+        stats.extra["concurrent_peak"] = len(playing)
+        if stats in playing:
+            audio_s = stats.audio_seconds_between(hold_start, hold_end)
+            stats.extra["rate_during_hold"] = round(audio_s / (hold_end - hold_start), 3)
     return sessions
 
 
@@ -281,19 +350,25 @@ def parse_args() -> argparse.Namespace:
     pauses.add_argument("--play-seconds", type=float, default=20)
 
     concurrency = commands.add_parser("concurrency", help="how many sessions can play at once")
-    concurrency.add_argument("--max-sessions", type=int, default=5)
+    concurrency.add_argument("--max-sessions", type=int, default=8)
     concurrency.add_argument(
-        "--settle", type=float, default=10, help="seconds to wait for audio before the next session"
+        "--spacing", type=float, default=45, help="seconds between session starts"
     )
     concurrency.add_argument(
-        "--hold", type=float, default=30, help="seconds to keep all sessions playing"
+        "--audio-timeout", type=float, default=STALL_S, help="seconds to wait for first audio"
+    )
+    concurrency.add_argument(
+        "--hold", type=float, default=120, help="seconds to keep all sessions playing"
     )
     return parser.parse_args()
 
 
 async def main() -> None:
     args = parse_args()
-    client = genai.Client(http_options={"api_version": args.api_version})
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        sys.exit("GEMINI_API_KEY is not set; run with uv run --env-file .env")
+    client = genai.Client(api_key=api_key, http_options={"api_version": args.api_version})
     measure = {
         "rate": measure_rate,
         "lifetime": measure_lifetime,
@@ -301,7 +376,8 @@ async def main() -> None:
         "concurrency": measure_concurrency,
     }[args.command]
     for stats in await measure(client, args):
-        print(json.dumps({"command": args.command} | stats.summary()), flush=True)
+        record = {"command": args.command, "sdk": genai.__version__} | stats.summary()
+        print(json.dumps(record), flush=True)
 
 
 if __name__ == "__main__":
