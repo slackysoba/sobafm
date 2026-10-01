@@ -27,6 +27,7 @@ FADE_OUT_S = 3.0
 REFUSAL_RETRY_S = 30.0
 CONNECT_BACKOFF_S = (2.0, 5.0, 15.0)
 PLAYER_RETRY_S = 1.0  # starting discord.py's player, at most once per interval
+EMPTY_GRACE_S = 60.0  # how long a program plays to an empty channel (PLAY-4)
 
 
 class Player(Protocol):
@@ -98,6 +99,7 @@ class Station:
     def __init__(
         self,
         voice: Callable[[], Player | None],
+        listeners: Callable[[], int],
         connect: Connect,
         pool: SessionPool,
         *,
@@ -108,6 +110,8 @@ class Station:
         self.program: Program | None = None
         self.decks: list[Deck] = []
         self._voice = voice
+        self._listeners = listeners
+        self._empty_since: float | None = None
         self._connect = connect
         self._pool = pool
         self._clock = clock
@@ -126,6 +130,7 @@ class Station:
         if self.program is not None:
             self.program.settle(Outcome.REPLACED)
         self.program = program
+        self._empty_since = None
         self.wake()
         return program.started
 
@@ -173,6 +178,9 @@ class Station:
         if self.program is not None and player is None:
             log.info("Voice connection lost; ending the program")
             self._finish(Outcome.DISCONNECTED)
+        if self.program is not None and self._abandoned():
+            log.info("No listeners for %d seconds; ending the program", EMPTY_GRACE_S)
+            self._finish(Outcome.STOPPED)
         self._discard()
         if self.program is not None:
             self._retire(self.program)
@@ -184,6 +192,16 @@ class Station:
         else:
             self._wind_down(player)
         await asyncio.gather(*(deck.regulate() for deck in self.decks))
+
+    def _abandoned(self) -> bool:
+        """Whether the channel has had no listeners for the whole grace period."""
+        if self._listeners() > 0:
+            self._empty_since = None
+            return False
+        now = self._clock()
+        if self._empty_since is None:
+            self._empty_since = now
+        return now - self._empty_since >= EMPTY_GRACE_S
 
     def _finish(self, outcome: Outcome) -> None:
         if self.program is not None:
