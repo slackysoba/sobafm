@@ -1,0 +1,66 @@
+import pytest
+from google.genai import types
+from pydantic import ValidationError
+
+from sobafm.plan import MusicPlan, Prompt
+
+
+def test_from_request_uses_the_text_as_the_only_prompt() -> None:
+    plan = MusicPlan.from_request("  rainy   lo-fi\nwith soft piano ")
+
+    assert plan.title == "rainy lo-fi with soft piano"
+    assert plan.weighted_prompts() == [
+        types.WeightedPrompt(text="rainy lo-fi with soft piano", weight=1.0)
+    ]
+
+
+def test_from_request_truncates_long_requests() -> None:
+    plan = MusicPlan.from_request("x" * 500)
+
+    assert len(plan.prompts[0].text) == 120
+    assert len(plan.title) == 60
+
+
+def test_config_is_complete_with_fixed_sampling_values() -> None:
+    config = MusicPlan.from_request("ambient").to_config()
+
+    assert (config.guidance, config.temperature, config.top_k) == (4.0, 1.1, 40)
+    assert config.mute_bass is False
+    assert config.only_bass_and_drums is False
+    assert config.music_generation_mode == types.MusicGenerationMode.QUALITY
+    assert config.bpm is None
+
+
+def test_config_carries_the_plan() -> None:
+    plan = MusicPlan(
+        title="Night drive",
+        prompts=[Prompt(text="synthwave"), Prompt(text="arpeggiated bass", weight=0.5)],
+        bpm=110,
+        scale=types.Scale.A_MAJOR_G_FLAT_MINOR,
+        density=0.6,
+        brightness=0.4,
+        mute_drums=True,
+        vocalization=True,
+    )
+
+    config = plan.to_config()
+
+    assert (config.bpm, config.scale, config.density, config.brightness) == (
+        110,
+        types.Scale.A_MAJOR_G_FLAT_MINOR,
+        0.6,
+        0.4,
+    )
+    assert config.mute_drums is True
+    assert config.music_generation_mode == types.MusicGenerationMode.VOCALIZATION
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"bpm": 59}, {"bpm": 201}, {"density": 1.5}, {"prompts": []}, {"title": ""}],
+)
+def test_rejects_values_outside_lyria_ranges(fields: dict[str, object]) -> None:
+    values: dict[str, object] = {"title": "Plan", "prompts": [Prompt(text="ambient")]} | fields
+
+    with pytest.raises(ValidationError):
+        MusicPlan.model_validate(values)
