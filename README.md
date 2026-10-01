@@ -8,6 +8,13 @@ A server manager places SobaFM in a voice channel, where it waits for requests. 
 
 SobaFM is in design and not yet ready to run. Planning and progress are tracked in the [SobaFM project](https://github.com/users/slackysoba/projects/2).
 
+## Documentation
+
+- [Requirements](docs/requirements.md): what v1 does
+- [Architecture](docs/architecture.md): how SobaFM works
+- [Roadmap](docs/roadmap.md): milestones and sequencing
+- [Decision records](docs/decisions/README.md): material technical choices and their rationale
+
 ## License
 
 [MIT](LICENSE)
