@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -5,9 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
-from sobafm.bot import SobaFM, Voice
+from sobafm.bot import PLAY_REPLIES, SobaFM, Voice
 from sobafm.config import load_settings
+from sobafm.station import Outcome, Station
 from sobafm.store import Store
+from tests.doubles import FakeLyria
 
 GUILD_ID = 1
 CHANNEL_ID = 10
@@ -86,12 +89,21 @@ def bot_voice_update(guild: Any, before: Any, after: Any) -> tuple[Any, Any, Any
 
 
 @pytest.fixture
-async def bot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> SobaFM:
+async def bot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lyria: FakeLyria) -> SobaFM:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", "key")
     store = Store(tmp_path / "sobafm.db")
     await store.initialize()
-    return SobaFM(load_settings(env_file=None), store)
+    return SobaFM(load_settings(env_file=None), store, connect=lyria.connect)
+
+
+def fake_station(outcome: Outcome = Outcome.PLAYING) -> Any:
+    """A station whose next request resolves to `outcome` straight away."""
+    station = fake(Station, program=None, close=AsyncMock())
+    started = asyncio.get_running_loop().create_future()
+    started.set_result(outcome)
+    station.play.return_value = started
+    return station
 
 
 def make_interaction(user: Any, *, deferred: bool = True) -> Any:
@@ -120,6 +132,15 @@ def test_commands_are_for_server_managers_in_servers_only(bot: SobaFM, name: str
     assert payload["default_member_permissions"] == discord.Permissions(manage_guild=True).value
 
 
+@pytest.mark.parametrize("name", ["play", "stop"])
+def test_music_commands_are_for_every_member_in_servers_only(bot: SobaFM, name: str) -> None:
+    command = bot.tree.get_command(name)
+
+    assert isinstance(command, discord.app_commands.Command)
+    assert command.guild_only
+    assert command.default_permissions is None
+
+
 @pytest.mark.parametrize("dev_guild_id", [None, 42])
 async def test_syncs_commands_globally_or_to_the_development_server(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch, dev_guild_id: int | None
@@ -136,7 +157,8 @@ async def test_syncs_commands_globally_or_to_the_development_server(
         assert sync.await_args is not None
         guild = sync.await_args.kwargs["guild"]
         assert guild.id == dev_guild_id
-        assert {command.name for command in bot.tree.get_commands(guild=guild)} == {"join", "leave"}
+        copied = {command.name for command in bot.tree.get_commands(guild=guild)}
+        assert copied == {command.name for command in bot.tree.get_commands()}
 
 
 async def test_join_command_defers_then_replies_privately(
@@ -419,3 +441,111 @@ async def test_forgets_the_channel_when_removed_from_the_server(bot: SobaFM) -> 
     await bot.on_guild_remove(make_guild())
 
     assert await bot.store.remembered_channel(GUILD_ID) is None
+
+
+def in_voice(member_channel: Any, bot_channel: Any) -> Any:
+    """A member in `member_channel` while SobaFM is in `bot_channel`."""
+    guild = bot_channel.guild
+    guild.voice_client = make_voice_client(bot_channel)
+    member = make_member(member_channel)
+    member.guild = guild
+    member.guild_permissions = discord.Permissions.none()
+    return member
+
+
+async def test_play_needs_sobafm_in_a_voice_channel(bot: SobaFM) -> None:
+    member = make_member(make_channel(make_guild()))
+    member.guild = make_guild()
+
+    assert bot.play_problem(member) == (
+        "SobaFM isn't in a voice channel. Ask a server manager to use /join."
+    )
+
+
+async def test_play_needs_the_caller_in_sobafms_channel(bot: SobaFM) -> None:
+    guild = make_guild()
+    member = in_voice(make_channel(guild, 11), make_channel(guild))
+
+    assert bot.play_problem(member) == "Join <#10> to request music."
+
+
+async def test_play_reports_what_is_playing(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+
+    assert bot.play_problem(member) is None
+    assert await bot.play(member, "ambient drones") == (
+        "Now playing **ambient drones**, requested by <@5>."
+    )
+    assert station.play.call_args.args[0].prompts[0].text == "ambient drones"
+
+
+@pytest.mark.parametrize("outcome", [Outcome.BUSY, Outcome.REFUSED, Outcome.FAILED])
+async def test_play_explains_failures(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(outcome)))
+
+    assert await bot.play(member, "ambient") == PLAY_REPLIES[outcome]
+
+
+async def test_stop_needs_the_channel_or_manage_server(bot: SobaFM) -> None:
+    guild = make_guild()
+    member = in_voice(make_channel(guild, 11), make_channel(guild))
+    assert bot.stop_problem(member) == "Join <#10> to stop the music."
+
+    member.guild_permissions = discord.Permissions(manage_guild=True)
+    assert bot.stop_problem(member) is None
+
+
+async def test_stop_ends_the_program(bot: SobaFM) -> None:
+    guild = make_guild()
+    assert bot.stop(guild) == "Nothing is playing."
+
+    station = fake_station()
+    station.program = object()
+    bot.stations[guild.id] = station
+
+    assert bot.stop(guild) == "Stopped the music."
+    station.stop.assert_called_once()
+
+
+async def test_leave_closes_the_station(bot: SobaFM) -> None:
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    station = fake_station()
+    bot.stations[guild.id] = station
+
+    await bot.leave(guild)
+
+    station.close.assert_awaited_once()
+    assert guild.id not in bot.stations
+
+
+async def test_leaving_voice_closes_the_station(bot: SobaFM) -> None:
+    guild = make_guild()
+    station = fake_station()
+    bot.stations[guild.id] = station
+
+    await bot.on_voice_lost(guild)
+
+    station.close.assert_awaited_once()
+    assert guild.id not in bot.stations
+
+
+async def test_a_voice_reconnect_keeps_the_station(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    bot.stations[guild.id] = fake_station()
+
+    await bot.on_voice_state_update(*bot_voice_update(guild, channel, None))
+    await bot.on_voice_state_update(*bot_voice_update(guild, None, channel))
+
+    assert guild.id in bot.stations

@@ -1,9 +1,11 @@
-"""Test doubles for Lyria RealTime sessions and the clock."""
+"""Test doubles for Lyria RealTime sessions, the voice player, and the clock."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from typing import Any, Literal
 
+import discord
 from google.genai import errors, types
 
 from sobafm.pcm import BYTES_PER_SECOND, MIME_TYPE
@@ -107,3 +109,29 @@ async def settle() -> None:
     """Let pending tasks run until they block."""
     for _ in range(20):
         await asyncio.sleep(0)
+
+
+class FakePlayer:
+    """Stands in for discord.py's voice client."""
+
+    def __init__(self) -> None:
+        self.playing = False
+        self.plays = 0
+        self.source: discord.AudioSource | None = None
+
+    def is_playing(self) -> bool:
+        return self.playing
+
+    def play(
+        self,
+        source: discord.AudioSource,
+        *,
+        after: Callable[[Exception | None], Any] | None = None,
+        signal_type: Literal["auto", "voice", "music"] = "auto",
+    ) -> None:
+        self.playing = True
+        self.plays += 1
+        self.source = source
+
+    def stop(self) -> None:
+        self.playing = False

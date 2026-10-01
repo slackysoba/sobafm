@@ -78,6 +78,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "error",
-    # google-genai uses typing internals that Python 3.14 deprecates.
+    # Dependencies use APIs that Python 3.14 deprecates: typing internals in google-genai,
+    # and positional re.sub() arguments in discord.py's escape_markdown.
     "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
+    "ignore:'count' is passed as positional argument:DeprecationWarning:discord.utils",
 ]

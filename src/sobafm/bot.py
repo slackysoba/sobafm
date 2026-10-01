@@ -10,11 +10,26 @@ from discord import app_commands
 
 from sobafm.commands import add_commands
 from sobafm.config import Settings
+from sobafm.deck import Connect, lyria
+from sobafm.plan import MusicPlan
+from sobafm.station import Outcome, SessionPool, Station
 from sobafm.store import Store
 
 log = logging.getLogger(__name__)
 
 REQUIRED_PERMISSIONS = {"view_channel": "View Channel", "connect": "Connect", "speak": "Speak"}
+VOLUME = 0.5  # per-server volume arrives with settings in M3
+START_TIMEOUT_S = 75.0  # covers one refused start and its retry
+
+PLAY_REPLIES = {
+    Outcome.BUSY: "SobaFM is already playing in as many servers as it can. Try again later.",
+    Outcome.REFUSED: (
+        "Lyria RealTime couldn't make music from that request. Try describing it differently."
+    ),
+    Outcome.FAILED: "SobaFM couldn't reach Lyria RealTime. Try again shortly.",
+    Outcome.REPLACED: "A newer request replaced this one before it started.",
+    Outcome.STOPPED: "The music was stopped before this request started.",
+}
 
 
 class Voice(discord.VoiceClient):
@@ -38,19 +53,85 @@ class Voice(discord.VoiceClient):
 
 
 class SobaFM(discord.Client):
-    def __init__(self, settings: Settings, store: Store) -> None:
+    def __init__(self, settings: Settings, store: Store, connect: Connect | None = None) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
         intents.voice_states = True
         super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
         self.settings = settings
         self.store = store
+        self.open_session = connect or lyria(settings.gemini_api_key.get_secret_value())
+        self.pool = SessionPool(settings.max_sessions)
+        self.stations: dict[int, Station] = {}
         self.tree = app_commands.CommandTree(
             self, allowed_installs=app_commands.AppInstallationType(guild=True, user=False)
         )
         add_commands(self.tree, self)
         self.voices: set[Voice] = set()
         self.voice_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    async def close(self) -> None:
+        """Close every station, ending its Lyria sessions, before disconnecting."""
+        await asyncio.gather(*(station.close() for station in self.stations.values()))
+        self.stations.clear()
+        await super().close()
+
+    def station(self, guild: discord.Guild) -> Station:
+        """The guild's station, created and started on first use."""
+        station = self.stations.get(guild.id)
+        if station is None:
+            station = Station(
+                lambda: cast(discord.VoiceClient | None, guild.voice_client),
+                self.open_session,
+                self.pool,
+                volume=VOLUME,
+            )
+            station.start()
+            self.stations[guild.id] = station
+        return station
+
+    async def close_station(self, guild: discord.Guild) -> None:
+        if (station := self.stations.pop(guild.id, None)) is not None:
+            await station.close()
+
+    def play_problem(self, member: discord.Member) -> str | None:
+        """Why `member` cannot request music right now, if they cannot."""
+        voice = cast(discord.VoiceClient | None, member.guild.voice_client)
+        if voice is None:
+            return "SobaFM isn't in a voice channel. Ask a server manager to use /join."
+        if member.voice is None or member.voice.channel != voice.channel:
+            return f"Join {voice.channel.mention} to request music."
+        return None
+
+    async def play(self, member: discord.Member, request: str) -> str:
+        """Start or replace the program, and describe the outcome once it plays or fails."""
+        plan = MusicPlan.from_request(request)
+        started = self.station(member.guild).play(plan, member.mention)
+        try:
+            outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
+        except TimeoutError:
+            return "The music is taking longer than usual to start."
+        if outcome is Outcome.PLAYING:
+            title = discord.utils.escape_markdown(plan.title)
+            return f"Now playing **{title}**, requested by {member.mention}."
+        return PLAY_REPLIES[outcome]
+
+    def stop_problem(self, member: discord.Member) -> str | None:
+        """Why `member` cannot stop the music, if they cannot."""
+        voice = cast(discord.VoiceClient | None, member.guild.voice_client)
+        if voice is None:
+            return "SobaFM isn't in a voice channel."
+        in_channel = member.voice is not None and member.voice.channel == voice.channel
+        if not in_channel and not member.guild_permissions.manage_guild:
+            return f"Join {voice.channel.mention} to stop the music."
+        return None
+
+    def stop(self, guild: discord.Guild) -> str:
+        station = self.stations.get(guild.id)
+        if station is None or station.program is None:
+            return "Nothing is playing."
+        station.stop()
+        return "Stopped the music."
 
     async def setup_hook(self) -> None:
         await self.store.initialize()
@@ -115,9 +196,10 @@ class SobaFM(discord.Client):
         return f"{'Joined' if voice is None else 'Moved to'} {channel.mention}."
 
     async def leave(self, guild: discord.Guild) -> str:
-        """Disconnect from voice and forget the server's channel."""
+        """End any program, disconnect from voice, and forget the server's channel."""
         async with self.voice_locks[guild.id]:
             await self.store.forget_channel(guild.id)
+            await self.close_station(guild)
             await self.close_stale_voice(guild)
             voice = cast(discord.VoiceClient | None, guild.voice_client)
             if voice is None:
@@ -160,6 +242,7 @@ class SobaFM(discord.Client):
                 return
             log.info("Left voice in %s", guild)
             await self.store.forget_channel(guild.id)
+            await self.close_station(guild)
 
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
