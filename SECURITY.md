@@ -8,21 +8,21 @@ SobaFM has not been released yet. Until version 1.0, security fixes are made on 
 
 Report vulnerabilities privately through [GitHub's private vulnerability reporting](https://github.com/slackysoba/sobafm/security/advisories/new). Do not open a public issue, pull request, or discussion about them.
 
-Include a description of the vulnerability and its impact, steps to reproduce it or a proof of concept, and the affected version or commit.
+Include a description of the vulnerability and its impact, steps to reproduce it or a proof of concept, and the affected version or commit. Keep the report private until an advisory is published.
 
 ## What to expect
 
 SobaFM has a single maintainer, so these targets are best effort:
 
-- Acknowledgment within 5 business days
-- An initial assessment within 14 days
+- Acknowledgment within 5 business days of the report
+- An initial assessment within 14 days of the report
 - Updates as a fix progresses, and credit in the published advisory unless you prefer otherwise
 
 ## Scope
 
 In scope: SobaFM's code, its use of its dependencies, and its published container images.
 
-Out of scope: vulnerabilities in Discord or Google services, which should be reported to those vendors, and deployments whose operator credentials have been exposed outside SobaFM.
+Out of scope: vulnerabilities in Discord, Google services, or SobaFM's dependencies themselves, which should be reported to their maintainers, and credentials an operator has exposed outside SobaFM, such as in a public repository.
 
 ## Protecting your deployment
 
