@@ -17,7 +17,7 @@ Thanks for your interest in SobaFM. This guide explains how work is planned, pro
 
 ## Development setup
 
-SobaFM needs Python 3.14 and [uv](https://docs.astral.sh/uv/getting-started/installation/), which manages the environment from `uv.lock` and installs Python 3.14 if it is missing.
+SobaFM needs Python 3.14 and [uv](https://docs.astral.sh/uv/getting-started/installation/), which manages the environment from `uv.lock` and installs Python 3.14 if it is missing. The Markdown hook also needs [Node.js](https://nodejs.org/) LTS, with npm, on your `PATH`.
 
 ```sh
 uv sync                     # create .venv with the locked dependencies
@@ -26,16 +26,16 @@ cp .env.example .env        # then set DISCORD_TOKEN and GEMINI_API_KEY
 uv run sobafm               # start SobaFM
 ```
 
-On Windows with Smart App Control enabled, install Python 3.14 from [python.org](https://www.python.org/downloads/) and point uv at it (`uv sync --python <path to python.exe>`): uv's own Python builds are unsigned, and Smart App Control blocks some of their modules.
+On Windows with Smart App Control enabled, install Python 3.14 from [python.org](https://www.python.org/downloads/) and point uv at it (`uv sync --python <path to python.exe>`): uv's own Python builds are unsigned, and Smart App Control blocks some of their modules. If it also blocks a tool's launcher, run the tool as a module, for example `uv run python -m pytest`, and set `PYRIGHT_PYTHON_NODEJS_WHEEL=0` so pyright uses your installed Node.js instead of its bundled one.
 
-The checks, which CI also runs:
+The checks:
 
 ```sh
 uv run ruff check                   # lint
 uv run ruff format --check          # formatting; `uv run ruff format` applies it
 uv run pyright                      # strict type checking
 uv run pytest                       # tests
-uv run pre-commit run --all-files   # every hook, including Markdown lint and secret scanning
+uv run pre-commit run --all-files   # every hook, including Markdown lint and a secret scan of staged changes
 ```
 
 ## Making a change

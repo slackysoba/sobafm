@@ -1,12 +1,14 @@
 """Operator configuration, read from the environment and an optional `.env` file."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr
+from pydantic import BeforeValidator, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+type LogLevel = Annotated[
+    Literal["DEBUG", "INFO", "WARNING", "ERROR"], BeforeValidator(lambda value: str(value).upper())
+]
 
 ENV_PREFIX = "SOBAFM_"
 
@@ -17,6 +19,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix=ENV_PREFIX,
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
         hide_input_in_errors=True,
     )

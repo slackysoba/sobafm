@@ -9,10 +9,10 @@ TOKEN = "discord-token-value"
 KEY = "gemini-key-value"
 
 
-@pytest.fixture(autouse=True)
-def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("DISCORD_TOKEN", "GEMINI_API_KEY", "SOBAFM_LOG_LEVEL"):
-        monkeypatch.delenv(name, raising=False)
+def write_env_file(path: Path, text: str) -> Path:
+    env_file = path / ".env"
+    env_file.write_text(text, encoding="utf-8")
+    return env_file
 
 
 def test_reads_secrets_and_defaults_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,29 +26,34 @@ def test_reads_secrets_and_defaults_from_environment(monkeypatch: pytest.MonkeyP
     assert settings.log_level == "INFO"
 
 
-def test_reads_prefixed_options(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reads_prefixed_options_case_insensitively(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
-    monkeypatch.setenv("SOBAFM_LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("SOBAFM_LOG_LEVEL", "debug")
 
     assert load_settings(env_file=None).log_level == "DEBUG"
 
 
 def test_reads_env_file(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text(f"DISCORD_TOKEN={TOKEN}\nGEMINI_API_KEY={KEY}\n", encoding="utf-8")
+    env_file = write_env_file(tmp_path, f"DISCORD_TOKEN={TOKEN}\nGEMINI_API_KEY={KEY}\n")
 
-    settings = load_settings(env_file=env_file)
-
-    assert settings.discord_token.get_secret_value() == TOKEN
+    assert load_settings(env_file=env_file).discord_token.get_secret_value() == TOKEN
 
 
 def test_environment_overrides_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text(f"DISCORD_TOKEN={TOKEN}\nGEMINI_API_KEY={KEY}\n", encoding="utf-8")
+    env_file = write_env_file(tmp_path, f"DISCORD_TOKEN={TOKEN}\nGEMINI_API_KEY={KEY}\n")
     monkeypatch.setenv("GEMINI_API_KEY", "from-environment")
 
     assert load_settings(env_file=env_file).gemini_api_key.get_secret_value() == "from-environment"
+
+
+def test_ignores_empty_environment_variables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env_file = write_env_file(tmp_path, f"DISCORD_TOKEN={TOKEN}\nGEMINI_API_KEY={KEY}\n")
+    monkeypatch.setenv("DISCORD_TOKEN", "")
+
+    assert load_settings(env_file=env_file).discord_token.get_secret_value() == TOKEN
 
 
 def test_secrets_never_appear_in_output(monkeypatch: pytest.MonkeyPatch) -> None:
