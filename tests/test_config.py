@@ -76,12 +76,28 @@ def test_validation_errors_hide_input(monkeypatch: pytest.MonkeyPatch) -> None:
     assert KEY not in str(caught.value)
 
 
+def test_reads_server_options(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+    assert load_settings(env_file=None).data_dir == Path("data")
+    assert load_settings(env_file=None).dev_guild_id is None
+
+    monkeypatch.setenv("SOBAFM_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SOBAFM_DEV_GUILD_ID", "1234")
+    settings = load_settings(env_file=None)
+
+    assert settings.data_dir == tmp_path
+    assert settings.dev_guild_id == 1234
+
+
 @pytest.mark.parametrize(
     ("field", "variable"),
     [
         ("discord_token", "DISCORD_TOKEN"),
         ("gemini_api_key", "GEMINI_API_KEY"),
         ("log_level", "SOBAFM_LOG_LEVEL"),
+        ("data_dir", "SOBAFM_DATA_DIR"),
+        ("dev_guild_id", "SOBAFM_DEV_GUILD_ID"),
     ],
 )
 def test_env_name(field: str, variable: str) -> None:

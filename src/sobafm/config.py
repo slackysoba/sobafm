@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     discord_token: SecretStr = Field(validation_alias="DISCORD_TOKEN", min_length=1)
     gemini_api_key: SecretStr = Field(validation_alias="GEMINI_API_KEY", min_length=1)
     log_level: LogLevel = "INFO"
+    data_dir: Path = Path("data")
+    dev_guild_id: int | None = None
 
     @classmethod
     def env_name(cls, field: str) -> str:

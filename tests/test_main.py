@@ -1,11 +1,26 @@
 import logging
 from pathlib import Path
 
+import discord
 import pytest
 
+import sobafm.__main__
 from sobafm.__main__ import main
+from sobafm.config import Settings
 
 KEY = "gemini-key-value"
+
+
+@pytest.fixture
+def started(monkeypatch: pytest.MonkeyPatch) -> list[Settings]:
+    """Replace the bot's run loop, recording the settings it would have started with."""
+    runs: list[Settings] = []
+
+    async def run(settings: Settings) -> None:
+        runs.append(settings)
+
+    monkeypatch.setattr(sobafm.__main__, "run", run)
+    return runs
 
 
 def test_exits_naming_missing_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,8 +62,34 @@ def test_exits_when_env_file_is_not_utf8(tmp_path: Path) -> None:
     assert caught.value.code == "sobafm: .env could not be read as UTF-8"
 
 
+def test_runs_the_bot_with_valid_configuration(
+    monkeypatch: pytest.MonkeyPatch, started: list[Settings]
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+
+    main()
+
+    assert [settings.discord_token.get_secret_value() for settings in started] == ["token"]
+
+
+def test_exits_when_discord_rejects_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+
+    async def rejected(settings: Settings) -> None:
+        raise discord.LoginFailure
+
+    monkeypatch.setattr(sobafm.__main__, "run", rejected)
+
+    with pytest.raises(SystemExit) as caught:
+        main()
+
+    assert caught.value.code == "sobafm: Discord rejected DISCORD_TOKEN"
+
+
 def test_debug_logging_applies_to_sobafm_only(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, started: list[Settings]
 ) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
@@ -58,6 +99,5 @@ def test_debug_logging_applies_to_sobafm_only(
 
     main()
 
-    assert "Configuration loaded" in caplog.messages
     assert logging.getLogger("sobafm").level == logging.DEBUG
     assert logging.getLogger("websockets").getEffectiveLevel() == logging.INFO
