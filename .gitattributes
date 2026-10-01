@@ -1,0 +1,19 @@
+# Store text files with LF line endings and check them out with LF on every
+# platform, so Windows, Linux, and CI see identical files.
+* text=auto eol=lf
+
+# cmd.exe batch scripts require CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.gif binary
+*.ico binary
+*.jpg binary
+*.mp3 binary
+*.ogg binary
+*.png binary
+*.wav binary
+
+# Generated files
+uv.lock linguist-generated=true
