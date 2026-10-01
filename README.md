@@ -15,6 +15,10 @@ SobaFM is in design and not yet ready to run. Planning and progress are tracked 
 - [Roadmap](docs/roadmap.md): milestones and sequencing
 - [Decision records](docs/decisions/README.md): material technical choices and their rationale
 
+## Contributing
+
+Contributions are welcome; the [contributing guide](CONTRIBUTING.md) explains how work is planned and merged, and everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately, as described in the [security policy](SECURITY.md).
+
 ## License
 
 [MIT](LICENSE)
