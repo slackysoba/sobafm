@@ -1,0 +1,51 @@
+name: Bug report
+description: Report something in SobaFM that does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Report security vulnerabilities privately, as described in the [security policy](https://github.com/slackysoba/sobafm/security/policy), not here.
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened
+      description: What you saw, including any error messages.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SobaFM version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How SobaFM runs
+      options:
+        - From source with uv
+        - Container image
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log lines. Remove tokens, API keys, and server or user identifiers first.
+      render: text
