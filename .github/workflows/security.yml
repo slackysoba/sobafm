@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
     env:
       OSV_SCANNER_VERSION: 2.6.0
       OSV_SCANNER_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
-      # Permissive licenses compatible with distributing SobaFM under MIT.
+      # Licenses compatible with distributing SobaFM under MIT.
       ALLOWED_LICENSES: MIT,MIT-0,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,0BSD,PSF-2.0,Python-2.0,MPL-2.0,Unlicense,CC0-1.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

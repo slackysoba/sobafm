@@ -10,13 +10,8 @@ id = "GHSA-mrfv-m5wm-5w6w"
 ignoreUntil = 2027-01-31
 reason = "Not reachable through discord.py's voice client; pinned by discord.py 2.7 (ADR-0001, #9)."
 
-[[IgnoredVulns]]
-id = "PYSEC-2026-3002"
-ignoreUntil = 2027-01-31
-reason = "Alias of GHSA-mrfv-m5wm-5w6w; see above."
-
-# Packages whose metadata carries license text or a classifier instead of an SPDX identifier.
-# Each override matches the license in the package's own repository.
+# Dependencies whose metadata carries license text or a classifier instead of an SPDX
+# identifier. Each override matches the license in the package's own repository.
 [[PackageOverrides]]
 name = "colorama"
 ecosystem = "PyPI"
@@ -47,6 +42,7 @@ ecosystem = "PyPI"
 license.override = ["MIT"]
 reason = "github.com/tox-dev/python-discovery is MIT."
 
+# SobaFM itself is not published, so osv-scanner cannot look up its license.
 [[PackageOverrides]]
 name = "sobafm"
 ecosystem = "PyPI"
