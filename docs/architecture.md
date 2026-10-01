@@ -60,7 +60,7 @@ flowchart LR
 | `config` | Typed settings from the environment and `.env`; secrets held as `SecretStr` |
 | `bot` | The discord.py client: intents, command sync, the station registry, and voice-state events |
 | `commands` | Slash command handlers: checks, deferral, and replies with mentions disabled |
-| `station` | One per server: the desired program, a command lock, the reconcile loop, listener tracking, and the voice channel status |
+| `station` | One per server: the desired program, the reconcile loop, listener tracking, and the voice channel status |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |
 | `mixer` | The `discord.AudioSource`: the live deck, crossfades, fades, and volume |
 | `pcm` | PCM format constants, the silence frame, and the chunk-to-frame splitter |
@@ -90,15 +90,15 @@ The **mixer** is the audio source discord.py reads. Each `read()` returns exactl
 
 A station stores only what should be happening: the program (plan, requester, and end time) or none. Its `reconcile()` method runs every 250 ms and whenever a command or event wakes it, and it is the only code that creates, switches, or closes decks. It applies these rules in order:
 
-1. **End.** If the program's end time has passed, or the channel has had no listeners for 60 seconds, clear the program.
-2. **Stop.** With no program, discard decks that are not playing and fade out the live deck; once the fade completes, stop the player and discard the remaining decks.
+1. **End.** If SobaFM has lost its voice connection, the program's end time has passed, or the channel has had no listeners for 60 seconds, clear the program.
+2. **Discard.** Drop ended decks the mixer no longer references once they are empty or replaced. A deck that ended without audio counts as a failed or refused start.
 3. **Retire.** Stop the session of any deck that has reached the session limit or belongs to a replaced plan. Its buffered audio stays playable.
 4. **Generate.** Keep a next deck filling for the current plan beside the live one, within the global session cap. Retry failed connections with backoff, and retry a refused start once after 30 seconds.
-5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player and fade in.
-6. **Hand over.** If no crossfade is in progress and the live deck's session has reached its limit or closed, holds less than 4 seconds, or belongs to a replaced plan, crossfade to the ready deck with the most buffered audio, preferring the current plan.
-7. **Discard.** Close decks the mixer no longer references once they are empty or replaced.
+5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player and fade in. Restart the player if discord.py stopped it.
+6. **Hand over, or stop.** With a program, if no crossfade is in progress and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck with the most buffered audio, preferring the current plan. Without one, retire idle decks, fade out the live deck, and then stop the player.
+7. **Regulate.** Pause or resume each deck's generation at the flow-control thresholds.
 
-The station never closes a deck the mixer still references. Commands take a per-station `asyncio.Lock`, so concurrent `/play`, `/stop`, and `/leave` requests apply in arrival order, and the change cooldown is checked inside the lock before the model call.
+The station never closes a deck the mixer still references. Commands only replace the desired program and wake the loop, so they need no lock: the latest request wins. The change cooldown (M3) is checked when a request arrives, before the model call.
 
 ### Constants
 
