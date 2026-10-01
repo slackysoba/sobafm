@@ -31,6 +31,9 @@ dev = [
     "ruff>=0.16.10",
 ]
 
+[tool.uv]
+required-version = "~=0.12.21"
+
 [tool.ruff]
 line-length = 100
 

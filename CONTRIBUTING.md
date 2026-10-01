@@ -52,7 +52,7 @@ uv run pre-commit run --all-files   # every hook, including Markdown lint and a 
 - Pull requests are squash-merged, and the pull request's title and description become the commit message.
 - Titles are imperative and in sentence case, without a type prefix: "Add the deck frame buffer", not "feat: deck buffer".
 - Descriptions state the intent, scope, verification, and risk of the change.
-- Every required check must pass before merging. Pull requests labeled `maintainer-approval` also need the maintainer's explicit approval.
+- Every required check must pass before merging: `ci` (lint, types, tests, Markdown lint, and link checks) and `security` (the vulnerability and license scan of `uv.lock`, and dependency review). Pull requests labeled `maintainer-approval` also need the maintainer's explicit approval.
 
 ## Templates and coding agents
 
