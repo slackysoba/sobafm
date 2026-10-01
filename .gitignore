@@ -23,6 +23,7 @@ data/
 .idea/
 .vscode/
 .claude/settings.local.json
+.claude/worktrees/
 
 # Operating systems
 .DS_Store

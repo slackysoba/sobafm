@@ -45,7 +45,7 @@ uv run pre-commit run --all-files   # every hook, including Markdown lint and a 
 3. **Keep the change focused:** one issue, one branch, one pull request. Record unrelated findings as new issues.
 4. **Reuse before building.** Prefer an existing platform capability or a well-maintained library over custom code, and explain the choice in the pull request. A new external service, which would add an account or a cost for operators, needs a decision first.
 5. **Keep the repository consistent.** Update the documents the change affects and delete the code it supersedes, in the same pull request.
-6. **Open a pull request** that describes the change and includes `Closes #<issue>`.
+6. **Open a pull request** that follows the [template](.github/pull_request_template.md) and includes `Closes #<issue>`.
 
 ## Commits and pull requests
 
@@ -53,6 +53,10 @@ uv run pre-commit run --all-files   # every hook, including Markdown lint and a 
 - Titles are imperative and in sentence case, without a type prefix: "Add the deck frame buffer", not "feat: deck buffer".
 - Descriptions state the intent, scope, verification, and risk of the change.
 - Every required check must pass before merging. Pull requests labeled `maintainer-approval` also need the maintainer's explicit approval.
+
+## Templates and coding agents
+
+Maintainers create milestone, task, decision, and research issues from the templates in [`docs/templates/`](docs/templates/), for example with `gh issue create --title "Add the deck frame buffer" --label task --body-file docs/templates/task.md`. Coding agents also follow [AGENTS.md](AGENTS.md).
 
 ## Code of conduct
 
