@@ -56,7 +56,7 @@ uv run pre-commit run --all-files   # every hook, including Markdown lint and a 
 
 ## Templates and coding agents
 
-Maintainers create milestones, tasks, decisions, and research issues from the templates in [`docs/templates/`](docs/templates/), for example with `gh issue create --body-file docs/templates/task.md`. Coding agents also follow [AGENTS.md](AGENTS.md).
+Maintainers create milestone, task, decision, and research issues from the templates in [`docs/templates/`](docs/templates/), for example with `gh issue create --title "Add the deck frame buffer" --label task --body-file docs/templates/task.md`. Coding agents also follow [AGENTS.md](AGENTS.md).
 
 ## Code of conduct
 

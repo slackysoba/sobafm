@@ -5,7 +5,8 @@
 ## Context
 
 - Parent:
-- Requirements and decisions:
+- Requirements:
+- Decisions:
 
 ## Scope
 

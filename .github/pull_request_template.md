@@ -1,3 +1,5 @@
+<!-- Fill in each section and delete these comments: the description becomes the squash commit message. -->
+
 ## Summary
 
 <!-- What changes and why, in a few sentences, then the issue this closes. -->
