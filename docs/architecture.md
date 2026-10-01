@@ -1,8 +1,8 @@
 # Architecture
 
-- **Status:** Approved (#5). The playback engine's constants and second-session rule are provisional until ADR-0004 (#12).
+- **Status:** Approved (#5); the playback engine follows ADR-0004 (#12).
 - **Requirements:** [requirements.md](requirements.md)
-- **Decisions:** [ADR-0001](decisions/0001-build-on-python-discord-py-and-the-google-gen-ai-sdk.md) · [ADR-0002](decisions/0002-interpret-requests-with-gemini-structured-output.md) · [ADR-0003](decisions/0003-keep-server-state-in-sqlite-and-use-discord-command-permissions.md)
+- **Decisions:** [ADR-0001](decisions/0001-build-on-python-discord-py-and-the-google-gen-ai-sdk.md) · [ADR-0002](decisions/0002-interpret-requests-with-gemini-structured-output.md) · [ADR-0003](decisions/0003-keep-server-state-in-sqlite-and-use-discord-command-permissions.md) · [ADR-0004](decisions/0004-stream-lyria-realtime-through-buffered-decks.md)
 
 ## Summary
 
@@ -19,8 +19,9 @@ In scope: the v1 [requirements](requirements.md). Out of scope: hosting several 
 | Lyria RealTime emits raw 16-bit PCM at 48 kHz in stereo, in chunks of about 2 seconds | [Lyria RealTime guide](https://ai.google.dev/gemini-api/docs/realtime-music-generation) | The format Discord encodes to Opus: chunks are split into 3,840-byte, 20 ms frames with no resampling |
 | Audio is generated ahead of playback, and prompt changes affect only audio generated afterwards | Lyria RealTime guide | Every plan change fills a new deck and crossfades to it, instead of steering a session whose audio is already buffered |
 | Every config update must include all fields, and `bpm` or `scale` changes need a hard context reset | Lyria RealTime guide | The full config is sent with every new session; tempo and key change only between decks |
-| New sessions take 5 to 10 seconds to settle, and sessions are limited to about 10 minutes | [Google AI developer guide](https://dev.to/googleai/lyria-realtime-the-developers-guide-to-infinite-music-streaming-4m1h); not in the official documentation | A pre-roll before a deck goes live; sessions retired after 540 seconds (measured in #11) |
-| Generation has been reported below real time, at about 45 seconds of audio per minute | [Google AI forum, September 2026](https://discuss.ai.google.dev/t/real-time-gen-ai/182054) | A second concurrent session while the measured rate is below real time (measured in #11) |
+| Sessions close after 600 seconds with WebSocket code 1011 and no warning; audio starts a median 2.9 seconds after `play()` | Measured in #11; not in the official documentation | Sessions are retired after 540 seconds; a deck goes live after a 6-second pre-roll |
+| Generation averages 0.97× to 0.99× real time per session, with per-minute dips to 0.77× and stalls of up to 17 seconds | Measured in #11 | The next deck fills up to 60 seconds ahead, so the deck taking over can absorb stalls |
+| Four concurrent sessions work when started apart; a session started seconds after others can be refused with a `filtered_prompt` | Measured in #11 | Two sessions per playing server; a refused start is retried once after 30 seconds |
 | discord.py calls `AudioSource.read()` on its player thread every 20 ms, and an empty result ends playback | [discord.py API reference](https://discordpy.readthedocs.io/en/stable/api.html#discord.AudioSource) | `read()` never blocks and returns silence on underrun |
 | Discord accepts only DAVE end-to-end-encrypted voice connections since March 1, 2026 | [Discord change log](https://docs.discord.com/developers/change-log) | discord.py 2.7 with its `voice` extra (ADR-0001) |
 
@@ -44,7 +45,7 @@ flowchart LR
     subgraph process [SobaFM process]
         commands --> station["Station (one per server)"]
         station -- "request and current plan" --> interpreter[Interpreter]
-        station -- "MusicPlan" --> decks["Decks (one or two)"]
+        station -- "MusicPlan" --> decks["Decks (live and next)"]
         decks -- "20 ms frames" --> mixer[Mixer]
     end
     interpreter <--> gemini[(Gemini API)]
@@ -71,7 +72,7 @@ flowchart LR
 
 ### Playback engine
 
-A **deck** is a buffer of 20 ms frames filled by at most one Lyria RealTime session. A session is retired when it reaches the session limit or when its plan is replaced, and its buffered audio stays playable. Session rotation, recovery from a dropped session, and plan changes therefore follow one path: fill a new deck, then crossfade to it.
+A **deck** is a buffer of 20 ms frames filled by at most one Lyria RealTime session. A playing server keeps two decks generating: the **live** deck, which the mixer plays, and the **next** deck, which fills ahead. A session is retired when it reaches the session limit or when its plan is replaced, and its buffered audio stays playable. Session rotation, recovery from a dropped session, stalls, and plan changes therefore follow one path: hand over to the next deck with a crossfade, then open a new next deck ([ADR-0004](decisions/0004-stream-lyria-realtime-through-buffered-decks.md)).
 
 Flow control uses only `pause()` and `play()`: a deck pauses generation when it holds 60 seconds of audio and resumes below 45 seconds. The receive loop is never throttled, because unread messages would delay WebSocket keepalive replies.
 
@@ -92,32 +93,32 @@ A station stores only what should be happening: the program (plan, requester, an
 1. **End.** If the program's end time has passed, or the channel has had no listeners for 60 seconds, clear the program.
 2. **Stop.** With no program, discard decks that are not playing and fade out the live deck; once the fade completes, stop the player and discard the remaining decks.
 3. **Retire.** Stop the session of any deck that has reached the session limit or belongs to a replaced plan. Its buffered audio stays playable.
-4. **Generate.** Keep one session filling a deck for the current plan, or two while the live deck's generation rate is below the second-session threshold, within the per-server and global session caps. Retry failed connections with backoff.
+4. **Generate.** Keep a next deck filling for the current plan beside the live one, within the global session cap. Retry failed connections with backoff, and retry a refused start once after 30 seconds.
 5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player and fade in.
-6. **Hand over.** If no crossfade is in progress and the live deck belongs to a replaced plan or is about to run dry, crossfade to the ready deck with the most buffered audio, preferring the current plan.
+6. **Hand over.** If no crossfade is in progress and the live deck's session has reached its limit or closed, holds less than 4 seconds, or belongs to a replaced plan, crossfade to the ready deck with the most buffered audio, preferring the current plan.
 7. **Discard.** Close decks the mixer no longer references once they are empty or replaced.
 
 The station never closes a deck the mixer still references. Commands take a per-station `asyncio.Lock`, so concurrent `/play`, `/stop`, and `/leave` requests apply in arrival order, and the change cooldown is checked inside the lock before the model call.
 
 ### Constants
 
-Provisional values; ADR-0004 sets them from the measurements in #11.
+Set by ADR-0004 from the measurements in #11.
 
-| Constant | Initial value | Purpose |
+| Constant | Value | Purpose |
 | --- | --- | --- |
 | Frame | 3,840 bytes | 20 ms of 16-bit, 48 kHz stereo PCM |
 | Reconcile tick | 250 ms | Rule evaluation and flow-control checks |
 | Pre-roll | 6 s | Audio a deck needs before it can go live, about three chunks |
-| Pause and resume thresholds | 60 s and 45 s buffered | Flow control |
-| Session limit | 540 s | Retires sessions before the reported 10-minute limit |
+| Pause and resume thresholds | 60 s and 45 s buffered | Flow control; the next deck stays paused at 60 s until it goes live |
+| Session limit | 540 s | Retires sessions before the 600-second limit |
 | Hand-over point and crossfade | 4 s remaining and 4 s | Start of a handover, and its length |
 | Fade-in and fade-out | 2 s and 3 s | Program start and end |
-| Second-session threshold | Generation rate below 1.05× | Opens a second concurrent session |
-| Session caps | 2 per server; global cap set by ADR-0004 | Bounds Lyria usage |
+| Refused-start retry | Once, after 30 s | Separates rate-limited session starts from filtered prompts |
+| Session caps | 2 per server; 4 per process | Bounds Lyria usage; two playing servers per API key |
 | Connect timeout and backoff | 15 s; 2, 5, then 15 s | Session recovery |
 | Empty-channel grace period | 60 s | PLAY-4 |
 
-The gap between the resume threshold and the hand-over point (41 seconds) exceeds the time to connect and pre-roll a new session (about 10 seconds), so a single session can rotate without a gap whenever generation keeps up with real time. A full deck holds about 11.5 MB of audio, and a playing server holds less than 40 MB in the worst case (NFR-3).
+The next deck reaches its 60-second buffer about a minute after it opens, well before the live session's 540-second limit, so each handover starts with a full minute of audio in reserve. A full deck holds about 11.5 MB of audio, and a playing server holds less than 40 MB in the worst case (NFR-3).
 
 ### Interpreter
 
@@ -179,7 +180,7 @@ CREATE TABLE guild (
 | `SOBAFM_DATA_DIR` | No | `./data` | Directory for the SQLite database |
 | `SOBAFM_LOG_LEVEL` | No | `INFO` | Log level |
 | `SOBAFM_DEV_GUILD_ID` | No | None | Registers commands to one server for development |
-| `SOBAFM_MAX_SESSIONS` | No | Set by ADR-0004 | Global cap on concurrent Lyria RealTime sessions |
+| `SOBAFM_MAX_SESSIONS` | No | `4` | Global cap on concurrent Lyria RealTime sessions |
 
 **Discord invitation:** scopes `bot` and `applications.commands`; permissions View Channel, Connect, Speak, and Set Voice Channel Status.
 
@@ -199,7 +200,9 @@ CREATE TABLE guild (
 | Lyria filters a prompt | Discard the new deck, keep the current music, and tell the requester |
 | Lyria refuses the connection (authentication, quota, or close code `1008`) | Reply with a specific error; the station stays idle |
 | Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills; repeated failures end the program with a notice |
-| Generation slower than real time | A second session fills another deck; remaining underruns play silence and are logged |
+| Generation stalls or slows | The live deck's buffer absorbs it; below 4 seconds, the station hands over to the next deck. Remaining underruns play silence and are logged |
+| Lyria refuses a new session's start (`filtered_prompt` with no audio) | Retry once after 30 seconds, then report the prompt as filtered |
+| No session capacity left in the process | Reply that SobaFM is busy in other servers |
 | Voice reconnection | discord.py reconnects; reads pause, flow control pauses generation, and crossfades resume intact |
 | SobaFM moved, disconnected, or its channel deleted | Adopt the new channel, or end the program and forget the channel (PLAY-7) |
 | Player thread error | `read()` returns silence; the `after` callback wakes the station, which restarts the player |
@@ -231,5 +234,5 @@ SobaFM runs from source with `uv run sobafm`. From M4 it also ships as a multi-a
 
 | Question | Tracking |
 | --- | --- |
-| Session limit, generation rate, concurrency, settle time, and API version | #11 |
-| Playback engine constants, the second-session rule, and the policy if continuous playback is not achievable | #12 |
+| Session limit, generation rate, concurrency, settle time, and API version | Answered in #11 |
+| Playback engine constants, the number of sessions per server, and whether continuous playback is achievable | Answered in ADR-0004 (#12) |
