@@ -88,6 +88,7 @@ class FakeLyria:
         self.sessions: list[FakeSession] = []
         self.failure: BaseException | None = None
         self.stall = False  # connecting never finishes
+        self.stall_sends = False  # each session's play() and pause() never finish
         self.closing: Callable[[], Awaitable[None]] | None = None  # runs as a session closes
 
     @asynccontextmanager
@@ -97,6 +98,7 @@ class FakeLyria:
         if self.stall:
             await asyncio.Event().wait()
         session = FakeSession()
+        session.stall = self.stall_sends
         self.sessions.append(session)
         try:
             yield session

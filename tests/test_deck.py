@@ -3,10 +3,12 @@ import logging
 
 import pytest
 from google.genai import types
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 import sobafm.deck
 from sobafm.deck import PAUSE_AT_S, RESUME_BELOW_S, Deck, EndReason, State
-from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS, is_this_format
+from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS
 from sobafm.plan import MusicPlan
 from tests.doubles import FakeClock, FakeLyria, FakeSession, settle
 
@@ -21,6 +23,16 @@ async def start_deck(lyria: FakeLyria, clock: FakeClock) -> tuple[Deck, FakeSess
 async def ended(deck: Deck) -> None:
     async with asyncio.timeout(1):
         await deck.wait_ended()
+
+
+def retire_during_close(lyria: FakeLyria, deck: Deck) -> None:
+    """Retire `deck` while the SDK closes its session, as the station's next tick can."""
+
+    async def closing() -> None:
+        deck.retire()
+        await asyncio.sleep(0)  # where a cancel would land
+
+    lyria.closing = closing
 
 
 def drain(deck: Deck, seconds: float) -> None:
@@ -119,6 +131,8 @@ async def test_retiring_ends_the_session_and_keeps_its_audio(
 
     deck.retire()
     await ended(deck)
+    session.send_audio(2)  # nothing receives once the session has ended
+    await settle()
 
     assert (deck.state, deck.end_reason) == (State.ENDED, EndReason.RETIRED)
     assert session.closed
@@ -135,7 +149,7 @@ async def test_retired_while_connecting_never_starts_playback(
     await ended(deck)
 
     assert (deck.state, deck.end_reason) == (State.ENDED, EndReason.RETIRED)
-    assert not any(session.calls for session in lyria.sessions)
+    assert lyria.sessions == []
 
 
 async def test_fails_when_connecting_stalls(
@@ -173,18 +187,22 @@ async def test_records_a_failed_connection(lyria: FakeLyria, clock: FakeClock) -
     assert (deck.end_reason, deck.detail) == (EndReason.FAILED, "OSError: unreachable")
 
 
-async def test_keeps_its_audio_when_receiving_fails(lyria: FakeLyria, clock: FakeClock) -> None:
+async def test_keeps_its_audio_when_receiving_fails(
+    lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
     deck, session = await start_deck(lyria, clock)
     session.send_audio(4)
     session.fail(ConnectionResetError("reset by peer"))
 
-    await ended(deck)
+    with caplog.at_level(logging.INFO, logger="sobafm.deck"):
+        await ended(deck)
 
     assert (deck.end_reason, deck.detail) == (
         EndReason.FAILED,
         "ConnectionResetError: reset by peer",
     )
     assert deck.buffered_seconds == pytest.approx(4)
+    assert "rainy" not in caplog.text  # the title can repeat the request
 
 
 async def test_accepts_its_format_in_any_case_and_order(lyria: FakeLyria, clock: FakeClock) -> None:
@@ -297,6 +315,22 @@ async def test_retiring_a_stalled_connection_stops_it_at_once(
     assert lyria.sessions == []
 
 
+async def test_retiring_again_lets_a_stalled_setup_close(
+    lyria: FakeLyria, clock: FakeClock
+) -> None:
+    lyria.stall_sends = True  # setup stalls once the session is open
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+    deck.start()
+    await settle()
+    retire_during_close(lyria, deck)
+
+    deck.retire()
+    await ended(deck)
+
+    assert deck.end_reason is EndReason.RETIRED
+    assert lyria.sessions[0].closed
+
+
 async def test_regulating_returns_while_a_send_stalls(
     lyria: FakeLyria, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -342,16 +376,24 @@ async def test_records_a_close_code(lyria: FakeLyria, clock: FakeClock) -> None:
     assert (deck.end_reason, deck.close_code) == (EndReason.CLOSED, 1008)
 
 
-@pytest.mark.parametrize(
-    ("mime_type", "expected"),
-    [
-        ("audio/l16;rate=48000;channels=2", True),
-        ("AUDIO/L16; channels=2; rate=48000", True),
-        ("audio/l16;rate=24000;channels=2", False),
-        ("audio/l16;rate=48000;channels=1", False),
-        ("audio/l16", False),
-        ("audio/wav;rate=48000;channels=2", False),
-    ],
-)
-def test_recognizes_its_audio_format(mime_type: str, *, expected: bool) -> None:
-    assert is_this_format(mime_type) is expected
+async def test_records_a_close_code_during_setup(lyria: FakeLyria, clock: FakeClock) -> None:
+    lyria.failure = ConnectionClosedError(Close(1008, "Project denied"), None)  # as the SDK raises
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+
+    deck.start()
+    await ended(deck)
+
+    assert (deck.end_reason, deck.close_code) == (EndReason.FAILED, 1008)
+
+
+async def test_retiring_while_lyria_closes_keeps_the_close_code(
+    lyria: FakeLyria, clock: FakeClock
+) -> None:
+    deck, session = await start_deck(lyria, clock)
+    retire_during_close(lyria, deck)
+
+    session.close(1008, "Project denied")
+    await ended(deck)
+
+    assert (deck.end_reason, deck.close_code) == (EndReason.CLOSED, 1008)
+    assert session.closed

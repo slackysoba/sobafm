@@ -1,5 +1,7 @@
 """The PCM format Lyria RealTime produces and Discord encodes: 16-bit, 48 kHz, stereo."""
 
+from email.message import Message
+
 SAMPLE_RATE = 48_000
 CHANNELS = 2
 SAMPLE_WIDTH = 2  # bytes per sample
@@ -10,15 +12,20 @@ SILENCE = bytes(FRAME_BYTES)
 MIME_TYPE = "audio/l16;rate=48000;channels=2"  # how Lyria RealTime labels this format
 
 
-def is_this_format(mime_type: str) -> bool:
-    """Whether `mime_type` labels this format, in any case and with its parameters in any order."""
-    kind, *parameters = (part.strip().lower() for part in mime_type.split(";"))
-    values: dict[str, str] = {}
-    for parameter in parameters:
-        name, _, value = parameter.partition("=")
-        values[name.strip()] = value.strip()
-    rate, channels = values.get("rate"), values.get("channels")
-    return kind == "audio/l16" and rate == str(SAMPLE_RATE) and channels == str(CHANNELS)
+def matches_mime_type(mime_type: str) -> bool:
+    """Whether `mime_type` has `MIME_TYPE`'s type, rate, and channels.
+
+    It is parsed as MIME requires: names in any case, parameters in any order and optionally
+    quoted. Other parameters are ignored.
+    """
+    return _essentials(mime_type) == _essentials(MIME_TYPE)
+
+
+def _essentials(mime_type: str) -> tuple[str, str | None, str | None]:
+    header = Message()
+    header["Content-Type"] = mime_type
+    parameters = dict(header.get_params(failobj=[])[1:])  # the first is the type itself
+    return header.get_content_type(), parameters.get("rate"), parameters.get("channels")
 
 
 class FrameSplitter:
