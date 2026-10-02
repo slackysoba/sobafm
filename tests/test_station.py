@@ -613,6 +613,28 @@ async def test_keeps_playing_when_a_listener_returns(rig: Rig) -> None:
     assert rig.station.program is None
 
 
+async def test_a_request_pending_when_the_grace_period_ends_is_stopped(rig: Rig) -> None:
+    rig.set_listeners(0)
+    started = rig.station.play(LOFI, "Deafened member")
+    await rig.tick()
+
+    await rig.tick(EMPTY_GRACE_S)
+
+    assert started.result() is Outcome.STOPPED
+
+
+async def test_a_lost_connection_outranks_an_empty_channel(rig: Rig) -> None:
+    rig.set_listeners(0)
+    started = rig.station.play(LOFI, "Deafened member")
+    await rig.tick()
+    await rig.tick(EMPTY_GRACE_S - 1)
+
+    rig.disconnect()
+    await rig.tick(1)
+
+    assert started.result() is Outcome.DISCONNECTED
+
+
 async def test_a_request_during_the_grace_period_restarts_it(rig: Rig) -> None:
     await start_playing(rig)
     rig.set_listeners(0)
