@@ -1,9 +1,10 @@
 import asyncio
 import logging
+from typing import Any
 
 import pytest
 from google.genai import types
-from websockets.exceptions import ConnectionClosedError
+from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
 
 import sobafm.deck
@@ -173,7 +174,7 @@ async def test_records_when_lyria_closes_the_session(lyria: FakeLyria, clock: Fa
     await ended(deck)
 
     assert deck.end_reason is EndReason.CLOSED
-    assert deck.detail == "code 1011: The service is currently unavailable."
+    assert deck.detail == "code 1011"  # the reason is free text
     assert deck.buffered_seconds == pytest.approx(4)
 
 
@@ -282,8 +283,7 @@ async def test_logs_one_summary_without_the_title(
         await ended(deck)
 
     assert caplog.messages == [
-        f"Deck {deck.number} closed (code 1011: Deadline expired) after 20 s: "
-        "20 s of audio at 1.00x real time"
+        f"Deck {deck.number} closed (code 1011) after 20 s: 20 s of audio at 1.00x real time"
     ]
 
 
@@ -391,14 +391,73 @@ async def test_records_a_close_code(lyria: FakeLyria, clock: FakeClock) -> None:
     assert (deck.end_reason, deck.close_code) == (EndReason.CLOSED, 1008)
 
 
-async def test_records_a_close_code_during_setup(lyria: FakeLyria, clock: FakeClock) -> None:
-    lyria.failure = ConnectionClosedError(Close(1008, "Project denied"), None)  # as the SDK raises
+SUSPENDED = "Consumer 'api_key:AIzaFakeKey' has been suspended."  # free text that quotes a key
+
+
+@pytest.mark.parametrize(
+    ("reason", "detail"),
+    [("RESOURCE_EXHAUSTED", "code 1008: RESOURCE_EXHAUSTED"), (SUSPENDED, "code 1008")],
+    ids=["token", "free text"],
+)
+async def test_logs_a_close_reason_only_as_a_token(
+    lyria: FakeLyria,
+    clock: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+    reason: str,
+    detail: str,
+) -> None:
+    deck, session = await start_deck(lyria, clock)
+
+    with caplog.at_level(logging.DEBUG):
+        session.close(1008, reason)
+        await ended(deck)
+
+    assert deck.detail == detail
+    assert f"({detail})" in caplog.text
+    assert "AIzaFakeKey" not in caplog.text
+
+
+def received(close: Close | None, error: type[ConnectionClosed] = ConnectionClosedError) -> Any:
+    """How websockets reports a close it received, and answered, during setup."""
+    return error(close, close, rcvd_then_sent=True) if close else error(None, None)
+
+
+@pytest.mark.parametrize(
+    ("closed", "code", "detail"),
+    [
+        (received(Close(1008, SUSPENDED)), 1008, "ConnectionClosedError: code 1008"),
+        (
+            received(Close(1008, "RESOURCE_EXHAUSTED")),
+            1008,
+            "ConnectionClosedError: code 1008: RESOURCE_EXHAUSTED",
+        ),
+        (
+            received(Close(1000, SUSPENDED), ConnectionClosedOK),
+            1000,
+            "ConnectionClosedOK: code 1000",
+        ),
+        (received(None), None, "ConnectionClosedError: no close frame received"),
+    ],
+    ids=["free text", "token", "normal close", "no close frame"],
+)
+async def test_records_a_close_during_setup_without_free_text(
+    lyria: FakeLyria,
+    clock: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+    closed: ConnectionClosed,
+    code: int | None,
+    detail: str,
+) -> None:
+    lyria.failure = closed
     deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
 
-    deck.start()
-    await ended(deck)
+    with caplog.at_level(logging.DEBUG):
+        deck.start()
+        await ended(deck)
 
-    assert (deck.end_reason, deck.close_code) == (EndReason.FAILED, 1008)
+    assert (deck.end_reason, deck.close_code, deck.detail) == (EndReason.FAILED, code, detail)
+    assert f"Deck {deck.number} failed: {detail}" in caplog.messages  # a warning, no traceback
+    assert "suspended" not in caplog.text
 
 
 async def test_retiring_while_lyria_closes_keeps_the_close_code(

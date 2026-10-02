@@ -210,9 +210,9 @@ def describe(error: Exception) -> str:
             return f"no answer within {TIMEOUT_S:.0f} s"
         case errors.APIError():
             text = str(error.code)
-            if status := _token(error.status):
+            if status := as_token(error.status):
                 text += f" {status}"
-            if reason := _token(_error_reason(error)):
+            if reason := as_token(_error_reason(error)):
                 text += f" ({reason})"
             return text
         case _ if isinstance(error, INVALID_OUTPUT):
@@ -221,7 +221,8 @@ def describe(error: Exception) -> str:
             return type(error).__name__
 
 
-def _token(value: object) -> str | None:
+def as_token(value: object) -> str | None:
+    """`value` if it is a token such as PERMISSION_DENIED, which cannot carry free text."""
     return value if isinstance(value, str) and TOKEN.fullmatch(value) else None
 
 
