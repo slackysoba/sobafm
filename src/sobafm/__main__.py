@@ -46,8 +46,8 @@ def configure_logging(level: str) -> None:
     """Apply `level` to SobaFM's own loggers only.
 
     Libraries stay at INFO: at DEBUG, the websockets library logs request headers, which
-    include the Gemini API key. The Google Gen AI SDK logs only warnings, since at INFO it logs
-    Lyria RealTime's setup reply verbatim.
+    include the Gemini API key. The Google Gen AI SDK logs only warnings and errors, since at INFO
+    it logs Lyria RealTime's setup reply verbatim.
     """
     logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger().setLevel(logging.INFO)
