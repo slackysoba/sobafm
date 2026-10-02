@@ -22,3 +22,4 @@ Each record captures one material decision: its context, the options considered,
 | [0001](0001-build-on-python-discord-py-and-the-google-gen-ai-sdk.md) | Build on Python 3.14, discord.py 2.7, and the Google Gen AI SDK | Accepted |
 | [0002](0002-interpret-requests-with-gemini-structured-output.md) | Interpret requests with Gemini structured output | Accepted |
 | [0003](0003-keep-server-state-in-sqlite-and-use-discord-command-permissions.md) | Keep server state in SQLite and use Discord command permissions | Accepted |
+| [0004](0004-stream-lyria-realtime-through-buffered-decks.md) | Stream Lyria RealTime through buffered decks and a crossfading mixer | Accepted |

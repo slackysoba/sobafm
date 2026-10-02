@@ -92,5 +92,5 @@ Voice input; queues and playlists; vocals with lyrics; Stage channels; more than
 
 | Question | Needed by | Tracking |
 | --- | --- | --- |
-| Lyria RealTime's session limit, generation rate, concurrency, and API version | ADR-0004 | #11 |
-| Whether continuous playback is achievable at the measured generation rate, and the policy if it is not | M2 | #12 |
+| Lyria RealTime's session limit, generation rate, concurrency, and API version | ADR-0004 | Answered in #11 |
+| Whether continuous playback is achievable at the measured generation rate, and the policy if it is not | M2 | Answered in ADR-0004 (#12): achievable with two sessions per playing server |
