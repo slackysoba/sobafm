@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,7 +17,7 @@ from sobafm.config import load_settings
 from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, Station
 from sobafm.store import GuildSettings, Store
-from tests.doubles import FakeClock, FakeLyria
+from tests.doubles import FakeClock, FakeLyria, settle
 
 GUILD_ID = 1
 CHANNEL_ID = 10
@@ -52,10 +53,10 @@ def make_channel(
         view_channel=True, connect=True, speak=speak
     )
 
-    async def connect(
-        *, self_deaf: bool, cls: type
-    ) -> Any:  # registers the client, as discord.py does
+    # Registers the client, as discord.py does, and connects it.
+    async def connect(*, self_deaf: bool, cls: type) -> Any:
         guild.voice_client = make_voice_client(channel, cls)
+        guild.voice_client.finish_connecting = AsyncMock()
         return guild.voice_client
 
     channel.connect = AsyncMock(side_effect=connect)
@@ -290,9 +291,8 @@ async def test_join_reports_a_failed_move(bot: SobaFM) -> None:
 async def test_join_reports_a_move_that_ends_the_connection(bot: SobaFM) -> None:
     guild = make_guild()
     guild.voice_client = make_voice_client(make_channel(guild, 11))
-    guild.voice_client.is_connected.return_value = (
-        False  # discord.py took the move for a disconnect
-    )
+    # discord.py took the move for a disconnect
+    guild.voice_client.is_connected.return_value = False
     await bot.store.remember_channel(GUILD_ID, 11)
 
     reply = await bot.join(make_member(make_channel(guild)))
@@ -320,20 +320,98 @@ async def test_join_reports_a_connection_that_never_completes(bot: SobaFM) -> No
     assert await bot.store.remembered_channel(GUILD_ID) is None
 
 
-async def test_join_completes_when_discord_py_restarts_the_connection(bot: SobaFM) -> None:
-    channel = make_channel(make_guild())
+async def test_join_waits_for_discord_py_to_restart_the_connection(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    moved_to = make_channel(guild, 11)
     connect = channel.connect.side_effect
 
-    async def restart(*, self_deaf: bool, cls: type) -> Any:  # moved during the handshake
-        await connect(self_deaf=self_deaf, cls=cls)
+    # An administrator moves SobaFM during the handshake, which restarts discord.py's connector.
+    async def restart(*, self_deaf: bool, cls: type) -> Any:
+        voice = await connect(self_deaf=self_deaf, cls=cls)
+        voice.is_connected.return_value = False
+
+        async def finish() -> None:  # the restarted connector completes in the new channel
+            voice.channel = moved_to
+            voice.is_connected.return_value = True
+
+        voice.finish_connecting.side_effect = finish
         raise asyncio.CancelledError
 
     channel.connect.side_effect = restart
 
     reply = await bot.join(make_member(channel))
 
-    assert reply == "Joined <#10>."
-    assert channel.guild.voice_client.joined
+    assert reply == "Joined <#11>."
+    assert await bot.store.remembered_channel(GUILD_ID) == 11
+    guild.voice_client.disconnect.assert_not_awaited()
+
+
+async def test_finish_connecting_waits_for_a_restarted_connector(bot: SobaFM) -> None:
+    voice = make_voice(bot, make_guild(), current=True)
+    connection = SimpleNamespace(_connector=None)
+    cast(Any, voice)._connection = connection
+    restart, release = asyncio.Event(), asyncio.Event()
+
+    async def first() -> None:  # ends when discord.py replaces it with a new connector
+        await restart.wait()
+        connection._connector = asyncio.create_task(release.wait())
+
+    connection._connector = asyncio.create_task(first())
+    waiting = asyncio.create_task(voice.finish_connecting())
+    await settle()
+    restart.set()
+    await settle()
+    assert not waiting.done()  # the new connector still runs
+
+    release.set()
+    await settle()
+    assert waiting.done()
+
+
+async def test_join_passes_on_its_own_cancellation(bot: SobaFM) -> None:
+    channel = make_channel(make_guild())
+    connecting = asyncio.Event()
+
+    async def stall(*, self_deaf: bool, cls: type) -> Any:
+        connecting.set()
+        await asyncio.Event().wait()
+
+    channel.connect.side_effect = stall
+    joining = asyncio.create_task(bot.join(make_member(channel)))
+    await connecting.wait()
+
+    joining.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await joining
+
+
+async def test_join_reports_a_channel_that_is_gone(bot: SobaFM) -> None:
+    channel = make_channel(make_guild())
+    del CHANNELS[CHANNEL_ID]  # deleted, or not yet in a new gateway session
+
+    reply = await bot.join(make_member(channel))
+
+    assert reply == "SobaFM couldn't connect to <#10>. Try again shortly."
+    channel.connect.assert_not_awaited()
+
+
+async def test_join_reports_a_move_that_leaves_another_client(bot: SobaFM) -> None:
+    guild = make_guild()
+    voice = make_voice_client(make_channel(guild, 11))
+    guild.voice_client = voice
+    channel = make_channel(guild)
+
+    async def replaced(destination: Any) -> None:  # the move ended this client
+        voice.channel = destination
+        guild.voice_client = make_voice_client(destination)
+
+    voice.move_to.side_effect = replaced
+
+    reply = await bot.join(make_member(channel))
+
+    assert reply == "SobaFM couldn't connect to <#10>. Try again shortly."
 
 
 async def test_join_connects_through_the_current_channel(bot: SobaFM) -> None:
@@ -382,18 +460,16 @@ async def test_follows_a_move_by_an_administrator(bot: SobaFM) -> None:
 
 
 class ClosingSocket:
-    """A voice websocket that closes with each of `codes`, then ends discord.py's poll loop."""
+    """A voice websocket that closes with `code`, then ends discord.py's poll loop."""
 
-    def __init__(self, *codes: int) -> None:
-        self.codes = list(codes)
+    def __init__(self, code: int) -> None:
+        self.code: int | None = code
 
     async def poll_event(self) -> None:
-        if not self.codes:
+        if (code := self.code) is None:
             raise asyncio.CancelledError
-        raise ConnectionClosed(MagicMock(), shard_id=None, code=self.codes.pop(0))
-
-    async def close(self, code: int = 1000) -> None:
-        pass
+        self.code = None
+        raise ConnectionClosed(MagicMock(), shard_id=None, code=code)
 
 
 def voice_state(channel_id: int | None) -> Any:
@@ -446,9 +522,13 @@ def test_a_finished_client_reports_whether_sobafm_left(
     dispatch = MagicMock()
     monkeypatch.setattr(bot, "dispatch", dispatch)
     guild = make_guild()
+    registry = cast(Any, bot)._connection  # discord.py's own registry of voice clients
+    type(guild).voice_client = property(lambda _: registry._get_voice_client(GUILD_ID))
     replacement = make_voice_client(make_channel(guild))
-    guild.voice_client = replacement
-    voice = make_voice(bot, guild, current=current, joined=joined)
+    registry._add_voice_client(GUILD_ID, replacement)
+    voice = make_voice(bot, guild, current=False, joined=joined)
+    if current:
+        registry._add_voice_client(GUILD_ID, voice)
 
     voice.cleanup()
 

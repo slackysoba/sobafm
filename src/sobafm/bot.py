@@ -59,9 +59,22 @@ class Voice(discord.VoiceClient):
         await super().on_voice_state_update(data)
         if cast(object, data["channel_id"]) is not None:  # None, despite its type, on leaving
             # discord.py's general voice reconnect leaves the channel and rejoins it. Leaving sets
-            # this flag and nothing clears it, so discord.py 2.7.1 would take a later move, which
-            # closes the voice websocket with 4014, for a disconnection (voice_state.py, #46).
+            # this flag and nothing clears it after the rejoin, so discord.py 2.7.1 would take a
+            # later move, which closes the voice websocket with 4014, for a disconnection
+            # (voice_state.py, #46).
             self._connection._disconnected.clear()  # pyright: ignore[reportPrivateUsage]
+
+    async def finish_connecting(self) -> None:
+        """Wait until discord.py's connector, which it restarts when SobaFM is moved or the voice
+        server changes during the handshake, connects or gives up."""
+        while True:
+            connector = cast(
+                asyncio.Task[None] | None,
+                self._connection._connector,  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+            )
+            if connector is None or connector.done():
+                return
+            await asyncio.wait({connector})
 
 
 class SobaFM(discord.Client):
@@ -274,15 +287,16 @@ class SobaFM(discord.Client):
             if voice is not None and voice.channel == channel:
                 return f"SobaFM is already in {channel.mention}."
             try:
-                if voice is None:
-                    await self.connect_to(channel)
+                if voice is None:  # a move during the handshake can end elsewhere
+                    joined = (await self.connect_to(channel)).channel
                 else:
                     await move(voice, channel)
+                    joined = channel
             except TimeoutError, discord.ClientException:
                 log.warning("Could not connect to %s in %s", channel, channel.guild, exc_info=True)
                 return f"SobaFM couldn't connect to {channel.mention}. Try again shortly."
-            await self.store.remember_channel(channel.guild.id, channel.id)
-        return f"{'Joined' if voice is None else 'Moved to'} {channel.mention}."
+            await self.store.remember_channel(channel.guild.id, joined.id)
+        return f"{'Joined' if voice is None else 'Moved to'} {joined.mention}."
 
     async def leave(self, guild: discord.Guild) -> str:
         """End any program, disconnect from voice, and forget the server's channel."""
@@ -297,29 +311,33 @@ class SobaFM(discord.Client):
             await voice.disconnect(force=True)
         return f"Left {channel.mention}."
 
-    async def connect_to(self, channel: discord.VoiceChannel) -> None:
+    async def connect_to(self, channel: discord.VoiceChannel) -> Voice:
         """Connect to `channel`, first closing any client from an earlier gateway session.
 
         Closing can outlast the gateway session `channel` comes from, so the channel is looked up
         again. The client counts as joined only once discord.py reports it connected: it can give
-        up on rejected handshakes without an error, and a move during the handshake restarts its
-        connector, cancelling `connect()`.
+        up on rejected handshakes without an error, and a move or a voice server change during
+        the handshake restarts its connector, cancelling `connect()`.
         """
         await self.close_stale_voice(channel.guild)
         current = self.get_channel(channel.id)
         if not isinstance(current, discord.VoiceChannel):
-            raise discord.ClientException(f"Voice channel {channel.id} no longer exists")
+            raise discord.ClientException(f"Voice channel {channel.id} isn't available")
         try:
             await current.connect(self_deaf=True, cls=Voice)
         except asyncio.CancelledError:
             if (task := asyncio.current_task()) is not None and task.cancelling():
                 raise  # the command itself is cancelled
         voice = current.guild.voice_client
+        if isinstance(voice, Voice):
+            await voice.finish_connecting()  # after a restart, the new connector is still running
         if not isinstance(voice, Voice) or not voice.is_connected():
             if voice is not None:
+                # If discord.py gave up, it has left already and this waits out its timeout.
                 await voice.disconnect(force=True)
             raise TimeoutError
         voice.joined = True
+        return voice
 
     async def close_stale_voice(self, guild: discord.Guild) -> None:
         """Disconnect clients from earlier gateway sessions, which discord.py no longer tracks."""
