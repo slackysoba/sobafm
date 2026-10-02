@@ -43,8 +43,8 @@ In scope: the v1 [requirements](requirements.md). Out of scope: hosting several 
 flowchart LR
     member([Member]) -- "slash command" --> commands[Commands]
     subgraph process [SobaFM process]
-        commands --> station["Station (one per server)"]
-        station -- "request and current plan" --> interpreter[Interpreter]
+        commands -- "request and current plan" --> interpreter[Interpreter]
+        commands -- "MusicPlan" --> station["Station (one per server)"]
         station -- "MusicPlan" --> decks["Decks (live and next)"]
         decks -- "20 ms frames" --> mixer[Mixer]
     end
@@ -58,7 +58,7 @@ flowchart LR
 | --- | --- |
 | `__main__` | Entry point: configuration, logging, signal handling, and a startup watchdog |
 | `config` | Typed settings from the environment and `.env`; secrets held as `SecretStr` |
-| `bot` | The discord.py client: intents, command sync, the station registry, and voice-state events |
+| `bot` | The discord.py client: intents, command sync, interpreting requests for the station registry, and voice-state events |
 | `commands` | Slash command handlers: checks, deferral, and replies with mentions disabled |
 | `station` | One per server: the desired program, the reconcile loop, listener tracking, and the voice channel status |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |

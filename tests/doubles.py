@@ -1,4 +1,4 @@
-"""Test doubles for Lyria RealTime sessions, the voice player, and the clock."""
+"""Test doubles for Lyria RealTime sessions, Gemini, the voice player, and the clock."""
 
 import asyncio
 import json

@@ -120,6 +120,7 @@ class SobaFM(discord.Client):
         self.voices: set[Voice] = set()
         self.voice_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.cooldowns: dict[int, float] = {}  # when each server's change cooldown started
+        self.interpreting: dict[int, asyncio.Future[Outcome]] = {}  # a request per server
         self.settings_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._clock = clock
 
@@ -145,8 +146,17 @@ class SobaFM(discord.Client):
         return station
 
     async def close_station(self, guild: discord.Guild, outcome: Outcome = Outcome.STOPPED) -> None:
+        self.supersede(guild, outcome)
         if (station := self.stations.pop(guild.id, None)) is not None:
             await station.close(outcome)
+
+    def supersede(self, guild: discord.Guild, outcome: Outcome) -> bool:
+        """End the server's request being interpreted with `outcome`, if there is one."""
+        interpreting = self.interpreting.pop(guild.id, None)
+        if interpreting is None or interpreting.done():
+            return False
+        interpreting.set_result(outcome)
+        return True
 
     async def admit(self, member: discord.Member, request: str) -> str | None:
         """Admit a request and start the server's change cooldown, or say why it can't play.
@@ -176,18 +186,23 @@ class SobaFM(discord.Client):
             del self.cooldowns[guild.id]
 
     async def play(self, member: discord.Member, request: str, cooldown: float | None) -> str:
-        """Interpret the request, start or replace the program, and describe the outcome once
-        it plays or fails.
+        """Interpret the request, play it, and describe the outcome once it plays or fails.
 
-        A relative request refines the current program's plan. `cooldown` is when `admit()`
-        started this request's cooldown, if it did. A request that ends without playing,
-        including one Gemini refuses, frees it, even after the reply.
+        A relative request refines the current program's plan. While a request is interpreted,
+        a newer request, /stop, or leaving the channel supersedes it. `cooldown` is when
+        `admit()` started this request's cooldown, if it did. A request that ends without
+        playing, including one Gemini refuses, frees it, even after the reply.
         """
         playing = False  # or may still play
+        interpreting: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+        self.supersede(member.guild, Outcome.REPLACED)
+        self.interpreting[member.guild.id] = interpreting
         try:
             station = self.stations.get(member.guild.id)
             current = station.program.plan if station and station.program else None
             result = await self.interpreter.interpret(request, current)
+            if interpreting.done():
+                return PLAY_REPLIES[interpreting.result()]
             if (plan := result.plan) is None:
                 return REFUSALS[result.outcome]
             settings = await self.store.settings(member.guild.id)
@@ -202,15 +217,17 @@ class SobaFM(discord.Client):
 
                 started.add_done_callback(settled)
                 playing = True
-                return "The music is taking longer than usual to start."
+                return note("The music is taking longer than usual to start.", result.outcome)
             playing = outcome is Outcome.PLAYING
         finally:
+            if self.interpreting.get(member.guild.id) is interpreting:
+                del self.interpreting[member.guild.id]
             if not playing:
                 self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
-            title = discord.utils.escape_markdown(plan.title)
+            title = discord.utils.escape_markdown(" ".join(plan.title.split()))
             reply = f"Now playing **{title}**, requested by {member.mention}."
-            return reply + FALLBACK_NOTE if result.outcome is Interpreted.FALLBACK else reply
+            return note(reply, result.outcome)
         return PLAY_REPLIES[outcome]
 
     def stop_problem(self, member: discord.Member) -> str | None:
@@ -224,9 +241,10 @@ class SobaFM(discord.Client):
         return None
 
     def stop(self, guild: discord.Guild) -> str:
+        cancelled = self.supersede(guild, Outcome.STOPPED)
         station = self.stations.get(guild.id)
         if station is None or station.program is None:
-            return "Nothing is playing."
+            return "Stopped the request before it played." if cancelled else "Nothing is playing."
         station.stop()
         return "Stopped the music."
 
@@ -436,6 +454,11 @@ def listeners(guild: discord.Guild) -> int:
         if (member is None or not member.bot) and not (state.self_deaf or state.deaf):
             count += 1
     return count
+
+
+def note(reply: str, interpreted: Interpreted) -> str:
+    """`reply`, saying so when Gemini couldn't interpret the request and it was used as typed."""
+    return reply + FALLBACK_NOTE if interpreted is Interpreted.FALLBACK else reply
 
 
 def seconds(count: int) -> str:

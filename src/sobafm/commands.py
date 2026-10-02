@@ -1,4 +1,5 @@
-"""Slash commands. Replies are private, except /play's answer once the music starts or fails."""
+"""Slash commands. Replies are private, except /play's answer once it plays, fails, or is
+refused."""
 
 import contextlib
 import logging
@@ -49,7 +50,8 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
         except Exception:  # such as an expired interaction, so nothing will play
             bot.free_cooldown(interaction.user.guild, cooldown)
             raise
-        await interaction.followup.send(await bot.play(interaction.user, request, cooldown))
+        reply = await bot.play(interaction.user, request, cooldown)
+        await interaction.followup.send(reply, suppress_embeds=True)  # titles are model-written
 
     @tree.command(description="Stop the music")
     @app_commands.guild_only()
