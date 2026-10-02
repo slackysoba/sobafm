@@ -68,6 +68,7 @@ class Voice(discord.VoiceClient):
         self.sobafm.voices.add(self)
 
     def cleanup(self) -> None:
+        self.failure()  # marks an error that ended discord.py's runner as handled
         current = self.guild.voice_client is self
         if current:  # an old client must not unregister its replacement
             super().cleanup()
@@ -117,7 +118,11 @@ class Voice(discord.VoiceClient):
                 asyncio.Task[None] | None,
                 self._connection._connector,  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
             )
-            if connector is None or connector.done():
+            if connector is None:
+                return
+            if connector.done():
+                if not connector.cancelled():
+                    connector.exception()  # discord.py logged it already
                 return
             await asyncio.wait({connector})
 
@@ -367,8 +372,11 @@ class SobaFM(discord.Client):
                 return
             try:
                 await self.connect_to(channel)
-            except Exception:  # any failure leaves the channel remembered for another attempt
-                log.warning("Could not rejoin %s in %s", channel, guild, exc_info=True)
+            except Exception as error:  # the channel stays remembered for another attempt
+                expected = isinstance(error, OSError | discord.ClientException)  # as in an outage
+                log.warning(
+                    "Could not rejoin %s in %s: %r", channel, guild, error, exc_info=not expected
+                )
 
     async def join(self, member: discord.Member) -> str:
         """Connect to, or move to, the member's voice channel, and remember where SobaFM ends up."""
@@ -504,6 +512,7 @@ class SobaFM(discord.Client):
                 # discord.py no longer routes events to this client, so this waits out its timeout.
                 log.info("Closing the voice connection from an earlier session in %s", guild)
                 await voice.disconnect(force=True)
+                raise_swallowed_cancel()
 
     def voice_ended(self, voice: Voice, *, left: bool) -> None:
         """Stop tracking `voice`, and handle SobaFM leaving its channel unless shutting down."""

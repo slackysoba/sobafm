@@ -94,6 +94,7 @@ def make_voice(bot: SobaFM, guild: Any, *, current: bool, joined: bool = True) -
     channel._get_voice_client_key.return_value = (guild.id, "guild_id")
     voice = Voice.__new__(Voice)
     voice.client, voice.channel, voice.sobafm, voice.joined = bot, channel, bot, joined
+    cast(Any, voice)._connection = SimpleNamespace(_connector=None, _runner=None)
     voice.stranded_since = None
     bot.voices.add(voice)
     if current:
@@ -719,7 +720,7 @@ async def test_replaces_a_stranded_voice_client(
 
 
 async def test_rejoins_once_the_outage_ends(
-    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr(sobafm.bot, "REJOIN_RETRY_S", 0.01)
     voice = stranded_voice(bot, monkeypatch, True)
@@ -730,6 +731,7 @@ async def test_rejoins_once_the_outage_ends(
             aiohttp.ClientConnectionResetError(),  # the gateway is down
             TimeoutError(),  # Discord doesn't answer
             aiohttp.ServerDisconnectedError(),  # the voice server drops the handshake
+            ValueError("bad IP discovery"),  # anything else
         ]
     )
     attempts: list[float] = []
@@ -743,10 +745,14 @@ async def test_rejoins_once_the_outage_ends(
     channel.connect.side_effect = reconnect
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
 
-    await finish_recovery(await recovery_after_checks(bot, clock))
+    with caplog.at_level(logging.WARNING, logger="sobafm.bot"):
+        await finish_recovery(await recovery_after_checks(bot, clock))
 
-    assert len(attempts) == 4
+    assert len(attempts) == 5
     assert all(later - earlier >= 0.01 for earlier, later in itertools.pairwise(attempts))
+    rejoins = [record for record in caplog.records if record.message.startswith("Could not rejoin")]
+    # one line each for what an outage causes, and a traceback for anything else
+    assert [bool(record.exc_info) for record in rejoins] == [False, False, True, True]
     assert voice.guild.voice_client is not None
     cast(MagicMock, bot.dispatch).assert_not_called()  # replaced, so SobaFM did not leave
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
@@ -867,6 +873,56 @@ async def test_retries_a_recovery_that_failed(
     cast(AsyncMock, voice.disconnect).assert_awaited_once_with(force=True)
 
 
+async def test_waits_before_rejoining_again(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    voice = stranded_voice(bot, monkeypatch, True)
+    channel = cast(Any, voice.channel)
+    attempted = asyncio.Event()
+
+    async def fail(**_: Any) -> Any:
+        attempted.set()
+        raise TimeoutError
+
+    channel.connect.side_effect = fail
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    recovery = await recovery_after_checks(bot, clock)
+    async with asyncio.timeout(1):
+        await attempted.wait()
+
+    await asyncio.sleep(0.2)
+
+    channel.connect.assert_awaited_once()  # the next attempt is 30 seconds away
+    recovery.cancel()
+    await asyncio.wait({recovery})
+
+
+async def test_closing_stops_a_recovery_while_an_old_client_closes(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    voice = stranded_voice(bot, monkeypatch, True)
+    channel = cast(Any, voice.channel)
+    old = tracked_client(bot, voice.guild)  # from an earlier gateway session
+    old.joined = True
+    closing = asyncio.Event()
+
+    async def leave(*, force: bool) -> None:  # discord.py waits to leave, swallowing a cancel
+        closing.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.Event().wait()
+
+    old.disconnect.side_effect = leave
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    recovery = await recovery_after_checks(bot, clock)
+    async with asyncio.timeout(1):
+        await closing.wait()
+
+        await bot.close()
+
+    assert recovery.cancelled()
+    channel.connect.assert_not_awaited()
+
+
 async def test_closing_stops_a_recovery_between_attempts(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
 ) -> None:
@@ -911,7 +967,8 @@ async def test_closing_stops_a_recovery_while_discord_py_leaves(
         await settle()  # discord.py leaves and waits for Discord to confirm
         guild.change_voice_state.assert_awaited_once_with(channel=None)
 
-        await bot.close()
+        async with asyncio.timeout(1):
+            await bot.close()
     finally:
         connection._socket_reader.stop()
 
