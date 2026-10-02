@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+import discord
 import pytest
 
 from sobafm.deck import PAUSE_AT_S, Deck, State
@@ -8,6 +9,7 @@ from sobafm.plan import MusicPlan
 from sobafm.station import (
     CONNECT_BACKOFF_S,
     HANDOVER_BELOW_S,
+    PLAYER_RETRY_S,
     REFUSAL_RETRY_S,
     SESSION_LIMIT_S,
     Outcome,
@@ -35,8 +37,10 @@ class Rig:
         await settle()
 
     def listen(self, seconds: float) -> None:
+        """Read the mixer as discord.py's player does, which only happens while it plays."""
         for _ in range(round(seconds / FRAME_SECONDS)):
-            self.station.mixer.read()
+            if self.player.playing:
+                self.station.mixer.read()
 
     def session(self, index: int) -> FakeSession:
         return self.lyria.sessions[index]
@@ -269,6 +273,22 @@ async def test_reserves_two_sessions_for_each_program(lyria: FakeLyria, clock: F
     assert not stations[2].play(LOFI, "Member").done()
 
 
+async def test_holds_its_reservation_until_its_sessions_end(
+    lyria: FakeLyria, clock: FakeClock
+) -> None:
+    pool = SessionPool(2)
+    first, _ = make_station(lyria, clock, pool)
+    second, _ = make_station(lyria, clock, pool)
+    first.play(LOFI, "Member")
+    await first.reconcile()
+
+    first.stop()
+    assert second.play(LOFI, "Member").result() is Outcome.BUSY  # sessions still open
+
+    await first.close()
+    assert not second.play(LOFI, "Member").done()
+
+
 async def test_reports_busy_without_session_capacity(lyria: FakeLyria, clock: FakeClock) -> None:
     station, _ = make_station(lyria, clock, SessionPool(1))
 
@@ -310,10 +330,34 @@ async def test_restarts_the_player_after_its_thread_ends(rig: Rig) -> None:
     await start_playing(rig)
 
     rig.player.end_thread()  # a slow voice reconnect: is_playing() still reports True
-    await rig.tick()
+    await rig.tick(PLAYER_RETRY_S)
 
     assert rig.player.plays == 2
     assert rig.player.playing
+
+
+async def test_restarts_a_failing_player_at_most_once_per_interval(rig: Rig) -> None:
+    await start_playing(rig)
+
+    for _ in range(4):  # a player that dies as soon as it starts
+        rig.player.end_thread()
+        await rig.tick()
+
+    assert rig.player.plays == 2
+
+
+async def test_keeps_reconciling_when_the_player_cannot_start(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.player.failure = discord.opus.OpusNotLoaded()
+    rig.station.play(LOFI, "Member")
+    await rig.tick()
+    await rig.feed(1, PAUSE_AT_S)
+
+    await rig.tick()
+
+    assert rig.session(1).calls[-1] == "pause"  # later rules still ran
+    assert "Could not start the voice player" in caplog.text
 
 
 async def test_waits_for_voice_to_reconnect_before_starting_the_player(rig: Rig) -> None:
@@ -323,12 +367,26 @@ async def test_waits_for_voice_to_reconnect_before_starting_the_player(rig: Rig)
     await rig.feed(-2, 10)
     await rig.tick()
     assert rig.player.plays == 0
+    assert not started.done()  # nothing can be heard yet
 
     rig.player.connected = True
-    await rig.tick()
+    await rig.tick(PLAYER_RETRY_S)
 
     assert started.result() is Outcome.PLAYING
     assert rig.player.plays == 1
+
+
+async def test_stops_at_once_when_no_player_can_run(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.player.connected = False
+    rig.player.end_thread()  # the thread gave up on a long voice outage
+
+    rig.station.stop()
+    await rig.tick()
+    await rig.tick()
+
+    assert rig.station.mixer.live is None
+    assert all(session.closed for session in rig.lyria.sessions)
 
 
 async def test_ends_the_program_when_the_voice_connection_is_lost(rig: Rig) -> None:

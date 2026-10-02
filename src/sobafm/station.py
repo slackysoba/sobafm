@@ -26,6 +26,7 @@ FADE_IN_S = 2.0
 FADE_OUT_S = 3.0
 REFUSAL_RETRY_S = 30.0
 CONNECT_BACKOFF_S = (2.0, 5.0, 15.0)
+PLAYER_RETRY_S = 1.0  # starting discord.py's player, at most once per interval
 
 
 class Player(Protocol):
@@ -109,6 +110,7 @@ class Station:
         self._pool = pool
         self._clock = clock
         self._playing: object | None = None  # identifies the running player, if any
+        self._next_play = 0.0
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -137,9 +139,9 @@ class Station:
         """Reconcile now rather than at the next tick."""
         self._wake.set()
 
-    async def close(self) -> None:
-        """Stop at once: end the program, retire every deck, and stop the loop."""
-        self.stop()
+    async def close(self, outcome: Outcome = Outcome.STOPPED) -> None:
+        """Stop at once: end the program with `outcome`, retire every deck, and stop the loop."""
+        self._finish(outcome)
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
@@ -192,6 +194,9 @@ class Station:
                 deck.retire()
         if all(deck.state is State.ENDED for deck in self.decks):
             self._pool.release(self)
+        if self._playing is None:  # nothing reads the mixer, so a fade would never finish
+            self.mixer.switch_to(None, 0)
+            return
         if self.mixer.switching:
             return
         if self.mixer.live is not None:
@@ -217,18 +222,18 @@ class Station:
             self.decks.append(deck)
 
     def _start(self, program: Program, player: Player | None) -> None:
-        """Fade in the first ready deck, and keep discord.py's player running."""
+        """Keep discord.py's player running, and fade in the first ready deck once it runs."""
         if player is None:
             return
-        if self.mixer.live is None and not self.mixer.switching:
-            deck = self._ready_deck(program.plan)
-            if deck is None:
-                return
-            self.mixer.switch_to(deck, FADE_IN_S)
-            program.settle(Outcome.PLAYING)
-            log.info("Program started on deck %d", deck.number)
-        if self._playing is None:
+        idle = self.mixer.live is None and not self.mixer.switching
+        deck = self._ready_deck(program.plan) if idle else None
+        if self._playing is None and (deck is not None or not idle):
             self._play(player)
+        if deck is None or self._playing is None:
+            return
+        self.mixer.switch_to(deck, FADE_IN_S)
+        program.settle(Outcome.PLAYING)
+        log.info("Program started on deck %d", deck.number)
 
     def _hand_over(self, program: Program) -> None:
         """Crossfade to the next deck when the live one belongs to a replaced plan or runs low."""
@@ -301,12 +306,18 @@ class Station:
                 log.warning("Voice player stopped: %s", error)
             loop.call_soon_threadsafe(self._player_stopped, playing)
 
+        if self._clock() < self._next_play:
+            return
+        self._next_play = self._clock() + PLAYER_RETRY_S
         if player.is_playing():
             player.stop()  # its thread has ended
         try:
             player.play(self.mixer, after=stopped, signal_type="music")
-        except discord.ClientException as error:  # not connected yet; the next tick retries
+        except discord.ClientException as error:  # not connected yet
             log.debug("Could not start the voice player: %s", error)
+            return
+        except discord.DiscordException as error:  # such as a missing Opus library
+            log.warning("Could not start the voice player: %s", error)
             return
         self._playing = playing
 

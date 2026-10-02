@@ -27,7 +27,7 @@ PLAY_REPLIES = {
         "Lyria RealTime couldn't make music from that request. Try describing it differently."
     ),
     Outcome.FAILED: "SobaFM couldn't reach Lyria RealTime. Try again shortly.",
-    Outcome.DISCONNECTED: "SobaFM lost its voice connection. Ask a server manager to use /join.",
+    Outcome.DISCONNECTED: "SobaFM lost its voice connection before the music started.",
     Outcome.REPLACED: "A newer request replaced this one before it started.",
     Outcome.STOPPED: "The music was stopped before this request started.",
 }
@@ -91,9 +91,9 @@ class SobaFM(discord.Client):
             self.stations[guild.id] = station
         return station
 
-    async def close_station(self, guild: discord.Guild) -> None:
+    async def close_station(self, guild: discord.Guild, outcome: Outcome = Outcome.STOPPED) -> None:
         if (station := self.stations.pop(guild.id, None)) is not None:
-            await station.close()
+            await station.close(outcome)
 
     def play_problem(self, member: discord.Member, request: str) -> str | None:
         """Why `member` cannot request this music right now, if they cannot."""
@@ -245,7 +245,7 @@ class SobaFM(discord.Client):
                 return
             log.info("Left voice in %s", guild)
             await self.store.forget_channel(guild.id)
-            await self.close_station(guild)
+            await self.close_station(guild, Outcome.DISCONNECTED)
 
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
