@@ -55,8 +55,8 @@ in a new plan, set them only when the request implies them.
 - vocalization: whether the music has wordless vocals, such as humming or choir "aahs". The \
 music has no lyrics.
 
-Never name artists, songs, albums, or other works. Describe their style instead: their \
-genre, instruments, tempo, and mood.
+Never name artists, songs, albums, or other works, in the title or the prompts. Describe \
+their style instead: their genre, instruments, tempo, and mood.
 """
 
 
