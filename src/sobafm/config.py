@@ -13,14 +13,15 @@ type LogLevel = Annotated[
 
 
 def _header_safe(key: SecretStr) -> SecretStr:
-    """Accept only visible ASCII, which an HTTP header can carry.
+    """Accept only visible ASCII, after stripping surrounding whitespace as the SDK does.
 
-    A key pasted with curly quotes or a line break would otherwise reach a library that quotes
-    the whole header value, key included, in its error message.
+    A key pasted with curly quotes or a line break inside it would otherwise reach a library that
+    quotes the whole header value, key included, in its error message.
     """
-    if not re.fullmatch(r"[!-~]+", key.get_secret_value()):
+    value = key.get_secret_value().strip()
+    if not re.fullmatch(r"[!-~]+", value):
         raise ValueError("must be visible ASCII characters")
-    return key
+    return SecretStr(value)
 
 
 type ApiKey = Annotated[SecretStr, AfterValidator(_header_safe)]

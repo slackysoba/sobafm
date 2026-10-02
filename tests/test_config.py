@@ -125,12 +125,10 @@ def test_env_name(field: str, variable: str) -> None:
 
 @pytest.mark.parametrize(
     "key",
-    ["\u201cAIzaKeyValue\u201d", "AIzaKey\nValue", "AIzaKey Value"],
-    ids=["curly quotes", "line break", "space"],
+    ["\u201cAIzaKeyValue\u201d", "AIzaKey\nValue", "AIzaKey Value", "AIzaKey\x7fValue"],
+    ids=["curly quotes", "line break", "space", "delete"],
 )
-def test_rejects_a_key_an_http_header_cannot_carry(
-    monkeypatch: pytest.MonkeyPatch, key: str
-) -> None:
+def test_rejects_a_key_that_is_not_visible_ascii(monkeypatch: pytest.MonkeyPatch, key: str) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
     monkeypatch.setenv("GEMINI_API_KEY", key)
 
@@ -139,3 +137,15 @@ def test_rejects_a_key_an_http_header_cannot_carry(
 
     assert [error["loc"] for error in caught.value.errors()] == [("GEMINI_API_KEY",)]
     assert "AIzaKey" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "key", [f"{KEY}\n", f" {KEY} ", f"!{KEY}/~"], ids=["newline", "spaces", "punctuation"]
+)
+def test_accepts_a_visible_ascii_key_without_surrounding_whitespace(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+
+    assert load_settings(env_file=None).gemini_api_key.get_secret_value() == key.strip()
