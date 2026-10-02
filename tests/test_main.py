@@ -64,6 +64,16 @@ def test_exits_on_invalid_option(monkeypatch: pytest.MonkeyPatch) -> None:
     assert KEY not in str(caught.value.code)
 
 
+def test_exits_naming_a_malformed_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", f"\u201c{KEY}\u201d")  # pasted with curly quotes
+
+    with pytest.raises(SystemExit) as caught:
+        main()
+
+    assert caught.value.code == "sobafm: GEMINI_API_KEY is invalid"
+
+
 def test_exits_when_env_file_is_not_utf8(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("DISCORD_TOKEN=token\n", encoding="utf-16")
 

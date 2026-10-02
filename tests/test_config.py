@@ -121,3 +121,21 @@ def test_rejects_a_session_cap_that_is_not_whole_programs(
 )
 def test_env_name(field: str, variable: str) -> None:
     assert Settings.env_name(field) == variable
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["\u201cAIzaKeyValue\u201d", "AIzaKey\nValue", "AIzaKey Value"],
+    ids=["curly quotes", "line break", "space"],
+)
+def test_rejects_a_key_an_http_header_cannot_carry(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+
+    with pytest.raises(ValidationError) as caught:
+        load_settings(env_file=None)
+
+    assert [error["loc"] for error in caught.value.errors()] == [("GEMINI_API_KEY",)]
+    assert "AIzaKey" not in str(caught.value)

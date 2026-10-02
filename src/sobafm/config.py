@@ -1,14 +1,29 @@
 """Operator configuration, read from the environment and an optional `.env` file."""
 
+import re
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, Field, SecretStr
+from pydantic import AfterValidator, BeforeValidator, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 type LogLevel = Annotated[
     Literal["DEBUG", "INFO", "WARNING", "ERROR"], BeforeValidator(lambda value: str(value).upper())
 ]
+
+
+def _header_safe(key: SecretStr) -> SecretStr:
+    """Accept only visible ASCII, which an HTTP header can carry.
+
+    A key pasted with curly quotes or a line break would otherwise reach a library that quotes
+    the whole header value, key included, in its error message.
+    """
+    if not re.fullmatch(r"[!-~]+", key.get_secret_value()):
+        raise ValueError("must be visible ASCII characters")
+    return key
+
+
+type ApiKey = Annotated[SecretStr, AfterValidator(_header_safe)]
 
 ENV_PREFIX = "SOBAFM_"
 
@@ -25,7 +40,7 @@ class Settings(BaseSettings):
     )
 
     discord_token: SecretStr = Field(validation_alias="DISCORD_TOKEN", min_length=1)
-    gemini_api_key: SecretStr = Field(validation_alias="GEMINI_API_KEY", min_length=1)
+    gemini_api_key: ApiKey = Field(validation_alias="GEMINI_API_KEY", min_length=1)
     gemini_model: str = "gemini-3.5-flash-lite"
     log_level: LogLevel = "INFO"
     data_dir: Path = Path("data")
