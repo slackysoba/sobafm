@@ -28,6 +28,13 @@ def main() -> None:
         sys.exit("sobafm: .env could not be read as UTF-8")
     configure_logging(settings.log_level)
     try:
+        discord.opus.Encoder()  # loads libopus, which discord.py bundles only on Windows
+    except discord.opus.OpusNotLoaded:
+        sys.exit(
+            "sobafm: the Opus library is missing; install libopus "
+            "(libopus0 on Debian and Ubuntu, opus on Homebrew)"
+        )
+    try:
         asyncio.run(run(settings))
     except discord.LoginFailure:
         sys.exit("sobafm: Discord rejected DISCORD_TOKEN")
