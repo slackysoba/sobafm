@@ -48,6 +48,7 @@ def test_carries_partial_frames_over() -> None:
         ("audio/l16", False),
         ("audio/wav;rate=48000;channels=2", False),
         ("", False),
+        ("audio/l16;rate=48000;channels=2;note=\ud800\u00e9", False),
     ],
     ids=[
         "exact",
@@ -59,6 +60,7 @@ def test_carries_partial_frames_over() -> None:
         "no parameters",
         "type",
         "empty",
+        "unencodable",
     ],
 )
 def test_matches_its_mime_type_as_mime_compares_them(mime_type: str, *, expected: bool) -> None:

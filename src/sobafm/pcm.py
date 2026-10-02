@@ -12,20 +12,27 @@ SILENCE = bytes(FRAME_BYTES)
 MIME_TYPE = "audio/l16;rate=48000;channels=2"  # how Lyria RealTime labels this format
 
 
-def matches_mime_type(mime_type: str) -> bool:
-    """Whether `mime_type` has `MIME_TYPE`'s type, rate, and channels.
-
-    It is parsed as MIME requires: names in any case, parameters in any order and optionally
-    quoted. Other parameters are ignored.
-    """
-    return _essentials(mime_type) == _essentials(MIME_TYPE)
-
-
-def _essentials(mime_type: str) -> tuple[str, str | None, str | None]:
+def _essentials(mime_type: str) -> tuple[str, object, object]:
+    """The type, rate, and channels, parsed by the standard library's MIME parser."""
     header = Message()
     header["Content-Type"] = mime_type
     parameters = dict(header.get_params(failobj=[])[1:])  # the first is the type itself
     return header.get_content_type(), parameters.get("rate"), parameters.get("channels")
+
+
+_FORMAT = _essentials(MIME_TYPE)
+
+
+def matches_mime_type(mime_type: str) -> bool:
+    """Whether `mime_type` has `MIME_TYPE`'s type, rate, and channels.
+
+    Names can be in any case, and parameters in any order and quoted. Other parameters are
+    ignored.
+    """
+    try:
+        return _essentials(mime_type) == _FORMAT
+    except ValueError:  # such as a lone surrogate, which the parser cannot encode
+        return False
 
 
 class FrameSplitter:

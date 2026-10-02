@@ -137,15 +137,15 @@ class Deck:
     def retire(self) -> None:
         """End the session; frames already buffered stay playable.
 
-        A deck still connecting is cancelled, rather than finishing a setup that can stall. A
-        generating deck ends through `_retiring`, so a session Lyria is closing keeps its end
-        reason. Only the first call acts, since another cancel would cut short the SDK's close.
+        A deck still connecting is cancelled, rather than finishing a setup that can stall,
+        unless a cancellation is pending already, such as the connect timeout's: another would
+        cut short the SDK's close of the socket. A generating deck ends through `_retiring`, so
+        once the SDK has reported Lyria's close, the deck keeps its end reason and close code.
         """
-        if self._retiring.is_set():
-            return
         self._retiring.set()
-        if self.state is State.CONNECTING and self._task is not None:
-            self._task.cancel()
+        task = self._task
+        if self.state is State.CONNECTING and task is not None and not task.cancelling():
+            task.cancel()
 
     async def wait_ended(self) -> None:
         """Wait for the session to end, however it ends."""

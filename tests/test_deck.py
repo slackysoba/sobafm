@@ -331,6 +331,21 @@ async def test_retiring_again_lets_a_stalled_setup_close(
     assert lyria.sessions[0].closed
 
 
+async def test_retiring_after_the_connect_timeout_lets_the_session_close(
+    lyria: FakeLyria, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sobafm.deck, "CONNECT_TIMEOUT_S", 0.01)
+    lyria.stall_sends = True  # setup stalls once the session is open
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+    retire_during_close(lyria, deck)  # while the timeout's cancellation is still pending
+
+    deck.start()
+    await ended(deck)
+
+    assert (deck.end_reason, deck.detail) == (EndReason.FAILED, "TimeoutError")
+    assert lyria.sessions[0].closed
+
+
 async def test_regulating_returns_while_a_send_stalls(
     lyria: FakeLyria, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
