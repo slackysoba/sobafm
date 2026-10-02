@@ -150,6 +150,20 @@ def test_switching_to_the_current_target_changes_nothing() -> None:
     assert levels == pytest.approx(expected, abs=2)
 
 
+@pytest.mark.parametrize("target", [None, source(10)], ids=["fade-out", "crossfade"])
+def test_an_instant_switch_to_the_current_target_finishes_the_switch(
+    target: Source | None,
+) -> None:
+    mixer = playing(source(10))
+    mixer.switch_to(target, 0.1)
+    mixer.read()
+
+    mixer.switch_to(target, 0)
+
+    assert not mixer.switching
+    assert mixer.live is target
+
+
 def test_a_new_target_during_a_switch_fades_from_the_incoming_source() -> None:
     mixer = playing(source(10, level=8_000))
     incoming = source(10, level=2_000)
@@ -265,7 +279,9 @@ def test_never_raises_and_logs_each_run_of_failures_once(
         assert [mixer.read() for _ in range(2)] == [SILENCE] * 2
 
     assert mixer.errors == 5
+    assert mixer.underruns == 0
     assert len(caplog.records) == 2
+    assert all(record.exc_info for record in caplog.records)
 
 
 def test_a_failure_finishes_the_switch_in_progress() -> None:

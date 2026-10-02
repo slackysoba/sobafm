@@ -64,19 +64,20 @@ class Mixer(discord.AudioSource):
 
         A crossfade or fade-out never outlasts the audio the live source still holds, and a
         live source that has run dry is dropped, so `source` fades in from silence. Switching
-        to the current target changes nothing. A new target during a switch makes the
-        incoming source live at once, then fades from it.
+        to the current target changes nothing, except that an instant switch finishes the one
+        in progress. A new target during a switch makes the incoming source live at once,
+        then fades from it.
         """
+        frames = round(seconds / FRAME_SECONDS)
         with self._lock:
             if self._switch_frames:
-                if source is self._incoming:
+                if source is self._incoming and frames > 0:
                     return
                 self._live, self._incoming, self._switch_frames = self._incoming, None, 0
             if source is self._live:
                 return
             if self._live is not None and not self._live.frames:
                 self._live = None
-            frames = round(seconds / FRAME_SECONDS)
             if self._live is not None:
                 frames = min(frames, len(self._live.frames))
             if frames <= 0 or (self._live is None and source is None):
@@ -100,6 +101,7 @@ class Mixer(discord.AudioSource):
         if not self._failing:  # one traceback per run of failures, logged outside the lock
             log.error("Mixer read failed; playing silence", exc_info=failure)
             self._failing = True
+        del failure  # its traceback holds this frame, which would hold it in a cycle
         return SILENCE
 
     def _next_frame(self) -> bytes:
