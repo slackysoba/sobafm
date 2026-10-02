@@ -112,6 +112,11 @@ class Deck:
         return self.buffered_seconds >= PREROLL_S
 
     @property
+    def has_audio(self) -> bool:
+        """Whether the session produced any audio."""
+        return self._audio_bytes > 0
+
+    @property
     def rate(self) -> float | None:
         """Seconds of audio received per second of unpaused generation."""
         generating = self._generated_s

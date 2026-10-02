@@ -54,6 +54,11 @@ class Mixer(discord.AudioSource):
         with self._lock:
             return self._switch_frames > 0
 
+    def uses(self, source: FrameSource) -> bool:
+        """Whether `source` is playing or fading in."""
+        with self._lock:
+            return source is self._live or source is self._incoming
+
     def set_volume(self, volume: float) -> None:
         """Change the volume (linear gain, 1.0 unchanged); it ramps to avoid clicks."""
         with self._lock:

@@ -1,4 +1,4 @@
-"""Slash commands. Replies are private to the caller."""
+"""Slash commands. Replies are private, except /play's answer once the music starts or fails."""
 
 import contextlib
 import logging
@@ -31,6 +31,29 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
             return  # unreachable: the command is guild-only
         await interaction.response.defer(ephemeral=True)
         await interaction.followup.send(await bot.leave(interaction.guild), ephemeral=True)
+
+    @tree.command(description="Play music in SobaFM's voice channel; requests are sent to Google")
+    @app_commands.guild_only()
+    @app_commands.describe(request="The music you want, for example: rainy lo-fi with soft piano")
+    async def play(
+        interaction: discord.Interaction, request: app_commands.Range[str, 1, 200]
+    ) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            return  # unreachable: the command is guild-only
+        if problem := bot.play_problem(interaction.user, request):
+            await interaction.response.send_message(problem, ephemeral=True)
+            return
+        await interaction.response.defer()
+        await interaction.followup.send(await bot.play(interaction.user, request))
+
+    @tree.command(description="Stop the music")
+    @app_commands.guild_only()
+    async def stop(interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            return  # unreachable: the command is guild-only
+        problem = bot.stop_problem(interaction.user)
+        reply = problem or bot.stop(interaction.user.guild)
+        await interaction.response.send_message(reply, ephemeral=True)
 
     @tree.error
     async def on_error(

@@ -79,15 +79,31 @@ def test_validation_errors_hide_input(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_reads_server_options(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
-    assert load_settings(env_file=None).data_dir == Path("data")
-    assert load_settings(env_file=None).dev_guild_id is None
+    defaults = load_settings(env_file=None)
+    assert (defaults.data_dir, defaults.dev_guild_id, defaults.max_sessions) == (
+        Path("data"),
+        None,
+        4,
+    )
 
     monkeypatch.setenv("SOBAFM_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SOBAFM_DEV_GUILD_ID", "1234")
+    monkeypatch.setenv("SOBAFM_MAX_SESSIONS", "8")
     settings = load_settings(env_file=None)
 
-    assert settings.data_dir == tmp_path
-    assert settings.dev_guild_id == 1234
+    assert (settings.data_dir, settings.dev_guild_id, settings.max_sessions) == (tmp_path, 1234, 8)
+
+
+@pytest.mark.parametrize("cap", ["1", "3"])
+def test_rejects_a_session_cap_that_is_not_whole_programs(
+    monkeypatch: pytest.MonkeyPatch, cap: str
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+    monkeypatch.setenv("SOBAFM_MAX_SESSIONS", cap)
+
+    with pytest.raises(ValidationError):
+        load_settings(env_file=None)
 
 
 @pytest.mark.parametrize(
@@ -98,6 +114,7 @@ def test_reads_server_options(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
         ("log_level", "SOBAFM_LOG_LEVEL"),
         ("data_dir", "SOBAFM_DATA_DIR"),
         ("dev_guild_id", "SOBAFM_DEV_GUILD_ID"),
+        ("max_sessions", "SOBAFM_MAX_SESSIONS"),
     ],
 )
 def test_env_name(field: str, variable: str) -> None:

@@ -1,9 +1,12 @@
-"""Test doubles for Lyria RealTime sessions and the clock."""
+"""Test doubles for Lyria RealTime sessions, the voice player, and the clock."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+import threading
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from typing import Any, Literal
 
+import discord
 from google.genai import errors, types
 
 from sobafm.pcm import BYTES_PER_SECOND, MIME_TYPE
@@ -107,3 +110,71 @@ async def settle() -> None:
     """Let pending tasks run until they block."""
     for _ in range(20):
         await asyncio.sleep(0)
+
+
+class FakePlayer:
+    """Stands in for discord.py's voice client, with its checks on `play()`.
+
+    As in discord.py, `is_playing()` stays true when the player thread ends on its own, and a
+    stopped thread calls `after` only once it notices, which a voice reconnect can delay:
+    `end_stopped_threads()` lets it.
+    """
+
+    def __init__(self) -> None:
+        self.playing = False  # what is_playing() reports
+        self.running = False  # whether the player thread runs, reading the source
+        self.connected = True
+        self.failure: Exception | None = None  # raised by play(), such as OpusNotLoaded
+        self.plays = 0
+        self.source: discord.AudioSource | None = None
+        self._after: Callable[[Exception | None], Any] | None = None
+        self._stopped: list[Callable[[Exception | None], Any]] = []  # threads still ending
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    def is_playing(self) -> bool:
+        return self.playing
+
+    def play(
+        self,
+        source: discord.AudioSource,
+        *,
+        after: Callable[[Exception | None], Any] | None = None,
+        signal_type: Literal["auto", "voice", "music"] = "auto",
+    ) -> None:
+        if self.failure is not None:
+            raise self.failure
+        if not self.connected:
+            raise discord.ClientException("Not connected to voice.")
+        if self.playing:
+            raise discord.ClientException("Already playing audio.")
+        self.playing = self.running = True
+        self.plays += 1
+        self.source = source
+        self._after = after
+
+    def stop(self) -> None:
+        self.playing = self.running = False
+        if self._after is not None:
+            self._stopped.append(self._after)
+            self._after = None
+
+    def end_thread(self) -> None:
+        """End the running player thread on its own, as when it gives up on a reconnect."""
+        self.running = False
+        if (after := self._after) is not None:
+            self._after = None
+            _call_from_thread(after)
+
+    def end_stopped_threads(self) -> None:
+        for after in self._stopped:
+            _call_from_thread(after)
+        self._stopped.clear()
+
+
+def _call_from_thread(after: Callable[[Exception | None], Any]) -> None:
+    """Call `after` from another thread, as discord.py's player thread does."""
+    thread = threading.Thread(target=after, args=(None,))
+    thread.start()
+    thread.join()

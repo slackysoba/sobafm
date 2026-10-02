@@ -88,14 +88,14 @@ The **mixer** is the audio source discord.py reads. Each `read()` returns exactl
 
 ### Station reconcile loop
 
-A station stores only what should be happening: the program (plan, requester, and end time) or none. Its `reconcile()` method runs every 250 ms and whenever a command or event wakes it, and it is the only code that creates, switches, or closes decks. It applies these rules in order:
+A station stores only what should be happening: the program (plan, requester, and end time) or none. Its `reconcile()` method runs every 250 ms and whenever a command or event wakes it, and it is the only code that creates, switches, or closes decks while the station runs; `close()` ends them. It applies these rules in order:
 
 1. **End.** If SobaFM has lost its voice connection, the program's end time has passed, or the channel has had no listeners for 60 seconds, clear the program.
 2. **Discard.** Drop ended decks the mixer no longer references once they are empty or replaced. A deck that ended without audio counts as a failed or refused start.
 3. **Retire.** Stop the session of any deck that has reached the session limit or belongs to a replaced plan. Its buffered audio stays playable.
 4. **Generate.** Keep a next deck filling for the current plan beside the live one, within the global session cap. Retry failed connections with backoff, and retry a refused start once after 30 seconds.
-5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player and fade in. Restart the player if discord.py stopped it.
-6. **Hand over, or stop.** With a program, if no crossfade is in progress and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck with the most buffered audio, preferring the current plan. Without one, retire idle decks, fade out the live deck, and then stop the player.
+5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player, and fade in once it runs with voice connected. Restart the player if discord.py stopped it.
+6. **Hand over, or stop.** With a program, if the player runs with voice connected, no crossfade is in progress, and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck of the current plan with the most buffered audio. Without one, retire idle decks; once any fade or crossfade completes, fade out the live deck and then stop the player. With no player running, nothing reads the mixer, so the station stops at once.
 7. **Regulate.** Pause or resume each deck's generation at the flow-control thresholds.
 
 The station never closes a deck the mixer still references. Commands only replace the desired program and wake the loop, so they need no lock: the latest request wins. The change cooldown (M3) is checked when a request arrives, before the model call.
@@ -180,7 +180,7 @@ CREATE TABLE guild (
 | `SOBAFM_DATA_DIR` | No | `./data` | Directory for the SQLite database |
 | `SOBAFM_LOG_LEVEL` | No | `INFO` | Log level |
 | `SOBAFM_DEV_GUILD_ID` | No | None | Registers commands to one server for development |
-| `SOBAFM_MAX_SESSIONS` | No | `4` | Global cap on concurrent Lyria RealTime sessions |
+| `SOBAFM_MAX_SESSIONS` | No | `4` | Global cap on concurrent Lyria RealTime sessions, an even number: each playing server reserves two |
 
 **Discord invitation:** scopes `bot` and `applications.commands`; permissions View Channel, Connect, Speak, and Set Voice Channel Status.
 
@@ -197,16 +197,16 @@ CREATE TABLE guild (
 | --- | --- |
 | Gemini timeout, rate limit, server error, or invalid output | Fall back to the request text and say so in the reply |
 | Not-music request or Gemini safety block | Refuse with a short explanation; nothing reaches Lyria |
-| Lyria filters a prompt | Discard the new deck, keep the current music, and tell the requester |
-| Lyria refuses the connection (authentication, quota, or close code `1008`) | Reply with a specific error; the station stays idle |
-| Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills; repeated failures end the program with a notice |
+| Lyria filters a prompt | Discard the new deck, keep the current music, and tell the requester. Keeping the current music arrives with #38; until then a refused replacement ends the program |
+| Lyria refuses the connection (authentication, quota, or close code `1008`) | Reply with a specific error; the station stays idle. Specific replies arrive with #38; until then the start is retried with backoff and then reported as a failure |
+| Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills. Failed starts are retried after 2, 5, then every 15 seconds; a program that has not started yet reports the failure after the third retry |
 | Generation stalls or slows | The live deck's buffer absorbs it; below 4 seconds, the station hands over to the next deck. Remaining underruns play silence and are logged |
 | Lyria refuses a new session's start (`filtered_prompt` with no audio) | Retry once after 30 seconds, then report the prompt as filtered |
-| No session capacity left in the process | Reply that SobaFM is busy in other servers |
-| Voice reconnection | discord.py reconnects; reads pause, flow control pauses generation, and crossfades resume intact |
+| No session capacity left in the process | Each program reserves two sessions; a request beyond the reservations is told that SobaFM is busy in other servers |
+| Voice reconnection | discord.py reconnects; reads pause, flow control pauses generation, and crossfades resume intact. If the player thread gives up first, a playing station starts a new one once voice is back. A fade-in or handover, which reports a request as playing, waits until voice is connected |
 | SobaFM moved, disconnected, or its channel deleted | Adopt the new channel, or end the program and forget the channel (PLAY-7). Discord reports every disconnect alike, so a voice connection that discord.py gives up reconnecting is also forgotten |
 | New gateway session (a reconnect that cannot resume) | discord.py forgets its voice clients, so the program ends. SobaFM closes the old voice connection, which takes up to 30 seconds, then rejoins the remembered channel |
-| Player thread error | `read()` returns silence; the `after` callback wakes the station, which restarts the player |
+| Player thread error | The `after` callback tells the station, which starts a new player while a program plays, at most once a second. If discord.py cannot start a player for a reason other than a missing voice connection, the program ends. Errors inside `read()` return silence and are logged once per run |
 | Gateway not ready at startup | The watchdog exits with an error and the process supervisor restarts SobaFM |
 | Opus library missing or unloadable | SobaFM exits at startup with a message that names the library |
 
