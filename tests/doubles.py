@@ -112,12 +112,14 @@ async def settle() -> None:
 
 
 class FakePlayer:
-    """Stands in for discord.py's voice client."""
+    """Stands in for discord.py's voice client, with its checks on `play()`."""
 
     def __init__(self) -> None:
         self.playing = False
+        self.connected = True
         self.plays = 0
         self.source: discord.AudioSource | None = None
+        self._after: Callable[[Exception | None], Any] | None = None
 
     def is_playing(self) -> bool:
         return self.playing
@@ -129,9 +131,22 @@ class FakePlayer:
         after: Callable[[Exception | None], Any] | None = None,
         signal_type: Literal["auto", "voice", "music"] = "auto",
     ) -> None:
+        if not self.connected:
+            raise discord.ClientException("Not connected to voice.")
+        if self.playing:
+            raise discord.ClientException("Already playing audio.")
         self.playing = True
         self.plays += 1
         self.source = source
+        self._after = after
 
     def stop(self) -> None:
-        self.playing = False
+        if self.playing:
+            self.playing = False
+            self.end_thread()
+
+    def end_thread(self) -> None:
+        """End the player thread, as discord.py does, calling `after`."""
+        if self._after is not None:
+            self._after(None)
+            self._after = None

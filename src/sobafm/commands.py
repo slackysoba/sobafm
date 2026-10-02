@@ -1,4 +1,4 @@
-"""Slash commands. Replies are private to the caller, except the reply to /play."""
+"""Slash commands. Replies are private, except /play's answer once the music starts or fails."""
 
 import contextlib
 import logging
@@ -40,7 +40,7 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
     ) -> None:
         if not isinstance(interaction.user, discord.Member):
             return  # unreachable: the command is guild-only
-        if problem := bot.play_problem(interaction.user):
+        if problem := bot.play_problem(interaction.user, request):
             await interaction.response.send_message(problem, ephemeral=True)
             return
         await interaction.response.defer()

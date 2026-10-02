@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
+import sobafm.bot
 from sobafm.bot import PLAY_REPLIES, SobaFM, Voice
 from sobafm.config import load_settings
 from sobafm.station import Outcome, Station
@@ -135,10 +136,13 @@ def test_commands_are_for_server_managers_in_servers_only(bot: SobaFM, name: str
 @pytest.mark.parametrize("name", ["play", "stop"])
 def test_music_commands_are_for_every_member_in_servers_only(bot: SobaFM, name: str) -> None:
     command = bot.tree.get_command(name)
+    assert command is not None
 
-    assert isinstance(command, discord.app_commands.Command)
-    assert command.guild_only
-    assert command.default_permissions is None
+    payload = command.to_dict(bot.tree)
+
+    assert payload["contexts"] == [0]
+    assert payload["integration_types"] == [0]
+    assert payload["default_member_permissions"] is None
 
 
 @pytest.mark.parametrize("dev_guild_id", [None, 42])
@@ -457,8 +461,17 @@ async def test_play_needs_sobafm_in_a_voice_channel(bot: SobaFM) -> None:
     member = make_member(make_channel(make_guild()))
     member.guild = make_guild()
 
-    assert bot.play_problem(member) == (
+    assert bot.play_problem(member, "ambient") == (
         "SobaFM isn't in a voice channel. Ask a server manager to use /join."
+    )
+
+
+async def test_play_needs_a_description(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+
+    assert bot.play_problem(in_voice(channel, channel), "   ") == (
+        "Describe the music you want, for example: rainy lo-fi with soft piano."
     )
 
 
@@ -466,7 +479,7 @@ async def test_play_needs_the_caller_in_sobafms_channel(bot: SobaFM) -> None:
     guild = make_guild()
     member = in_voice(make_channel(guild, 11), make_channel(guild))
 
-    assert bot.play_problem(member) == "Join <#10> to request music."
+    assert bot.play_problem(member, "ambient") == "Join <#10> to request music."
 
 
 async def test_play_reports_what_is_playing(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -477,7 +490,7 @@ async def test_play_reports_what_is_playing(bot: SobaFM, monkeypatch: pytest.Mon
     station = fake_station()
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
 
-    assert bot.play_problem(member) is None
+    assert bot.play_problem(member, "ambient drones") is None
     assert await bot.play(member, "ambient drones") == (
         "Now playing **ambient drones**, requested by <@5>."
     )
@@ -549,3 +562,67 @@ async def test_a_voice_reconnect_keeps_the_station(bot: SobaFM) -> None:
     await bot.on_voice_state_update(*bot_voice_update(guild, None, channel))
 
     assert guild.id in bot.stations
+
+
+async def test_play_command_answers_publicly_once_the_music_starts(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot, "play_problem", MagicMock(return_value=None))
+    monkeypatch.setattr(bot, "play", AsyncMock(return_value="Now playing **ambient**."))
+    interaction = make_interaction(make_member(None))
+    command: Any = bot.tree.get_command("play")
+
+    await command.callback(interaction, request="ambient")
+
+    interaction.response.defer.assert_awaited_once_with()
+    interaction.followup.send.assert_awaited_once_with("Now playing **ambient**.")
+
+
+async def test_play_command_explains_problems_privately(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot, "play_problem", MagicMock(return_value="Join <#10> first."))
+    interaction = make_interaction(make_member(None))
+    command: Any = bot.tree.get_command("play")
+
+    await command.callback(interaction, request="ambient")
+
+    interaction.response.send_message.assert_awaited_once_with("Join <#10> first.", ephemeral=True)
+    interaction.response.defer.assert_not_awaited()
+
+
+async def test_stop_command_replies_privately(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot, "stop_problem", MagicMock(return_value=None))
+    monkeypatch.setattr(bot, "stop", MagicMock(return_value="Stopped the music."))
+    interaction = make_interaction(make_member(None))
+    command: Any = bot.tree.get_command("stop")
+
+    await command.callback(interaction)
+
+    interaction.response.send_message.assert_awaited_once_with("Stopped the music.", ephemeral=True)
+
+
+async def test_play_says_when_the_music_is_slow_to_start(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
+    station = fake(Station, close=AsyncMock())
+    station.play.return_value = asyncio.get_running_loop().create_future()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    guild = make_guild()
+    channel = make_channel(guild)
+
+    reply = await bot.play(in_voice(channel, channel), "ambient")
+
+    assert reply == "The music is taking longer than usual to start."
+    assert not station.play.return_value.done()  # the station still settles it later
+
+
+async def test_closing_the_client_closes_every_station(bot: SobaFM) -> None:
+    station = fake_station()
+    bot.stations[GUILD_ID] = station
+
+    await bot.close()
+
+    station.close.assert_awaited_once()
+    assert bot.stations == {}

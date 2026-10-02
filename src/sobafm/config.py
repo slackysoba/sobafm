@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     log_level: LogLevel = "INFO"
     data_dir: Path = Path("data")
     dev_guild_id: int | None = None
-    max_sessions: int = Field(default=4, ge=1)
+    max_sessions: int = Field(default=4, ge=2)  # each playing server uses two
 
     @classmethod
     def env_name(cls, field: str) -> str:

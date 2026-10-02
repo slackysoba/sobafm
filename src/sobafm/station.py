@@ -46,28 +46,31 @@ class Player(Protocol):
 
 class Outcome(StrEnum):
     PLAYING = "playing"
-    BUSY = "busy"  # no Lyria session capacity left in the process
+    BUSY = "busy"  # every program's worth of Lyria sessions is taken
     REFUSED = "refused"  # Lyria refused the prompt twice
-    FAILED = "failed"  # sessions could not be opened, or the voice connection was lost
+    FAILED = "failed"  # sessions could not be opened
+    DISCONNECTED = "disconnected"  # SobaFM lost its voice connection
     REPLACED = "replaced"  # a newer request replaced it before it started
     STOPPED = "stopped"
 
 
 class SessionPool:
-    """Caps concurrent Lyria RealTime sessions across every station in the process."""
+    """Caps Lyria RealTime sessions in the process by reserving two for each program."""
 
     def __init__(self, limit: int) -> None:
-        self.limit = limit
-        self._decks: set[Deck] = set()
+        self.programs = limit // SESSIONS_PER_STATION
+        self._holders: set[object] = set()
 
-    def open(self, connect: Connect, plan: MusicPlan, clock: Callable[[], float]) -> Deck | None:
-        self._decks = {deck for deck in self._decks if deck.state is not State.ENDED}
-        if len(self._decks) >= self.limit:
-            return None
-        deck = Deck(connect, plan, clock=clock)
-        deck.start()
-        self._decks.add(deck)
-        return deck
+    def reserve(self, holder: object) -> bool:
+        """Reserve a program's sessions for `holder`; False when every reservation is taken."""
+        if holder not in self._holders:
+            if len(self._holders) >= self.programs:
+                return False
+            self._holders.add(holder)
+        return True
+
+    def release(self, holder: object) -> None:
+        self._holders.discard(holder)
 
 
 @dataclass
@@ -87,7 +90,7 @@ class Program:
 
 
 class Station:
-    """Plays one server's program. Only `reconcile()` creates, switches, or closes decks."""
+    """Plays one server's program. Only `reconcile()` and `close()` change decks."""
 
     def __init__(
         self,
@@ -105,21 +108,25 @@ class Station:
         self._connect = connect
         self._pool = pool
         self._clock = clock
+        self._playing: object | None = None  # identifies the running player, if any
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
     def play(self, plan: MusicPlan, requester: str) -> asyncio.Future[Outcome]:
         """Start or replace the program; the result resolves once it plays or fails."""
+        program = Program(plan, requester)
+        if not self._pool.reserve(self):
+            log.info("No Lyria RealTime session capacity left")
+            program.settle(Outcome.BUSY)
+            return program.started
         if self.program is not None:
             self.program.settle(Outcome.REPLACED)
-        self.program = Program(plan, requester)
+        self.program = program
         self.wake()
-        return self.program.started
+        return program.started
 
     def stop(self) -> None:
-        if self.program is not None:
-            self.program.settle(Outcome.STOPPED)
-            self.program = None
+        self._finish(Outcome.STOPPED)
         self.wake()
 
     def start(self) -> None:
@@ -140,6 +147,7 @@ class Station:
             deck.retire()
         await asyncio.gather(*(deck.wait_ended() for deck in self.decks))
         self.decks.clear()
+        self._pool.release(self)
         self.mixer.switch_to(None, 0)
         if (player := self._voice()) is not None:
             player.stop()
@@ -160,7 +168,7 @@ class Station:
         player = self._voice()
         if self.program is not None and player is None:
             log.info("Voice connection lost; ending the program")
-            self._finish(Outcome.FAILED)
+            self._finish(Outcome.DISCONNECTED)
         self._discard()
         if self.program is not None:
             self._retire(self.program)
@@ -178,10 +186,12 @@ class Station:
             self.program = None
 
     def _wind_down(self, player: Player | None) -> None:
-        """Without a program: drop idle decks, fade out, then stop the player."""
+        """Without a program: drop idle decks, fade out, stop the player, and free sessions."""
         for deck in self.decks:
             if not self.mixer.uses(deck):
                 deck.retire()
+        if all(deck.state is State.ENDED for deck in self.decks):
+            self._pool.release(self)
         if self.mixer.switching:
             return
         if self.mixer.live is not None:
@@ -197,37 +207,27 @@ class Station:
                 deck.retire()
 
     def _generate(self, program: Program) -> None:
-        """Keep the live and next decks for the current plan generating."""
+        """Keep the program's two reserved sessions generating for the current plan."""
         if self._clock() < program.retry_at:
             return
         sessions = sum(deck.state is not State.ENDED for deck in self.decks)
-        current = sum(
-            deck.plan is program.plan and deck.state is not State.ENDED for deck in self.decks
-        )
-        while current < SESSIONS_PER_STATION and sessions < SESSIONS_PER_STATION:
-            deck = self._pool.open(self._connect, program.plan, self._clock)
-            if deck is None:
-                if not any(d.plan is program.plan for d in self.decks):
-                    log.info("No Lyria RealTime session capacity left")
-                    self._finish(Outcome.BUSY)
-                return
+        for _ in range(SESSIONS_PER_STATION - sessions):
+            deck = Deck(self._connect, program.plan, clock=self._clock)
+            deck.start()
             self.decks.append(deck)
-            current += 1
-            sessions += 1
 
     def _start(self, program: Program, player: Player | None) -> None:
-        """Fade in the first ready deck, and restart the player if discord.py stopped it."""
+        """Fade in the first ready deck, and keep discord.py's player running."""
         if player is None:
             return
         if self.mixer.live is None and not self.mixer.switching:
             deck = self._ready_deck(program.plan)
             if deck is None:
                 return
-            self._play(player)
             self.mixer.switch_to(deck, FADE_IN_S)
             program.settle(Outcome.PLAYING)
-            log.info("Playing %r for %s", program.plan.title, program.requester)
-        elif not player.is_playing():
+            log.info("Program started on deck %d", deck.number)
+        if self._playing is None:
             self._play(player)
 
     def _hand_over(self, program: Program) -> None:
@@ -235,18 +235,14 @@ class Station:
         live = self.mixer.live
         if self.mixer.switching or not isinstance(live, Deck):
             return
-        replaced = live.plan is not program.plan
-        if not replaced and live.buffered_seconds >= HANDOVER_BELOW_S:
+        if live.plan is program.plan and live.buffered_seconds >= HANDOVER_BELOW_S:
             return
         deck = self._ready_deck(program.plan, exclude=live)
-        if deck is None and not replaced:
-            deck = self._ready_deck(None, exclude=live)
         if deck is None:
             return
         self.mixer.switch_to(deck, CROSSFADE_S)
         live.retire()
-        if deck.plan is program.plan:
-            program.settle(Outcome.PLAYING)
+        program.settle(Outcome.PLAYING)
 
     def _discard(self) -> None:
         """Drop ended decks the mixer no longer uses once they are empty or replaced."""
@@ -265,6 +261,7 @@ class Station:
         """Schedule a retry for a session that ended without audio, or give up.
 
         Sessions that fail together count once, so both decks of a round share one retry.
+        A program that has started keeps retrying, because its buffers may outlast an outage.
         """
         program = self.program
         now = self._clock()
@@ -274,7 +271,7 @@ class Station:
             program.refusals += 1
             program.retry_at = now + REFUSAL_RETRY_S
             if program.refusals >= 2 and not program.started.done():
-                log.info("Lyria refused %r: %s", program.plan.title, deck.detail)
+                log.info("Lyria refused the request twice: %s", deck.detail)
                 self._finish(Outcome.REFUSED)
             return
         program.failures += 1
@@ -282,24 +279,38 @@ class Station:
             now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
         )
         if program.failures > len(CONNECT_BACKOFF_S) and not program.started.done():
-            log.warning("Could not open a Lyria RealTime session for %r", program.plan.title)
+            log.warning("Could not open a Lyria RealTime session: %s", deck.detail)
             self._finish(Outcome.FAILED)
 
-    def _ready_deck(self, plan: MusicPlan | None, exclude: Deck | None = None) -> Deck | None:
-        """The ready deck with the most buffered audio, for `plan` or any plan."""
-        ready = [
-            deck
-            for deck in self.decks
-            if deck is not exclude and deck.ready and (plan is None or deck.plan is plan)
-        ]
+    def _ready_deck(self, plan: MusicPlan, exclude: Deck | None = None) -> Deck | None:
+        """The ready deck for `plan` with the most buffered audio."""
+        ready = [d for d in self.decks if d is not exclude and d.ready and d.plan is plan]
         return max(ready, key=lambda deck: deck.buffered_seconds, default=None)
 
     def _play(self, player: Player) -> None:
+        """Start discord.py's player and track it until its thread ends.
+
+        A player thread that gives up on a slow voice reconnect ends without updating
+        `is_playing()`, so the station relies on the `after` callback instead.
+        """
         loop = asyncio.get_running_loop()
+        playing = object()
 
         def stopped(error: Exception | None) -> None:  # runs on discord.py's player thread
             if error is not None:
                 log.warning("Voice player stopped: %s", error)
-            loop.call_soon_threadsafe(self.wake)
+            loop.call_soon_threadsafe(self._player_stopped, playing)
 
-        player.play(self.mixer, after=stopped, signal_type="music")
+        if player.is_playing():
+            player.stop()  # its thread has ended
+        try:
+            player.play(self.mixer, after=stopped, signal_type="music")
+        except discord.ClientException as error:  # not connected yet; the next tick retries
+            log.debug("Could not start the voice player: %s", error)
+            return
+        self._playing = playing
+
+    def _player_stopped(self, playing: object) -> None:
+        if self._playing is playing:
+            self._playing = None
+        self.wake()

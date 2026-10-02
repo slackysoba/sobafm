@@ -27,6 +27,7 @@ PLAY_REPLIES = {
         "Lyria RealTime couldn't make music from that request. Try describing it differently."
     ),
     Outcome.FAILED: "SobaFM couldn't reach Lyria RealTime. Try again shortly.",
+    Outcome.DISCONNECTED: "SobaFM lost its voice connection. Ask a server manager to use /join.",
     Outcome.REPLACED: "A newer request replaced this one before it started.",
     Outcome.STOPPED: "The music was stopped before this request started.",
 }
@@ -94,8 +95,10 @@ class SobaFM(discord.Client):
         if (station := self.stations.pop(guild.id, None)) is not None:
             await station.close()
 
-    def play_problem(self, member: discord.Member) -> str | None:
-        """Why `member` cannot request music right now, if they cannot."""
+    def play_problem(self, member: discord.Member, request: str) -> str | None:
+        """Why `member` cannot request this music right now, if they cannot."""
+        if not request.strip():
+            return "Describe the music you want, for example: rainy lo-fi with soft piano."
         voice = cast(discord.VoiceClient | None, member.guild.voice_client)
         if voice is None:
             return "SobaFM isn't in a voice channel. Ask a server manager to use /join."
