@@ -1,9 +1,10 @@
 import asyncio
 import logging
+from typing import Any
 
 import pytest
 from google.genai import types
-from websockets.exceptions import ConnectionClosedError
+from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
 
 import sobafm.deck
@@ -416,20 +417,47 @@ async def test_logs_a_close_reason_only_as_a_token(
     assert "AIzaFakeKey" not in caplog.text
 
 
-async def test_records_a_close_during_setup_without_its_reason(
-    lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
+def received(close: Close | None, error: type[ConnectionClosed] = ConnectionClosedError) -> Any:
+    """How websockets reports a close it received, and answered, during setup."""
+    return error(close, close, rcvd_then_sent=True) if close else error(None, None)
+
+
+@pytest.mark.parametrize(
+    ("closed", "code", "detail"),
+    [
+        (received(Close(1008, SUSPENDED)), 1008, "ConnectionClosedError: code 1008"),
+        (
+            received(Close(1008, "RESOURCE_EXHAUSTED")),
+            1008,
+            "ConnectionClosedError: code 1008: RESOURCE_EXHAUSTED",
+        ),
+        (
+            received(Close(1000, SUSPENDED), ConnectionClosedOK),
+            1000,
+            "ConnectionClosedOK: code 1000",
+        ),
+        (received(None), None, "ConnectionClosedError: no close frame received"),
+    ],
+    ids=["free text", "token", "normal close", "no close frame"],
+)
+async def test_records_a_close_during_setup_without_free_text(
+    lyria: FakeLyria,
+    clock: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+    closed: ConnectionClosed,
+    code: int | None,
+    detail: str,
 ) -> None:
-    close = Close(1008, SUSPENDED)
-    lyria.failure = ConnectionClosedError(close, close, rcvd_then_sent=True)  # as the SDK raises it
+    lyria.failure = closed
     deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
 
     with caplog.at_level(logging.DEBUG):
         deck.start()
         await ended(deck)
 
-    assert (deck.end_reason, deck.close_code) == (EndReason.FAILED, 1008)
-    assert deck.detail == "ConnectionClosedError: code 1008"
-    assert "AIzaFakeKey" not in caplog.text
+    assert (deck.end_reason, deck.close_code, deck.detail) == (EndReason.FAILED, code, detail)
+    assert f"Deck {deck.number} failed: {detail}" in caplog.messages  # a warning, no traceback
+    assert "suspended" not in caplog.text
 
 
 async def test_retiring_while_lyria_closes_keeps_the_close_code(

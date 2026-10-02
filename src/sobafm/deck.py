@@ -196,14 +196,16 @@ class Deck:
             self._end(reason)
         except errors.APIError as error:
             # A WebSocket close carries its reason in `details`, which the SDK leaves untyped.
-            reason: object = error.message or getattr(error, "details", None)
+            cause: object = error.message or getattr(error, "details", None)
             self.close_code = error.code
-            self._end(EndReason.CLOSED, close_detail(error.code, reason))
+            self._end(EndReason.CLOSED, close_detail(error.code, cause))
         except live_music.ConnectionClosed as error:
             # Closed during setup, as on a refusal. A traceback would quote the close reason.
-            close = error.rcvd
-            self.close_code = close.code if close else None
-            detail = close_detail(close.code, close.reason) if close else "no close frame"
+            if (close := error.rcvd) is not None:
+                self.close_code = close.code
+                detail = close_detail(close.code, close.reason)
+            else:
+                detail = "no close frame received"
             detail = f"{type(error).__name__}: {detail}"
             log.warning("Deck %d failed: %s", self.number, detail)
             self._end(EndReason.FAILED, detail)
