@@ -46,9 +46,9 @@ textures, such as "warm Rhodes piano", "bossa nova", or "dreamy". Weights from 0
 balance them.
 - bpm (60 to 200), scale, density (0 sparse to 1 busy), and brightness (0 dark to 1 bright): \
 set them only when the request implies them.
-- mute_drums when the request asks for no drums or no percussion.
-- vocalization only for wordless vocals such as humming or choir "aahs". The music has no \
-lyrics.
+- mute_drums: whether the music has no drums or percussion.
+- vocalization: whether the music has wordless vocals, such as humming or choir "aahs". The \
+music has no lyrics.
 
 Never name artists, songs, albums, or other works. Describe their style instead: their \
 genre, instruments, tempo, and mood.
@@ -59,6 +59,15 @@ class Interpretation(BaseModel):
     kind: Literal["new", "refine", "not_music"]
     plan: MusicPlan | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _no_plan_for_not_music(cls, data: object) -> object:
+        """Ignore any plan in a refusal, so an invalid one cannot turn it into a fallback."""
+        if isinstance(data, dict):
+            fields = cast(dict[str, object], data)
+            return {"kind": "not_music"} if fields.get("kind") == "not_music" else fields
+        return data
+
     @model_validator(mode="after")
     def _plan_unless_not_music(self) -> Self:
         if self.kind != "not_music" and self.plan is None:
@@ -66,20 +75,27 @@ class Interpretation(BaseModel):
         return self
 
 
-def _without_descriptions(schema: object) -> object:
-    """The JSON Schema without the models' docstrings, which are not written for Gemini."""
+def without_descriptions(schema: object, *, names: bool = False) -> object:
+    """The JSON Schema without the models' docstrings, which are not written for Gemini.
+
+    The keys of `properties` and `$defs` are names, not keywords, so `names` keeps them all.
+    """
     if isinstance(schema, dict):
         items = cast(dict[str, object], schema).items()
-        return {key: _without_descriptions(value) for key, value in items if key != "description"}
+        return {
+            key: without_descriptions(value, names=not names and key in ("properties", "$defs"))
+            for key, value in items
+            if names or key != "description"
+        }
     if isinstance(schema, list):
-        return [_without_descriptions(value) for value in cast(list[object], schema)]
+        return [without_descriptions(value) for value in cast(list[object], schema)]
     return schema
 
 
 CONFIG = types.GenerateContentConfig(
     system_instruction=INSTRUCTION,
     response_mime_type="application/json",
-    response_json_schema=_without_descriptions(Interpretation.model_json_schema()),
+    response_json_schema=without_descriptions(Interpretation.model_json_schema()),
     thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
 )
@@ -143,7 +159,10 @@ class Interpreter:
                 )
             result = self._read(response, current)
         except Exception as error:  # any failure falls back to the request text
-            expected = isinstance(error, TimeoutError | errors.APIError | ValidationError)
+            expected = isinstance(
+                error,
+                TimeoutError | errors.APIError | ValidationError | errors.UnknownApiResponseError,
+            )
             log.warning(
                 "Interpreter failed (%s); using the request text",
                 describe(error),
@@ -177,15 +196,31 @@ class Interpreter:
 
 
 def describe(error: Exception) -> str:
-    """Why the model call failed, without echoing request text or model output."""
+    """Why the model call failed, from fixed fields only.
+
+    Error messages are free text that can quote the request, the model's output, or the API key
+    itself, as Gemini's message for a suspended key does, so none is logged.
+    """
     match error:
         case TimeoutError():
             return f"no answer within {TIMEOUT_S:.0f} s"
-        case errors.APIError() if 400 <= error.code < 500 and error.code != 429 and error.message:
-            return f"{error.code} {error.status}: {error.message}"  # such as a bad key or model
         case errors.APIError():
-            return f"{error.code} {error.status}"
-        case ValidationError():
+            reason = _error_reason(error)
+            return f"{error.code} {error.status}" + (f" ({reason})" if reason else "")
+        case ValidationError() | errors.UnknownApiResponseError():
             return "invalid output"
         case _:
             return type(error).__name__
+
+
+def _error_reason(error: errors.APIError) -> str | None:
+    """The `reason` of the error's `google.rpc.ErrorInfo`, such as API_KEY_INVALID."""
+    details: object = getattr(error, "details", None)
+    body = cast(dict[str, object], details).get("error") if isinstance(details, dict) else None
+    items = cast(dict[str, object], body).get("details") if isinstance(body, dict) else None
+    for item in cast(list[object], items) if isinstance(items, list) else []:
+        fields = cast(dict[str, object], item) if isinstance(item, dict) else {}
+        if str(fields.get("@type", "")).endswith("ErrorInfo"):
+            reason = fields.get("reason")
+            return reason if isinstance(reason, str) else None
+    return None

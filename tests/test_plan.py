@@ -63,7 +63,6 @@ def test_config_carries_the_plan() -> None:
         {"density": 1.5},
         {"prompts": []},
         {"title": ""},
-        {"scale": "E_MINOR"},
     ],
 )
 def test_rejects_values_outside_lyria_ranges(fields: dict[str, object]) -> None:
@@ -90,3 +89,10 @@ def test_accepts_scale_names_in_any_case() -> None:
     )
 
     assert plan.scale is types.Scale.C_MAJOR_A_MINOR
+
+
+def test_rejects_scales_lyria_does_not_have() -> None:
+    with pytest.raises(ValidationError, match="unknown scale"):
+        MusicPlan.model_validate(
+            {"title": "Plan", "prompts": [{"text": "ambient"}], "scale": "E_MINOR"}
+        )
