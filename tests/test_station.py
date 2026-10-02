@@ -90,7 +90,7 @@ async def start_playing(
 ) -> None:
     """Start a program and listen through its fade-in, leaving 8 s on the live deck.
 
-    The program is requested at the clock's current time, and the clock ends 0.5 s later.
+    The program is requested at the clock's current time, which is 0.5 s later on return.
     """
     started = rig.station.play(plan, "Member", duration_seconds=duration_seconds)
     await rig.tick()

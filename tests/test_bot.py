@@ -1329,6 +1329,20 @@ async def test_play_gives_each_program_the_servers_duration(
     assert durations == [3600, 300]
 
 
+async def test_settings_leave_the_program_playing_its_end_time(bot: SobaFM) -> None:
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    station = bot.station(guild, 0.5)
+    station.play(MusicPlan.from_request("ambient"), "Member", duration_seconds=3600)
+    assert station.program is not None
+    ends_at = station.program.ends_at
+
+    await bot.configure(guild, duration_minutes=5)
+
+    assert station.program.ends_at == ends_at
+    await station.close()
+
+
 async def test_play_creates_the_station_at_the_stored_volume(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch
 ) -> None:
