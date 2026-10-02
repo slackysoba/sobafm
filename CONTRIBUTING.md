@@ -38,6 +38,12 @@ uv run pytest                       # tests
 uv run pre-commit run --all-files   # every hook, including Markdown lint and a secret scan of staged changes
 ```
 
+The evaluation set measures how well the interpreter turns requests into music plans. It calls Gemini with your `GEMINI_API_KEY`, so `uv run pytest` and CI skip it. Run it after changing the interpreter's instruction, schema, or model, and record the results on the pull request. Set `SOBAFM_GEMINI_MODEL` to evaluate another model.
+
+```sh
+uv run --env-file .env pytest -m eval -s   # about 4 minutes, plus 1 to 2 for each retry
+```
+
 ## Making a change
 
 1. **Start from an issue.** Every change is linked to one. For anything beyond a small fix, agree on the approach in the issue before writing code.

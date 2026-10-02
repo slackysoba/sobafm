@@ -7,11 +7,18 @@ from tests.doubles import FakeClock, FakeLyria
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Run every test in an empty directory, without the developer's SobaFM settings."""
+def isolated_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Run every test in an empty directory, without the developer's SobaFM settings.
+
+    The evaluation set keeps them, because it calls Gemini with the developer's key.
+    """
     monkeypatch.chdir(tmp_path)
-    for field in Settings.model_fields:
-        monkeypatch.delenv(Settings.env_name(field), raising=False)
+    # pytest leaves `request.node` unannotated.
+    if request.node.get_closest_marker("eval") is None:  # pyright: ignore[reportUnknownMemberType]
+        for field in Settings.model_fields:
+            monkeypatch.delenv(Settings.env_name(field), raising=False)
 
 
 @pytest.fixture
