@@ -2,10 +2,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from sobafm.deck import Deck, State
+from sobafm.deck import PAUSE_AT_S, Deck, State
 from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan
 from sobafm.station import (
+    CONNECT_BACKOFF_S,
+    HANDOVER_BELOW_S,
     REFUSAL_RETRY_S,
     SESSION_LIMIT_S,
     Outcome,
@@ -47,14 +49,20 @@ class Rig:
         self.voice.clear()
 
 
+def make_station(
+    lyria: FakeLyria, clock: FakeClock, pool: SessionPool
+) -> tuple[Station, list[FakePlayer]]:
+    voice = [FakePlayer()]  # emptied to simulate a lost voice connection
+    station = Station(
+        lambda: voice[0] if voice else None, lyria.connect, pool, volume=1.0, clock=clock
+    )
+    return station, voice
+
+
 @pytest.fixture
 def rig(lyria: FakeLyria, clock: FakeClock) -> Rig:
-    player = FakePlayer()
-    voice = [player]  # emptied to simulate a lost voice connection
-    station = Station(
-        lambda: voice[0] if voice else None, lyria.connect, SessionPool(4), volume=1.0, clock=clock
-    )
-    return Rig(station, lyria, clock, player, voice)
+    station, voice = make_station(lyria, clock, SessionPool(4))
+    return Rig(station, lyria, clock, voice[0], voice)
 
 
 async def start_playing(rig: Rig, plan: MusicPlan = LOFI) -> None:
@@ -97,11 +105,20 @@ async def test_fades_in_once_a_deck_has_its_preroll(rig: Rig) -> None:
     assert live_deck(rig).plan is LOFI
 
 
+async def test_the_next_deck_pauses_once_full(rig: Rig) -> None:
+    await start_playing(rig)
+
+    await rig.feed(1, PAUSE_AT_S)
+    await rig.tick()
+
+    assert rig.session(1).calls[-1] == "pause"
+
+
 async def test_hands_over_when_the_live_deck_runs_low(rig: Rig) -> None:
     await start_playing(rig)
     first = live_deck(rig)
     await rig.feed(1, 30)
-    rig.listen(4.5)
+    rig.listen(8 - HANDOVER_BELOW_S + 0.5)
 
     await rig.tick()
     rig.listen(4)
@@ -124,6 +141,36 @@ async def test_retires_sessions_before_lyrias_limit(rig: Rig) -> None:
     assert live_deck(rig).buffered_seconds > 0
 
 
+async def test_a_retired_live_deck_plays_out_its_buffer(rig: Rig) -> None:
+    await start_playing(rig)
+    first = live_deck(rig)
+    await rig.feed(0, 20)
+    await rig.feed(1, 30)
+
+    await rig.tick(SESSION_LIMIT_S)
+    await rig.tick()
+    assert first.state is State.ENDED
+    assert live_deck(rig) is first  # 28 s left to play
+
+    rig.listen(28 - HANDOVER_BELOW_S + 0.5)
+    await rig.tick()
+    rig.listen(4)
+
+    assert live_deck(rig) is not first
+    assert rig.station.mixer.underruns == 0
+
+
+async def test_keeps_an_ended_deck_the_mixer_still_plays(rig: Rig) -> None:
+    await start_playing(rig)
+    first = live_deck(rig)
+
+    rig.session(0).close(1011)
+    await rig.tick()
+    await rig.tick()
+
+    assert first in rig.station.decks
+
+
 async def test_crossfades_to_a_new_request(rig: Rig) -> None:
     await start_playing(rig)
     await rig.feed(1, 60)
@@ -142,6 +189,7 @@ async def test_crossfades_to_a_new_request(rig: Rig) -> None:
     assert replaced.result() is Outcome.PLAYING
     assert live_deck(rig).plan is SYNTHWAVE
     assert rig.session(0).closed
+    assert rig.station.mixer.underruns == 0
 
 
 async def test_keeps_playing_when_lyria_closes_the_live_session(rig: Rig) -> None:
@@ -151,7 +199,7 @@ async def test_keeps_playing_when_lyria_closes_the_live_session(rig: Rig) -> Non
 
     rig.session(0).close(1011)
     await rig.tick()
-    rig.listen(4.5)
+    rig.listen(8 - HANDOVER_BELOW_S + 0.5)
     await rig.tick()
     rig.listen(4)
 
@@ -182,6 +230,20 @@ async def test_retries_a_refused_start_once(rig: Rig) -> None:
     assert rig.station.program is None
 
 
+async def test_backs_off_between_failed_starts(rig: Rig) -> None:
+    rig.lyria.failure = OSError("unreachable")
+    rig.station.play(LOFI, "Member")
+    await rig.tick()
+    await rig.tick()
+
+    rig.lyria.failure = None
+    await rig.tick(CONNECT_BACKOFF_S[0] - 0.5)
+    assert rig.lyria.sessions == []
+
+    await rig.tick(0.5)
+    assert len(rig.lyria.sessions) == 2
+
+
 async def test_reports_failed_connections_after_backing_off(rig: Rig) -> None:
     rig.lyria.failure = OSError("unreachable")
     started = rig.station.play(LOFI, "Member")
@@ -192,15 +254,25 @@ async def test_reports_failed_connections_after_backing_off(rig: Rig) -> None:
     assert started.result() is Outcome.FAILED
 
 
-async def test_reports_busy_without_session_capacity(
-    rig: Rig, lyria: FakeLyria, clock: FakeClock
-) -> None:
-    station = Station(lambda: rig.player, lyria.connect, SessionPool(0), volume=1.0, clock=clock)
+async def test_reserves_two_sessions_for_each_program(lyria: FakeLyria, clock: FakeClock) -> None:
+    pool = SessionPool(4)
+    stations = [make_station(lyria, clock, pool)[0] for _ in range(3)]
+    first, second = (station.play(LOFI, "Member") for station in stations[:2])
 
-    started = station.play(LOFI, "Member")
-    await station.reconcile()
+    third = stations[2].play(LOFI, "Member")
+    assert third.result() is Outcome.BUSY
+    assert not first.done()
+    assert not second.done()
 
-    assert started.result() is Outcome.BUSY
+    stations[0].stop()
+    await stations[0].reconcile()  # nothing was playing, so its sessions free at once
+    assert not stations[2].play(LOFI, "Member").done()
+
+
+async def test_reports_busy_without_session_capacity(lyria: FakeLyria, clock: FakeClock) -> None:
+    station, _ = make_station(lyria, clock, SessionPool(1))
+
+    assert station.play(LOFI, "Member").result() is Outcome.BUSY
 
 
 async def test_stop_fades_out_then_stops_the_player(rig: Rig) -> None:
@@ -214,16 +286,49 @@ async def test_stop_fades_out_then_stops_the_player(rig: Rig) -> None:
 
     assert rig.station.mixer.live is None
     assert not rig.player.playing
-    assert all(deck.state is State.ENDED for deck in rig.station.decks)
+    assert all(session.closed for session in rig.lyria.sessions)
 
 
-async def test_restarts_the_player_after_discord_stops_it(rig: Rig) -> None:
+async def test_a_request_during_a_fade_out_starts_once_it_ends(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.stop()
+    await rig.tick()
+    assert rig.station.mixer.switching
+
+    started = rig.station.play(SYNTHWAVE, "Member")
+    await rig.tick()
+    await rig.feed(-1, 10)
+    rig.listen(3)
+    await rig.tick()
+    rig.listen(2)
+
+    assert started.result() is Outcome.PLAYING
+    assert live_deck(rig).plan is SYNTHWAVE
+
+
+async def test_restarts_the_player_after_its_thread_ends(rig: Rig) -> None:
     await start_playing(rig)
 
-    rig.player.playing = False
+    rig.player.end_thread()  # a slow voice reconnect: is_playing() still reports True
     await rig.tick()
 
     assert rig.player.plays == 2
+    assert rig.player.playing
+
+
+async def test_waits_for_voice_to_reconnect_before_starting_the_player(rig: Rig) -> None:
+    rig.player.connected = False
+    started = rig.station.play(LOFI, "Member")
+    await rig.tick()
+    await rig.feed(-2, 10)
+    await rig.tick()
+    assert rig.player.plays == 0
+
+    rig.player.connected = True
+    await rig.tick()
+
+    assert started.result() is Outcome.PLAYING
+    assert rig.player.plays == 1
 
 
 async def test_ends_the_program_when_the_voice_connection_is_lost(rig: Rig) -> None:
@@ -232,7 +337,7 @@ async def test_ends_the_program_when_the_voice_connection_is_lost(rig: Rig) -> N
 
     await rig.tick()
 
-    assert started.result() is Outcome.FAILED
+    assert started.result() is Outcome.DISCONNECTED
     assert rig.station.program is None
 
 

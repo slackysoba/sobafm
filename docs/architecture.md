@@ -180,7 +180,7 @@ CREATE TABLE guild (
 | `SOBAFM_DATA_DIR` | No | `./data` | Directory for the SQLite database |
 | `SOBAFM_LOG_LEVEL` | No | `INFO` | Log level |
 | `SOBAFM_DEV_GUILD_ID` | No | None | Registers commands to one server for development |
-| `SOBAFM_MAX_SESSIONS` | No | `4` | Global cap on concurrent Lyria RealTime sessions |
+| `SOBAFM_MAX_SESSIONS` | No | `4` | Global cap on concurrent Lyria RealTime sessions; each playing server reserves two, so at least 2 |
 
 **Discord invitation:** scopes `bot` and `applications.commands`; permissions View Channel, Connect, Speak, and Set Voice Channel Status.
 
@@ -197,16 +197,16 @@ CREATE TABLE guild (
 | --- | --- |
 | Gemini timeout, rate limit, server error, or invalid output | Fall back to the request text and say so in the reply |
 | Not-music request or Gemini safety block | Refuse with a short explanation; nothing reaches Lyria |
-| Lyria filters a prompt | Discard the new deck, keep the current music, and tell the requester |
+| Lyria filters a prompt | Discard the new deck, keep the current music, and tell the requester. Keeping the current music arrives with #38; until then a refused replacement ends the program |
 | Lyria refuses the connection (authentication, quota, or close code `1008`) | Reply with a specific error; the station stays idle |
-| Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills; repeated failures end the program with a notice |
+| Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills. Failed starts are retried after 2, 5, then every 15 seconds; a program that has not started yet reports the failure after the third retry |
 | Generation stalls or slows | The live deck's buffer absorbs it; below 4 seconds, the station hands over to the next deck. Remaining underruns play silence and are logged |
 | Lyria refuses a new session's start (`filtered_prompt` with no audio) | Retry once after 30 seconds, then report the prompt as filtered |
-| No session capacity left in the process | Reply that SobaFM is busy in other servers |
-| Voice reconnection | discord.py reconnects; reads pause, flow control pauses generation, and crossfades resume intact |
+| No session capacity left in the process | Each program reserves two sessions; a request beyond the reservations is told that SobaFM is busy in other servers |
+| Voice reconnection | discord.py reconnects; reads pause, flow control pauses generation, and crossfades resume intact. If the player thread gives up first, the station starts a new one once voice is back |
 | SobaFM moved, disconnected, or its channel deleted | Adopt the new channel, or end the program and forget the channel (PLAY-7). Discord reports every disconnect alike, so a voice connection that discord.py gives up reconnecting is also forgotten |
 | New gateway session (a reconnect that cannot resume) | discord.py forgets its voice clients, so the program ends. SobaFM closes the old voice connection, which takes up to 30 seconds, then rejoins the remembered channel |
-| Player thread error | `read()` returns silence; the `after` callback wakes the station, which restarts the player |
+| Player thread error | The `after` callback tells the station, which starts a new player. Errors inside `read()` return silence and are logged once per run |
 | Gateway not ready at startup | The watchdog exits with an error and the process supervisor restarts SobaFM |
 
 ## Security and privacy
