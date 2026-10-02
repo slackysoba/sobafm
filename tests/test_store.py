@@ -4,6 +4,7 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from sobafm.store import GuildSettings, Store
 
@@ -70,6 +71,27 @@ async def test_settings_survive_alongside_the_channel(store: Store) -> None:
 def store_raw_settings(store: Store, text: str) -> None:
     with closing(sqlite3.connect(store.path)) as db, db:
         db.execute("INSERT INTO guild (guild_id, settings, updated_at) VALUES (1, ?, '')", (text,))
+
+
+def test_settings_accept_the_limits_of_their_ranges() -> None:
+    GuildSettings(duration_minutes=5, volume_percent=1, cooldown_seconds=0)
+    GuildSettings(duration_minutes=240, volume_percent=100, cooldown_seconds=600)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"duration_minutes": 4},
+        {"duration_minutes": 241},
+        {"volume_percent": 0},
+        {"volume_percent": 101},
+        {"cooldown_seconds": -1},
+        {"cooldown_seconds": 601},
+    ],
+)
+def test_settings_reject_values_out_of_range(values: dict[str, int]) -> None:
+    with pytest.raises(ValidationError):
+        GuildSettings.model_validate(values)
 
 
 async def test_stored_settings_ignore_unknown_fields(store: Store) -> None:

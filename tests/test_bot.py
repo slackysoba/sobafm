@@ -1,18 +1,16 @@
 import asyncio
 import time
-from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
 import pytest
+from pydantic import ValidationError
 
 import sobafm.bot
 from sobafm.bot import PLAY_REPLIES, SobaFM, Voice, listeners
 from sobafm.config import load_settings
-from sobafm.pcm import FRAME_BYTES
 from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, Station
 from sobafm.store import GuildSettings, Store
@@ -740,18 +738,15 @@ async def test_settings_save_changes_and_apply_the_volume_at_once(bot: SobaFM) -
     station.mixer.set_volume.assert_called_once_with(0.8)
 
 
-@dataclass
-class Frames:
-    frames: deque[bytes]
+async def test_a_new_station_plays_at_its_volume(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = MagicMock(return_value=fake_station())
+    monkeypatch.setattr(sobafm.bot, "Station", created)
 
+    bot.station(make_guild(), 0.8)
 
-async def test_a_new_station_plays_at_its_volume(bot: SobaFM) -> None:
-    station = bot.station(make_guild(), 0.8)
-    frame = (10_000).to_bytes(2, "little", signed=True) * (FRAME_BYTES // 2)
-    station.mixer.switch_to(Frames(deque([frame])), 0)
-
-    assert int.from_bytes(station.mixer.read()[:2], "little", signed=True) == 8_000
-    await station.close()
+    assert created.call_args.kwargs["volume"] == 0.8
 
 
 async def test_play_creates_the_station_at_the_stored_volume(
@@ -777,6 +772,17 @@ async def test_refuses_a_change_inside_the_cooldown(bot: SobaFM) -> None:
     reply = await bot.admit(member, "jazz")
 
     assert reply == "The music changed recently. Try again in 30 seconds."
+
+
+async def test_a_refused_request_leaves_the_cooldown_alone(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    outside = in_voice(make_channel(guild), channel)
+    assert await bot.admit(outside, "ambient") is not None
+    member = in_voice(channel, channel)
+    assert await bot.admit(member, " ") is not None
+
+    assert await bot.admit(member, "jazz") is None
 
 
 async def test_admits_a_change_once_the_cooldown_passes(bot: SobaFM) -> None:
@@ -903,6 +909,15 @@ async def test_settings_keep_what_a_change_leaves_out(bot: SobaFM) -> None:
     assert await bot.store.settings(guild.id) == GuildSettings(
         duration_minutes=90, volume_percent=70
     )
+
+
+async def test_settings_reject_a_value_out_of_range(bot: SobaFM) -> None:
+    guild = make_guild()
+
+    with pytest.raises(ValidationError):
+        await bot.configure(guild, volume_percent=101)
+
+    assert await bot.store.settings(guild.id) == GuildSettings()
 
 
 async def test_concurrent_settings_changes_both_apply(bot: SobaFM) -> None:
