@@ -347,20 +347,41 @@ async def test_join_waits_for_discord_py_to_restart_the_connection(bot: SobaFM) 
     guild.voice_client.disconnect.assert_not_awaited()
 
 
+async def test_join_reports_a_restarted_connection_that_gives_up(bot: SobaFM) -> None:
+    channel = make_channel(make_guild())
+    connect = channel.connect.side_effect
+    clients: list[Any] = []
+
+    async def restart(*, self_deaf: bool, cls: type) -> Any:
+        voice = await connect(self_deaf=self_deaf, cls=cls)
+        voice.is_connected.return_value = False
+        clients.append(voice)
+
+        async def give_up() -> None:  # discord.py leaves and unregisters the client
+            channel.guild.voice_client = None
+
+        voice.finish_connecting.side_effect = give_up
+        raise asyncio.CancelledError
+
+    channel.connect.side_effect = restart
+
+    reply = await bot.join(make_member(channel))
+
+    assert reply == "SobaFM couldn't connect to <#10>. Try again shortly."
+    clients[0].disconnect.assert_not_awaited()  # discord.py has left already
+
+
 async def test_finish_connecting_waits_for_a_restarted_connector(bot: SobaFM) -> None:
     voice = make_voice(bot, make_guild(), current=True)
     connection = SimpleNamespace(_connector=None)
     cast(Any, voice)._connection = connection
-    restart, release = asyncio.Event(), asyncio.Event()
-
-    async def first() -> None:  # ends when discord.py replaces it with a new connector
-        await restart.wait()
-        connection._connector = asyncio.create_task(release.wait())
-
-    connection._connector = asyncio.create_task(first())
+    release = asyncio.Event()
+    connection._connector = asyncio.create_task(asyncio.Event().wait())
     waiting = asyncio.create_task(voice.finish_connecting())
     await settle()
-    restart.set()
+
+    connection._connector.cancel()  # discord.py cancels its connector, then starts a new one
+    connection._connector = asyncio.create_task(release.wait())
     await settle()
     assert not waiting.done()  # the new connector still runs
 

@@ -65,8 +65,11 @@ class Voice(discord.VoiceClient):
             self._connection._disconnected.clear()  # pyright: ignore[reportPrivateUsage]
 
     async def finish_connecting(self) -> None:
-        """Wait until discord.py's connector, which it restarts when SobaFM is moved or the voice
-        server changes during the handshake, connects or gives up."""
+        """Wait until discord.py's connector connects or gives up.
+
+        discord.py cancels and restarts its connector when SobaFM is moved, or the voice server
+        changes, during the handshake.
+        """
         while True:
             connector = cast(
                 asyncio.Task[None] | None,
@@ -274,7 +277,7 @@ class SobaFM(discord.Client):
                 log.warning("Could not rejoin %s in %s", channel, guild, exc_info=True)
 
     async def join(self, member: discord.Member) -> str:
-        """Connect to, or move to, the member's voice channel, and remember it."""
+        """Connect to, or move to, the member's voice channel, and remember where SobaFM ends up."""
         channel = member.voice.channel if member.voice else None
         if channel is None:
             return "Join a voice channel first, then use /join."
@@ -288,15 +291,15 @@ class SobaFM(discord.Client):
                 return f"SobaFM is already in {channel.mention}."
             try:
                 if voice is None:  # a move during the handshake can end elsewhere
-                    joined = (await self.connect_to(channel)).channel
+                    destination = (await self.connect_to(channel)).channel
                 else:
                     await move(voice, channel)
-                    joined = channel
+                    destination = channel
             except TimeoutError, discord.ClientException:
                 log.warning("Could not connect to %s in %s", channel, channel.guild, exc_info=True)
                 return f"SobaFM couldn't connect to {channel.mention}. Try again shortly."
-            await self.store.remember_channel(channel.guild.id, joined.id)
-        return f"{'Joined' if voice is None else 'Moved to'} {joined.mention}."
+            await self.store.remember_channel(channel.guild.id, destination.id)
+        return f"{'Joined' if voice is None else 'Moved to'} {destination.mention}."
 
     async def leave(self, guild: discord.Guild) -> str:
         """End any program, disconnect from voice, and forget the server's channel."""
@@ -331,9 +334,11 @@ class SobaFM(discord.Client):
         voice = current.guild.voice_client
         if isinstance(voice, Voice):
             await voice.finish_connecting()  # after a restart, the new connector is still running
+            voice = current.guild.voice_client  # a restarted connector that gave up unregistered it
         if not isinstance(voice, Voice) or not voice.is_connected():
             if voice is not None:
-                # If discord.py gave up, it has left already and this waits out its timeout.
+                # After five rejected handshakes, discord.py has left already, so this waits out
+                # its timeout.
                 await voice.disconnect(force=True)
             raise TimeoutError
         voice.joined = True
