@@ -85,3 +85,12 @@ async def test_invalid_stored_settings_fall_back_to_the_defaults(
 
     assert await store.settings(1) == GuildSettings()
     assert "invalid" in caplog.text
+
+
+async def test_an_invalid_stored_setting_keeps_the_valid_ones(
+    store: Store, caplog: pytest.LogCaptureFixture
+) -> None:
+    store_raw_settings(store, '{"volume_percent": 500, "duration_minutes": 90}')
+
+    assert await store.settings(1) == GuildSettings(duration_minutes=90)
+    assert "invalid volume_percent" in caplog.text

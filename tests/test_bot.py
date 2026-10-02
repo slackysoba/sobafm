@@ -16,7 +16,7 @@ from sobafm.pcm import FRAME_BYTES
 from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, Station
 from sobafm.store import GuildSettings, Store
-from tests.doubles import FakeLyria
+from tests.doubles import FakeClock, FakeLyria
 
 GUILD_ID = 1
 CHANNEL_ID = 10
@@ -126,7 +126,7 @@ def test_uses_only_the_guilds_and_voice_states_intents(bot: SobaFM) -> None:
     assert bot.intents == discord.Intents(guilds=True, voice_states=True)
 
 
-@pytest.mark.parametrize("name", ["join", "leave"])
+@pytest.mark.parametrize("name", ["join", "leave", "settings"])
 def test_commands_are_for_server_managers_in_servers_only(bot: SobaFM, name: str) -> None:
     command = bot.tree.get_command(name)
     assert command is not None
@@ -688,7 +688,7 @@ async def test_stations_count_the_listeners_in_their_server(
     monkeypatch.setattr(sobafm.bot, "listeners", counted)
     guild = make_guild()
     guild.voice_client = make_voice_client(make_channel(guild))
-    station = bot.station(guild, GuildSettings())
+    station = bot.station(guild, 0.5)
     station.play(MusicPlan.from_request("ambient"), "Member")
 
     await station.reconcile()
@@ -697,14 +697,12 @@ async def test_stations_count_the_listeners_in_their_server(
     await station.close()
 
 
-def test_settings_command_is_for_server_managers_with_bounded_options(bot: SobaFM) -> None:
+def test_settings_command_options_are_bounded(bot: SobaFM) -> None:
     command = bot.tree.get_command("settings")
     assert command is not None
 
     payload = command.to_dict(bot.tree)
 
-    assert payload["default_member_permissions"] == discord.Permissions(manage_guild=True).value
-    assert payload["contexts"] == [0]
     bounds = {
         o["name"]: (o["min_value"], o["max_value"], o["required"]) for o in payload["options"]
     }
@@ -747,13 +745,27 @@ class Frames:
     frames: deque[bytes]
 
 
-async def test_a_new_station_plays_at_the_stored_volume(bot: SobaFM) -> None:
-    station = bot.station(make_guild(), GuildSettings(volume_percent=80))
+async def test_a_new_station_plays_at_its_volume(bot: SobaFM) -> None:
+    station = bot.station(make_guild(), 0.8)
     frame = (10_000).to_bytes(2, "little", signed=True) * (FRAME_BYTES // 2)
     station.mixer.switch_to(Frames(deque([frame])), 0)
 
     assert int.from_bytes(station.mixer.read()[:2], "little", signed=True) == 8_000
     await station.close()
+
+
+async def test_play_creates_the_station_at_the_stored_volume(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    await bot.store.save_settings(guild.id, GuildSettings(volume_percent=80))
+    station = MagicMock(return_value=fake_station())
+    monkeypatch.setattr(bot, "station", station)
+
+    await bot.play(in_voice(channel, channel), "ambient")
+
+    station.assert_called_once_with(guild, 0.8)
 
 
 async def test_refuses_a_change_inside_the_cooldown(bot: SobaFM) -> None:
@@ -764,7 +776,7 @@ async def test_refuses_a_change_inside_the_cooldown(bot: SobaFM) -> None:
 
     reply = await bot.admit(member, "jazz")
 
-    assert reply == "The music changed moments ago. Try again in 30 seconds."
+    assert reply == "The music changed recently. Try again in 30 seconds."
 
 
 async def test_admits_a_change_once_the_cooldown_passes(bot: SobaFM) -> None:
@@ -802,3 +814,110 @@ async def test_settings_command_replies_privately(
     interaction.response.send_message.assert_awaited_once_with(
         "SobaFM's settings for this server: ...", ephemeral=True
     )
+
+
+async def test_admits_one_of_several_concurrent_requests(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+
+    replies = await asyncio.gather(*(bot.admit(member, "jazz") for _ in range(5)))
+
+    assert replies.count(None) == 1
+
+
+async def test_the_cooldown_counts_down_to_the_second(bot: SobaFM) -> None:
+    clock = FakeClock()
+    bot.clock = clock
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    assert await bot.admit(member, "ambient") is None
+
+    clock.now = 29.5
+    assert await bot.admit(member, "jazz") == "The music changed recently. Try again in 1 second."
+    clock.now = 30.0
+    assert await bot.admit(member, "jazz") is None
+
+
+@pytest.mark.parametrize(
+    ("outcome", "frees"),
+    [
+        (Outcome.PLAYING, False),
+        (Outcome.BUSY, True),
+        (Outcome.REFUSED, True),
+        (Outcome.FAILED, True),
+    ],
+)
+async def test_a_request_that_changes_nothing_frees_the_cooldown(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome, *, frees: bool
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(outcome)))
+    assert await bot.admit(member, "ambient") is None
+
+    await bot.play(member, "ambient")
+
+    assert (await bot.admit(member, "jazz") is None) is frees
+
+
+async def test_a_slow_start_keeps_the_cooldown(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
+    station = fake(Station, close=AsyncMock())
+    station.play.return_value = asyncio.get_running_loop().create_future()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    assert await bot.admit(member, "ambient") is None
+
+    await bot.play(member, "ambient")
+
+    assert await bot.admit(member, "jazz") is not None
+
+
+async def test_an_expired_interaction_frees_the_cooldown(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    interaction = make_interaction(member)
+    interaction.response.defer.side_effect = discord.NotFound(MagicMock(status=404), "expired")
+    command: Any = bot.tree.get_command("play")
+
+    with pytest.raises(discord.NotFound):
+        await command.callback(interaction, request="ambient")
+
+    assert await bot.admit(member, "jazz") is None
+
+
+async def test_settings_keep_what_a_change_leaves_out(bot: SobaFM) -> None:
+    guild = make_guild()
+    await bot.store.save_settings(guild.id, GuildSettings(duration_minutes=90))
+
+    await bot.configure(guild, volume_percent=70)
+
+    assert await bot.store.settings(guild.id) == GuildSettings(
+        duration_minutes=90, volume_percent=70
+    )
+
+
+async def test_concurrent_settings_changes_both_apply(bot: SobaFM) -> None:
+    guild = make_guild()
+
+    await asyncio.gather(
+        bot.configure(guild, volume_percent=80), bot.configure(guild, duration_minutes=90)
+    )
+
+    assert await bot.store.settings(guild.id) == GuildSettings(
+        duration_minutes=90, volume_percent=80
+    )
+
+
+async def test_settings_name_a_single_second(bot: SobaFM) -> None:
+    reply = await bot.configure(make_guild(), cooldown_seconds=1)
+
+    assert reply.endswith("- Change cooldown: 1 second")

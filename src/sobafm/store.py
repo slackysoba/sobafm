@@ -1,12 +1,13 @@
 """Per-server state in SQLite: one row per guild (ADR-0003)."""
 
 import asyncio
+import json
 import logging
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -75,10 +76,27 @@ class Store:
         if not rows:
             return GuildSettings()
         try:
-            return GuildSettings.model_validate_json(rows[0][0])
-        except ValidationError:
-            log.warning("Stored settings for server %d are invalid; using the defaults", guild_id)
+            stored: object = json.loads(rows[0][0])
+        except json.JSONDecodeError:
+            stored = None
+        if not isinstance(stored, dict):
+            log.warning(
+                "Stored settings for server %d are unreadable; using the defaults", guild_id
+            )
             return GuildSettings()
+        fields = cast(dict[str, object], stored)
+        try:
+            return GuildSettings.model_validate(fields)
+        except ValidationError as error:
+            invalid = {str(problem["loc"][0]) for problem in error.errors() if problem["loc"]}
+            log.warning(
+                "Stored settings for server %d have invalid %s; using the defaults for them",
+                guild_id,
+                ", ".join(sorted(invalid)),
+            )
+            return GuildSettings.model_validate(
+                {name: value for name, value in fields.items() if name not in invalid}
+            )
 
     async def save_settings(self, guild_id: int, settings: GuildSettings) -> None:
         await self._execute(
