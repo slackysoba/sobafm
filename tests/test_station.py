@@ -23,6 +23,7 @@ from sobafm.station import (
 )
 from tests.doubles import FakeClock, FakeLyria, FakePlayer, FakeSession, settle
 
+HOUR_S = 3600.0
 LOFI = MusicPlan.from_request("rainy lo-fi")
 SYNTHWAVE = MusicPlan.from_request("synthwave")
 
@@ -86,7 +87,7 @@ def rig(lyria: FakeLyria, clock: FakeClock) -> Rig:
 
 async def start_playing(rig: Rig, plan: MusicPlan = LOFI) -> None:
     """Start a program and listen through its fade-in, leaving 8 s on the live deck."""
-    started = rig.station.play(plan, "Member")
+    started = rig.station.play(plan, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.feed(-2, 10)
     await rig.tick()
@@ -101,7 +102,7 @@ def live_deck(rig: Rig) -> Deck:
 
 
 async def test_opens_the_live_and_next_decks(rig: Rig) -> None:
-    rig.station.play(LOFI, "Member")
+    rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     await rig.tick()
 
     assert len(rig.lyria.sessions) == 2
@@ -109,7 +110,7 @@ async def test_opens_the_live_and_next_decks(rig: Rig) -> None:
 
 
 async def test_fades_in_once_a_deck_has_its_preroll(rig: Rig) -> None:
-    started = rig.station.play(LOFI, "Member")
+    started = rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.feed(0, 5)
     await rig.tick()
@@ -194,7 +195,7 @@ async def test_crossfades_to_a_new_request(rig: Rig) -> None:
     await start_playing(rig)
     await rig.feed(1, 60)
 
-    replaced = rig.station.play(SYNTHWAVE, "Another member")
+    replaced = rig.station.play(SYNTHWAVE, "Another member", duration_s=HOUR_S)
     await rig.tick()
     assert rig.session(1).closed
     assert not rig.session(0).closed  # the live deck plays until the new one is ready
@@ -228,7 +229,7 @@ async def test_keeps_playing_when_lyria_closes_the_live_session(rig: Rig) -> Non
 
 
 async def test_retries_a_refused_start_once(rig: Rig) -> None:
-    started = rig.station.play(LOFI, "Member")
+    started = rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     await rig.tick()
     rig.session(0).refuse()
     rig.session(1).refuse()
@@ -251,7 +252,7 @@ async def test_retries_a_refused_start_once(rig: Rig) -> None:
 
 async def test_backs_off_between_failed_starts(rig: Rig) -> None:
     rig.lyria.failure = OSError("unreachable")
-    rig.station.play(LOFI, "Member")
+    rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.tick()
 
@@ -265,7 +266,7 @@ async def test_backs_off_between_failed_starts(rig: Rig) -> None:
 
 async def test_reports_failed_connections_after_backing_off(rig: Rig) -> None:
     rig.lyria.failure = OSError("unreachable")
-    started = rig.station.play(LOFI, "Member")
+    started = rig.station.play(LOFI, "Member", duration_s=HOUR_S)
 
     for _ in range(8):
         await rig.tick(16)
@@ -276,16 +277,16 @@ async def test_reports_failed_connections_after_backing_off(rig: Rig) -> None:
 async def test_reserves_two_sessions_for_each_program(lyria: FakeLyria, clock: FakeClock) -> None:
     pool = SessionPool(4)
     stations = [make_station(lyria, clock, pool)[0] for _ in range(3)]
-    first, second = (station.play(LOFI, "Member") for station in stations[:2])
+    first, second = (station.play(LOFI, "Member", duration_s=HOUR_S) for station in stations[:2])
 
-    third = stations[2].play(LOFI, "Member")
+    third = stations[2].play(LOFI, "Member", duration_s=HOUR_S)
     assert third.result() is Outcome.BUSY
     assert not first.done()
     assert not second.done()
 
     stations[0].stop()
     await stations[0].reconcile()  # nothing was playing, so its sessions free at once
-    assert not stations[2].play(LOFI, "Member").done()
+    assert not stations[2].play(LOFI, "Member", duration_s=HOUR_S).done()
 
 
 async def test_holds_its_reservation_until_its_sessions_end(
@@ -294,21 +295,23 @@ async def test_holds_its_reservation_until_its_sessions_end(
     pool = SessionPool(2)
     first, _, _ = make_station(lyria, clock, pool)
     second, _, _ = make_station(lyria, clock, pool)
-    first.play(LOFI, "Member")
+    first.play(LOFI, "Member", duration_s=HOUR_S)
     await first.reconcile()
 
     first.stop()
     await first.reconcile()
-    assert second.play(LOFI, "Member").result() is Outcome.BUSY  # sessions still open
+    assert (
+        second.play(LOFI, "Member", duration_s=HOUR_S).result() is Outcome.BUSY
+    )  # sessions still open
 
     await first.close()
-    assert not second.play(LOFI, "Member").done()
+    assert not second.play(LOFI, "Member", duration_s=HOUR_S).done()
 
 
 async def test_reports_busy_without_session_capacity(lyria: FakeLyria, clock: FakeClock) -> None:
     station, _, _ = make_station(lyria, clock, SessionPool(1))
 
-    assert station.play(LOFI, "Member").result() is Outcome.BUSY
+    assert station.play(LOFI, "Member", duration_s=HOUR_S).result() is Outcome.BUSY
 
 
 async def test_stop_fades_out_then_stops_the_player(rig: Rig) -> None:
@@ -326,7 +329,7 @@ async def test_stop_fades_out_then_stops_the_player(rig: Rig) -> None:
 
 
 async def test_a_stop_during_the_fade_in_waits_for_it_before_fading_out(rig: Rig) -> None:
-    started = rig.station.play(LOFI, "Member")
+    started = rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.feed(-2, 10)
     await rig.tick()
@@ -352,7 +355,7 @@ async def test_a_late_callback_from_a_stopped_player_is_ignored(rig: Rig) -> Non
     await rig.tick()  # stops the player, whose thread has yet to end
     assert not rig.player.playing
 
-    rig.station.play(SYNTHWAVE, "Member")
+    rig.station.play(SYNTHWAVE, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.tick()
     await rig.feed(-1, 10)
@@ -370,7 +373,7 @@ async def test_a_request_during_a_fade_out_starts_once_it_ends(rig: Rig) -> None
     await rig.tick()
     assert rig.station.mixer.switching
 
-    started = rig.station.play(SYNTHWAVE, "Member")
+    started = rig.station.play(SYNTHWAVE, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.feed(-1, 10)
     rig.listen(3)
@@ -406,7 +409,7 @@ async def test_ends_the_program_when_the_player_cannot_start_at_all(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
     rig.player.failure = discord.DiscordException("the encoder failed")
-    started = rig.station.play(LOFI, "Member")
+    started = rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.feed(-2, 10)
 
@@ -420,7 +423,7 @@ async def test_ends_the_program_when_the_player_cannot_start_at_all(
 
 async def test_waits_for_voice_to_reconnect_before_starting_the_player(rig: Rig) -> None:
     rig.player.connected = False
-    started = rig.station.play(LOFI, "Member")
+    started = rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.feed(-2, 10)
     await rig.tick()
@@ -438,7 +441,7 @@ async def test_hands_over_to_a_new_request_only_once_the_player_runs(rig: Rig) -
     await start_playing(rig)
     rig.player.connected = False
     rig.player.end_thread()  # the thread gave up on a voice outage
-    started = rig.station.play(SYNTHWAVE, "Member")
+    started = rig.station.play(SYNTHWAVE, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.tick()
     await rig.feed(-1, 10)
@@ -454,7 +457,7 @@ async def test_hands_over_to_a_new_request_only_once_the_player_runs(rig: Rig) -
 async def test_hands_over_only_while_voice_is_connected(rig: Rig) -> None:
     await start_playing(rig)
     rig.player.connected = False  # the player thread waits for voice to reconnect
-    started = rig.station.play(SYNTHWAVE, "Member")
+    started = rig.station.play(SYNTHWAVE, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.tick()
     await rig.feed(-1, 10)
@@ -469,7 +472,7 @@ async def test_hands_over_only_while_voice_is_connected(rig: Rig) -> None:
 
 async def test_hands_over_only_once_a_player_runs_again(rig: Rig) -> None:
     await start_playing(rig)
-    started = rig.station.play(SYNTHWAVE, "Member")
+    started = rig.station.play(SYNTHWAVE, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.tick()
     await rig.feed(-1, 10)
@@ -486,7 +489,7 @@ async def test_fades_in_only_while_voice_is_connected(rig: Rig) -> None:
     await start_playing(rig)
     rig.station.stop()
     await rig.tick()
-    started = rig.station.play(SYNTHWAVE, "Member")
+    started = rig.station.play(SYNTHWAVE, "Member", duration_s=HOUR_S)
     await rig.tick()
     await rig.feed(-1, 10)
     rig.listen(FADE_OUT_S)
@@ -547,7 +550,7 @@ async def test_stops_at_once_when_no_player_can_run(rig: Rig) -> None:
 
 
 async def test_ends_the_program_when_the_voice_connection_is_lost(rig: Rig) -> None:
-    started = rig.station.play(LOFI, "Member")
+    started = rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     rig.disconnect()
 
     await rig.tick()
@@ -557,7 +560,7 @@ async def test_ends_the_program_when_the_voice_connection_is_lost(rig: Rig) -> N
 
 
 async def test_close_settles_a_pending_request_with_its_outcome(rig: Rig) -> None:
-    started = rig.station.play(LOFI, "Member")
+    started = rig.station.play(LOFI, "Member", duration_s=HOUR_S)
     await rig.tick()
 
     await rig.station.close(Outcome.DISCONNECTED)
@@ -573,6 +576,31 @@ async def test_close_retires_everything(rig: Rig) -> None:
     assert all(session.closed for session in rig.lyria.sessions)
     assert rig.station.decks == []
     assert not rig.player.playing
+
+
+async def test_ends_the_program_when_its_duration_elapses(rig: Rig) -> None:
+    rig.station.play(LOFI, "Member", duration_s=300)
+    await rig.tick()
+    await rig.feed(-2, 10)
+    await rig.tick()
+    await rig.tick(299)
+    assert rig.station.program is not None
+
+    await rig.tick(1)
+    assert rig.station.program is None
+    assert rig.station.mixer.switching  # it fades out rather than cutting
+
+
+async def test_a_new_request_restarts_the_duration(rig: Rig) -> None:
+    rig.station.play(LOFI, "Member", duration_s=300)
+    await rig.tick(200)
+    rig.station.play(SYNTHWAVE, "Member", duration_s=300)
+    await rig.tick()
+    await rig.tick(299)
+    assert rig.station.program is not None
+
+    await rig.tick(1)
+    assert rig.station.program is None
 
 
 async def test_ends_the_program_after_the_channel_stays_empty(rig: Rig) -> None:
@@ -615,7 +643,7 @@ async def test_keeps_playing_when_a_listener_returns(rig: Rig) -> None:
 
 async def test_a_request_pending_when_the_grace_period_ends_is_stopped(rig: Rig) -> None:
     rig.set_listeners(0)
-    started = rig.station.play(LOFI, "Deafened member")
+    started = rig.station.play(LOFI, "Deafened member", duration_s=HOUR_S)
     await rig.tick()
 
     await rig.tick(EMPTY_GRACE_S)
@@ -625,7 +653,7 @@ async def test_a_request_pending_when_the_grace_period_ends_is_stopped(rig: Rig)
 
 async def test_a_lost_connection_outranks_an_empty_channel(rig: Rig) -> None:
     rig.set_listeners(0)
-    started = rig.station.play(LOFI, "Deafened member")
+    started = rig.station.play(LOFI, "Deafened member", duration_s=HOUR_S)
     await rig.tick()
     await rig.tick(EMPTY_GRACE_S - 1)
 
@@ -641,7 +669,7 @@ async def test_a_request_during_the_grace_period_restarts_it(rig: Rig) -> None:
     await rig.tick()
     await rig.tick(50)
 
-    rig.station.play(SYNTHWAVE, "Deafened member")
+    rig.station.play(SYNTHWAVE, "Deafened member", duration_s=HOUR_S)
     await rig.tick()
     await rig.tick(EMPTY_GRACE_S - 1)
     assert rig.station.program is not None
@@ -657,7 +685,7 @@ async def test_a_new_request_restarts_the_grace_period(rig: Rig) -> None:
     await rig.tick(EMPTY_GRACE_S)
     assert rig.station.program is None
 
-    rig.station.play(SYNTHWAVE, "Deafened member")
+    rig.station.play(SYNTHWAVE, "Deafened member", duration_s=HOUR_S)
     await rig.tick()
     await rig.tick(EMPTY_GRACE_S - 1)
     assert rig.station.program is not None
