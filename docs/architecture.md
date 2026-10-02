@@ -127,7 +127,7 @@ The interpreter is SobaFM's only Gemini stage. It makes one call for each accept
 - **Input:** the request text and the current plan, sent as data in the user turn. The system instruction distills the [Lyria prompt guide](https://ai.google.dev/gemini-api/docs/lyria-prompt-guide), asks for instrumental descriptors in English, and has names of artists and works translated into descriptive terms.
 - **Output:** JSON constrained by the schema below through [structured output](https://ai.google.dev/gemini-api/docs/structured-output), then validated with Pydantic.
 - **Policy:** `not_music` and safety-blocked requests are refused. A timeout (10 seconds), rate limit, server error, or invalid output falls back to the request text, truncated to 120 characters, as a single prompt. For `refine`, unset tempo, key, density, and brightness values are copied from the current plan.
-- **Model:** `gemini-3.5-flash-lite` by default, set with `SOBAFM_GEMINI_MODEL`. Sampling parameters are not sent.
+- **Model:** `gemini-3.5-flash-lite` by default, set with `SOBAFM_GEMINI_MODEL`. The call uses the minimal thinking level and no tools; sampling parameters are not sent.
 
 ```python
 class Prompt(BaseModel):
