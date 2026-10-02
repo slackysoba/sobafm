@@ -1250,7 +1250,7 @@ async def test_stations_count_the_listeners_in_their_server(
     guild = make_guild()
     guild.voice_client = make_voice_client(make_channel(guild))
     station = bot.station(guild, 0.5)
-    station.play(MusicPlan.from_request("ambient"), "Member", duration_s=3600)
+    station.play(MusicPlan.from_request("ambient"), "Member", duration_seconds=3600)
 
     await station.reconcile()
 
@@ -1312,18 +1312,21 @@ async def test_a_new_station_plays_at_its_volume(
     assert created.call_args.kwargs["volume"] == 0.8
 
 
-async def test_play_gives_the_program_the_servers_duration(
+async def test_play_gives_each_program_the_servers_duration(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     guild = make_guild()
     channel = make_channel(guild)
     station = fake_station()
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
-    await bot.store.save_settings(guild.id, GuildSettings(duration_minutes=5))
+    member = in_voice(channel, channel)
+    await bot.play(member, "ambient", None)
 
-    await bot.play(in_voice(channel, channel), "ambient", None)
+    await bot.configure(guild, duration_minutes=5)  # applies from the next request
+    await bot.play(member, "jazz", None)
 
-    assert station.play.call_args.kwargs["duration_s"] == 300
+    durations = [call.kwargs["duration_seconds"] for call in station.play.call_args_list]
+    assert durations == [3600, 300]
 
 
 async def test_play_creates_the_station_at_the_stored_volume(

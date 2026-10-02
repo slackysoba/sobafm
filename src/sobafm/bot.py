@@ -221,7 +221,7 @@ class SobaFM(discord.Client):
             if member.guild.voice_client is None:  # left before this request was tracked
                 return PLAY_REPLIES[Outcome.DISCONNECTED]
             started = self.station(member.guild, settings.volume).play(
-                plan, member.mention, duration_s=settings.duration_minutes * 60
+                plan, member.mention, duration_seconds=settings.duration_seconds
             )
             self.supersede_older(member.guild, interpreting)
             try:

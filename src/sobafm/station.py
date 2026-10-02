@@ -122,13 +122,13 @@ class Station:
         self._task: asyncio.Task[None] | None = None
 
     def play(
-        self, plan: MusicPlan, requester: str, *, duration_s: float
+        self, plan: MusicPlan, requester: str, *, duration_seconds: float
     ) -> asyncio.Future[Outcome]:
-        """Start or replace the program, which ends `duration_s` from now.
+        """Start or replace the program, which ends `duration_seconds` from now.
 
         The result resolves once it plays or fails.
         """
-        program = Program(plan, requester, ends_at=self._clock() + duration_s)
+        program = Program(plan, requester, ends_at=self._clock() + duration_seconds)
         if not self._pool.reserve(self):
             log.info("No Lyria RealTime session capacity left")
             program.settle(Outcome.BUSY)
