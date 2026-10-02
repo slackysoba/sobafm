@@ -13,7 +13,7 @@ from typing import Protocol
 from google import genai
 from google.genai import errors, types
 
-from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, MIME_TYPE, FrameSplitter
+from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, is_this_format
 from sobafm.plan import MusicPlan
 
 log = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ PAUSE_AT_S = 60.0  # generation pauses at this much buffered audio...
 RESUME_BELOW_S = 45.0  # ...and resumes below this
 RATE_WINDOW_S = 10.0  # generating time before the rate is meaningful
 CONNECT_TIMEOUT_S = 15.0  # connecting and starting playback
+REGULATE_TIMEOUT_S = 0.5  # a pause or resume, which a closing session can stall
 
 
 class MusicSession(Protocol):
@@ -86,6 +87,7 @@ class Deck:
         self.state = State.CONNECTING
         self.end_reason: EndReason | None = None
         self.detail: str | None = None
+        self.close_code: int | None = None  # how a closed session ended, such as 1008 on refusal
         self.paused = False
         self._connect = connect
         self._clock = clock
@@ -130,14 +132,21 @@ class Deck:
         if self._task is None:
             log.debug("Deck %d plays %r", self.number, self.plan.title)
             self._task = asyncio.create_task(self._run(), name=f"deck {self.number}")
+            self._task.add_done_callback(self._cancelled)
 
     def retire(self) -> None:
-        """End the session; frames already buffered stay playable."""
+        """End the session; frames already buffered stay playable.
+
+        A deck still connecting stops at once, rather than finishing a setup that can stall.
+        """
         self._retiring.set()
+        if self.state is State.CONNECTING and self._task is not None:
+            self._task.cancel()
 
     async def wait_ended(self) -> None:
+        """Wait for the session to end, however it ends."""
         if self._task is not None:
-            await self._task
+            await asyncio.wait({self._task})
 
     async def regulate(self) -> None:
         """Pause generation when the buffer is full and resume it as the buffer drains."""
@@ -151,7 +160,9 @@ class Deck:
         else:
             return
         try:
-            await (session.pause() if pause else session.play())
+            # Bounded, so a socket whose close hangs cannot stall the station's ticks.
+            async with asyncio.timeout(REGULATE_TIMEOUT_S):
+                await (session.pause() if pause else session.play())
         except Exception:  # noqa: BLE001 - the session is ending, and the receive task records why
             log.debug("Deck %d could not %s", self.number, "pause" if pause else "resume")
             return
@@ -175,13 +186,17 @@ class Deck:
         except errors.APIError as error:
             # A WebSocket close carries its reason in `details`, which the SDK leaves untyped.
             cause: object = error.message or getattr(error, "details", None) or "no reason"
+            self.close_code = error.code
             self._end(EndReason.CLOSED, f"code {error.code}: {cause}")
-        except asyncio.CancelledError:
-            self._end(EndReason.RETIRED)
-            raise
         except Exception as error:  # a deck failure must never stop the station
             log.warning("Deck %d failed", self.number, exc_info=True)
-            self._end(EndReason.FAILED, f"{type(error).__name__}: {error}"[:200])
+            detail = type(error).__name__ + (f": {error}" if str(error) else "")
+            self._end(EndReason.FAILED, detail[:200])
+
+    def _cancelled(self, task: asyncio.Task[None]) -> None:
+        """Record a deck cancelled while connecting, or before it started, as retired."""
+        if task.cancelled():
+            self._end(EndReason.RETIRED)
 
     async def _generate(self, session: MusicSession) -> EndReason:
         """Receive audio until Lyria ends or refuses the session, or the deck is retired."""
@@ -206,7 +221,7 @@ class Deck:
                 return EndReason.FILTERED
             content = message.server_content
             for chunk in (content.audio_chunks or []) if content else []:
-                if chunk.mime_type not in (None, MIME_TYPE):
+                if chunk.mime_type is not None and not is_this_format(chunk.mime_type):
                     raise ValueError(f"unexpected audio format {chunk.mime_type}")
                 data = chunk.data or b""
                 self._audio_bytes += len(data)

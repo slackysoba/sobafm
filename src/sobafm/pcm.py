@@ -10,6 +10,17 @@ SILENCE = bytes(FRAME_BYTES)
 MIME_TYPE = "audio/l16;rate=48000;channels=2"  # how Lyria RealTime labels this format
 
 
+def is_this_format(mime_type: str) -> bool:
+    """Whether `mime_type` labels this format, in any case and with its parameters in any order."""
+    kind, *parameters = (part.strip().lower() for part in mime_type.split(";"))
+    values: dict[str, str] = {}
+    for parameter in parameters:
+        name, _, value = parameter.partition("=")
+        values[name.strip()] = value.strip()
+    rate, channels = values.get("rate"), values.get("channels")
+    return kind == "audio/l16" and rate == str(SAMPLE_RATE) and channels == str(CHANNELS)
+
+
 class FrameSplitter:
     """Splits audio chunks of any length into whole frames, carrying any remainder over."""
 
