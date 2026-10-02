@@ -24,6 +24,7 @@ def test_reads_secrets_and_defaults_from_environment(monkeypatch: pytest.MonkeyP
     assert settings.discord_token.get_secret_value() == TOKEN
     assert settings.gemini_api_key.get_secret_value() == KEY
     assert settings.log_level == "INFO"
+    assert settings.gemini_model == "gemini-3.5-flash-lite"
 
 
 def test_reads_prefixed_options_case_insensitively(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -111,6 +112,7 @@ def test_rejects_a_session_cap_that_is_not_whole_programs(
     [
         ("discord_token", "DISCORD_TOKEN"),
         ("gemini_api_key", "GEMINI_API_KEY"),
+        ("gemini_model", "SOBAFM_GEMINI_MODEL"),
         ("log_level", "SOBAFM_LOG_LEVEL"),
         ("data_dir", "SOBAFM_DATA_DIR"),
         ("dev_guild_id", "SOBAFM_DEV_GUILD_ID"),
