@@ -41,9 +41,9 @@ class Rig:
         await settle()
 
     def listen(self, seconds: float) -> None:
-        """Read the mixer as discord.py's player thread does, while it runs."""
+        """Read the mixer as discord.py's player thread does: while it runs and voice is up."""
         for _ in range(round(seconds / FRAME_SECONDS)):
-            if self.player.running:
+            if self.player.running and self.player.connected:
                 self.station.mixer.read()
 
     def session(self, index: int) -> FakeSession:
@@ -453,6 +453,21 @@ async def test_hands_over_only_while_voice_is_connected(rig: Rig) -> None:
     rig.player.connected = True
     await rig.tick()
 
+    assert started.result() is Outcome.PLAYING
+
+
+async def test_hands_over_only_once_a_player_runs_again(rig: Rig) -> None:
+    await start_playing(rig)
+    started = rig.station.play(SYNTHWAVE, "Member")
+    await rig.tick()
+    await rig.tick()
+    await rig.feed(-1, 10)
+
+    rig.player.end_thread()  # voice stays connected; the restart waits out PLAYER_RETRY_S
+    await rig.tick()
+    assert not started.done()  # nothing reads the mixer yet
+
+    await rig.tick(PLAYER_RETRY_S)
     assert started.result() is Outcome.PLAYING
 
 
