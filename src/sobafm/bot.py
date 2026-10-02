@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import math
+import time
 from collections import defaultdict
 from typing import cast
 
@@ -13,12 +15,11 @@ from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
 from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, SessionPool, Station
-from sobafm.store import Store
+from sobafm.store import GuildSettings, Store
 
 log = logging.getLogger(__name__)
 
 REQUIRED_PERMISSIONS = {"view_channel": "View Channel", "connect": "Connect", "speak": "Speak"}
-VOLUME = 0.5  # per-server volume arrives with settings in M3
 START_TIMEOUT_S = 75.0  # covers one refused start and its retry
 
 PLAY_REPLIES = {
@@ -70,6 +71,7 @@ class SobaFM(discord.Client):
         add_commands(self.tree, self)
         self.voices: set[Voice] = set()
         self.voice_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.changed_at: dict[int, float] = {}  # when each server's program last changed
 
     async def close(self) -> None:
         """Close every station, ending its Lyria sessions, before disconnecting."""
@@ -77,7 +79,7 @@ class SobaFM(discord.Client):
         self.stations.clear()
         await super().close()
 
-    def station(self, guild: discord.Guild) -> Station:
+    def station(self, guild: discord.Guild, settings: GuildSettings) -> Station:
         """The guild's station, created and started on first use."""
         station = self.stations.get(guild.id)
         if station is None:
@@ -86,7 +88,7 @@ class SobaFM(discord.Client):
                 lambda: listeners(guild),
                 self.open_session,
                 self.pool,
-                volume=VOLUME,
+                volume=settings.volume,
             )
             station.start()
             self.stations[guild.id] = station
@@ -96,8 +98,12 @@ class SobaFM(discord.Client):
         if (station := self.stations.pop(guild.id, None)) is not None:
             await station.close(outcome)
 
-    def play_problem(self, member: discord.Member, request: str) -> str | None:
-        """Why `member` cannot request this music right now, if they cannot."""
+    async def admit(self, member: discord.Member, request: str) -> str | None:
+        """Admit a request and start the server's change cooldown, or say why it can't play.
+
+        The check and the start of the cooldown happen without an await between them, so
+        concurrent requests cannot both get past it.
+        """
         if not request.strip():
             return "Describe the music you want, for example: rainy lo-fi with soft piano."
         voice = cast(discord.VoiceClient | None, member.guild.voice_client)
@@ -105,12 +111,19 @@ class SobaFM(discord.Client):
             return "SobaFM isn't in a voice channel. Ask a server manager to use /join."
         if member.voice is None or member.voice.channel != voice.channel:
             return f"Join {voice.channel.mention} to request music."
+        settings = await self.store.settings(member.guild.id)
+        now = time.monotonic()
+        wait = settings.cooldown_seconds - (now - self.changed_at.get(member.guild.id, -math.inf))
+        if wait > 0:
+            return f"The music changed moments ago. Try again in {math.ceil(wait)} seconds."
+        self.changed_at[member.guild.id] = now
         return None
 
     async def play(self, member: discord.Member, request: str) -> str:
         """Start or replace the program, and describe the outcome once it plays or fails."""
         plan = MusicPlan.from_request(request)
-        started = self.station(member.guild).play(plan, member.mention)
+        settings = await self.store.settings(member.guild.id)
+        started = self.station(member.guild, settings).play(plan, member.mention)
         try:
             outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
         except TimeoutError:
@@ -136,6 +149,22 @@ class SobaFM(discord.Client):
             return "Nothing is playing."
         station.stop()
         return "Stopped the music."
+
+    async def configure(self, guild: discord.Guild, **changes: int | None) -> str:
+        """Apply the given settings, and describe the server's settings."""
+        settings = await self.store.settings(guild.id)
+        if updates := {name: value for name, value in changes.items() if value is not None}:
+            settings = GuildSettings.model_validate(settings.model_dump() | updates)
+            await self.store.save_settings(guild.id, settings)
+            if (station := self.stations.get(guild.id)) is not None:
+                station.mixer.set_volume(settings.volume)
+        heading = "Saved. SobaFM's settings" if updates else "SobaFM's settings"
+        return (
+            f"{heading} for this server:\n"
+            f"- Play duration: {settings.duration_minutes} minutes\n"
+            f"- Volume: {settings.volume_percent}%\n"
+            f"- Change cooldown: {settings.cooldown_seconds} seconds"
+        )
 
     async def setup_hook(self) -> None:
         await self.store.initialize()

@@ -164,7 +164,7 @@ CREATE TABLE guild (
 );
 ```
 
-`GuildSettings` is a Pydantic model with the defaults and ranges in [SET-1 to SET-3](requirements.md#settings). Missing fields take their defaults and unknown fields are ignored, so adding a setting needs no migration.
+`GuildSettings` is a Pydantic model with the defaults and ranges in [SET-1 to SET-3](requirements.md#settings). Missing fields take their defaults and unknown fields are ignored, so adding a setting needs no migration; stored settings that no longer validate fall back to the defaults with a warning.
 
 ## Interfaces
 
