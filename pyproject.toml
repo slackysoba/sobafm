@@ -62,6 +62,7 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]  # pytest asserts and placeholder credentials
 "scripts/**" = ["T20"]  # command-line tools report results on standard output
+"tests/eval/**" = ["T20"]  # the evaluation set reports its results
 
 [tool.pyright]
 include = ["src", "tests", "scripts"]
@@ -73,7 +74,8 @@ venv = ".venv"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 strict = true
-addopts = ["-ra"]
+addopts = ["-ra", "-m", "not eval"]
+markers = ["eval: the interpreter's evaluation set, which calls Gemini; run with -m eval"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
