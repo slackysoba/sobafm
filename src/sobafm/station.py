@@ -177,6 +177,7 @@ class Station:
             self._generate(self.program)
         if self.program is not None:
             self._start(self.program, player)
+        if self.program is not None:  # starting the player can end the program
             self._hand_over(self.program)
         else:
             self._wind_down(player)
@@ -203,6 +204,7 @@ class Station:
             self.mixer.switch_to(None, FADE_OUT_S)
         elif player is not None and player.is_playing():
             player.stop()
+            self._playing = None  # its `after` callback can come much later
 
     def _retire(self, program: Program) -> None:
         """End sessions near Lyria's limit, and idle sessions of a replaced plan."""
@@ -236,9 +238,13 @@ class Station:
         log.info("Program started on deck %d", deck.number)
 
     def _hand_over(self, program: Program) -> None:
-        """Crossfade to the next deck when the live one belongs to a replaced plan or runs low."""
+        """Crossfade to the next deck when the live one belongs to a replaced plan or runs low.
+
+        Only while the player runs: without it, nothing would be heard and the crossfade would
+        not advance.
+        """
         live = self.mixer.live
-        if self.mixer.switching or not isinstance(live, Deck):
+        if self.mixer.switching or self._playing is None or not isinstance(live, Deck):
             return
         if live.plan is program.plan and live.buffered_seconds >= HANDOVER_BELOW_S:
             return
@@ -316,8 +322,9 @@ class Station:
         except discord.ClientException as error:  # not connected yet
             log.debug("Could not start the voice player: %s", error)
             return
-        except discord.DiscordException as error:  # such as a missing Opus library
-            log.warning("Could not start the voice player: %s", error)
+        except discord.DiscordException:  # such as an Opus encoder error, which retries cannot fix
+            log.exception("Could not start the voice player; ending the program")
+            self._finish(Outcome.FAILED)
             return
         self._playing = playing
 

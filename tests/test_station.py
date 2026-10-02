@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 
 import discord
@@ -8,6 +9,8 @@ from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan
 from sobafm.station import (
     CONNECT_BACKOFF_S,
+    FADE_IN_S,
+    FADE_OUT_S,
     HANDOVER_BELOW_S,
     PLAYER_RETRY_S,
     REFUSAL_RETRY_S,
@@ -37,9 +40,9 @@ class Rig:
         await settle()
 
     def listen(self, seconds: float) -> None:
-        """Read the mixer as discord.py's player does, which only happens while it plays."""
+        """Read the mixer as discord.py's player thread does, while it runs."""
         for _ in range(round(seconds / FRAME_SECONDS)):
-            if self.player.playing:
+            if self.player.running:
                 self.station.mixer.read()
 
     def session(self, index: int) -> FakeSession:
@@ -283,6 +286,7 @@ async def test_holds_its_reservation_until_its_sessions_end(
     await first.reconcile()
 
     first.stop()
+    await first.reconcile()
     assert second.play(LOFI, "Member").result() is Outcome.BUSY  # sessions still open
 
     await first.close()
@@ -309,6 +313,45 @@ async def test_stop_fades_out_then_stops_the_player(rig: Rig) -> None:
     assert all(session.closed for session in rig.lyria.sessions)
 
 
+async def test_a_stop_during_the_fade_in_waits_for_it_before_fading_out(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member")
+    await rig.tick()
+    await rig.feed(-2, 10)
+    await rig.tick()
+    assert started.result() is Outcome.PLAYING
+
+    rig.station.stop()
+    await rig.tick()
+    assert rig.player.playing  # still fading in
+    rig.listen(FADE_IN_S)
+    await rig.tick()
+    rig.listen(FADE_OUT_S)
+    await rig.tick()
+
+    assert rig.station.mixer.live is None
+    assert not rig.player.playing
+
+
+async def test_a_late_callback_from_a_stopped_player_is_ignored(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.stop()
+    await rig.tick()
+    rig.listen(FADE_OUT_S)
+    await rig.tick()  # stops the player, whose thread has yet to end
+    assert not rig.player.playing
+
+    rig.station.play(SYNTHWAVE, "Member")
+    await rig.tick()
+    await rig.tick()
+    await rig.feed(-1, 10)
+    await rig.tick(PLAYER_RETRY_S)
+    assert rig.player.plays == 2
+    rig.player.end_stopped_threads()  # the stopped player's `after` arrives only now
+    await rig.tick(PLAYER_RETRY_S)
+
+    assert rig.player.plays == 2  # the new player is still tracked, so none is restarted
+
+
 async def test_a_request_during_a_fade_out_starts_once_it_ends(rig: Rig) -> None:
     await start_playing(rig)
     rig.station.stop()
@@ -328,6 +371,7 @@ async def test_a_request_during_a_fade_out_starts_once_it_ends(rig: Rig) -> None
 
 async def test_restarts_the_player_after_its_thread_ends(rig: Rig) -> None:
     await start_playing(rig)
+    asyncio.get_running_loop().set_debug(True)  # flags loop calls from the player's thread
 
     rig.player.end_thread()  # a slow voice reconnect: is_playing() still reports True
     await rig.tick(PLAYER_RETRY_S)
@@ -346,18 +390,20 @@ async def test_restarts_a_failing_player_at_most_once_per_interval(rig: Rig) -> 
     assert rig.player.plays == 2
 
 
-async def test_keeps_reconciling_when_the_player_cannot_start(
+async def test_ends_the_program_when_the_player_cannot_start_at_all(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
-    rig.player.failure = discord.opus.OpusNotLoaded()
-    rig.station.play(LOFI, "Member")
+    rig.player.failure = discord.DiscordException("the encoder failed")
+    started = rig.station.play(LOFI, "Member")
     await rig.tick()
-    await rig.feed(1, PAUSE_AT_S)
+    await rig.feed(-2, 10)
 
     await rig.tick()
+    await rig.tick()
 
-    assert rig.session(1).calls[-1] == "pause"  # later rules still ran
+    assert started.result() is Outcome.FAILED
     assert "Could not start the voice player" in caplog.text
+    assert all(session.closed for session in rig.lyria.sessions)
 
 
 async def test_waits_for_voice_to_reconnect_before_starting_the_player(rig: Rig) -> None:
@@ -374,6 +420,38 @@ async def test_waits_for_voice_to_reconnect_before_starting_the_player(rig: Rig)
 
     assert started.result() is Outcome.PLAYING
     assert rig.player.plays == 1
+
+
+async def test_hands_over_to_a_new_request_only_once_the_player_runs(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.player.connected = False
+    rig.player.end_thread()  # the thread gave up on a voice outage
+    started = rig.station.play(SYNTHWAVE, "Member")
+    await rig.tick()
+    await rig.tick()
+    await rig.feed(-1, 10)
+    await rig.tick()
+    assert not started.done()  # nothing can be heard yet
+
+    rig.player.connected = True
+    await rig.tick(PLAYER_RETRY_S)
+
+    assert started.result() is Outcome.PLAYING
+
+
+async def test_stops_at_once_when_the_player_ends_during_the_fade_out(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.stop()
+    await rig.tick()
+    assert rig.station.mixer.switching
+
+    rig.player.end_thread()  # the thread gives up on a voice outage mid-fade
+    await rig.tick()
+    await rig.tick()
+
+    assert rig.station.mixer.live is None
+    assert not rig.station.mixer.switching
+    assert all(session.closed for session in rig.lyria.sessions)
 
 
 async def test_stops_at_once_when_no_player_can_run(rig: Rig) -> None:
@@ -397,6 +475,15 @@ async def test_ends_the_program_when_the_voice_connection_is_lost(rig: Rig) -> N
 
     assert started.result() is Outcome.DISCONNECTED
     assert rig.station.program is None
+
+
+async def test_close_settles_a_pending_request_with_its_outcome(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member")
+    await rig.tick()
+
+    await rig.station.close(Outcome.DISCONNECTED)
+
+    assert started.result() is Outcome.DISCONNECTED
 
 
 async def test_close_retires_everything(rig: Rig) -> None:

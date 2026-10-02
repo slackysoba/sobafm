@@ -95,7 +95,7 @@ A station stores only what should be happening: the program (plan, requester, an
 3. **Retire.** Stop the session of any deck that has reached the session limit or belongs to a replaced plan. Its buffered audio stays playable.
 4. **Generate.** Keep a next deck filling for the current plan beside the live one, within the global session cap. Retry failed connections with backoff, and retry a refused start once after 30 seconds.
 5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player and fade in. Restart the player if discord.py stopped it.
-6. **Hand over, or stop.** With a program, if no crossfade is in progress and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck of the current plan with the most buffered audio. Without one, retire idle decks; once any fade or crossfade completes, fade out the live deck and then stop the player. With no player running, nothing reads the mixer, so the station stops at once.
+6. **Hand over, or stop.** With a program, if the player runs, no crossfade is in progress, and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck of the current plan with the most buffered audio. Without one, retire idle decks; once any fade or crossfade completes, fade out the live deck and then stop the player. With no player running, nothing reads the mixer, so the station stops at once.
 7. **Regulate.** Pause or resume each deck's generation at the flow-control thresholds.
 
 The station never closes a deck the mixer still references. Commands only replace the desired program and wake the loop, so they need no lock: the latest request wins. The change cooldown (M3) is checked when a request arrives, before the model call.
@@ -206,7 +206,7 @@ CREATE TABLE guild (
 | Voice reconnection | discord.py reconnects; reads pause, flow control pauses generation, and crossfades resume intact. If the player thread gives up first, a playing station starts a new one once voice is back |
 | SobaFM moved, disconnected, or its channel deleted | Adopt the new channel, or end the program and forget the channel (PLAY-7). Discord reports every disconnect alike, so a voice connection that discord.py gives up reconnecting is also forgotten |
 | New gateway session (a reconnect that cannot resume) | discord.py forgets its voice clients, so the program ends. SobaFM closes the old voice connection, which takes up to 30 seconds, then rejoins the remembered channel |
-| Player thread error | The `after` callback tells the station, which starts a new player while a program plays, at most once a second. Errors inside `read()` return silence and are logged once per run |
+| Player thread error | The `after` callback tells the station, which starts a new player while a program plays, at most once a second. If discord.py cannot start a player for a reason other than a missing voice connection, the program ends. Errors inside `read()` return silence and are logged once per run |
 | Gateway not ready at startup | The watchdog exits with an error and the process supervisor restarts SobaFM |
 
 ## Security and privacy

@@ -26,7 +26,7 @@ PLAY_REPLIES = {
     Outcome.REFUSED: (
         "Lyria RealTime couldn't make music from that request. Try describing it differently."
     ),
-    Outcome.FAILED: "SobaFM couldn't reach Lyria RealTime. Try again shortly.",
+    Outcome.FAILED: "SobaFM couldn't start the music. Try again shortly.",
     Outcome.DISCONNECTED: "SobaFM lost its voice connection before the music started.",
     Outcome.REPLACED: "A newer request replaced this one before it started.",
     Outcome.STOPPED: "The music was stopped before this request started.",
