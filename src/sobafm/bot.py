@@ -89,12 +89,22 @@ class Voice(discord.VoiceClient):
         leaving the client registered with nothing to connect it (#47). A connected client always
         has a running runner, so a stranded client can still report itself connected.
         """
+        return all(task is None or task.done() for task in self._connection_tasks())
+
+    def failure(self) -> BaseException | None:
+        """The error that ended discord.py's voice runner, if one did, marked as handled."""
+        runner = self._connection_tasks()[1]
+        if runner is None or not runner.done() or runner.cancelled():
+            return None
+        return runner.exception()
+
+    def _connection_tasks(self) -> list[asyncio.Task[None] | None]:
+        """discord.py's connector and voice runner."""
         connection = self._connection
-        workers = cast(
+        return cast(
             list[asyncio.Task[None] | None],
             [connection._connector, connection._runner],  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
         )
-        return all(task is None or task.done() for task in workers)
 
     async def finish_connecting(self) -> None:
         """Wait until discord.py's connector connects or gives up.
@@ -357,7 +367,7 @@ class SobaFM(discord.Client):
                 return
             try:
                 await self.connect_to(channel)
-            except TimeoutError, OSError, discord.ClientException:  # OSError: the gateway is down
+            except Exception:  # any failure leaves the channel remembered for another attempt
                 log.warning("Could not rejoin %s in %s", channel, guild, exc_info=True)
 
     async def join(self, member: discord.Member) -> str:
@@ -434,7 +444,7 @@ class SobaFM(discord.Client):
         now = self._clock()
         for voice in list(self.voices):
             guild_id = voice.guild.id
-            if not voice.joined or not voice.stranded():
+            if not voice.joined or voice is not voice.guild.voice_client or not voice.stranded():
                 voice.stranded_since = None
             elif voice.stranded_since is None:
                 voice.stranded_since = now
@@ -452,6 +462,8 @@ class SobaFM(discord.Client):
                 return
             while True:
                 await self.rejoin(guild)
+                # discord.py waits for a departure after a failed attempt, swallowing a cancel.
+                raise_swallowed_cancel()
                 if guild.voice_client is not None:
                     return
                 if await self.store.remembered_channel(guild.id) is None:
@@ -471,14 +483,17 @@ class SobaFM(discord.Client):
         async with self.voice_locks[guild.id]:
             if guild.voice_client is not voice or not voice.stranded():
                 return False
-            log.warning("discord.py stopped reconnecting to voice in %s; rejoining", guild)
+            log.warning(
+                "discord.py stopped reconnecting to voice in %s; rejoining",
+                guild,
+                exc_info=voice.failure(),
+            )
             await self.close_station(guild, Outcome.DISCONNECTED)
             voice.joined = False  # replaced rather than left, so the channel stays remembered
             # discord.py waits up to 30 seconds for Discord to confirm the departure. A later
             # confirmation would reach the new connection and end it.
             await voice.disconnect(force=True)
-            if (task := asyncio.current_task()) is not None and task.cancelling():
-                raise asyncio.CancelledError  # discord.py swallows a cancel while it waits
+            raise_swallowed_cancel()
         return True
 
     async def close_stale_voice(self, guild: discord.Guild) -> None:
@@ -519,6 +534,12 @@ class SobaFM(discord.Client):
             return  # joins and departures are handled where SobaFM connects and disconnects
         if before.channel != after.channel:
             await self.store.remember_channel(member.guild.id, after.channel.id)
+
+
+def raise_swallowed_cancel() -> None:
+    """Raise a cancel that discord.py swallowed while it waited for a voice departure."""
+    if (task := asyncio.current_task()) is not None and task.cancelling():
+        raise asyncio.CancelledError
 
 
 async def move(voice: discord.VoiceClient, channel: discord.VoiceChannel) -> None:
