@@ -41,8 +41,8 @@ class Mixer(discord.AudioSource):
         self._volume = volume
         self._gain = volume
         self._failing = False
-        self.underruns = 0  # reads that played silence while a source was playing
-        self.errors = 0
+        self.underruns = 0  # reads with a playing source but no frame from it
+        self.errors = 0  # reads that failed; they play silence too
 
     @property
     def live(self) -> FrameSource | None:
@@ -86,20 +86,21 @@ class Mixer(discord.AudioSource):
 
     @override
     def read(self) -> bytes:
-        try:
-            with self._lock:
+        with self._lock:
+            try:
                 frame = self._next_frame()
-        except Exception:  # an exception would stop discord.py's player
-            self.errors += 1
-            if not self._failing:  # one traceback per run of failures, not 50 a second
-                log.exception("Mixer read failed; playing silence")
-            self._failing = True
-            with self._lock:  # finish any switch, so a failing source cannot hold it open
-                if self._switch_frames:
+            except Exception as error:  # noqa: BLE001 - an exception would stop discord.py's player
+                self.errors += 1
+                if self._switch_frames:  # a failing source must not hold a switch open
                     self._live, self._incoming, self._switch_frames = self._incoming, None, 0
-            return SILENCE
-        self._failing = False
-        return frame
+                failure = error
+            else:
+                self._failing = False
+                return frame
+        if not self._failing:  # one traceback per run of failures, logged outside the lock
+            log.error("Mixer read failed; playing silence", exc_info=failure)
+            self._failing = True
+        return SILENCE
 
     def _next_frame(self) -> bytes:
         self._gain += max(-VOLUME_STEP, min(VOLUME_STEP, self._volume - self._gain))

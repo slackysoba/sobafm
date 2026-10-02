@@ -62,14 +62,14 @@ def test_plays_silence_and_counts_an_underrun_when_the_live_source_is_empty() ->
     assert mixer.underruns == 1
 
 
-def test_fades_in_along_the_equal_power_curve() -> None:
-    mixer = Mixer(1.0)
+def test_fades_in_along_the_equal_power_curve_at_the_volume() -> None:
+    mixer = Mixer(0.5)
     new = source(10)
 
     mixer.switch_to(new, 0.1)
     levels = [level_of(mixer.read()) for _ in range(5)]
 
-    assert levels == pytest.approx([LEVEL * math.sin(a) for a in angles(5)], abs=2)
+    assert levels == pytest.approx([0.5 * LEVEL * math.sin(a) for a in angles(5)], abs=2)
     assert mixer.live is new
     assert not mixer.switching
 
@@ -108,13 +108,13 @@ def test_fades_in_from_silence_when_the_live_source_has_run_dry() -> None:
     assert levels == pytest.approx([LEVEL * math.sin(a) for a in angles(5)], abs=2)
 
 
-def test_fades_out_along_the_equal_power_curve() -> None:
-    mixer = playing(source(10))
+def test_fades_out_along_the_equal_power_curve_at_the_volume() -> None:
+    mixer = playing(source(10), volume=0.5)
 
     mixer.switch_to(None, 0.06)
     levels = [level_of(mixer.read()) for _ in range(3)]
 
-    assert levels == pytest.approx([LEVEL * math.cos(a) for a in angles(3)], abs=2)
+    assert levels == pytest.approx([0.5 * LEVEL * math.cos(a) for a in angles(3)], abs=2)
     assert mixer.live is None
     assert mixer.read() == SILENCE
     assert mixer.underruns == 0
@@ -170,6 +170,33 @@ def test_fading_out_silence_is_instant() -> None:
     assert not mixer.switching
 
 
+def test_fading_out_a_dry_source_is_instant() -> None:
+    mixer = playing(source(0))
+
+    mixer.switch_to(None, 3.0)
+
+    assert not mixer.switching
+    assert mixer.live is None
+
+
+def test_switching_a_dry_source_to_itself_changes_nothing() -> None:
+    dry = source(0)
+    mixer = playing(dry)
+
+    mixer.switch_to(dry, 2.0)
+
+    assert not mixer.switching
+    assert mixer.live is dry
+
+
+def test_counts_an_underrun_while_fading_in_an_empty_source() -> None:
+    mixer = Mixer(1.0)
+    mixer.switch_to(source(0), 0.1)
+
+    assert mixer.read() == SILENCE
+    assert mixer.underruns == 1
+
+
 def test_counts_one_underrun_per_silent_read() -> None:
     mixer = playing(source(5))
     mixer.switch_to(source(0), 0.1)  # the incoming source has nothing yet
@@ -182,29 +209,71 @@ def test_counts_one_underrun_per_silent_read() -> None:
     assert mixer.underruns == 1
 
 
-def test_ramps_volume_changes() -> None:
-    mixer = playing(source(60), volume=0.5)
+@pytest.mark.parametrize(("start", "end"), [(0.5, 1.0), (1.0, 0.5)], ids=["up", "down"])
+def test_ramps_volume_changes(start: float, end: float) -> None:
+    mixer = playing(source(60), volume=start)
 
-    mixer.set_volume(1.0)
+    mixer.set_volume(end)
     levels = [level_of(mixer.read()) for _ in range(30)]
 
-    expected = [LEVEL * min(1.0, 0.5 + 0.02 * (i + 1)) for i in range(30)]
+    step = 0.02 if end > start else -0.02
+    gains = [start + step * (i + 1) for i in range(30)]
+    expected = [LEVEL * (min(g, end) if end > start else max(g, end)) for g in gains]
     assert levels == pytest.approx(expected, abs=2)
+
+
+def test_ramps_a_volume_change_during_a_crossfade() -> None:
+    mixer = playing(source(10, level=8_000))
+    mixer.switch_to(source(10, level=2_000), 0.1)
+
+    mixer.set_volume(0.5)
+    levels = [level_of(mixer.read()) for _ in range(5)]
+
+    expected = [
+        (1 - 0.02 * (i + 1)) * (8_000 * math.cos(a) + 2_000 * math.sin(a))
+        for i, a in enumerate(angles(5))
+    ]
+    assert levels == pytest.approx(expected, abs=2)
+
+
+class Flaky:
+    """A source whose frames fail to read while `broken` is set."""
+
+    def __init__(self, count: int) -> None:
+        self.broken = True
+        self._frames = source(count).frames
+
+    @property
+    def frames(self) -> deque[bytes]:
+        if self.broken:
+            raise RuntimeError("broken source")
+        return self._frames
 
 
 def test_never_raises_and_logs_each_run_of_failures_once(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    class Broken:
-        @property
-        def frames(self) -> deque[bytes]:
-            raise RuntimeError("broken source")
-
+    flaky = Flaky(10)
     mixer = Mixer(1.0)
-    mixer.switch_to(Broken(), 0)
+    mixer.switch_to(flaky, 0)
 
     with caplog.at_level(logging.ERROR, logger="sobafm.mixer"):
         assert [mixer.read() for _ in range(3)] == [SILENCE] * 3
+        flaky.broken = False
+        assert level_of(mixer.read()) == LEVEL
+        flaky.broken = True
+        assert [mixer.read() for _ in range(2)] == [SILENCE] * 2
 
-    assert mixer.errors == 3
-    assert len(caplog.records) == 1
+    assert mixer.errors == 5
+    assert len(caplog.records) == 2
+
+
+def test_a_failure_finishes_the_switch_in_progress() -> None:
+    mixer = playing(source(10))
+    flaky = Flaky(10)
+    mixer.switch_to(flaky, 0.1)
+
+    assert mixer.read() == SILENCE
+
+    assert not mixer.switching
+    assert mixer.live is flaky
