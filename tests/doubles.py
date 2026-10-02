@@ -130,6 +130,9 @@ class FakePlayer:
         self._after: Callable[[Exception | None], Any] | None = None
         self._stopped: list[Callable[[Exception | None], Any]] = []  # threads still ending
 
+    def is_connected(self) -> bool:
+        return self.connected
+
     def is_playing(self) -> bool:
         return self.playing
 

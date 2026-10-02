@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from dataclasses import dataclass
 
 import discord
@@ -437,6 +438,58 @@ async def test_hands_over_to_a_new_request_only_once_the_player_runs(rig: Rig) -
     await rig.tick(PLAYER_RETRY_S)
 
     assert started.result() is Outcome.PLAYING
+
+
+async def test_hands_over_only_while_voice_is_connected(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.player.connected = False  # the player thread waits for voice to reconnect
+    started = rig.station.play(SYNTHWAVE, "Member")
+    await rig.tick()
+    await rig.tick()
+    await rig.feed(-1, 10)
+    await rig.tick()
+    assert not started.done()  # nothing can be heard yet
+
+    rig.player.connected = True
+    await rig.tick()
+
+    assert started.result() is Outcome.PLAYING
+
+
+async def test_fades_in_only_while_voice_is_connected(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.stop()
+    await rig.tick()
+    started = rig.station.play(SYNTHWAVE, "Member")
+    await rig.tick()
+    await rig.feed(-1, 10)
+    rig.listen(FADE_OUT_S)
+    rig.player.connected = False  # voice drops as the fade-out ends
+    await rig.tick()
+    assert not started.done()
+
+    rig.player.connected = True
+    await rig.tick()
+
+    assert started.result() is Outcome.PLAYING
+
+
+async def test_handles_the_players_callback_on_the_loop_thread(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await start_playing(rig)
+    woken_on: list[int] = []
+    wake = rig.station.wake
+
+    def record() -> None:
+        woken_on.append(threading.get_ident())
+        wake()
+
+    monkeypatch.setattr(rig.station, "wake", record)
+    rig.player.end_thread()
+    await rig.tick()
+
+    assert woken_on == [threading.get_ident()]
 
 
 async def test_stops_at_once_when_the_player_ends_during_the_fade_out(rig: Rig) -> None:

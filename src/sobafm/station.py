@@ -32,6 +32,8 @@ PLAYER_RETRY_S = 1.0  # starting discord.py's player, at most once per interval
 class Player(Protocol):
     """The part of discord.py's voice client a station uses."""
 
+    def is_connected(self) -> bool: ...
+
     def is_playing(self) -> bool: ...
 
     def play(
@@ -49,7 +51,7 @@ class Outcome(StrEnum):
     PLAYING = "playing"
     BUSY = "busy"  # every program's worth of Lyria sessions is taken
     REFUSED = "refused"  # Lyria refused the prompt twice
-    FAILED = "failed"  # sessions could not be opened
+    FAILED = "failed"  # sessions could not be opened, or the player could not start
     DISCONNECTED = "disconnected"  # SobaFM lost its voice connection
     REPLACED = "replaced"  # a newer request replaced it before it started
     STOPPED = "stopped"
@@ -178,7 +180,7 @@ class Station:
         if self.program is not None:
             self._start(self.program, player)
         if self.program is not None:  # starting the player can end the program
-            self._hand_over(self.program)
+            self._hand_over(self.program, player)
         else:
             self._wind_down(player)
         await asyncio.gather(*(deck.regulate() for deck in self.decks))
@@ -231,20 +233,20 @@ class Station:
         deck = self._ready_deck(program.plan) if idle else None
         if self._playing is None and (deck is not None or not idle):
             self._play(player)
-        if deck is None or self._playing is None:
+        if deck is None or not self._audible(player):
             return
         self.mixer.switch_to(deck, FADE_IN_S)
         program.settle(Outcome.PLAYING)
         log.info("Program started on deck %d", deck.number)
 
-    def _hand_over(self, program: Program) -> None:
+    def _hand_over(self, program: Program, player: Player | None) -> None:
         """Crossfade to the next deck when the live one belongs to a replaced plan or runs low.
 
-        Only while the player runs: without it, nothing would be heard and the crossfade would
-        not advance.
+        Only while it can be heard, so a replacement is never reported as playing during a
+        voice outage.
         """
         live = self.mixer.live
-        if self.mixer.switching or self._playing is None or not isinstance(live, Deck):
+        if self.mixer.switching or not self._audible(player) or not isinstance(live, Deck):
             return
         if live.plan is program.plan and live.buffered_seconds >= HANDOVER_BELOW_S:
             return
@@ -292,6 +294,10 @@ class Station:
         if program.failures > len(CONNECT_BACKOFF_S) and not program.started.done():
             log.warning("Could not open a Lyria RealTime session: %s", deck.detail)
             self._finish(Outcome.FAILED)
+
+    def _audible(self, player: Player | None) -> bool:
+        """Whether a running player sends the mixer's audio to a connected voice channel."""
+        return self._playing is not None and player is not None and player.is_connected()
 
     def _ready_deck(self, plan: MusicPlan, exclude: Deck | None = None) -> Deck | None:
         """The ready deck for `plan` with the most buffered audio."""
