@@ -7,8 +7,9 @@ import discord
 import pytest
 
 import sobafm.bot
-from sobafm.bot import PLAY_REPLIES, SobaFM, Voice
+from sobafm.bot import PLAY_REPLIES, SobaFM, Voice, listeners
 from sobafm.config import load_settings
+from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, Station
 from sobafm.store import Store
 from tests.doubles import FakeLyria
@@ -626,3 +627,67 @@ async def test_closing_the_client_closes_every_station(bot: SobaFM) -> None:
 
     station.close.assert_awaited_once()
     assert bot.stations == {}
+
+
+@pytest.mark.parametrize(
+    ("kind", "counted"),
+    [
+        ("member", True),
+        ("bot", False),
+        ("self-deafened member", False),
+        ("server-deafened member", False),
+        ("member missing from the cache", True),
+        ("deafened member missing from the cache", False),
+    ],
+)
+def test_counts_listeners_who_are_neither_bots_nor_deafened(kind: str, *, counted: bool) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.voice_client = make_voice_client(channel)
+    cached = {
+        "member": fake(discord.Member, bot=False),
+        "bot": fake(discord.Member, bot=True),  # including SobaFM itself
+        "self-deafened member": fake(discord.Member, bot=False),
+        "server-deafened member": fake(discord.Member, bot=False),
+    }
+    guild.get_member.return_value = cached.get(kind)
+    channel.voice_states = {
+        1: fake(
+            discord.VoiceState,
+            self_deaf=kind == "self-deafened member",
+            deaf=kind in ("server-deafened member", "deafened member missing from the cache"),
+        )
+    }
+
+    assert listeners(guild) == int(counted)
+
+
+def test_counts_no_listeners_without_a_voice_connection() -> None:
+    assert listeners(make_guild()) == 0
+
+
+def test_looks_members_up_in_the_current_guild() -> None:
+    current = make_guild()
+    channel = make_channel(current)
+    current.get_member.return_value = fake(discord.Member, bot=True)
+    stale = make_guild(voice_client=make_voice_client(channel))  # from an earlier session
+    stale.get_member.return_value = None
+    channel.voice_states = {1: fake(discord.VoiceState, self_deaf=False, deaf=False)}
+
+    assert listeners(stale) == 0
+
+
+async def test_stations_count_the_listeners_in_their_server(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counted = MagicMock(return_value=1)
+    monkeypatch.setattr(sobafm.bot, "listeners", counted)
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    station = bot.station(guild)
+    station.play(MusicPlan.from_request("ambient"), "Member")
+
+    await station.reconcile()
+
+    counted.assert_called_with(guild)
+    await station.close()

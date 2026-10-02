@@ -83,6 +83,7 @@ class SobaFM(discord.Client):
         if station is None:
             station = Station(
                 lambda: cast(discord.VoiceClient | None, guild.voice_client),
+                lambda: listeners(guild),
                 self.open_session,
                 self.pool,
                 volume=VOLUME,
@@ -267,6 +268,24 @@ async def move(voice: discord.VoiceClient, channel: discord.VoiceChannel) -> Non
     if voice.channel != channel:
         raise TimeoutError
     await channel.guild.change_voice_state(channel=channel, self_deaf=True)
+
+
+def listeners(guild: discord.Guild) -> int:
+    """Members in SobaFM's voice channel who are neither bots nor deafened.
+
+    Members are looked up through the channel, because `guild` can be an object from an
+    earlier gateway session whose member cache no longer updates. Members missing from the
+    cache count, so an incomplete cache never ends a program.
+    """
+    voice = cast(discord.VoiceClient | None, guild.voice_client)
+    if voice is None:
+        return 0
+    count = 0
+    for user_id, state in voice.channel.voice_states.items():
+        member = voice.channel.guild.get_member(user_id)
+        if (member is None or not member.bot) and not (state.self_deaf or state.deaf):
+            count += 1
+    return count
 
 
 def missing_permissions(channel: discord.VoiceChannel) -> list[str]:

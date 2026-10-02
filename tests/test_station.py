@@ -10,6 +10,7 @@ from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan
 from sobafm.station import (
     CONNECT_BACKOFF_S,
+    EMPTY_GRACE_S,
     FADE_IN_S,
     FADE_OUT_S,
     HANDOVER_BELOW_S,
@@ -33,6 +34,7 @@ class Rig:
     clock: FakeClock
     player: FakePlayer
     voice: list[FakePlayer]
+    listeners: list[int]
 
     async def tick(self, seconds: float = 0.25) -> None:
         self.clock.now += seconds
@@ -56,21 +58,30 @@ class Rig:
     def disconnect(self) -> None:
         self.voice.clear()
 
+    def set_listeners(self, count: int) -> None:
+        self.listeners[0] = count
+
 
 def make_station(
     lyria: FakeLyria, clock: FakeClock, pool: SessionPool
-) -> tuple[Station, list[FakePlayer]]:
+) -> tuple[Station, list[FakePlayer], list[int]]:
     voice = [FakePlayer()]  # emptied to simulate a lost voice connection
+    listeners = [1]
     station = Station(
-        lambda: voice[0] if voice else None, lyria.connect, pool, volume=1.0, clock=clock
+        lambda: voice[0] if voice else None,
+        lambda: listeners[0],
+        lyria.connect,
+        pool,
+        volume=1.0,
+        clock=clock,
     )
-    return station, voice
+    return station, voice, listeners
 
 
 @pytest.fixture
 def rig(lyria: FakeLyria, clock: FakeClock) -> Rig:
-    station, voice = make_station(lyria, clock, SessionPool(4))
-    return Rig(station, lyria, clock, voice[0], voice)
+    station, voice, listeners = make_station(lyria, clock, SessionPool(4))
+    return Rig(station, lyria, clock, voice[0], voice, listeners)
 
 
 async def start_playing(rig: Rig, plan: MusicPlan = LOFI) -> None:
@@ -281,8 +292,8 @@ async def test_holds_its_reservation_until_its_sessions_end(
     lyria: FakeLyria, clock: FakeClock
 ) -> None:
     pool = SessionPool(2)
-    first, _ = make_station(lyria, clock, pool)
-    second, _ = make_station(lyria, clock, pool)
+    first, _, _ = make_station(lyria, clock, pool)
+    second, _, _ = make_station(lyria, clock, pool)
     first.play(LOFI, "Member")
     await first.reconcile()
 
@@ -295,7 +306,7 @@ async def test_holds_its_reservation_until_its_sessions_end(
 
 
 async def test_reports_busy_without_session_capacity(lyria: FakeLyria, clock: FakeClock) -> None:
-    station, _ = make_station(lyria, clock, SessionPool(1))
+    station, _, _ = make_station(lyria, clock, SessionPool(1))
 
     assert station.play(LOFI, "Member").result() is Outcome.BUSY
 
@@ -562,3 +573,94 @@ async def test_close_retires_everything(rig: Rig) -> None:
     assert all(session.closed for session in rig.lyria.sessions)
     assert rig.station.decks == []
     assert not rig.player.playing
+
+
+async def test_ends_the_program_after_the_channel_stays_empty(rig: Rig) -> None:
+    await start_playing(rig)
+
+    rig.set_listeners(0)
+    await rig.tick()
+    await rig.tick(EMPTY_GRACE_S - 1)
+    assert rig.station.program is not None
+
+    await rig.tick(1)
+    assert rig.station.program is None
+    assert rig.station.mixer.switching  # it fades out rather than cutting
+    assert rig.player.playing
+
+    rig.listen(FADE_OUT_S)
+    await rig.tick()
+    await rig.tick()
+    assert rig.station.mixer.live is None
+    assert not rig.player.playing
+    assert all(session.closed for session in rig.lyria.sessions)
+
+
+async def test_keeps_playing_when_a_listener_returns(rig: Rig) -> None:
+    await start_playing(rig)
+
+    rig.set_listeners(0)
+    await rig.tick()
+    await rig.tick(EMPTY_GRACE_S - 10)
+    rig.set_listeners(1)
+    await rig.tick()
+    rig.set_listeners(0)
+    await rig.tick()  # the grace period starts again here
+    await rig.tick(EMPTY_GRACE_S - 1)
+    assert rig.station.program is not None
+
+    await rig.tick(1)
+    assert rig.station.program is None
+
+
+async def test_a_request_pending_when_the_grace_period_ends_is_stopped(rig: Rig) -> None:
+    rig.set_listeners(0)
+    started = rig.station.play(LOFI, "Deafened member")
+    await rig.tick()
+
+    await rig.tick(EMPTY_GRACE_S)
+
+    assert started.result() is Outcome.STOPPED
+
+
+async def test_a_lost_connection_outranks_an_empty_channel(rig: Rig) -> None:
+    rig.set_listeners(0)
+    started = rig.station.play(LOFI, "Deafened member")
+    await rig.tick()
+    await rig.tick(EMPTY_GRACE_S - 1)
+
+    rig.disconnect()
+    await rig.tick(1)
+
+    assert started.result() is Outcome.DISCONNECTED
+
+
+async def test_a_request_during_the_grace_period_restarts_it(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.set_listeners(0)
+    await rig.tick()
+    await rig.tick(50)
+
+    rig.station.play(SYNTHWAVE, "Deafened member")
+    await rig.tick()
+    await rig.tick(EMPTY_GRACE_S - 1)
+    assert rig.station.program is not None
+
+    await rig.tick(1)
+    assert rig.station.program is None
+
+
+async def test_a_new_request_restarts_the_grace_period(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.set_listeners(0)
+    await rig.tick()
+    await rig.tick(EMPTY_GRACE_S)
+    assert rig.station.program is None
+
+    rig.station.play(SYNTHWAVE, "Deafened member")
+    await rig.tick()
+    await rig.tick(EMPTY_GRACE_S - 1)
+    assert rig.station.program is not None
+
+    await rig.tick(1)
+    assert rig.station.program is None
