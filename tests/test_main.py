@@ -133,13 +133,17 @@ def test_debug_logging_applies_to_sobafm_only(
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
     monkeypatch.setenv("SOBAFM_LOG_LEVEL", "DEBUG")
-    for logger in (logging.getLogger(), logging.getLogger("sobafm")):
+    for name in ("", "sobafm", "google_genai"):
+        logger = logging.getLogger(name)
         monkeypatch.setattr(logger, "level", logger.level)  # restored after the test
 
     main()
 
     assert logging.getLogger("sobafm").level == logging.DEBUG
     assert logging.getLogger("websockets").getEffectiveLevel() == logging.INFO
+    sdk = logging.getLogger("google_genai.live_music")  # which logs Lyria's setup reply at INFO
+    assert not sdk.isEnabledFor(logging.INFO)
+    assert sdk.isEnabledFor(logging.WARNING)
 
 
 class NeverReady:
