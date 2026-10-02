@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 log = logging.getLogger(__name__)
 
-# Parses a stored settings document into its raw fields, which are then validated one by one.
+# Parses a stored settings document into its raw fields, so an invalid one can fall back alone.
 SETTINGS_DOCUMENT = TypeAdapter(dict[str, object])
 
 SCHEMA = """

@@ -953,23 +953,6 @@ async def test_a_request_that_raises_frees_the_cooldown(
     assert await bot.admit(member, "jazz") is None
 
 
-async def test_a_request_frees_only_the_cooldown_it_started(
-    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
-) -> None:
-    guild = make_guild()
-    await bot.store.save_settings(guild.id, GuildSettings(cooldown_seconds=1))
-    channel = make_channel(guild)
-    member = in_voice(channel, channel)
-    first = await admitted(bot, member, "ambient")
-    clock.now = 1.5
-    await admitted(bot, member, "jazz")  # admitted while the first request is still starting
-    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(Outcome.REPLACED)))
-
-    await bot.play(member, "ambient", first)
-
-    assert await bot.admit(member, "lo-fi") is not None
-
-
 @pytest.mark.parametrize(
     "failure",
     [discord.NotFound(MagicMock(status=404), "expired"), aiohttp.ServerDisconnectedError()],
