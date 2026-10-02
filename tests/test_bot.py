@@ -833,6 +833,7 @@ async def test_a_newer_request_supersedes_one_being_interpreted(
 
     await bot.play(member, "lo-fi", None)  # ...and answers the newer one first
 
+    assert bot.stop(guild) == "Nothing is playing."  # the replaced request is no longer tracked
     assert await older == PLAY_REPLIES[Outcome.REPLACED]
     assert [call.args[0].title for call in station.play.call_args_list] == ["lo-fi"]
 
@@ -909,6 +910,67 @@ async def test_stop_supersedes_a_request_being_interpreted(
     assert bot.stop(guild) == "Stopped the request before it played."
     assert await request == PLAY_REPLIES[Outcome.STOPPED]
     station.play.assert_not_called()
+
+
+async def test_a_stopped_request_stays_stopped_when_a_newer_one_plays(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
+    gemini.delay = 0.05
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()
+    assert bot.stop(guild) == "Stopped the request before it played."
+    gemini.delay = 0
+
+    assert (await bot.play(member, "lo-fi", None)).startswith("Now playing **lo-fi**")
+    assert bot.stop(guild) == "Nothing is playing."  # the stopped request is no longer tracked
+    assert await older == PLAY_REPLIES[Outcome.STOPPED]
+
+
+async def test_a_request_the_station_rejects_leaves_older_ones_to_play(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    station.play.side_effect = [RuntimeError("a bug"), station.play.return_value]
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay = 0.05
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()
+    gemini.delay = 0
+
+    with pytest.raises(RuntimeError):
+        await bot.play(member, "lo-fi", None)
+
+    assert (await older).startswith("Now playing **jazz**")
+
+
+async def test_a_request_from_before_leaving_creates_no_station(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    guild.voice_client = None  # SobaFM left before the request was tracked
+
+    assert await bot.play(member, "jazz", None) == PLAY_REPLIES[Outcome.DISCONNECTED]
+    assert guild.id not in bot.stations
+
+
+async def test_closing_ends_requests_being_interpreted(bot: SobaFM, gemini: FakeGemini) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    gemini.delay = 0.05
+    request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
+    await settle()
+
+    await bot.close()
+
+    assert await request == PLAY_REPLIES[Outcome.STOPPED]
+    assert guild.id not in bot.stations
 
 
 async def test_stop_supersedes_a_request_reading_its_settings(

@@ -127,7 +127,9 @@ class SobaFM(discord.Client):
         self._clock = clock
 
     async def close(self) -> None:
-        """Close every station, ending its Lyria sessions, before disconnecting."""
+        """End every request and station, closing Lyria sessions, before disconnecting."""
+        for guild_id in list(self.interpreting):
+            self.supersede(guild_id, Outcome.STOPPED)
         await asyncio.gather(*(station.close() for station in self.stations.values()))
         self.stations.clear()
         await super().close()
@@ -148,19 +150,19 @@ class SobaFM(discord.Client):
         return station
 
     async def close_station(self, guild: discord.Guild, outcome: Outcome = Outcome.STOPPED) -> None:
-        self.supersede(guild, outcome)
+        self.supersede(guild.id, outcome)
         if (station := self.stations.pop(guild.id, None)) is not None:
             await station.close(outcome)
 
-    def supersede(self, guild: discord.Guild, outcome: Outcome) -> bool:
+    def supersede(self, guild_id: int, outcome: Outcome) -> bool:
         """End the server's requests being interpreted with `outcome`, and say if there were any."""
-        requests = self.interpreting.pop(guild.id, [])
+        requests = self.interpreting.pop(guild_id, [])
         for request in requests:
             request.set_result(outcome)
         return bool(requests)
 
-    def hand_over(self, guild: discord.Guild, request: asyncio.Future[Outcome]) -> None:
-        """Stop tracking a request on its way to the station, and end the older ones it replaces."""
+    def supersede_older(self, guild: discord.Guild, request: asyncio.Future[Outcome]) -> None:
+        """Stop tracking a request the station has taken, and end the older ones as replaced."""
         requests = self.interpreting[guild.id]
         arrival = requests.index(request)
         for older in requests[:arrival]:
@@ -216,8 +218,10 @@ class SobaFM(discord.Client):
                 return PLAY_REPLIES[interpreting.result()]
             if (plan := result.plan) is None:
                 return REFUSALS[result.outcome]
-            self.hand_over(member.guild, interpreting)
+            if member.guild.voice_client is None:  # left before this request was tracked
+                return PLAY_REPLIES[Outcome.DISCONNECTED]
             started = self.station(member.guild, settings.volume).play(plan, member.mention)
+            self.supersede_older(member.guild, interpreting)
             try:
                 outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
             except TimeoutError:
@@ -252,7 +256,7 @@ class SobaFM(discord.Client):
         return None
 
     def stop(self, guild: discord.Guild) -> str:
-        cancelled = self.supersede(guild, Outcome.STOPPED)
+        cancelled = self.supersede(guild.id, Outcome.STOPPED)
         station = self.stations.get(guild.id)
         if station is None or station.program is None:
             return "Stopped the request before it played." if cancelled else "Nothing is playing."
