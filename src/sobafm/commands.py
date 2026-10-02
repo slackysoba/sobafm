@@ -43,13 +43,13 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
         if problem := await bot.admit(interaction.user, request):
             await interaction.response.send_message(problem, ephemeral=True)
             return
-        admitted_at = bot.changed_at.get(interaction.user.guild.id)
+        cooldown = bot.cooldowns.get(interaction.user.guild.id)  # the one admit() started
         try:
             await interaction.response.defer()
-        except discord.HTTPException:  # the interaction expired, so nothing will play
-            bot.withdraw(interaction.user.guild, admitted_at)
+        except Exception:  # such as an expired interaction, so nothing will play
+            bot.free_cooldown(interaction.user.guild, cooldown)
             raise
-        await interaction.followup.send(await bot.play(interaction.user, request))
+        await interaction.followup.send(await bot.play(interaction.user, request, cooldown))
 
     @tree.command(description="Stop the music")
     @app_commands.guild_only()

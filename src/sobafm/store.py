@@ -1,17 +1,18 @@
 """Per-server state in SQLite: one row per guild (ADR-0003)."""
 
 import asyncio
-import json
 import logging
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 log = logging.getLogger(__name__)
+
+STORED_FIELDS = TypeAdapter(dict[str, object])  # a settings document, before its fields
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS guild (
@@ -76,15 +77,12 @@ class Store:
         if not rows:
             return GuildSettings()
         try:
-            stored: object = json.loads(rows[0][0])
-        except json.JSONDecodeError:
-            stored = None
-        if not isinstance(stored, dict):
+            fields = STORED_FIELDS.validate_json(rows[0][0])
+        except ValidationError:
             log.warning(
                 "Stored settings for server %d are unreadable; using the defaults", guild_id
             )
             return GuildSettings()
-        fields = cast(dict[str, object], stored)
         try:
             return GuildSettings.model_validate(fields)
         except ValidationError as error:

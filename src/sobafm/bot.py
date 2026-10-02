@@ -56,7 +56,14 @@ class Voice(discord.VoiceClient):
 
 
 class SobaFM(discord.Client):
-    def __init__(self, settings: Settings, store: Store, connect: Connect | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: Store,
+        connect: Connect | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
         intents.voice_states = True
@@ -72,9 +79,9 @@ class SobaFM(discord.Client):
         add_commands(self.tree, self)
         self.voices: set[Voice] = set()
         self.voice_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.changed_at: dict[int, float] = {}  # when each server's program last changed
+        self.cooldowns: dict[int, float] = {}  # when each server's change cooldown started
         self.settings_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.clock: Callable[[], float] = time.monotonic
+        self._clock = clock
 
     async def close(self) -> None:
         """Close every station, ending its Lyria sessions, before disconnecting."""
@@ -105,8 +112,8 @@ class SobaFM(discord.Client):
         """Admit a request and start the server's change cooldown, or say why it can't play.
 
         The check and the start of the cooldown happen without an await between them, so
-        concurrent requests cannot both get past it. A request that ends without changing the
-        program frees the cooldown again (`play()` and `withdraw()`).
+        concurrent requests cannot both get past it. The start time in `cooldowns` identifies
+        the request: one that ends without playing frees it with `free_cooldown()`.
         """
         if not request.strip():
             return "Describe the music you want, for example: rainy lo-fi with soft piano."
@@ -116,25 +123,27 @@ class SobaFM(discord.Client):
         if member.voice is None or member.voice.channel != voice.channel:
             return f"Join {voice.channel.mention} to request music."
         settings = await self.store.settings(member.guild.id)
-        now = self.clock()
-        wait = settings.cooldown_seconds - (now - self.changed_at.get(member.guild.id, -math.inf))
+        now = self._clock()
+        wait = settings.cooldown_seconds - (now - self.cooldowns.get(member.guild.id, -math.inf))
         if wait > 0:
             return f"The music changed recently. Try again in {seconds(math.ceil(wait))}."
-        self.changed_at[member.guild.id] = now
+        self.cooldowns[member.guild.id] = now
         return None
 
-    def withdraw(self, guild: discord.Guild, admitted_at: float | None) -> None:
-        """Free the cooldown an admitted request started, unless another has started since."""
-        if admitted_at is not None and self.changed_at.get(guild.id) == admitted_at:
-            del self.changed_at[guild.id]
+    def free_cooldown(self, guild: discord.Guild, started: float | None) -> None:
+        """Free the cooldown that started at `started`, unless another has started since."""
+        if started is not None and self.cooldowns.get(guild.id) == started:
+            del self.cooldowns[guild.id]
 
-    async def play(self, member: discord.Member, request: str) -> str:
+    async def play(
+        self, member: discord.Member, request: str, cooldown: float | None = None
+    ) -> str:
         """Start or replace the program, and describe the outcome once it plays or fails.
 
-        A request that fails, or is replaced or stopped before it starts, frees the cooldown.
+        `cooldown` is when `admit()` started this request's cooldown. A request that ends
+        without playing frees it, even after the reply.
         """
-        admitted_at = self.changed_at.get(member.guild.id)
-        changed = False
+        playing = False  # or may still play
         try:
             plan = MusicPlan.from_request(request)
             settings = await self.store.settings(member.guild.id)
@@ -142,12 +151,18 @@ class SobaFM(discord.Client):
             try:
                 outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
             except TimeoutError:
-                changed = True  # it may still start
+
+                def settled(done: asyncio.Future[Outcome]) -> None:
+                    if done.result() is not Outcome.PLAYING:
+                        self.free_cooldown(member.guild, cooldown)
+
+                started.add_done_callback(settled)
+                playing = True
                 return "The music is taking longer than usual to start."
-            changed = outcome is Outcome.PLAYING
+            playing = outcome is Outcome.PLAYING
         finally:
-            if not changed:
-                self.withdraw(member.guild, admitted_at)
+            if not playing:
+                self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
             title = discord.utils.escape_markdown(plan.title)
             return f"Now playing **{title}**, requested by {member.mention}."

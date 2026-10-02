@@ -94,10 +94,23 @@ def test_settings_reject_values_out_of_range(values: dict[str, int]) -> None:
         GuildSettings.model_validate(values)
 
 
-async def test_stored_settings_ignore_unknown_fields(store: Store) -> None:
+async def test_stored_settings_ignore_unknown_fields(
+    store: Store, caplog: pytest.LogCaptureFixture
+) -> None:
     store_raw_settings(store, '{"volume_percent": 30, "theme": "dark"}')
 
     assert await store.settings(1) == GuildSettings(volume_percent=30)
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("text", ["not json", "[]", "null"])
+async def test_unreadable_stored_settings_fall_back_to_the_defaults(
+    store: Store, caplog: pytest.LogCaptureFixture, text: str
+) -> None:
+    store_raw_settings(store, text)
+
+    assert await store.settings(1) == GuildSettings()
+    assert "unreadable" in caplog.text
 
 
 async def test_invalid_stored_settings_fall_back_to_the_defaults(

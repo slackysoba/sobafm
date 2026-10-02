@@ -1,9 +1,9 @@
 import asyncio
-import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import discord
 import pytest
 from pydantic import ValidationError
@@ -93,12 +93,20 @@ def bot_voice_update(guild: Any, before: Any, after: Any) -> tuple[Any, Any, Any
 
 
 @pytest.fixture
-async def bot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lyria: FakeLyria) -> SobaFM:
+async def bot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lyria: FakeLyria, clock: FakeClock
+) -> SobaFM:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", "key")
     store = Store(tmp_path / "sobafm.db")
     await store.initialize()
-    return SobaFM(load_settings(env_file=None), store, connect=lyria.connect)
+    return SobaFM(load_settings(env_file=None), store, connect=lyria.connect, clock=clock)
+
+
+async def admitted(bot: SobaFM, member: Any, request: str) -> float:
+    """Admit `request`, returning when the cooldown it started began."""
+    assert await bot.admit(member, request) is None
+    return bot.cooldowns[member.guild.id]
 
 
 def fake_station(outcome: Outcome = Outcome.PLAYING) -> Any:
@@ -777,19 +785,10 @@ async def test_refuses_a_change_inside_the_cooldown(bot: SobaFM) -> None:
 async def test_a_refused_request_leaves_the_cooldown_alone(bot: SobaFM) -> None:
     guild = make_guild()
     channel = make_channel(guild)
-    outside = in_voice(make_channel(guild), channel)
+    outside = in_voice(make_channel(guild, 11), channel)
     assert await bot.admit(outside, "ambient") is not None
     member = in_voice(channel, channel)
     assert await bot.admit(member, " ") is not None
-
-    assert await bot.admit(member, "jazz") is None
-
-
-async def test_admits_a_change_once_the_cooldown_passes(bot: SobaFM) -> None:
-    guild = make_guild()
-    channel = make_channel(guild)
-    member = in_voice(channel, channel)
-    bot.changed_at[guild.id] = time.monotonic() - 30
 
     assert await bot.admit(member, "jazz") is None
 
@@ -832,9 +831,7 @@ async def test_admits_one_of_several_concurrent_requests(bot: SobaFM) -> None:
     assert replies.count(None) == 1
 
 
-async def test_the_cooldown_counts_down_to_the_second(bot: SobaFM) -> None:
-    clock = FakeClock()
-    bot.clock = clock
+async def test_the_cooldown_counts_down_to_the_second(bot: SobaFM, clock: FakeClock) -> None:
     guild = make_guild()
     channel = make_channel(guild)
     member = in_voice(channel, channel)
@@ -846,55 +843,91 @@ async def test_the_cooldown_counts_down_to_the_second(bot: SobaFM) -> None:
     assert await bot.admit(member, "jazz") is None
 
 
-@pytest.mark.parametrize(
-    ("outcome", "frees"),
-    [
-        (Outcome.PLAYING, False),
-        (Outcome.BUSY, True),
-        (Outcome.REFUSED, True),
-        (Outcome.FAILED, True),
-    ],
-)
-async def test_a_request_that_changes_nothing_frees_the_cooldown(
-    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome, *, frees: bool
+@pytest.mark.parametrize("outcome", list(Outcome))
+async def test_only_a_request_that_plays_keeps_the_cooldown(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome
 ) -> None:
     guild = make_guild()
     channel = make_channel(guild)
     member = in_voice(channel, channel)
     monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(outcome)))
-    assert await bot.admit(member, "ambient") is None
+    cooldown = await admitted(bot, member, "ambient")
 
-    await bot.play(member, "ambient")
+    await bot.play(member, "ambient", cooldown)
 
-    assert (await bot.admit(member, "jazz") is None) is frees
+    assert (await bot.admit(member, "jazz") is None) is (outcome is not Outcome.PLAYING)
 
 
-async def test_a_slow_start_keeps_the_cooldown(
-    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("outcome", [Outcome.PLAYING, Outcome.FAILED])
+async def test_a_slow_start_keeps_the_cooldown_until_it_settles(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome
 ) -> None:
     monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
+    started: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
     station = fake(Station, close=AsyncMock())
-    station.play.return_value = asyncio.get_running_loop().create_future()
+    station.play.return_value = started
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
     guild = make_guild()
     channel = make_channel(guild)
     member = in_voice(channel, channel)
-    assert await bot.admit(member, "ambient") is None
+    cooldown = await admitted(bot, member, "ambient")
+    await bot.play(member, "ambient", cooldown)
+    assert await bot.admit(member, "jazz") is not None  # it may still start
 
-    await bot.play(member, "ambient")
+    started.set_result(outcome)
+    await asyncio.sleep(0)
 
-    assert await bot.admit(member, "jazz") is not None
+    assert (await bot.admit(member, "jazz") is None) is (outcome is not Outcome.PLAYING)
 
 
-async def test_an_expired_interaction_frees_the_cooldown(bot: SobaFM) -> None:
+async def test_a_request_that_raises_frees_the_cooldown(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot, "station", MagicMock(side_effect=RuntimeError("a bug")))
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    cooldown = await admitted(bot, member, "ambient")
+
+    with pytest.raises(RuntimeError):
+        await bot.play(member, "ambient", cooldown)
+
+    assert await bot.admit(member, "jazz") is None
+
+
+async def test_a_request_frees_only_the_cooldown_it_started(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    guild = make_guild()
+    await bot.store.save_settings(guild.id, GuildSettings(cooldown_seconds=1))
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    first = await admitted(bot, member, "ambient")
+    clock.now = 1.5
+    await admitted(bot, member, "jazz")  # admitted while the first request is still starting
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(Outcome.REPLACED)))
+
+    await bot.play(member, "ambient", first)
+
+    assert await bot.admit(member, "lo-fi") is not None
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [discord.NotFound(MagicMock(status=404), "expired"), aiohttp.ServerDisconnectedError()],
+    ids=["expired", "disconnected"],
+)
+async def test_an_unanswered_interaction_frees_the_cooldown(
+    bot: SobaFM, failure: Exception
+) -> None:
     guild = make_guild()
     channel = make_channel(guild)
     member = in_voice(channel, channel)
     interaction = make_interaction(member)
-    interaction.response.defer.side_effect = discord.NotFound(MagicMock(status=404), "expired")
+    interaction.response.defer.side_effect = failure
     command: Any = bot.tree.get_command("play")
 
-    with pytest.raises(discord.NotFound):
+    with pytest.raises(type(failure)):
         await command.callback(interaction, request="ambient")
 
     assert await bot.admit(member, "jazz") is None
