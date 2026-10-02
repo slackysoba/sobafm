@@ -103,6 +103,16 @@ async def bot(
     return SobaFM(load_settings(env_file=None), store, connect=lyria.connect, clock=clock)
 
 
+def slow_station(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> asyncio.Future[Outcome]:
+    """Make the next request outlast the reply, returning the outcome the station will settle."""
+    monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
+    started: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+    station = fake(Station, close=AsyncMock())
+    station.play.return_value = started
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    return started
+
+
 async def admitted(bot: SobaFM, member: Any, request: str) -> float:
     """Admit `request`, returning when the cooldown it started began."""
     assert await bot.admit(member, request) is None
@@ -502,7 +512,7 @@ async def test_play_reports_what_is_playing(bot: SobaFM, monkeypatch: pytest.Mon
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
 
     assert await bot.admit(member, "ambient drones") is None
-    assert await bot.play(member, "ambient drones") == (
+    assert await bot.play(member, "ambient drones", None) == (
         "Now playing **ambient drones**, requested by <@5>."
     )
     assert station.play.call_args.args[0].prompts[0].text == "ambient drones"
@@ -517,7 +527,7 @@ async def test_play_explains_failures(
     member = in_voice(channel, channel)
     monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(outcome)))
 
-    assert await bot.play(member, "ambient") == PLAY_REPLIES[outcome]
+    assert await bot.play(member, "ambient", None) == PLAY_REPLIES[outcome]
 
 
 async def test_stop_needs_the_channel_or_manage_server(bot: SobaFM) -> None:
@@ -616,17 +626,14 @@ async def test_stop_command_replies_privately(bot: SobaFM, monkeypatch: pytest.M
 async def test_play_says_when_the_music_is_slow_to_start(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
-    station = fake(Station, close=AsyncMock())
-    station.play.return_value = asyncio.get_running_loop().create_future()
-    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    started = slow_station(bot, monkeypatch)
     guild = make_guild()
     channel = make_channel(guild)
 
-    reply = await bot.play(in_voice(channel, channel), "ambient")
+    reply = await bot.play(in_voice(channel, channel), "ambient", None)
 
     assert reply == "The music is taking longer than usual to start."
-    assert not station.play.return_value.done()  # the station still settles it later
+    assert not started.done()  # the station still settles it later
 
 
 async def test_closing_the_client_closes_every_station(bot: SobaFM) -> None:
@@ -766,7 +773,7 @@ async def test_play_creates_the_station_at_the_stored_volume(
     station = MagicMock(return_value=fake_station())
     monkeypatch.setattr(bot, "station", station)
 
-    await bot.play(in_voice(channel, channel), "ambient")
+    await bot.play(in_voice(channel, channel), "ambient", None)
 
     station.assert_called_once_with(guild, 0.8)
 
@@ -862,11 +869,7 @@ async def test_only_a_request_that_plays_keeps_the_cooldown(
 async def test_a_slow_start_keeps_the_cooldown_until_it_settles(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome
 ) -> None:
-    monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
-    started: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
-    station = fake(Station, close=AsyncMock())
-    station.play.return_value = started
-    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    started = slow_station(bot, monkeypatch)
     guild = make_guild()
     channel = make_channel(guild)
     member = in_voice(channel, channel)
@@ -878,6 +881,61 @@ async def test_a_slow_start_keeps_the_cooldown_until_it_settles(
     await asyncio.sleep(0)
 
     assert (await bot.admit(member, "jazz") is None) is (outcome is not Outcome.PLAYING)
+
+
+async def test_a_slow_start_never_frees_a_later_cooldown(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    started = slow_station(bot, monkeypatch)
+    guild = make_guild()
+    await bot.store.save_settings(guild.id, GuildSettings(cooldown_seconds=1))
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    first = await admitted(bot, member, "ambient")
+    await bot.play(member, "ambient", first)
+    clock.now = 1.5
+    await admitted(bot, member, "jazz")
+
+    started.set_result(Outcome.REPLACED)
+    await asyncio.sleep(0)
+
+    assert await bot.admit(member, "lo-fi") is not None
+
+
+async def test_the_play_command_frees_the_cooldown_when_nothing_plays(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(Outcome.FAILED)))
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    command: Any = bot.tree.get_command("play")
+
+    await command.callback(make_interaction(member), request="ambient")
+
+    assert await bot.admit(member, "jazz") is None
+
+
+async def test_the_play_command_keeps_a_cooldown_started_during_its_reply(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(Outcome.REPLACED)))
+    guild = make_guild()
+    await bot.store.save_settings(guild.id, GuildSettings(cooldown_seconds=1))
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    interaction = make_interaction(member)
+
+    async def admit_another() -> None:  # another request is admitted while this one defers
+        clock.now = 1.5
+        assert await bot.admit(member, "jazz") is None
+
+    interaction.response.defer.side_effect = admit_another
+    command: Any = bot.tree.get_command("play")
+
+    await command.callback(interaction, request="ambient")
+
+    assert await bot.admit(member, "lo-fi") is not None
 
 
 async def test_a_request_that_raises_frees_the_cooldown(

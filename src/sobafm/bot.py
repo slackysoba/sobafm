@@ -130,18 +130,16 @@ class SobaFM(discord.Client):
         self.cooldowns[member.guild.id] = now
         return None
 
-    def free_cooldown(self, guild: discord.Guild, started: float | None) -> None:
-        """Free the cooldown that started at `started`, unless another has started since."""
-        if started is not None and self.cooldowns.get(guild.id) == started:
+    def free_cooldown(self, guild: discord.Guild, cooldown: float | None) -> None:
+        """Free the cooldown that started at `cooldown`, unless another has started since."""
+        if cooldown is not None and self.cooldowns.get(guild.id) == cooldown:
             del self.cooldowns[guild.id]
 
-    async def play(
-        self, member: discord.Member, request: str, cooldown: float | None = None
-    ) -> str:
+    async def play(self, member: discord.Member, request: str, cooldown: float | None) -> str:
         """Start or replace the program, and describe the outcome once it plays or fails.
 
-        `cooldown` is when `admit()` started this request's cooldown. A request that ends
-        without playing frees it, even after the reply.
+        `cooldown` is when `admit()` started this request's cooldown, if it did. A request that
+        ends without playing frees it, even after the reply.
         """
         playing = False  # or may still play
         try:
