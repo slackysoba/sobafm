@@ -15,7 +15,8 @@ def isolated_environment(
     The evaluation set keeps them, because it calls Gemini with the developer's key.
     """
     monkeypatch.chdir(tmp_path)
-    if "eval" not in request.keywords:
+    # pytest leaves `request.node` unannotated.
+    if request.node.get_closest_marker("eval") is None:  # pyright: ignore[reportUnknownMemberType]
         for field in Settings.model_fields:
             monkeypatch.delenv(Settings.env_name(field), raising=False)
 
