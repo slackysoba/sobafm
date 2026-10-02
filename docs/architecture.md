@@ -208,7 +208,7 @@ CREATE TABLE guild (
 | New gateway session (a reconnect that cannot resume) | discord.py forgets its voice clients, so the program ends. SobaFM closes the old voice connection, which takes up to 30 seconds, then rejoins the remembered channel |
 | Player thread error | `read()` returns silence; the `after` callback wakes the station, which restarts the player |
 | Gateway not ready at startup | The watchdog exits with an error and the process supervisor restarts SobaFM |
-| Opus library missing | SobaFM exits at startup with a message that names the library |
+| Opus library missing or unloadable | SobaFM exits at startup with a message that names the library |
 
 ## Security and privacy
 

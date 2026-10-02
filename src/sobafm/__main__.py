@@ -28,10 +28,10 @@ def main() -> None:
         sys.exit("sobafm: .env could not be read as UTF-8")
     configure_logging(settings.log_level)
     try:
-        discord.opus.Encoder()  # loads libopus, which discord.py bundles only on Windows
+        discord.opus.Encoder()  # loads libopus as voice playback does
     except discord.opus.OpusNotLoaded:
         sys.exit(
-            "sobafm: the Opus library is missing; install libopus "
+            "sobafm: the Opus library could not be loaded; install libopus "
             "(libopus0 on Debian and Ubuntu, opus on Homebrew)"
         )
     try:

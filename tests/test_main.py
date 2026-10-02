@@ -74,13 +74,14 @@ def test_exits_when_env_file_is_not_utf8(tmp_path: Path) -> None:
 
 
 def test_runs_the_bot_with_valid_configuration(
-    monkeypatch: pytest.MonkeyPatch, started: list[Settings]
+    monkeypatch: pytest.MonkeyPatch, opus: MagicMock, started: list[Settings]
 ) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
 
     main()
 
+    opus.assert_called_once_with()  # no arguments, so only loading the library can fail
     assert [settings.discord_token.get_secret_value() for settings in started] == ["token"]
 
 
@@ -95,7 +96,7 @@ def test_exits_when_the_opus_library_is_missing(
         main()
 
     assert caught.value.code == (
-        "sobafm: the Opus library is missing; install libopus "
+        "sobafm: the Opus library could not be loaded; install libopus "
         "(libopus0 on Debian and Ubuntu, opus on Homebrew)"
     )
     assert not started
