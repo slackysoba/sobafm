@@ -60,7 +60,7 @@ uv run pytest                       # tests
 - Agents may merge a pull request only when an agent opened it for a Ready issue, it is not labeled `maintainer-approval`, every required check passes, and an independent review by a separate agent records no blocking findings; the review and its dispositions are posted on the pull request.
 - The maintainer approves everything else: pull requests from other contributors, and those labeled `maintainer-approval` (decision records, requirement changes, security-posture changes, and anything with a cost).
 - Squash merge only. Never push to `main`; rewrite only your own unmerged branches, with `--force-with-lease`.
-- Before merging a pull request that others are based on, retarget them to `main`, as [CONTRIBUTING.md](CONTRIBUTING.md#commits-and-pull-requests) describes.
+- Before merging a pull request that others are based on, change their base to `main`, and merge without `--delete-branch`, as [CONTRIBUTING.md](CONTRIBUTING.md#stacked-pull-requests) describes.
 - Work outside the issue's scope becomes a new issue rather than part of the current pull request.
 
 ## Safety

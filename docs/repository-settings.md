@@ -9,7 +9,7 @@ The settings of `slackysoba/sobafm`, each with its reason and the `gh` command t
 | Visibility | Public | SobaFM is open source |
 | Features | Issues and Projects on; wiki and discussions off | Work is tracked in issues and the Project; documentation lives in `docs/` |
 | Merge methods | Squash only, using the pull request title and description | One commit per issue on `main`, with the reviewed description as its message |
-| Head branches | Deleted on merge; update-branch suggestions on | Keeps branches short-lived |
+| Head branches | Deleted on merge; update-branch suggestions on | Keeps branches short-lived; GitHub retargets pull requests based on a branch it deletes |
 
 ```sh
 gh repo edit slackysoba/sobafm --enable-issues --enable-projects --enable-wiki=false \

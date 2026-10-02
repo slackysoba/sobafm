@@ -41,7 +41,7 @@ uv run pre-commit run --all-files   # every hook, including Markdown lint and a 
 ## Making a change
 
 1. **Start from an issue.** Every change is linked to one. For anything beyond a small fix, agree on the approach in the issue before writing code.
-2. **Branch** from `main` as `<type>/<issue>-<slug>`, where the type is `task`, `bug`, `decision`, or `research` (enhancements are implemented as tasks); for example, `task/8-python-toolchain`.
+2. **Branch** from `main`, or for a [stacked pull request](#stacked-pull-requests) from the branch it builds on, as `<type>/<issue>-<slug>`, where the type is `task`, `bug`, `decision`, or `research` (enhancements are implemented as tasks); for example, `task/8-python-toolchain`.
 3. **Keep the change focused:** one issue, one branch, one pull request. Record unrelated findings as new issues.
 4. **Reuse before building.** Prefer an existing platform capability or a well-maintained library over custom code, and explain the choice in the pull request. A new external service, which would add an account or a cost for operators, needs a decision first.
 5. **Keep the repository consistent.** Update the documents the change affects and delete the code it supersedes, in the same pull request.
@@ -52,8 +52,18 @@ uv run pre-commit run --all-files   # every hook, including Markdown lint and a 
 - Pull requests are squash-merged, and the pull request's title and description become the commit message.
 - Titles are imperative and in sentence case, without a type prefix: "Add the deck frame buffer", not "feat: deck buffer".
 - Descriptions state the intent, scope, verification, and risk of the change.
-- A pull request can build on another that is still in review. Branch from that branch, base the pull request on it, and say which commits are its own. Before merging the base pull request, change each dependent's base to `main`, then rebase it onto `main` once the merge lands. Merge without `--delete-branch`, since the repository deletes merged branches itself; deleting a base branch through the API closes the pull requests based on it.
 - Every required check must pass before merging: `ci` (lint, types, tests, Markdown lint, and link checks) and `security` (the vulnerability and license scan of `uv.lock`, and dependency review). Pull requests labeled `maintainer-approval` also need the maintainer's explicit approval. [Repository settings](docs/repository-settings.md) records the branch ruleset and every other setting.
+
+### Stacked pull requests
+
+A pull request can build on another that is still in review:
+
+1. Branch from that pull request's branch, base the new pull request on it, and say in the description which pull request it builds on. Keep it rebased on that branch while both are in review.
+2. Before merging the base pull request, change each dependent's base to `main`: `gh pr list --base <branch>` lists them, and `gh pr edit <number> --base main` changes one.
+3. Merge with `gh pr merge <number> --squash`, without `--delete-branch`, and decline gh's offer to delete the branch. The repository deletes merged branches itself and retargets the pull requests based on them. When gh deletes the branch right after the merge, GitHub closes those pull requests instead ([cli/cli#14223](https://github.com/cli/cli/issues/14223)).
+4. Rebase each dependent onto `main`, replaying only its own commits: `git rebase --onto origin/main <base head>`, where `<base head>` is the base pull request's last commit (`gh pr view <base> --json headRefOid --jq .headRefOid`). Then remove the note about the base from its description, which becomes the squash commit message.
+
+If a dependent is closed anyway, do not push to its branch: a closed pull request cannot be reopened once its branch is force-pushed. Restore the base branch, reopen the dependent, change its base to `main`, and then rebase it.
 
 ## Templates and coding agents
 
