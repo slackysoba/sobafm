@@ -52,6 +52,7 @@ uv run pre-commit run --all-files   # every hook, including Markdown lint and a 
 - Pull requests are squash-merged, and the pull request's title and description become the commit message.
 - Titles are imperative and in sentence case, without a type prefix: "Add the deck frame buffer", not "feat: deck buffer".
 - Descriptions state the intent, scope, verification, and risk of the change.
+- A pull request can build on another that is still in review. Branch from that branch, base the pull request on it, and say which commits are its own. Before merging the base pull request, change each dependent's base to `main`, then rebase it onto `main` once the merge lands. Merge without `--delete-branch`, since the repository deletes merged branches itself; deleting a base branch through the API closes the pull requests based on it.
 - Every required check must pass before merging: `ci` (lint, types, tests, Markdown lint, and link checks) and `security` (the vulnerability and license scan of `uv.lock`, and dependency review). Pull requests labeled `maintainer-approval` also need the maintainer's explicit approval. [Repository settings](docs/repository-settings.md) records the branch ruleset and every other setting.
 
 ## Templates and coding agents
