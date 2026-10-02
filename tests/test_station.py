@@ -585,10 +585,14 @@ async def test_ends_the_program_after_the_channel_stays_empty(rig: Rig) -> None:
 
     await rig.tick(1)
     assert rig.station.program is None
-    rig.listen(3)
+    assert rig.station.mixer.switching  # it fades out rather than cutting
+    assert rig.player.playing
+
+    rig.listen(FADE_OUT_S)
     await rig.tick()
     await rig.tick()
     assert rig.station.mixer.live is None
+    assert not rig.player.playing
     assert all(session.closed for session in rig.lyria.sessions)
 
 
@@ -601,9 +605,27 @@ async def test_keeps_playing_when_a_listener_returns(rig: Rig) -> None:
     rig.set_listeners(1)
     await rig.tick()
     rig.set_listeners(0)
-    await rig.tick(EMPTY_GRACE_S - 10)
-
+    await rig.tick()  # the grace period starts again here
+    await rig.tick(EMPTY_GRACE_S - 1)
     assert rig.station.program is not None
+
+    await rig.tick(1)
+    assert rig.station.program is None
+
+
+async def test_a_request_during_the_grace_period_restarts_it(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.set_listeners(0)
+    await rig.tick()
+    await rig.tick(50)
+
+    rig.station.play(SYNTHWAVE, "Deafened member")
+    await rig.tick()
+    await rig.tick(EMPTY_GRACE_S - 1)
+    assert rig.station.program is not None
+
+    await rig.tick(1)
+    assert rig.station.program is None
 
 
 async def test_a_new_request_restarts_the_grace_period(rig: Rig) -> None:

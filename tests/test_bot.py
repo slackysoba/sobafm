@@ -9,6 +9,7 @@ import pytest
 import sobafm.bot
 from sobafm.bot import PLAY_REPLIES, SobaFM, Voice, listeners
 from sobafm.config import load_settings
+from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, Station
 from sobafm.store import Store
 from tests.doubles import FakeLyria
@@ -674,3 +675,19 @@ def test_looks_members_up_in_the_current_guild() -> None:
     channel.voice_states = {1: fake(discord.VoiceState, self_deaf=False, deaf=False)}
 
     assert listeners(stale) == 0
+
+
+async def test_stations_count_the_listeners_in_their_server(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counted = MagicMock(return_value=1)
+    monkeypatch.setattr(sobafm.bot, "listeners", counted)
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    station = bot.station(guild)
+    station.play(MusicPlan.from_request("ambient"), "Member")
+
+    await station.reconcile()
+
+    counted.assert_called_with(guild)
+    await station.close()
