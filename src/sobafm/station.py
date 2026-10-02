@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal, Protocol
@@ -105,6 +105,7 @@ class Station:
         pool: SessionPool,
         *,
         volume: float,
+        status: Callable[[str | None], Coroutine[Any, Any, None]],
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.mixer = Mixer(volume)
@@ -120,6 +121,14 @@ class Station:
         self._next_play = 0.0
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._set_status = status
+        self._status: str | None = None  # the voice channel status last requested
+        self._status_task: asyncio.Task[None] | None = None
+
+    @property
+    def time_left(self) -> float | None:
+        """Seconds until the program ends, or None without one."""
+        return None if self.program is None else max(0.0, self.program.ends_at - self._clock())
 
     def play(
         self, plan: MusicPlan, requester: str, *, duration_seconds: float
@@ -153,7 +162,10 @@ class Station:
         self._wake.set()
 
     async def close(self, outcome: Outcome = Outcome.STOPPED) -> None:
-        """Stop at once: end the program with `outcome`, retire every deck, and stop the loop."""
+        """Stop at once: end the program with `outcome`, retire every deck, and stop the loop.
+
+        It also clears the voice channel status, which needs SobaFM still in the channel.
+        """
         self._finish(outcome)
         if self._task is not None:
             self._task.cancel()
@@ -166,6 +178,10 @@ class Station:
         self.mixer.switch_to(None, 0)
         if (player := self._voice()) is not None:
             player.stop()
+        if self._status_task is not None:  # the station has shown a status
+            self._status_task.cancel()
+            self._status = None
+            await self._show_status(None)
 
     async def _run(self) -> None:
         while True:
@@ -200,7 +216,33 @@ class Station:
             self._hand_over(self.program, player)
         else:
             self._wind_down(player)
+        self._show_heard_title()
         await asyncio.gather(*(deck.regulate() for deck in self.decks))
+
+    def _show_heard_title(self) -> None:
+        """Show the title being heard as the voice channel status (FB-2).
+
+        A program shows its title once it plays. A replacement leaves the title still heard
+        until it plays itself.
+        """
+        program = self.program
+        if program is None:
+            status = None
+        elif program.started.done() and program.started.result() is Outcome.PLAYING:
+            status = program.plan.title
+        else:
+            return
+        if status != self._status:
+            self._status = status
+            if self._status_task is not None:
+                self._status_task.cancel()  # the latest status wins
+            self._status_task = asyncio.create_task(self._show_status(status))
+
+    async def _show_status(self, status: str | None) -> None:
+        try:
+            await self._set_status(status)
+        except Exception:  # the status is cosmetic, so it must never affect playback
+            log.exception("Could not update the voice channel status")
 
     def _abandoned(self) -> bool:
         """Whether the channel has had no listeners for the whole grace period."""

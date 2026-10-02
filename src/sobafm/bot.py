@@ -7,6 +7,7 @@ import math
 import time
 from collections import defaultdict
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import cast
 
 import discord
@@ -20,6 +21,7 @@ from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
 from sobafm.interpreter import Interpreter
 from sobafm.interpreter import Outcome as Interpreted
+from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, SessionPool, Station
 from sobafm.store import GuildSettings, Store
 
@@ -50,7 +52,7 @@ REFUSALS = {  # the current music keeps playing
     ),
     Interpreted.BLOCKED: "Gemini's safety filters blocked that request, so nothing changed.",
 }
-FALLBACK_NOTE = " Gemini couldn't interpret the request, so it was used as typed."
+FALLBACK_NOTE = "\nGemini couldn't interpret the request, so it was used as typed."
 
 
 class Voice(discord.VoiceClient):
@@ -185,6 +187,7 @@ class SobaFM(discord.Client):
                 self.open_session,
                 self.pool,
                 volume=volume,
+                status=lambda status: set_voice_status(guild, status),
             )
             station.start()
             self.stations[guild.id] = station
@@ -261,6 +264,7 @@ class SobaFM(discord.Client):
                 return REFUSALS[result.outcome]
             if member.guild.voice_client is None:  # left before this request was tracked
                 return PLAY_REPLIES[Outcome.DISCONNECTED]
+            ends = discord.utils.utcnow() + timedelta(seconds=settings.duration_seconds)
             started = self.station(member.guild, settings.volume).play(
                 plan, member.mention, duration_seconds=settings.duration_seconds
             )
@@ -283,10 +287,19 @@ class SobaFM(discord.Client):
             if not playing:
                 self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
-            title = discord.utils.escape_markdown(plan.title)
-            reply = f"Now playing **{title}**, requested by {member.mention}."
-            return note(reply, result.outcome)
+            return note(f"Now playing {describe(plan, member.mention, ends)}", result.outcome)
         return PLAY_REPLIES[outcome]
+
+    def now(self, guild: discord.Guild) -> str:
+        """Describe the server's program for /now (CMD-3)."""
+        station = self.stations.get(guild.id)
+        program = station.program if station is not None else None
+        if station is None or program is None or (time_left := station.time_left) is None:
+            return "Nothing is playing."
+        playing = program.started.done() and program.started.result() is Outcome.PLAYING
+        ends = discord.utils.utcnow() + timedelta(seconds=time_left)
+        phase = "Now playing" if playing else "Starting"
+        return f"{phase} {describe(program.plan, program.requester, ends)}"
 
     def stop_problem(self, member: discord.Member) -> str | None:
         """Why `member` cannot stop the music, if they cannot."""
@@ -563,6 +576,32 @@ async def move(voice: discord.VoiceClient, channel: discord.VoiceChannel) -> Non
     if not moved or not voice.is_connected():
         raise TimeoutError
     await channel.guild.change_voice_state(channel=channel, self_deaf=True)
+
+
+def describe(plan: MusicPlan, requester: str, ends: datetime) -> str:
+    """A program's title, requester, style, and end time, with model-written text escaped."""
+    style = ", ".join(prompt.text for prompt in plan.prompts)
+    if plan.bpm is not None:
+        style += f", {plan.bpm} BPM"
+    return (
+        f"**{discord.utils.escape_markdown(plan.title)}**, requested by {requester}.\n"
+        f"Style: {discord.utils.escape_markdown(style)}\n"
+        f"Ends {discord.utils.format_dt(ends, 'R')}."
+    )
+
+
+async def set_voice_status(guild: discord.Guild, status: str | None) -> None:
+    """Show `status` on SobaFM's voice channel, if SobaFM may set it there (FB-2)."""
+    voice = cast(discord.VoiceClient | None, guild.voice_client)
+    channel = voice.channel if voice is not None else None
+    if not isinstance(channel, discord.VoiceChannel):
+        return
+    if not channel.permissions_for(channel.guild.me).set_voice_channel_status:
+        return
+    try:
+        await channel.edit(status=status)
+    except discord.HTTPException:
+        log.warning("Could not set the voice channel status in %s", guild, exc_info=True)
 
 
 def listeners(guild: discord.Guild) -> int:

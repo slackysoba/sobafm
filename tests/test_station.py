@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import threading
 from dataclasses import dataclass
 
@@ -36,6 +37,7 @@ class Rig:
     player: FakePlayer
     voice: list[FakePlayer]
     listeners: list[int]
+    statuses: list[str | None]  # the voice channel statuses the station has shown
 
     async def tick(self, seconds: float = 0.25) -> None:
         self.clock.now += seconds
@@ -65,24 +67,30 @@ class Rig:
 
 def make_station(
     lyria: FakeLyria, clock: FakeClock, pool: SessionPool
-) -> tuple[Station, list[FakePlayer], list[int]]:
+) -> tuple[Station, list[FakePlayer], list[int], list[str | None]]:
     voice = [FakePlayer()]  # emptied to simulate a lost voice connection
     listeners = [1]
+    statuses: list[str | None] = []
+
+    async def show(status: str | None) -> None:
+        statuses.append(status)
+
     station = Station(
         lambda: voice[0] if voice else None,
         lambda: listeners[0],
         lyria.connect,
         pool,
         volume=1.0,
+        status=show,
         clock=clock,
     )
-    return station, voice, listeners
+    return station, voice, listeners, statuses
 
 
 @pytest.fixture
 def rig(lyria: FakeLyria, clock: FakeClock) -> Rig:
-    station, voice, listeners = make_station(lyria, clock, SessionPool(4))
-    return Rig(station, lyria, clock, voice[0], voice, listeners)
+    station, voice, listeners, statuses = make_station(lyria, clock, SessionPool(4))
+    return Rig(station, lyria, clock, voice[0], voice, listeners, statuses)
 
 
 async def start_playing(
@@ -300,8 +308,8 @@ async def test_holds_its_reservation_until_its_sessions_end(
     lyria: FakeLyria, clock: FakeClock
 ) -> None:
     pool = SessionPool(2)
-    first, _, _ = make_station(lyria, clock, pool)
-    second, _, _ = make_station(lyria, clock, pool)
+    first, *_ = make_station(lyria, clock, pool)
+    second, *_ = make_station(lyria, clock, pool)
     first.play(LOFI, "Member", duration_seconds=HOUR_S)
     await first.reconcile()
 
@@ -315,7 +323,7 @@ async def test_holds_its_reservation_until_its_sessions_end(
 
 
 async def test_reports_busy_without_session_capacity(lyria: FakeLyria, clock: FakeClock) -> None:
-    station, _, _ = make_station(lyria, clock, SessionPool(1))
+    station, *_ = make_station(lyria, clock, SessionPool(1))
 
     assert station.play(LOFI, "Member", duration_seconds=HOUR_S).result() is Outcome.BUSY
 
@@ -702,3 +710,103 @@ async def test_a_new_request_restarts_the_grace_period(rig: Rig) -> None:
 
     await rig.tick(1)
     assert rig.station.program is None
+
+
+async def test_reports_the_time_left(rig: Rig) -> None:
+    assert rig.station.time_left is None
+
+    rig.station.play(LOFI, "Member", duration_seconds=300)
+    await rig.tick(100)
+
+    assert rig.station.time_left == pytest.approx(200)
+
+
+async def test_shows_the_title_once_the_program_plays(rig: Rig) -> None:
+    rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    assert rig.statuses == []  # nothing is heard yet
+
+    await rig.feed(-2, 10)
+    await rig.tick()
+
+    assert rig.statuses == [LOFI.title]
+
+
+async def test_shows_a_replacements_title_once_it_plays(rig: Rig) -> None:
+    await start_playing(rig)
+    await rig.feed(1, 60)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()
+    assert rig.statuses == [LOFI.title]  # still what is heard
+
+    await rig.feed(-1, 6)
+    await rig.tick()
+
+    assert rig.statuses == [LOFI.title, SYNTHWAVE.title]
+
+
+@pytest.mark.parametrize("end", ["stop", "duration", "voice lost"])
+async def test_clears_the_status_when_the_program_ends(rig: Rig, end: str) -> None:
+    await start_playing(rig, duration_seconds=300)
+    if end == "stop":
+        rig.station.stop()
+    elif end == "duration":
+        rig.clock.now += 300
+    else:
+        rig.disconnect()
+
+    await rig.tick()
+
+    assert rig.statuses == [LOFI.title, None]
+
+
+async def test_clears_the_status_on_close(rig: Rig) -> None:
+    await start_playing(rig)
+
+    await rig.station.close()
+
+    assert rig.statuses == [LOFI.title, None]
+
+
+async def test_close_leaves_a_status_it_never_showed(rig: Rig) -> None:
+    rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+
+    await rig.station.close()
+
+    assert rig.statuses == []
+
+
+async def test_the_latest_status_wins(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    shown: list[str | None] = []
+    answered = asyncio.Event()
+
+    async def slow(status: str | None) -> None:  # Discord answers late
+        await answered.wait()
+        shown.append(status)
+
+    monkeypatch.setattr(rig.station, "_set_status", slow)
+    await start_playing(rig)
+    rig.station.stop()
+    await rig.tick()
+
+    answered.set()
+    await settle()
+
+    assert shown == [None]
+
+
+async def test_a_failing_status_never_affects_playback(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def fail(status: str | None) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(rig.station, "_set_status", fail)
+
+    with caplog.at_level(logging.ERROR, logger="sobafm.station"):
+        await start_playing(rig)
+
+    assert "Could not update the voice channel status" in caplog.text
+    assert rig.station.program is not None
