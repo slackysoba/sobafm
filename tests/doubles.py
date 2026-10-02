@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from google.genai import errors, types
 
-from sobafm.pcm import BYTES_PER_SECOND
+from sobafm.pcm import BYTES_PER_SECOND, MIME_TYPE
 
 
 class FakeSession:
@@ -17,6 +17,7 @@ class FakeSession:
         self.prompts: list[types.WeightedPrompt] = []
         self.config: types.LiveMusicGenerationConfig | None = None
         self.closed = False
+        self.ending = False  # once Lyria has ended the session, sends fail
         self._messages: asyncio.Queue[types.LiveMusicServerMessage | BaseException] = (
             asyncio.Queue()
         )
@@ -30,10 +31,16 @@ class FakeSession:
         self.config = config
 
     async def play(self) -> None:
+        self._check_open()
         self.calls.append("play")
 
     async def pause(self) -> None:
+        self._check_open()
         self.calls.append("pause")
+
+    def _check_open(self) -> None:
+        if self.ending or self.closed:
+            raise ConnectionError("the session is closing")
 
     async def receive(self) -> AsyncGenerator[types.LiveMusicServerMessage]:
         while True:
@@ -42,9 +49,13 @@ class FakeSession:
                 raise message
             yield message
 
-    def send_audio(self, seconds: float = 0.0, *, size: int | None = None) -> None:
-        data = bytes(size if size is not None else round(seconds * BYTES_PER_SECOND))
-        content = types.LiveMusicServerContent(audio_chunks=[types.AudioChunk(data=data)])
+    def send_audio(
+        self, seconds: float = 0.0, *, data: bytes | None = None, mime_type: str = MIME_TYPE
+    ) -> None:
+        if data is None:
+            data = bytes(round(seconds * BYTES_PER_SECOND))
+        chunk = types.AudioChunk(data=data, mime_type=mime_type)
+        content = types.LiveMusicServerContent(audio_chunks=[chunk])
         self._messages.put_nowait(types.LiveMusicServerMessage(server_content=content))
 
     def refuse(self, reason: str = "We couldn't create what you asked for.") -> None:
@@ -55,7 +66,11 @@ class FakeSession:
         self, code: int = 1011, reason: str = "The service is currently unavailable."
     ) -> None:
         """End the session the way the SDK reports a WebSocket close."""
-        self._messages.put_nowait(errors.APIError(code, reason))
+        self.fail(errors.APIError(code, reason))
+
+    def fail(self, error: BaseException) -> None:
+        self.ending = True
+        self._messages.put_nowait(error)
 
 
 class FakeLyria:
@@ -64,11 +79,14 @@ class FakeLyria:
     def __init__(self) -> None:
         self.sessions: list[FakeSession] = []
         self.failure: BaseException | None = None
+        self.stall = False  # connecting never finishes
 
     @asynccontextmanager
     async def connect(self) -> AsyncGenerator[FakeSession]:
         if self.failure is not None:
             raise self.failure
+        if self.stall:
+            await asyncio.Event().wait()
         session = FakeSession()
         self.sessions.append(session)
         try:

@@ -18,9 +18,11 @@ def test_splits_chunks_into_whole_frames() -> None:
 
 def test_carries_partial_frames_over() -> None:
     splitter = FrameSplitter()
+    audio = bytes(i % 251 for i in range(FRAME_BYTES * 2))
 
-    first = splitter.split(bytes(FRAME_BYTES + 100))
-    second = splitter.split(bytes(FRAME_BYTES - 100))
+    first = splitter.split(audio[: FRAME_BYTES + 100])
+    second = splitter.split(audio[FRAME_BYTES + 100 :])
 
     assert [len(frame) for frame in first + second] == [FRAME_BYTES, FRAME_BYTES]
+    assert b"".join(first + second) == audio
     assert splitter.split(b"") == []

@@ -31,7 +31,7 @@ class MusicPlan(BaseModel):
 
     @classmethod
     def from_request(cls, request: str) -> MusicPlan:
-        """A plan that plays the request text itself as the only prompt."""
+        """A plan that plays the request text itself as the only prompt; it must not be blank."""
         text = " ".join(request.split())[:MAX_PROMPT_LENGTH]
         return cls(title=text[:MAX_TITLE_LENGTH], prompts=[Prompt(text=text)])
 
@@ -39,7 +39,11 @@ class MusicPlan(BaseModel):
         return [types.WeightedPrompt(text=p.text, weight=p.weight) for p in self.prompts]
 
     def to_config(self) -> types.LiveMusicGenerationConfig:
-        """The complete generation config: Lyria resets any field a config omits."""
+        """The generation config, with every field SobaFM controls set.
+
+        Lyria resets any field a config omits, so only the plan's unset optional values are
+        left to Lyria's defaults.
+        """
         return types.LiveMusicGenerationConfig(
             guidance=GUIDANCE,
             temperature=TEMPERATURE,

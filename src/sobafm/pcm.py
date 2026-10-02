@@ -7,6 +7,7 @@ BYTES_PER_SECOND = SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH
 FRAME_SECONDS = 0.02
 FRAME_BYTES = 3_840  # one 20 ms frame, the unit discord.py reads
 SILENCE = bytes(FRAME_BYTES)
+MIME_TYPE = "audio/l16;rate=48000;channels=2"  # how Lyria RealTime labels this format
 
 
 class FrameSplitter:
