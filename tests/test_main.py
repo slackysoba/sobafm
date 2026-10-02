@@ -2,6 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Self
+from unittest.mock import MagicMock
 
 import discord
 import pytest
@@ -11,6 +12,14 @@ from sobafm.__main__ import main, run
 from sobafm.config import Settings, load_settings
 
 KEY = "gemini-key-value"
+
+
+@pytest.fixture(autouse=True)
+def opus(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Stand in for libopus, so the tests do not depend on the system's copy."""
+    encoder = MagicMock()
+    monkeypatch.setattr(discord.opus, "Encoder", encoder)
+    return encoder
 
 
 @pytest.fixture
@@ -65,14 +74,32 @@ def test_exits_when_env_file_is_not_utf8(tmp_path: Path) -> None:
 
 
 def test_runs_the_bot_with_valid_configuration(
-    monkeypatch: pytest.MonkeyPatch, started: list[Settings]
+    monkeypatch: pytest.MonkeyPatch, opus: MagicMock, started: list[Settings]
 ) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
 
     main()
 
+    opus.assert_called_once_with()  # no arguments, so only loading the library can fail
     assert [settings.discord_token.get_secret_value() for settings in started] == ["token"]
+
+
+def test_exits_when_the_opus_library_is_missing(
+    monkeypatch: pytest.MonkeyPatch, opus: MagicMock, started: list[Settings]
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+    opus.side_effect = discord.opus.OpusNotLoaded
+
+    with pytest.raises(SystemExit) as caught:
+        main()
+
+    assert caught.value.code == (
+        "sobafm: the Opus library could not be loaded; install libopus "
+        "(libopus0 on Debian and Ubuntu, opus on Homebrew)"
+    )
+    assert not started
 
 
 def test_exits_when_discord_rejects_the_token(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,7 +17,7 @@ Thanks for your interest in SobaFM. This guide explains how work is planned, pro
 
 ## Development setup
 
-SobaFM needs Python 3.14 and [uv](https://docs.astral.sh/uv/getting-started/installation/), which manages the environment from `uv.lock` and installs Python 3.14 if it is missing. The Markdown hook also needs [Node.js](https://nodejs.org/) LTS, with npm, on your `PATH`.
+SobaFM needs Python 3.14 and [uv](https://docs.astral.sh/uv/getting-started/installation/), which manages the environment from `uv.lock` and installs Python 3.14 if it is missing. SobaFM also needs the Opus library, which it checks at startup: `libopus0` on Debian and Ubuntu, or `opus` on Homebrew. On Apple silicon, discord.py looks only in the default library paths, which exclude Homebrew's, so link the library into one: `mkdir -p ~/lib && ln -s /opt/homebrew/lib/libopus.dylib ~/lib/`. On Windows, discord.py includes it for x86 and x64 Python; on Windows on Arm, use x64 Python. The Markdown hook also needs [Node.js](https://nodejs.org/) LTS, with npm, on your `PATH`.
 
 ```sh
 uv sync                     # create .venv with the locked dependencies
