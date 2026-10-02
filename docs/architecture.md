@@ -83,7 +83,7 @@ The **mixer** is the audio source discord.py reads. Each `read()` returns exactl
 - The **event loop** runs the gateway, commands, Gemini calls, Lyria sessions, and the reconcile loop. Store calls run in a worker thread through `asyncio.to_thread`.
 - discord.py's **player thread** calls `Mixer.read()` every 20 ms.
 - Frames cross between the two through each deck's `collections.deque`, whose appends and pops are thread-safe.
-- The mixer's control state (live deck, pending switch, volume) sits behind one `threading.Lock`, held only for constant-time reads and writes.
+- The mixer's control state (live deck, pending switch, volume) sits behind one `threading.Lock`, held for one read's pops and mixing, tens of microseconds, or for a constant-time update.
 - The mixer never calls into the event loop; the station observes it on each tick. The only cross-thread signal is discord.py's `after` callback, delivered with `loop.call_soon_threadsafe`.
 
 ### Station reconcile loop

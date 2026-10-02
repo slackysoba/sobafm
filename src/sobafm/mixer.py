@@ -13,7 +13,8 @@ from sobafm.pcm import FRAME_SECONDS, SAMPLE_WIDTH, SILENCE
 
 log = logging.getLogger(__name__)
 
-VOLUME_STEP = FRAME_SECONDS  # gain moves at most this much per frame: full scale in one second
+VOLUME_RAMP_S = 1.0  # a full-scale volume change takes this long, so it never clicks
+VOLUME_STEP = FRAME_SECONDS / VOLUME_RAMP_S  # the most the gain moves per frame
 
 
 class FrameSource(Protocol):
@@ -32,14 +33,16 @@ class Mixer(discord.AudioSource):
     """
 
     def __init__(self, volume: float) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # held for one read's pops and mixing, or a setter
         self._live: FrameSource | None = None
         self._incoming: FrameSource | None = None
         self._switch_frames = 0
         self._switch_position = 0
         self._volume = volume
         self._gain = volume
-        self.underruns = 0
+        self._failing = False
+        self.underruns = 0  # reads that played silence while a source was playing
+        self.errors = 0
 
     @property
     def live(self) -> FrameSource | None:
@@ -59,58 +62,76 @@ class Mixer(discord.AudioSource):
     def switch_to(self, source: FrameSource | None, seconds: float) -> None:
         """Fade from the live source to `source`, or to silence when `source` is None.
 
-        A crossfade or fade-out never outlasts the audio the live source still holds. Callers
-        let a switch finish before starting another.
+        A crossfade or fade-out never outlasts the audio the live source still holds, and a
+        live source that has run dry is dropped, so `source` fades in from silence. Switching
+        to the current target changes nothing. A new target during a switch makes the
+        incoming source live at once, then fades from it.
         """
         with self._lock:
+            if self._switch_frames:
+                if source is self._incoming:
+                    return
+                self._live, self._incoming, self._switch_frames = self._incoming, None, 0
+            if source is self._live:
+                return
+            if self._live is not None and not self._live.frames:
+                self._live = None
             frames = round(seconds / FRAME_SECONDS)
             if self._live is not None:
                 frames = min(frames, len(self._live.frames))
-            if frames <= 0:
-                self._live, self._incoming, self._switch_frames = source, None, 0
+            if frames <= 0 or (self._live is None and source is None):
+                self._live = source
                 return
-            self._incoming = source
-            self._switch_frames = frames
-            self._switch_position = 0
+            self._incoming, self._switch_frames, self._switch_position = source, frames, 0
 
     @override
     def read(self) -> bytes:
         try:
             with self._lock:
-                return self._next_frame()
+                frame = self._next_frame()
         except Exception:  # an exception would stop discord.py's player
-            log.exception("Mixer read failed")
+            self.errors += 1
+            if not self._failing:  # one traceback per run of failures, not 50 a second
+                log.exception("Mixer read failed; playing silence")
+            self._failing = True
+            with self._lock:  # finish any switch, so a failing source cannot hold it open
+                if self._switch_frames:
+                    self._live, self._incoming, self._switch_frames = self._incoming, None, 0
             return SILENCE
-
-    @override
-    def is_opus(self) -> bool:
-        return False
+        self._failing = False
+        return frame
 
     def _next_frame(self) -> bytes:
         self._gain += max(-VOLUME_STEP, min(VOLUME_STEP, self._volume - self._gain))
-        if self._switch_frames == 0:
-            return self._scaled(self._take(self._live), self._gain)
-        progress = (self._switch_position + 0.5) / self._switch_frames
-        outgoing = self._scaled(
-            self._take(self._live), self._gain * math.cos(progress * math.pi / 2)
-        )
-        incoming = self._scaled(
-            self._take(self._incoming), self._gain * math.sin(progress * math.pi / 2)
-        )
-        self._switch_position += 1
-        if self._switch_position >= self._switch_frames:
-            self._live, self._incoming, self._switch_frames = self._incoming, None, 0
-        return audioop.add(outgoing, incoming, SAMPLE_WIDTH)
-
-    def _take(self, source: FrameSource | None) -> bytes:
-        if source is None:
+        if not self._switch_frames:
+            sources = [(self._live, self._gain)]
+        else:
+            angle = (self._switch_position + 0.5) / self._switch_frames * math.pi / 2
+            sources = [
+                (self._live, self._gain * math.cos(angle)),
+                (self._incoming, self._gain * math.sin(angle)),
+            ]
+            self._switch_position += 1
+            if self._switch_position >= self._switch_frames:
+                self._live, self._incoming, self._switch_frames = self._incoming, None, 0
+        playing = [(s, gain) for s, gain in sources if s is not None]
+        frames = [(f, gain) for s, gain in playing if (f := _pop(s)) is not None]
+        if not frames:
+            if playing:
+                self.underruns += 1
             return SILENCE
-        try:
-            return source.frames.popleft()
-        except IndexError:
-            self.underruns += 1
-            return SILENCE
+        mixed = _scaled(*frames[0])
+        for frame, gain in frames[1:]:
+            mixed = audioop.add(mixed, _scaled(frame, gain), SAMPLE_WIDTH)
+        return mixed
 
-    @staticmethod
-    def _scaled(frame: bytes, gain: float) -> bytes:
-        return frame if gain == 1.0 else audioop.mul(frame, SAMPLE_WIDTH, gain)
+
+def _pop(source: FrameSource) -> bytes | None:
+    try:
+        return source.frames.popleft()
+    except IndexError:
+        return None
+
+
+def _scaled(frame: bytes, gain: float) -> bytes:
+    return frame if gain == 1.0 else audioop.mul(frame, SAMPLE_WIDTH, gain)
