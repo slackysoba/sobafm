@@ -1,11 +1,13 @@
 import asyncio
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Self
 from unittest.mock import MagicMock
 
 import discord
 import pytest
+from google.genai import live_music
 
 import sobafm.__main__
 from sobafm.__main__ import main, run
@@ -20,6 +22,16 @@ def opus(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     encoder = MagicMock()
     monkeypatch.setattr(discord.opus, "Encoder", encoder)
     return encoder
+
+
+@pytest.fixture(autouse=True)
+def logging_levels() -> Iterator[None]:
+    """Restore the levels `main()` sets, so other tests keep the defaults."""
+    loggers = [logging.getLogger(name) for name in ("", "sobafm", "google_genai")]
+    levels = [logger.level for logger in loggers]
+    yield
+    for logger, level in zip(loggers, levels, strict=True):
+        logger.setLevel(level)
 
 
 @pytest.fixture
@@ -133,13 +145,14 @@ def test_debug_logging_applies_to_sobafm_only(
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
     monkeypatch.setenv("SOBAFM_LOG_LEVEL", "DEBUG")
-    for logger in (logging.getLogger(), logging.getLogger("sobafm")):
-        monkeypatch.setattr(logger, "level", logger.level)  # restored after the test
 
     main()
 
     assert logging.getLogger("sobafm").level == logging.DEBUG
     assert logging.getLogger("websockets").getEffectiveLevel() == logging.INFO
+    # the SDK's own logger, which logs Lyria's setup reply at INFO
+    assert not live_music.logger.isEnabledFor(logging.INFO)
+    assert live_music.logger.isEnabledFor(logging.WARNING)
 
 
 class NeverReady:
