@@ -18,6 +18,7 @@ from sobafm.station import (
     PLAYER_RETRY_S,
     REFUSAL_RETRY_S,
     SESSION_LIMIT_S,
+    STATUS_RETRY_S,
     Outcome,
     SessionPool,
     Station,
@@ -25,6 +26,7 @@ from sobafm.station import (
 from tests.doubles import FakeClock, FakeLyria, FakePlayer, FakeSession, settle
 
 HOUR_S = 3600.0
+CHANNEL = 10  # SobaFM's voice channel
 LOFI = MusicPlan.from_request("rainy lo-fi")
 SYNTHWAVE = MusicPlan.from_request("synthwave")
 
@@ -37,7 +39,8 @@ class Rig:
     player: FakePlayer
     voice: list[FakePlayer]
     listeners: list[int]
-    statuses: list[str | None]  # the voice channel statuses the station has shown
+    statuses: list[tuple[int, str | None]]  # each voice channel status request: where, and what
+    channel: list[int]  # SobaFM's voice channel, while voice is connected
 
     async def tick(self, seconds: float = 0.25) -> None:
         self.clock.now += seconds
@@ -64,16 +67,21 @@ class Rig:
     def set_listeners(self, count: int) -> None:
         self.listeners[0] = count
 
+    def move(self, channel: int) -> None:
+        self.channel[0] = channel
+
 
 def make_station(
     lyria: FakeLyria, clock: FakeClock, pool: SessionPool
-) -> tuple[Station, list[FakePlayer], list[int], list[str | None]]:
+) -> tuple[Station, list[FakePlayer], list[int], list[tuple[int, str | None]], list[int]]:
     voice = [FakePlayer()]  # emptied to simulate a lost voice connection
     listeners = [1]
-    statuses: list[str | None] = []
+    statuses: list[tuple[int, str | None]] = []
+    channel = [CHANNEL]
 
-    async def show(status: str | None) -> None:
-        statuses.append(status)
+    async def show(channel: int, status: str | None) -> bool:
+        statuses.append((channel, status))
+        return True
 
     station = Station(
         lambda: voice[0] if voice else None,
@@ -81,16 +89,17 @@ def make_station(
         lyria.connect,
         pool,
         volume=1.0,
+        channel=lambda: channel[0] if voice else None,
         status=show,
         clock=clock,
     )
-    return station, voice, listeners, statuses
+    return station, voice, listeners, statuses, channel
 
 
 @pytest.fixture
 def rig(lyria: FakeLyria, clock: FakeClock) -> Rig:
-    station, voice, listeners, statuses = make_station(lyria, clock, SessionPool(4))
-    return Rig(station, lyria, clock, voice[0], voice, listeners, statuses)
+    station, voice, listeners, statuses, channel = make_station(lyria, clock, SessionPool(4))
+    return Rig(station, lyria, clock, voice[0], voice, listeners, statuses, channel)
 
 
 async def start_playing(
@@ -727,9 +736,10 @@ async def test_shows_the_title_once_the_program_plays(rig: Rig) -> None:
     assert rig.statuses == []  # nothing is heard yet
 
     await rig.feed(-2, 10)
-    await rig.tick()
+    for _ in range(4):
+        await rig.tick()
 
-    assert rig.statuses == [LOFI.title]
+    assert rig.statuses == [(CHANNEL, LOFI.title)]  # once
 
 
 async def test_shows_a_replacements_title_once_it_plays(rig: Rig) -> None:
@@ -738,27 +748,59 @@ async def test_shows_a_replacements_title_once_it_plays(rig: Rig) -> None:
     rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
     await rig.tick()
     await rig.tick()
-    assert rig.statuses == [LOFI.title]  # still what is heard
+    assert rig.statuses == [(CHANNEL, LOFI.title)]  # still what is heard
 
     await rig.feed(-1, 6)
     await rig.tick()
 
-    assert rig.statuses == [LOFI.title, SYNTHWAVE.title]
+    assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, SYNTHWAVE.title)]
 
 
-@pytest.mark.parametrize("end", ["stop", "duration", "voice lost"])
+@pytest.mark.parametrize("end", ["stop", "duration"])
 async def test_clears_the_status_when_the_program_ends(rig: Rig, end: str) -> None:
     await start_playing(rig, duration_seconds=300)
     if end == "stop":
         rig.station.stop()
-    elif end == "duration":
-        rig.clock.now += 300
     else:
-        rig.disconnect()
+        rig.clock.now += 300
 
     await rig.tick()
 
-    assert rig.statuses == [LOFI.title, None]
+    assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None)]
+
+
+async def test_clears_the_status_once_back_in_the_channel(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.disconnect()  # a new gateway session: discord.py forgets the voice client
+    await rig.tick()
+    assert rig.station.program is None
+    assert rig.statuses == [(CHANNEL, LOFI.title)]  # nowhere to clear it from yet
+
+    rig.voice.append(rig.player)  # SobaFM rejoins its channel
+    await rig.tick()
+
+    assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None)]
+
+
+async def test_shows_the_title_where_sobafm_is_moved(rig: Rig) -> None:
+    await start_playing(rig)
+
+    rig.move(11)  # an administrator drags SobaFM to another channel
+    await rig.tick()
+
+    assert rig.statuses == [(CHANNEL, LOFI.title), (11, LOFI.title)]
+
+
+async def test_clears_the_status_before_a_move(rig: Rig) -> None:
+    await start_playing(rig)
+
+    async with rig.station.moving():
+        assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None)]
+        await rig.tick()  # nothing is shown while SobaFM is still in the old channel
+        rig.move(11)
+    await rig.tick()
+
+    assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None), (11, LOFI.title)]
 
 
 async def test_clears_the_status_on_close(rig: Rig) -> None:
@@ -766,7 +808,7 @@ async def test_clears_the_status_on_close(rig: Rig) -> None:
 
     await rig.station.close()
 
-    assert rig.statuses == [LOFI.title, None]
+    assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None)]
 
 
 async def test_close_leaves_a_status_it_never_showed(rig: Rig) -> None:
@@ -778,29 +820,76 @@ async def test_close_leaves_a_status_it_never_showed(rig: Rig) -> None:
     assert rig.statuses == []
 
 
-async def test_the_latest_status_wins(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
-    shown: list[str | None] = []
+async def test_sends_one_status_request_at_a_time(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
     answered = asyncio.Event()
+    shown: list[tuple[int, str | None]] = []
 
-    async def slow(status: str | None) -> None:  # Discord answers late
+    async def slow(channel: int, status: str | None) -> bool:  # Discord answers late
         await answered.wait()
-        shown.append(status)
+        shown.append((channel, status))
+        return True
 
     monkeypatch.setattr(rig.station, "_set_status", slow)
     await start_playing(rig)
     rig.station.stop()
     await rig.tick()
+    await rig.tick()
+    assert shown == []  # the title's request is still in flight, and nothing cancels it
+
+    answered.set()
+    await rig.tick()
+
+    assert shown == [(CHANNEL, LOFI.title), (CHANNEL, None)]
+
+
+async def test_retries_a_status_discord_refused(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = iter([False, True])
+    shown: list[tuple[int, str | None]] = []
+
+    async def flaky(channel: int, status: str | None) -> bool:
+        shown.append((channel, status))
+        return next(answers)
+
+    monkeypatch.setattr(rig.station, "_set_status", flaky)
+    await start_playing(rig)
+    await rig.tick(STATUS_RETRY_S - 0.5)
+    assert shown == [(CHANNEL, LOFI.title)]
+
+    await rig.tick(0.5)
+    await rig.tick()
+
+    assert shown == [(CHANNEL, LOFI.title), (CHANNEL, LOFI.title)]  # then settled
+
+
+async def test_close_waits_a_bounded_time_for_the_status(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await start_playing(rig)
+    monkeypatch.setattr("sobafm.station.STATUS_TIMEOUT_S", 0.01)
+    answered = asyncio.Event()
+    finished: list[str | None] = []
+
+    async def hang(channel: int, status: str | None) -> bool:  # Discord never answers in time
+        await answered.wait()
+        finished.append(status)
+        return True
+
+    monkeypatch.setattr(rig.station, "_set_status", hang)
+
+    async with asyncio.timeout(1):
+        await rig.station.close()
 
     answered.set()
     await settle()
-
-    assert shown == [None]
+    assert finished == [None]  # the clear was left running rather than cancelled
 
 
 async def test_a_failing_status_never_affects_playback(
     rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    async def fail(status: str | None) -> None:
+    async def fail(channel: int, status: str | None) -> bool:
         raise RuntimeError("a bug")
 
     monkeypatch.setattr(rig.station, "_set_status", fail)

@@ -187,7 +187,8 @@ class SobaFM(discord.Client):
                 self.open_session,
                 self.pool,
                 volume=volume,
-                status=lambda status: set_voice_status(guild, status),
+                channel=lambda: voice_channel_id(guild),
+                status=self.show_voice_status,
             )
             station.start()
             self.stations[guild.id] = station
@@ -290,15 +291,33 @@ class SobaFM(discord.Client):
             return note(f"Now playing {describe(plan, member.mention, ends)}", result.outcome)
         return PLAY_REPLIES[outcome]
 
+    async def show_voice_status(self, channel_id: int, status: str | None) -> bool:
+        """Show `status` on voice channel `channel_id`, if SobaFM may set it there (FB-2).
+
+        Returns whether that settled it, rather than calling for another attempt.
+        """
+        channel = self.get_channel(channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            return True  # gone, so there is nothing to show
+        if not channel.permissions_for(channel.guild.me).set_voice_channel_status:
+            return True  # skipped silently, as FB-2 allows
+        try:
+            await channel.edit(status=status)
+        except discord.HTTPException:
+            log.warning(
+                "Could not set the voice channel status in %s", channel.guild, exc_info=True
+            )
+            return False
+        return True
+
     def now(self, guild: discord.Guild) -> str:
         """Describe the server's program for /now (CMD-3)."""
         station = self.stations.get(guild.id)
         program = station.program if station is not None else None
         if station is None or program is None or (time_left := station.time_left) is None:
             return "Nothing is playing."
-        playing = program.started.done() and program.started.result() is Outcome.PLAYING
         ends = discord.utils.utcnow() + timedelta(seconds=time_left)
-        phase = "Now playing" if playing else "Starting"
+        phase = "Now playing" if program.playing else "Starting"
         return f"{phase} {describe(program.plan, program.requester, ends)}"
 
     def stop_problem(self, member: discord.Member) -> str | None:
@@ -408,7 +427,9 @@ class SobaFM(discord.Client):
                 if voice is None:  # a move during the handshake can end elsewhere
                     destination = (await self.connect_to(channel)).channel
                 else:
-                    await move(voice, channel)
+                    station = self.stations.get(channel.guild.id)
+                    async with station.moving() if station else contextlib.nullcontext():
+                        await move(voice, channel)
                     destination = channel
             except TimeoutError, discord.ClientException:
                 log.warning("Could not connect to %s in %s", channel, channel.guild, exc_info=True)
@@ -584,24 +605,20 @@ def describe(plan: MusicPlan, requester: str, ends: datetime) -> str:
     if plan.bpm is not None:
         style += f", {plan.bpm} BPM"
     return (
-        f"**{discord.utils.escape_markdown(plan.title)}**, requested by {requester}.\n"
-        f"Style: {discord.utils.escape_markdown(style)}\n"
+        f"**{escape(plan.title)}**, requested by {requester}.\n"
+        f"Style: {escape(style)}\n"
         f"Ends {discord.utils.format_dt(ends, 'R')}."
     )
 
 
-async def set_voice_status(guild: discord.Guild, status: str | None) -> None:
-    """Show `status` on SobaFM's voice channel, if SobaFM may set it there (FB-2)."""
+def escape(text: str) -> str:
+    """Model-written text with Discord's markdown escaped, and its mentions and timestamps too."""
+    return discord.utils.escape_markdown(text).replace("<", "\\<")
+
+
+def voice_channel_id(guild: discord.Guild) -> int | None:
     voice = cast(discord.VoiceClient | None, guild.voice_client)
-    channel = voice.channel if voice is not None else None
-    if not isinstance(channel, discord.VoiceChannel):
-        return
-    if not channel.permissions_for(channel.guild.me).set_voice_channel_status:
-        return
-    try:
-        await channel.edit(status=status)
-    except discord.HTTPException:
-        log.warning("Could not set the voice channel status in %s", guild, exc_info=True)
+    return voice.channel.id if voice is not None else None
 
 
 def listeners(guild: discord.Guild) -> int:

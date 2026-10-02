@@ -97,7 +97,7 @@ A station stores only what should be happening: the program (plan, requester, an
 5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player, and fade in once it runs with voice connected. Restart the player if discord.py stopped it.
 6. **Hand over, or stop.** With a program, if the player runs with voice connected, no crossfade is in progress, and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck of the current plan with the most buffered audio. Without one, retire idle decks; once any fade or crossfade completes, fade out the live deck and then stop the player. With no player running, nothing reads the mixer, so the station stops at once.
 7. **Regulate.** Pause or resume each deck's generation at the flow-control thresholds.
-8. **Status.** Show the title being heard as the voice channel status (FB-2): a program's title once it plays, kept while a replacement starts, and cleared when the program ends or the station closes. The bot sets it only with the Set Voice Channel Status permission, and a failure never affects playback.
+8. **Status.** Show the title being heard as the voice channel status (FB-2): a program's title once it plays, kept while a replacement starts, and cleared when the program ends or the station closes. One request runs at a time and is never cancelled. Each tick compares what SobaFM shows, and where, with what it should show, so moves and reconnects catch up, and a refused request is retried after 10 seconds. `/join` clears the status before it moves SobaFM. Discord lets SobaFM change a channel's status only while connected to it, so a channel it was dragged out of keeps the status until the channel empties, as does one it lost and doesn't rejoin. The bot sets the status only with the Set Voice Channel Status permission, and a failure never affects playback.
 
 The station never closes a deck the mixer still references. Commands only replace the desired program and wake the loop, so they need no lock: the latest request wins. The change cooldown (M3) is checked and started when a request arrives, before the model call. It is freed again if that request ends without playing, even after the reply, unless a later request has started it since. It is kept in memory, so a restart, which ends every program, clears it.
 
@@ -132,7 +132,7 @@ The interpreter is SobaFM's only Gemini stage. It makes one call for each accept
 
 ```python
 class Prompt(BaseModel):
-    text: str  # 1 to 120 characters
+    text: str  # 1 to 120 characters, with whitespace collapsed
     weight: float  # 0.1 to 1.0
 
 
