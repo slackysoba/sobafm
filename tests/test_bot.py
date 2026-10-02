@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
-from sobafm.bot import SobaFM
+from sobafm.bot import SobaFM, Voice
 from sobafm.config import load_settings
 from sobafm.store import Store
 
@@ -61,6 +61,25 @@ def make_voice_client(channel: Any) -> Any:
     return voice
 
 
+def make_voice(bot: SobaFM, guild: Any, *, current: bool, joined: bool = True) -> Voice:
+    """A tracked voice client, built without discord.py's connection state and socket thread."""
+    channel = make_channel(guild)
+    channel._get_voice_client_key.return_value = (guild.id, "guild_id")
+    voice = Voice.__new__(Voice)
+    voice.client, voice.channel, voice.sobafm, voice.joined = bot, channel, bot, joined
+    bot.voices.add(voice)
+    if current:
+        guild.voice_client = voice
+    return voice
+
+
+def tracked_client(bot: SobaFM, guild: Any) -> Any:
+    """A voice client SobaFM opened, with its disconnect recorded."""
+    voice = fake(Voice, guild=guild, disconnect=AsyncMock())
+    bot.voices.add(voice)
+    return voice
+
+
 def bot_voice_update(guild: Any, before: Any, after: Any) -> tuple[Any, Any, Any]:
     me = fake(discord.Member, id=guild.me.id, guild=guild)
     return me, fake(discord.VoiceState, channel=before), fake(discord.VoiceState, channel=after)
@@ -92,12 +111,13 @@ def test_uses_only_the_guilds_and_voice_states_intents(bot: SobaFM) -> None:
 @pytest.mark.parametrize("name", ["join", "leave"])
 def test_commands_are_for_server_managers_in_servers_only(bot: SobaFM, name: str) -> None:
     command = bot.tree.get_command(name)
+    assert command is not None
 
-    assert isinstance(command, discord.app_commands.Command)
-    assert command.guild_only
-    assert command.default_permissions == discord.Permissions(manage_guild=True)
-    assert bot.tree.allowed_installs.guild
-    assert not bot.tree.allowed_installs.user
+    payload = command.to_dict(bot.tree)
+
+    assert payload["contexts"] == [0]  # servers only
+    assert payload["integration_types"] == [0]  # installed to servers, not users
+    assert payload["default_member_permissions"] == discord.Permissions(manage_guild=True).value
 
 
 @pytest.mark.parametrize("dev_guild_id", [None, 42])
@@ -114,7 +134,9 @@ async def test_syncs_commands_globally_or_to_the_development_server(
         sync.assert_awaited_once_with()
     else:
         assert sync.await_args is not None
-        assert sync.await_args.kwargs["guild"].id == dev_guild_id
+        guild = sync.await_args.kwargs["guild"]
+        assert guild.id == dev_guild_id
+        assert {command.name for command in bot.tree.get_commands(guild=guild)} == {"join", "leave"}
 
 
 async def test_join_command_defers_then_replies_privately(
@@ -166,7 +188,7 @@ async def test_join_connects_and_remembers_the_channel(bot: SobaFM) -> None:
     reply = await bot.join(make_member(channel))
 
     assert reply == "Joined <#10>."
-    channel.connect.assert_awaited_once_with(self_deaf=True)
+    channel.connect.assert_awaited_once_with(self_deaf=True, cls=Voice)
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
 
 
@@ -238,23 +260,63 @@ async def test_follows_a_move_by_an_administrator(bot: SobaFM) -> None:
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
 
 
-async def test_forgets_the_channel_when_disconnected(bot: SobaFM) -> None:
+async def test_ignores_its_own_reconnect(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:
     guild = make_guild()
+    channel = make_channel(guild)
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
 
-    await bot.on_voice_state_update(*bot_voice_update(guild, make_channel(guild), None))
+    # discord.py reconnects by leaving and rejoining, keeping the same client
+    await bot.on_voice_state_update(*bot_voice_update(guild, channel, None))
+    await bot.on_voice_state_update(*bot_voice_update(guild, None, channel))
+
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+
+
+@pytest.mark.parametrize(
+    ("current", "joined", "left"), [(True, True, True), (True, False, False), (False, True, False)]
+)
+def test_a_finished_client_reports_whether_sobafm_left(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, *, current: bool, joined: bool, left: bool
+) -> None:
+    dispatch = MagicMock()
+    monkeypatch.setattr(bot, "dispatch", dispatch)
+    guild = make_guild()
+    replacement = make_voice_client(make_channel(guild))
+    guild.voice_client = replacement
+    voice = make_voice(bot, guild, current=current, joined=joined)
+
+    voice.cleanup()
+
+    assert voice not in bot.voices
+    assert dispatch.called is left
+    # a client from an earlier session leaves its replacement registered
+    assert (guild.voice_client is replacement) is not current
+
+
+def test_keeps_the_channel_when_shutting_down(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:
+    dispatch = MagicMock()
+    monkeypatch.setattr(bot, "dispatch", dispatch)
+    monkeypatch.setattr(bot, "is_closed", MagicMock(return_value=True))
+
+    make_voice(bot, make_guild(), current=True).cleanup()
+
+    dispatch.assert_not_called()
+
+
+async def test_forgets_the_channel_after_leaving_voice(bot: SobaFM) -> None:
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+
+    await bot.on_voice_lost(make_guild())
 
     assert await bot.store.remembered_channel(GUILD_ID) is None
 
 
-async def test_keeps_the_channel_when_shutting_down(
-    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_keeps_the_channel_when_already_rejoined(bot: SobaFM) -> None:
     guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
-    monkeypatch.setattr(bot, "is_closed", MagicMock(return_value=True))
 
-    await bot.on_voice_state_update(*bot_voice_update(guild, make_channel(guild), None))
+    await bot.on_voice_lost(guild)
 
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
 
@@ -279,28 +341,39 @@ async def test_rejoins_when_the_server_becomes_available(bot: SobaFM) -> None:
 
     await bot.on_guild_available(guild)
 
-    channel.connect.assert_awaited_once_with(self_deaf=True)
+    channel.connect.assert_awaited_once_with(self_deaf=True, cls=Voice)
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
 
 
-async def test_rejoin_first_closes_a_connection_from_an_earlier_session(bot: SobaFM) -> None:
+async def test_rejoin_first_closes_a_client_from_an_earlier_session(bot: SobaFM) -> None:
     guild = make_guild()
     channel = make_channel(guild)
     guild.get_channel.return_value = channel
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
-    stale = make_voice_client(channel)
+    old = tracked_client(bot, guild)
+    guild.voice_client = old
+    # discord.py reconnects to voice, which SobaFM sees as leaving and rejoining
+    await bot.on_voice_state_update(*bot_voice_update(guild, channel, None))
+    await bot.on_voice_state_update(*bot_voice_update(guild, None, channel))
+    guild.voice_client = None  # a new gateway session: discord.py forgets the client
 
     def disconnect(*, force: bool) -> None:
         channel.connect.assert_not_awaited()
 
-    stale.disconnect.side_effect = disconnect
-    bot.voice_connections[GUILD_ID] = stale
+    old.disconnect.side_effect = disconnect
 
     await bot.on_guild_available(guild)
 
-    stale.disconnect.assert_awaited_once_with(force=True)
+    old.disconnect.assert_awaited_once_with(force=True)
     channel.connect.assert_awaited_once()
-    assert bot.voice_connections[GUILD_ID] is not stale
+
+
+async def test_leave_closes_a_client_from_an_earlier_session(bot: SobaFM) -> None:
+    guild = make_guild()
+    old = tracked_client(bot, guild)
+
+    assert await bot.leave(guild) == "SobaFM isn't in a voice channel."
+    old.disconnect.assert_awaited_once_with(force=True)
 
 
 async def test_rejoin_skips_a_connected_server(bot: SobaFM) -> None:

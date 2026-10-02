@@ -132,10 +132,17 @@ async def test_exits_when_the_gateway_is_not_ready_in_time(
 ) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
-    monkeypatch.setattr(sobafm.__main__, "SobaFM", NeverReady)
+    clients: list[NeverReady] = []
+
+    def client(*args: object) -> NeverReady:
+        clients.append(NeverReady(*args))
+        return clients[-1]
+
+    monkeypatch.setattr(sobafm.__main__, "SobaFM", client)
     monkeypatch.setattr(sobafm.__main__, "READY_TIMEOUT_S", 0.01)
 
     with pytest.raises(SystemExit) as caught:
         await run(load_settings(env_file=None))
 
     assert caught.value.code == 1
+    assert clients[0].closed.is_set()

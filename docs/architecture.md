@@ -201,8 +201,8 @@ CREATE TABLE guild (
 | Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills; repeated failures end the program with a notice |
 | Generation slower than real time | A second session fills another deck; remaining underruns play silence and are logged |
 | Voice reconnection | discord.py reconnects; reads pause, flow control pauses generation, and crossfades resume intact |
-| SobaFM moved, disconnected, or its channel deleted | Adopt the new channel, or end the program and forget the channel (PLAY-7). Discord reports every disconnect alike, so a voice connection that discord.py cannot restore is also forgotten |
-| New gateway session | discord.py forgets its voice clients; SobaFM closes the old connection, then rejoins the remembered channel |
+| SobaFM moved, disconnected, or its channel deleted | Adopt the new channel, or end the program and forget the channel (PLAY-7). Discord reports every disconnect alike, so a voice connection that discord.py gives up reconnecting is also forgotten |
+| New gateway session (a reconnect that cannot resume) | discord.py forgets its voice clients, so the program ends. SobaFM closes the old voice connection, which takes up to 30 seconds, then rejoins the remembered channel |
 | Player thread error | `read()` returns silence; the `after` callback wakes the station, which restarts the player |
 | Gateway not ready at startup | The watchdog exits with an error and the process supervisor restarts SobaFM |
 

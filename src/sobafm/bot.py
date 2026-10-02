@@ -17,6 +17,26 @@ log = logging.getLogger(__name__)
 REQUIRED_PERMISSIONS = {"view_channel": "View Channel", "connect": "Connect", "speak": "Speak"}
 
 
+class Voice(discord.VoiceClient):
+    """A voice client that tells SobaFM when discord.py is finished with it.
+
+    discord.py forgets its voice clients when a new gateway session starts, but an old client
+    keeps running and can still disconnect SobaFM, so SobaFM tracks the clients it opens.
+    """
+
+    def __init__(self, client: discord.Client, channel: discord.abc.Connectable) -> None:
+        super().__init__(client, channel)
+        self.sobafm = cast("SobaFM", client)
+        self.joined = False  # set once the connection completes
+        self.sobafm.voices.add(self)
+
+    def cleanup(self) -> None:
+        current = self.guild.voice_client is self
+        if current:  # an old client must not unregister its replacement
+            super().cleanup()
+        self.sobafm.voice_ended(self, left=current and self.joined)
+
+
 class SobaFM(discord.Client):
     def __init__(self, settings: Settings, store: Store) -> None:
         intents = discord.Intents.none()
@@ -29,9 +49,7 @@ class SobaFM(discord.Client):
             self, allowed_installs=app_commands.AppInstallationType(guild=True, user=False)
         )
         add_commands(self.tree, self)
-        # discord.py forgets its voice clients when a new gateway session starts, but an old
-        # client can still disconnect SobaFM later, so SobaFM tracks the clients it opens.
-        self.voice_connections: dict[int, discord.VoiceClient] = {}
+        self.voices: set[Voice] = set()
         self.voice_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def setup_hook(self) -> None:
@@ -56,8 +74,11 @@ class SobaFM(discord.Client):
     async def rejoin(self, guild: discord.Guild) -> None:
         """Reconnect to the server's remembered channel, or forget it if SobaFM can't."""
         async with self.voice_locks[guild.id]:
+            if guild.voice_client is not None:
+                return
+            await self.close_stale_voice(guild)
             channel_id = await self.store.remembered_channel(guild.id)
-            if channel_id is None or guild.voice_client is not None:
+            if channel_id is None:
                 return
             channel = guild.get_channel(channel_id)
             if not isinstance(channel, discord.VoiceChannel) or missing_permissions(channel):
@@ -97,7 +118,7 @@ class SobaFM(discord.Client):
         """Disconnect from voice and forget the server's channel."""
         async with self.voice_locks[guild.id]:
             await self.store.forget_channel(guild.id)
-            self.voice_connections.pop(guild.id, None)
+            await self.close_stale_voice(guild)
             voice = cast(discord.VoiceClient | None, guild.voice_client)
             if voice is None:
                 return "SobaFM isn't in a voice channel."
@@ -107,28 +128,46 @@ class SobaFM(discord.Client):
 
     async def connect_to(self, channel: discord.VoiceChannel) -> None:
         """Connect to `channel`, first closing any client from an earlier gateway session."""
-        if (stale := self.voice_connections.pop(channel.guild.id, None)) is not None:
-            # discord.py no longer routes events to this client, so this waits out its timeout.
-            log.info("Closing the voice connection from an earlier session in %s", channel.guild)
-            await stale.disconnect(force=True)
-        self.voice_connections[channel.guild.id] = await channel.connect(self_deaf=True)
+        await self.close_stale_voice(channel.guild)
+        voice = await channel.connect(self_deaf=True, cls=Voice)
+        voice.joined = True
+
+    async def close_stale_voice(self, guild: discord.Guild) -> None:
+        """Disconnect clients from earlier gateway sessions, which discord.py no longer tracks."""
+        for voice in [v for v in self.voices if v.guild.id == guild.id]:
+            if voice is not guild.voice_client:
+                self.voices.discard(voice)
+                # discord.py no longer routes events to this client, so this waits out its timeout.
+                log.info("Closing the voice connection from an earlier session in %s", guild)
+                await voice.disconnect(force=True)
+
+    def voice_ended(self, voice: Voice, *, left: bool) -> None:
+        """Stop tracking `voice`, and handle SobaFM leaving its channel unless shutting down."""
+        self.voices.discard(voice)
+        # Shutting down disconnects from voice; keep the channel so SobaFM rejoins on restart.
+        if left and not self.is_closed():
+            self.dispatch("voice_lost", voice.guild)
+
+    async def on_voice_lost(self, guild: discord.Guild) -> None:
+        """Forget the channel after SobaFM leaves it, unless it has rejoined since (PLAY-7).
+
+        discord.py's own reconnects keep the client, so this runs only when the client ends:
+        after /leave, a disconnect by a member, a deleted channel, or a reconnect discord.py
+        gives up on. Discord reports these alike, so all count as removals.
+        """
+        async with self.voice_locks[guild.id]:
+            if guild.voice_client is not None:
+                return
+            log.info("Left voice in %s", guild)
+            await self.store.forget_channel(guild.id)
 
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
     ) -> None:
-        """Follow moves by administrators, and forget a channel SobaFM is removed from.
-
-        Discord reports every disconnect alike, so one discord.py gives up reconnecting after
-        also counts as a removal.
-        """
-        # Shutting down disconnects from voice; keep the channel so SobaFM rejoins on restart.
-        if self.is_closed() or member.id != member.guild.me.id or before.channel == after.channel:
-            return
-        if after.channel is None:
-            log.info("Disconnected from %s in %s", before.channel, member.guild)
-            self.voice_connections.pop(member.guild.id, None)
-            await self.store.forget_channel(member.guild.id)
-        else:
+        """Adopt the channel an administrator moves SobaFM to."""
+        if member.id != member.guild.me.id or before.channel is None or after.channel is None:
+            return  # joins and departures are handled where SobaFM connects and disconnects
+        if before.channel != after.channel:
             await self.store.remember_channel(member.guild.id, after.channel.id)
 
 
