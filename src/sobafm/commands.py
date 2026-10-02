@@ -1,5 +1,7 @@
-"""Slash commands. Replies are private, except /play's answer once it plays, fails, or is
-refused."""
+"""Slash commands.
+
+Replies are private, except /play's answer once the request plays, fails, or is refused.
+"""
 
 import contextlib
 import logging

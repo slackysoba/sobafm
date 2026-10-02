@@ -815,6 +815,7 @@ async def test_a_refused_request_never_reaches_lyria(
 
     assert guild.id not in bot.stations
     assert lyria.sessions == []
+    assert bot.stop(guild) == "Nothing is playing."  # nothing is left being interpreted
 
 
 async def test_a_newer_request_supersedes_one_being_interpreted(
@@ -836,6 +837,64 @@ async def test_a_newer_request_supersedes_one_being_interpreted(
     assert [call.args[0].title for call in station.play.call_args_list] == ["lo-fi"]
 
 
+async def test_an_older_request_answered_first_plays_until_a_newer_one(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay = 0.01
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()  # the older request is with Gemini when the newer one arrives
+    gemini.delay = 0.05
+
+    newer = await bot.play(member, "lo-fi", None)
+
+    assert (await older).startswith("Now playing **jazz**")
+    assert newer.startswith("Now playing **lo-fi**")
+    assert [call.args[0].title for call in station.play.call_args_list] == ["jazz", "lo-fi"]
+
+
+async def test_a_refused_request_leaves_an_older_one_to_play(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay = 0.05
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()
+    gemini.delay, gemini.response = 0, answer(json.dumps({"kind": "not_music"}))
+
+    assert await bot.play(member, "what's the weather?", None) == REFUSALS[Interpreted.NOT_MUSIC]
+    assert (await older).startswith("Now playing **jazz**")
+    assert [call.args[0].title for call in station.play.call_args_list] == ["jazz"]
+
+
+async def test_a_request_that_ends_first_leaves_newer_ones_to_stop(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay, gemini.response = 0.01, answer(json.dumps({"kind": "not_music"}))
+    older = asyncio.create_task(bot.play(member, "what's the weather?", None))
+    await settle()
+    gemini.delay, gemini.response = 0.05, None
+    newer = asyncio.create_task(bot.play(member, "jazz", None))
+    assert await older == REFUSALS[Interpreted.NOT_MUSIC]  # while the newer one is with Gemini
+
+    assert bot.stop(guild) == "Stopped the request before it played."
+    assert await newer == PLAY_REPLIES[Outcome.STOPPED]
+    station.play.assert_not_called()
+
+
 async def test_stop_supersedes_a_request_being_interpreted(
     bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -848,6 +907,30 @@ async def test_stop_supersedes_a_request_being_interpreted(
     await settle()
 
     assert bot.stop(guild) == "Stopped the request before it played."
+    assert await request == PLAY_REPLIES[Outcome.STOPPED]
+    station.play.assert_not_called()
+
+
+async def test_stop_supersedes_a_request_reading_its_settings(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    read = asyncio.Event()
+    settings = bot.store.settings
+
+    async def slow_settings(guild_id: int) -> GuildSettings:
+        await read.wait()
+        return await settings(guild_id)
+
+    monkeypatch.setattr(bot.store, "settings", slow_settings)
+    request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
+    await settle()  # interpreted, and waiting for the server's settings
+
+    assert bot.stop(guild) == "Stopped the request before it played."
+    read.set()
     assert await request == PLAY_REPLIES[Outcome.STOPPED]
     station.play.assert_not_called()
 

@@ -27,6 +27,11 @@ def _known_scale(value: object) -> object:
     return value
 
 
+def _one_line(value: object) -> object:
+    """Collapse whitespace, so a title reads on one line and a blank one is empty."""
+    return " ".join(value.split()) if isinstance(value, str) else value
+
+
 class Prompt(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
     weight: float = Field(default=1.0, ge=0.1, le=1.0)
@@ -35,7 +40,9 @@ class Prompt(BaseModel):
 class MusicPlan(BaseModel):
     """A program's musical direction (ADR-0002); unset values are left to Lyria."""
 
-    title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
+    title: Annotated[str, BeforeValidator(_one_line)] = Field(
+        min_length=1, max_length=MAX_TITLE_LENGTH
+    )
     prompts: list[Prompt] = Field(min_length=1, max_length=4)
     bpm: int | None = Field(default=None, ge=60, le=200)
     scale: Annotated[types.Scale | None, BeforeValidator(_known_scale)] = None

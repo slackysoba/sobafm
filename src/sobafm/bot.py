@@ -1,6 +1,7 @@
 """The Discord client: gateway intents, slash commands, and each server's voice channel."""
 
 import asyncio
+import contextlib
 import logging
 import math
 import time
@@ -120,7 +121,8 @@ class SobaFM(discord.Client):
         self.voices: set[Voice] = set()
         self.voice_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.cooldowns: dict[int, float] = {}  # when each server's change cooldown started
-        self.interpreting: dict[int, asyncio.Future[Outcome]] = {}  # a request per server
+        # Each server's requests being interpreted, oldest first
+        self.interpreting: defaultdict[int, list[asyncio.Future[Outcome]]] = defaultdict(list)
         self.settings_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._clock = clock
 
@@ -151,12 +153,19 @@ class SobaFM(discord.Client):
             await station.close(outcome)
 
     def supersede(self, guild: discord.Guild, outcome: Outcome) -> bool:
-        """End the server's request being interpreted with `outcome`, if there is one."""
-        interpreting = self.interpreting.pop(guild.id, None)
-        if interpreting is None or interpreting.done():
-            return False
-        interpreting.set_result(outcome)
-        return True
+        """End the server's requests being interpreted with `outcome`, and say if there were any."""
+        requests = self.interpreting.pop(guild.id, [])
+        for request in requests:
+            request.set_result(outcome)
+        return bool(requests)
+
+    def hand_over(self, guild: discord.Guild, request: asyncio.Future[Outcome]) -> None:
+        """Stop tracking a request on its way to the station, and end the older ones it replaces."""
+        requests = self.interpreting[guild.id]
+        arrival = requests.index(request)
+        for older in requests[:arrival]:
+            older.set_result(Outcome.REPLACED)
+        del requests[: arrival + 1]
 
     async def admit(self, member: discord.Member, request: str) -> str | None:
         """Admit a request and start the server's change cooldown, or say why it can't play.
@@ -188,24 +197,26 @@ class SobaFM(discord.Client):
     async def play(self, member: discord.Member, request: str, cooldown: float | None) -> str:
         """Interpret the request, play it, and describe the outcome once it plays or fails.
 
-        A relative request refines the current program's plan. While a request is interpreted,
-        a newer request, /stop, or leaving the channel supersedes it. `cooldown` is when
-        `admit()` started this request's cooldown, if it did. A request that ends without
-        playing, including one Gemini refuses, frees it, even after the reply.
+        A relative request refines the current program's plan. A request that reaches the
+        station ends the older ones still being interpreted, and /stop or leaving the channel
+        ends them all. `cooldown` is when `admit()` started this request's cooldown, if it did.
+        A request that ends without playing, including one Gemini refuses, frees it, even after
+        the reply.
         """
         playing = False  # or may still play
         interpreting: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
-        self.supersede(member.guild, Outcome.REPLACED)
-        self.interpreting[member.guild.id] = interpreting
+        self.interpreting[member.guild.id].append(interpreting)
         try:
             station = self.stations.get(member.guild.id)
             current = station.program.plan if station and station.program else None
             result = await self.interpreter.interpret(request, current)
+            settings = await self.store.settings(member.guild.id)
+            # No await from this check to the station, so nothing can end the request unseen.
             if interpreting.done():
                 return PLAY_REPLIES[interpreting.result()]
             if (plan := result.plan) is None:
                 return REFUSALS[result.outcome]
-            settings = await self.store.settings(member.guild.id)
+            self.hand_over(member.guild, interpreting)
             started = self.station(member.guild, settings.volume).play(plan, member.mention)
             try:
                 outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
@@ -220,12 +231,12 @@ class SobaFM(discord.Client):
                 return note("The music is taking longer than usual to start.", result.outcome)
             playing = outcome is Outcome.PLAYING
         finally:
-            if self.interpreting.get(member.guild.id) is interpreting:
-                del self.interpreting[member.guild.id]
+            with contextlib.suppress(ValueError):  # ended or handed over already
+                self.interpreting[member.guild.id].remove(interpreting)
             if not playing:
                 self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
-            title = discord.utils.escape_markdown(" ".join(plan.title.split()))
+            title = discord.utils.escape_markdown(plan.title)
             reply = f"Now playing **{title}**, requested by {member.mention}."
             return note(reply, result.outcome)
         return PLAY_REPLIES[outcome]

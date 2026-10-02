@@ -209,10 +209,11 @@ class FakeGemini:
         self, *, model: str, contents: str, config: types.GenerateContentConfig
     ) -> types.GenerateContentResponse:
         self.calls.append({"model": model, "contents": contents, "config": config})
+        response, error = self.response, self.error  # as set when the call is made
         await asyncio.sleep(self.delay)
-        if self.error is not None:
-            raise self.error
-        if self.response is not None:
-            return self.response
+        if error is not None:
+            raise error
+        if response is not None:
+            return response
         plan = MusicPlan.from_request(json.loads(contents)["request"])
         return answer(json.dumps({"kind": "new", "plan": plan.model_dump(mode="json")}))

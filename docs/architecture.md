@@ -58,7 +58,7 @@ flowchart LR
 | --- | --- |
 | `__main__` | Entry point: configuration, logging, signal handling, and a startup watchdog |
 | `config` | Typed settings from the environment and `.env`; secrets held as `SecretStr` |
-| `bot` | The discord.py client: intents, command sync, interpreting requests for the station registry, and voice-state events |
+| `bot` | The discord.py client: intents, command sync, the station registry, interpreting and playing requests, and voice-state events |
 | `commands` | Slash command handlers: checks, deferral, and replies with mentions disabled |
 | `station` | One per server: the desired program, the reconcile loop, listener tracking, and the voice channel status |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |
@@ -136,7 +136,7 @@ class Prompt(BaseModel):
 
 
 class MusicPlan(BaseModel):
-    title: str  # 1 to 60 characters
+    title: str  # 1 to 60 characters, with whitespace collapsed
     prompts: list[Prompt]  # 1 to 4 prompts
     bpm: int | None  # 60 to 200
     scale: Scale | None  # the SDK's scale enum
