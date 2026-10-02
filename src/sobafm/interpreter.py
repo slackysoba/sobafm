@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -17,6 +18,9 @@ log = logging.getLogger(__name__)
 
 TIMEOUT_S = 10.0
 KEPT_FIELDS = ("bpm", "scale", "density", "brightness", "mute_drums", "vocalization")
+# How an unusable answer surfaces: the SDK parses the body with `json.loads`.
+INVALID_OUTPUT = ValidationError | json.JSONDecodeError | errors.UnknownApiResponseError
+TOKEN = re.compile(r"[A-Z][A-Z0-9_]{0,62}")  # an API status or reason, such as API_KEY_INVALID
 SAFETY_FINISH_REASONS = {
     types.FinishReason.SAFETY,
     types.FinishReason.BLOCKLIST,
@@ -45,7 +49,7 @@ A plan has:
 textures, such as "warm Rhodes piano", "bossa nova", or "dreamy". Weights from 0.1 to 1.0 \
 balance them.
 - bpm (60 to 200), scale, density (0 sparse to 1 busy), and brightness (0 dark to 1 bright): \
-set them only when the request implies them.
+in a new plan, set them only when the request implies them.
 - mute_drums: whether the music has no drums or percussion.
 - vocalization: whether the music has wordless vocals, such as humming or choir "aahs". The \
 music has no lyrics.
@@ -79,6 +83,7 @@ def without_descriptions(schema: object, *, names: bool = False) -> object:
     """The JSON Schema without the models' docstrings, which are not written for Gemini.
 
     The keys of `properties` and `$defs` are names, not keywords, so `names` keeps them all.
+    Pydantic's schemas here have no other maps of names, such as `patternProperties`.
     """
     if isinstance(schema, dict):
         items = cast(dict[str, object], schema).items()
@@ -159,10 +164,7 @@ class Interpreter:
                 )
             result = self._read(response, current)
         except Exception as error:  # any failure falls back to the request text
-            expected = isinstance(
-                error,
-                TimeoutError | errors.APIError | ValidationError | errors.UnknownApiResponseError,
-            )
+            expected = isinstance(error, TimeoutError | errors.APIError | INVALID_OUTPUT)
             log.warning(
                 "Interpreter failed (%s); using the request text",
                 describe(error),
@@ -196,24 +198,33 @@ class Interpreter:
 
 
 def describe(error: Exception) -> str:
-    """Why the model call failed, from fixed fields only.
+    """Why the model call failed, without free text.
 
-    Error messages are free text that can quote the request, the model's output, or the API key
-    itself, as Gemini's message for a suspended key does, so none is logged.
+    API error messages can quote the request, the model's output, or the API key itself, as
+    Gemini's message for a suspended key does. So an API error is described by its code and by
+    its status and reason only when they are tokens such as PERMISSION_DENIED.
     """
     match error:
         case TimeoutError():
             return f"no answer within {TIMEOUT_S:.0f} s"
         case errors.APIError():
-            reason = _error_reason(error)
-            return f"{error.code} {error.status}" + (f" ({reason})" if reason else "")
-        case ValidationError() | errors.UnknownApiResponseError():
+            text = str(error.code)
+            if status := _token(error.status):
+                text += f" {status}"
+            if reason := _token(_error_reason(error)):
+                text += f" ({reason})"
+            return text
+        case ValidationError() | json.JSONDecodeError() | errors.UnknownApiResponseError():
             return "invalid output"
         case _:
             return type(error).__name__
 
 
-def _error_reason(error: errors.APIError) -> str | None:
+def _token(value: object) -> str | None:
+    return value if isinstance(value, str) and TOKEN.fullmatch(value) else None
+
+
+def _error_reason(error: errors.APIError) -> object:
     """The `reason` of the error's `google.rpc.ErrorInfo`, such as API_KEY_INVALID."""
     details: object = getattr(error, "details", None)
     body = cast(dict[str, object], details).get("error") if isinstance(details, dict) else None
@@ -221,6 +232,5 @@ def _error_reason(error: errors.APIError) -> str | None:
     for item in cast(list[object], items) if isinstance(items, list) else []:
         fields = cast(dict[str, object], item) if isinstance(item, dict) else {}
         if str(fields.get("@type", "")).endswith("ErrorInfo"):
-            reason = fields.get("reason")
-            return reason if isinstance(reason, str) else None
+            return fields.get("reason")
     return None

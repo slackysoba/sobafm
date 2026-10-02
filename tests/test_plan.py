@@ -73,7 +73,9 @@ def test_rejects_values_outside_lyria_ranges(fields: dict[str, object]) -> None:
 
 
 @pytest.mark.parametrize(
-    "value", ["SCALE_UNSPECIFIED", types.Scale.SCALE_UNSPECIFIED], ids=["name", "member"]
+    "value",
+    ["SCALE_UNSPECIFIED", "scale_unspecified", types.Scale.SCALE_UNSPECIFIED],
+    ids=["name", "lower case", "member"],
 )
 def test_reads_an_unspecified_scale_as_none(value: object) -> None:
     plan = MusicPlan.model_validate(
