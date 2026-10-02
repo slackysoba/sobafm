@@ -43,6 +43,10 @@ class GuildSettings(BaseModel):
         """The volume as linear gain; 1.0 leaves the level unchanged."""
         return self.volume_percent / 100
 
+    @property
+    def duration_seconds(self) -> int:
+        return self.duration_minutes * 60
+
 
 class Store:
     """Remembers each server's voice channel and settings. Calls run in a worker thread."""

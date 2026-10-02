@@ -81,6 +81,7 @@ class SessionPool:
 class Program:
     plan: MusicPlan
     requester: str
+    ends_at: float  # on the station's clock
     started: asyncio.Future[Outcome] = field(
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
@@ -120,9 +121,14 @@ class Station:
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
-    def play(self, plan: MusicPlan, requester: str) -> asyncio.Future[Outcome]:
-        """Start or replace the program; the result resolves once it plays or fails."""
-        program = Program(plan, requester)
+    def play(
+        self, plan: MusicPlan, requester: str, *, duration_seconds: float
+    ) -> asyncio.Future[Outcome]:
+        """Start or replace the program, which ends `duration_seconds` from now.
+
+        The result resolves once it plays or fails.
+        """
+        program = Program(plan, requester, ends_at=self._clock() + duration_seconds)
         if not self._pool.reserve(self):
             log.info("No Lyria RealTime session capacity left")
             program.settle(Outcome.BUSY)
@@ -178,6 +184,9 @@ class Station:
         if self.program is not None and player is None:
             log.info("Voice connection lost; ending the program")
             self._finish(Outcome.DISCONNECTED)
+        if self.program is not None and self._clock() >= self.program.ends_at:
+            log.info("Play duration elapsed; ending the program")
+            self._finish(Outcome.STOPPED)
         if self.program is not None and self._abandoned():
             log.info("No listeners for %d seconds; ending the program", EMPTY_GRACE_S)
             self._finish(Outcome.STOPPED)

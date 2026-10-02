@@ -220,7 +220,9 @@ class SobaFM(discord.Client):
                 return REFUSALS[result.outcome]
             if member.guild.voice_client is None:  # left before this request was tracked
                 return PLAY_REPLIES[Outcome.DISCONNECTED]
-            started = self.station(member.guild, settings.volume).play(plan, member.mention)
+            started = self.station(member.guild, settings.volume).play(
+                plan, member.mention, duration_seconds=settings.duration_seconds
+            )
             self.supersede_older(member.guild, interpreting)
             try:
                 outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
