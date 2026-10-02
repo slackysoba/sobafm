@@ -1,4 +1,4 @@
-"""The interpreter's evaluation set (AI-7), run on demand against Gemini in 4 to 6 minutes.
+"""The interpreter's evaluation set (AI-7), run on demand against Gemini in about 4 minutes.
 
     uv run --env-file .env pytest -m eval -s
 
@@ -7,9 +7,11 @@ every case returns valid output, every not-music request, including prompt injec
 refused, and at least 90% of all checks pass: each case's classification as music or not, and
 its properties.
 
-A case is retried once, a minute later, when Gemini times out, rate-limits the call, or fails
-with a server error. Invalid output is not retried, since a retry could hide it. Any other
-failure, such as a bad API key or model name, or a failed retry, stops the run.
+Only an answer that fails validation counts against the model, and it is not retried, since a
+retry could hide it. A case is retried up to twice, after one and then two minutes, when the call
+times out, is rate-limited, fails on the server or the connection, or returns a response the SDK
+cannot parse. Any other failure, such as a bad API key or model name, or a third failure, stops
+the run after printing the results so far.
 """
 
 import asyncio
@@ -21,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
+import aiohttp
 import pytest
 from google import genai
 from google.genai import errors, types
@@ -40,7 +43,9 @@ type Setting = Literal["bpm", "scale", "density", "brightness", "mute_drums", "v
 REFUSED = (Outcome.NOT_MUSIC, Outcome.BLOCKED)
 TARGET = 0.9  # of all checks
 SPACING_S = 6.0  # Gemini's free tier allows 15 requests a minute per model
-RETRY_AFTER_S = 60.0  # one quota window
+RETRY_AFTER_S = (60.0, 120.0)  # one quota window, then two
+# How a call can fail in a way that may pass within a quota window
+TRANSIENT = OSError | aiohttp.ClientError | json.JSONDecodeError | errors.UnknownApiResponseError
 
 
 @dataclass(frozen=True)
@@ -143,6 +148,10 @@ def mentions(stem: str) -> Check:
     )
 
 
+class RunStoppedError(Exception):
+    """Gemini failed in a way that would fail the remaining cases too."""
+
+
 def whole_words(phrase: str) -> re.Pattern[str]:
     """Matches `phrase` as whole words, in any case and with any separators between them."""
     words = r"\W+".join(re.escape(word) for word in phrase.split())
@@ -154,9 +163,16 @@ def texts(plan: MusicPlan) -> list[str]:
     return [plan.title, *(prompt.text for prompt in plan.prompts)]
 
 
+def name_start(name: str) -> re.Pattern[str]:
+    """Matches a word that starts with `name`, its words joined by any separators or none, such
+    as "Zimmeresque" for "zimmer" or "DaftPunk" for "daft punk"."""
+    words = r"\W*".join(re.escape(word) for word in name.split())
+    return re.compile(rf"\b{words}", re.IGNORECASE)
+
+
 def avoids(*names: str) -> Check:
-    """Neither the title nor any prompt has these names, as whole words."""
-    patterns = [whole_words(name) for name in names]
+    """Neither the title nor any prompt has these names, alone or starting a word."""
+    patterns = [name_start(name) for name in names]
     return (
         f"avoids {', '.join(map(repr, names))}",
         lambda p, _: not any(pattern.search(text) for pattern in patterns for text in texts(p)),
@@ -273,31 +289,34 @@ CASES = [
 def verdict(error: BaseException | None) -> Literal["invalid", "retry", "stop"]:
     """What a fallback caused by `error` means; None means that the answer failed validation.
 
-    Output that is invalid or cannot be parsed counts against the model. A timeout, which
-    cancels the call, a rate limit, or a server error can pass within a quota window. Any other
-    failure, such as a bad API key or model name, would fail every case.
+    The SDK parses the model's answer leniently, so only the interpreter's validation can find it
+    invalid. Other failures are the call's: a timeout, which cancels the call, a rate limit, a
+    server error, a failed connection, or an unparseable response can pass within a quota
+    window. Any other error, such as a bad API key or model name, would fail every case.
     """
-    if error is None or isinstance(error, json.JSONDecodeError | errors.UnknownApiResponseError):
+    if error is None:
         return "invalid"
     if isinstance(error, errors.APIError):
         return "retry" if error.code in (408, 429) or error.code >= 500 else "stop"
-    return "retry" if isinstance(error, TimeoutError | asyncio.CancelledError) else "stop"
+    return "retry" if isinstance(error, asyncio.CancelledError | TRANSIENT) else "stop"
 
 
 def reason(error: BaseException | None) -> str:
-    """Why the interpreter fell back, as it logs it: never by an API error's message."""
+    """Why the interpreter fell back: never by an API error's message, which can quote the key."""
     if error is None:
         return "invalid output"
-    if isinstance(error, asyncio.CancelledError):  # how the interpreter's timeout ends the call
+    if isinstance(error, errors.APIError):
+        return describe(error)
+    if isinstance(error, asyncio.CancelledError | TimeoutError):  # the interpreter's timeout
         return describe(TimeoutError())
-    return describe(error) if isinstance(error, Exception) else type(error).__name__
+    return type(error).__name__
 
 
 async def interpret(
     interpreter: Interpreter, gemini: Recorder, case: Case, report: Report
 ) -> Result:
-    """Interpret the case's request, retrying once if Gemini failed rather than its answer."""
-    retried = False
+    """Interpret the case's request, retrying when the call failed rather than the answer."""
+    waits = iter(RETRY_AFTER_S)
     while True:
         result = await interpreter.interpret(case.request, case.current)
         if result.outcome is not Outcome.FALLBACK:
@@ -306,12 +325,11 @@ async def interpret(
         match verdict(gemini.error):
             case "invalid":
                 return result
-            case "retry" if not retried:
-                retried = True
+            case "retry" if (wait := next(waits, None)) is not None:
                 report.retries += 1
-                await asyncio.sleep(RETRY_AFTER_S)
+                await asyncio.sleep(wait)
             case _:
-                pytest.fail(f"Stopped at {case.name}: {reason(gemini.error)}")
+                raise RunStoppedError(f"{case.name}: {reason(gemini.error)}")
 
 
 def score(case: Case, result: Result, report: Report) -> None:
@@ -342,7 +360,20 @@ def score(case: Case, result: Result, report: Report) -> None:
 
 
 def rate(passed: int, checks: int) -> str:
-    return f"{passed} of {checks} passed ({passed / checks:.1%})"
+    return f"{passed} of {checks} passed" + (f" ({passed / checks:.1%})" if checks else "")
+
+
+def summarize(model: str, report: Report) -> tuple[int, int]:
+    """Print the results, returning the number of checks passed and the number counted."""
+    checks = report.cases + report.properties
+    passed = checks - len(report.failures)
+    properties_passed = report.properties - report.failed_properties
+    print(f"\n{model}: {report.cases} cases, {report.retries} retried")
+    print(f"Property checks: {rate(properties_passed, report.properties)}")
+    print(f"All checks: {rate(passed, checks)}; {TARGET:.0%} needed")
+    for failure in report.failures:
+        print(f"FAILED {failure}")
+    return passed, checks
 
 
 async def test_interpretation_meets_its_targets() -> None:
@@ -354,22 +385,19 @@ async def test_interpretation_meets_its_targets() -> None:
         or Settings.model_fields["gemini_model"].default
     )
     report = Report()
-    async with genai.Client(api_key=api_key).aio as client:
-        gemini = Recorder(client)
-        interpreter = Interpreter(gemini, model)
-        for case in CASES:
-            started = time.monotonic()
-            score(case, await interpret(interpreter, gemini, case, report), report)
-            await asyncio.sleep(max(0.0, started + SPACING_S - time.monotonic()))
+    try:
+        async with genai.Client(api_key=api_key).aio as client:
+            gemini = Recorder(client)
+            interpreter = Interpreter(gemini, model)
+            for case in CASES:
+                started = time.monotonic()
+                score(case, await interpret(interpreter, gemini, case, report), report)
+                await asyncio.sleep(max(0.0, started + SPACING_S - time.monotonic()))
+    except RunStoppedError as stopped:
+        summarize(model, report)
+        pytest.fail(f"Stopped at {stopped}")
 
-    checks = report.cases + report.properties
-    passed = checks - len(report.failures)
-    properties_passed = report.properties - report.failed_properties
-    print(f"\n{model}: {report.cases} cases, {report.retries} retried")
-    print(f"Property checks: {rate(properties_passed, report.properties)}")
-    print(f"All checks: {rate(passed, checks)}; {TARGET:.0%} needed")
-    for failure in report.failures:
-        print(f"FAILED {failure}")
+    passed, checks = summarize(model, report)
     assert not report.invalid, f"no valid output for {report.invalid}"
     assert not report.not_refused, f"not refused: {report.not_refused}"
     assert passed >= TARGET * checks, f"{passed} of {checks} checks passed"
