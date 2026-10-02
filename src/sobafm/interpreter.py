@@ -18,7 +18,8 @@ log = logging.getLogger(__name__)
 
 TIMEOUT_S = 10.0
 KEPT_FIELDS = ("bpm", "scale", "density", "brightness", "mute_drums", "vocalization")
-# How an unusable answer surfaces: the SDK parses the body with `json.loads`.
+# How an unusable answer surfaces. The SDK parses a body with `json.loads`, so a malformed error
+# body also counts here.
 INVALID_OUTPUT = ValidationError | json.JSONDecodeError | errors.UnknownApiResponseError
 TOKEN = re.compile(r"[A-Z][A-Z0-9_]{0,62}")  # an API status or reason, such as API_KEY_INVALID
 SAFETY_FINISH_REASONS = {
@@ -214,7 +215,7 @@ def describe(error: Exception) -> str:
             if reason := _token(_error_reason(error)):
                 text += f" ({reason})"
             return text
-        case ValidationError() | json.JSONDecodeError() | errors.UnknownApiResponseError():
+        case _ if isinstance(error, INVALID_OUTPUT):
             return "invalid output"
         case _:
             return type(error).__name__
