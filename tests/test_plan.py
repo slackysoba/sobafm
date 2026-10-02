@@ -57,10 +57,36 @@ def test_config_carries_the_plan() -> None:
 
 @pytest.mark.parametrize(
     "fields",
-    [{"bpm": 59}, {"bpm": 201}, {"density": 1.5}, {"prompts": []}, {"title": ""}],
+    [
+        {"bpm": 59},
+        {"bpm": 201},
+        {"density": 1.5},
+        {"prompts": []},
+        {"title": ""},
+        {"scale": "E_MINOR"},
+    ],
 )
 def test_rejects_values_outside_lyria_ranges(fields: dict[str, object]) -> None:
     values: dict[str, object] = {"title": "Plan", "prompts": [Prompt(text="ambient")]} | fields
 
     with pytest.raises(ValidationError):
         MusicPlan.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "value", ["SCALE_UNSPECIFIED", types.Scale.SCALE_UNSPECIFIED], ids=["name", "member"]
+)
+def test_reads_an_unspecified_scale_as_none(value: object) -> None:
+    plan = MusicPlan.model_validate(
+        {"title": "Plan", "prompts": [{"text": "ambient"}], "scale": value}
+    )
+
+    assert plan.scale is None
+
+
+def test_accepts_scale_names_in_any_case() -> None:
+    plan = MusicPlan.model_validate(
+        {"title": "Plan", "prompts": [{"text": "ambient"}], "scale": "c_major_a_minor"}
+    )
+
+    assert plan.scale is types.Scale.C_MAJOR_A_MINOR

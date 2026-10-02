@@ -1,7 +1,9 @@
 """What a program plays, and its mapping to Lyria RealTime prompts and configuration."""
 
+from typing import Annotated
+
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 # Lyria RealTime's defaults; SobaFM fixes them rather than letting a model choose them.
 GUIDANCE = 4.0
@@ -10,6 +12,19 @@ TOP_K = 40
 
 MAX_PROMPT_LENGTH = 120
 MAX_TITLE_LENGTH = 60
+
+
+def _known_scale(value: object) -> object:
+    """Accept only Lyria's scales, and read SCALE_UNSPECIFIED as no scale.
+
+    The SDK's enum turns any string into a member with only a warning, so names are checked here.
+    """
+    if isinstance(value, str):  # the enum's members are strings too
+        if value.upper() == types.Scale.SCALE_UNSPECIFIED.value:
+            return None
+        if value.upper() not in types.Scale.__members__:
+            raise ValueError(f"unknown scale {value!r}")
+    return value
 
 
 class Prompt(BaseModel):
@@ -23,7 +38,7 @@ class MusicPlan(BaseModel):
     title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
     prompts: list[Prompt] = Field(min_length=1, max_length=4)
     bpm: int | None = Field(default=None, ge=60, le=200)
-    scale: types.Scale | None = None
+    scale: Annotated[types.Scale | None, BeforeValidator(_known_scale)] = None
     density: float | None = Field(default=None, ge=0.0, le=1.0)
     brightness: float | None = Field(default=None, ge=0.0, le=1.0)
     mute_drums: bool = False
