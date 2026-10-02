@@ -1,11 +1,28 @@
+import asyncio
 import logging
 from pathlib import Path
+from typing import Self
 
+import discord
 import pytest
 
-from sobafm.__main__ import main
+import sobafm.__main__
+from sobafm.__main__ import main, run
+from sobafm.config import Settings, load_settings
 
 KEY = "gemini-key-value"
+
+
+@pytest.fixture
+def started(monkeypatch: pytest.MonkeyPatch) -> list[Settings]:
+    """Replace the bot's run loop, recording the settings it would have started with."""
+    runs: list[Settings] = []
+
+    async def run(settings: Settings) -> None:
+        runs.append(settings)
+
+    monkeypatch.setattr(sobafm.__main__, "run", run)
+    return runs
 
 
 def test_exits_naming_missing_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,8 +64,34 @@ def test_exits_when_env_file_is_not_utf8(tmp_path: Path) -> None:
     assert caught.value.code == "sobafm: .env could not be read as UTF-8"
 
 
+def test_runs_the_bot_with_valid_configuration(
+    monkeypatch: pytest.MonkeyPatch, started: list[Settings]
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+
+    main()
+
+    assert [settings.discord_token.get_secret_value() for settings in started] == ["token"]
+
+
+def test_exits_when_discord_rejects_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+
+    async def rejected(settings: Settings) -> None:
+        raise discord.LoginFailure
+
+    monkeypatch.setattr(sobafm.__main__, "run", rejected)
+
+    with pytest.raises(SystemExit) as caught:
+        main()
+
+    assert caught.value.code == "sobafm: Discord rejected DISCORD_TOKEN"
+
+
 def test_debug_logging_applies_to_sobafm_only(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, started: list[Settings]
 ) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
@@ -58,6 +101,48 @@ def test_debug_logging_applies_to_sobafm_only(
 
     main()
 
-    assert "Configuration loaded" in caplog.messages
     assert logging.getLogger("sobafm").level == logging.DEBUG
     assert logging.getLogger("websockets").getEffectiveLevel() == logging.INFO
+
+
+class NeverReady:
+    """A client whose gateway never becomes ready; `close()` ends its session."""
+
+    def __init__(self, *_: object) -> None:
+        self.closed = asyncio.Event()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        pass
+
+    async def start(self, token: str) -> None:
+        await self.closed.wait()
+
+    async def wait_until_ready(self) -> None:
+        await asyncio.Event().wait()
+
+    async def close(self) -> None:
+        self.closed.set()
+
+
+async def test_exits_when_the_gateway_is_not_ready_in_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+    clients: list[NeverReady] = []
+
+    def client(*args: object) -> NeverReady:
+        clients.append(NeverReady(*args))
+        return clients[-1]
+
+    monkeypatch.setattr(sobafm.__main__, "SobaFM", client)
+    monkeypatch.setattr(sobafm.__main__, "READY_TIMEOUT_S", 0.01)
+
+    with pytest.raises(SystemExit) as caught:
+        await run(load_settings(env_file=None))
+
+    assert caught.value.code == 1
+    assert clients[0].closed.is_set()
