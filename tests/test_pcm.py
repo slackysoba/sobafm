@@ -1,6 +1,14 @@
+import pytest
 from discord.opus import Encoder
 
-from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES, SILENCE, FrameSplitter
+from sobafm.pcm import (
+    BYTES_PER_SECOND,
+    FRAME_BYTES,
+    MIME_TYPE,
+    SILENCE,
+    FrameSplitter,
+    matches_mime_type,
+)
 
 
 def test_frames_match_what_discord_encodes() -> None:
@@ -26,3 +34,34 @@ def test_carries_partial_frames_over() -> None:
     assert [len(frame) for frame in first + second] == [FRAME_BYTES, FRAME_BYTES]
     assert b"".join(first + second) == audio
     assert splitter.split(b"") == []
+
+
+@pytest.mark.parametrize(
+    ("mime_type", "expected"),
+    [
+        (MIME_TYPE, True),
+        ("AUDIO/L16; Channels=2; Rate=48000", True),
+        ('audio/l16; rate="48000"; channels=2', True),
+        ("audio/l16;rate=48000;channels=2;endianness=little", True),
+        ("audio/l16;rate=24000;channels=2", False),
+        ("audio/l16;rate=48000;channels=1", False),
+        ("audio/l16", False),
+        ("audio/wav;rate=48000;channels=2", False),
+        ("", False),
+        ("audio/l16;rate=48000;channels=2;note=\ud800\u00e9", False),
+    ],
+    ids=[
+        "exact",
+        "case and order",
+        "quoted",
+        "other parameter",
+        "rate",
+        "channels",
+        "no parameters",
+        "type",
+        "empty",
+        "unencodable",
+    ],
+)
+def test_matches_its_mime_type_as_mime_compares_them(mime_type: str, *, expected: bool) -> None:
+    assert matches_mime_type(mime_type) is expected

@@ -3,7 +3,7 @@
 import asyncio
 import json
 import threading
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
@@ -23,6 +23,7 @@ class FakeSession:
         self.config: types.LiveMusicGenerationConfig | None = None
         self.closed = False
         self.ending = False  # once Lyria has ended the session, sends fail
+        self.stall = False  # sends never finish, as on a socket whose close hangs
         self._messages: asyncio.Queue[types.LiveMusicServerMessage | BaseException] = (
             asyncio.Queue()
         )
@@ -36,16 +37,18 @@ class FakeSession:
         self.config = config
 
     async def play(self) -> None:
-        self._check_open()
+        await self._check_open()
         self.calls.append("play")
 
     async def pause(self) -> None:
-        self._check_open()
+        await self._check_open()
         self.calls.append("pause")
 
-    def _check_open(self) -> None:
+    async def _check_open(self) -> None:
         if self.ending or self.closed:
             raise ConnectionError("the session is closing")
+        if self.stall:
+            await asyncio.Event().wait()
 
     async def receive(self) -> AsyncGenerator[types.LiveMusicServerMessage]:
         while True:
@@ -85,6 +88,8 @@ class FakeLyria:
         self.sessions: list[FakeSession] = []
         self.failure: BaseException | None = None
         self.stall = False  # connecting never finishes
+        self.stall_sends = False  # each session's play() and pause() never finish
+        self.closing: Callable[[], Awaitable[None]] | None = None  # runs as a session closes
 
     @asynccontextmanager
     async def connect(self) -> AsyncGenerator[FakeSession]:
@@ -93,10 +98,13 @@ class FakeLyria:
         if self.stall:
             await asyncio.Event().wait()
         session = FakeSession()
+        session.stall = self.stall_sends
         self.sessions.append(session)
         try:
             yield session
         finally:
+            if self.closing is not None:
+                await self.closing()
             session.closed = True
 
 

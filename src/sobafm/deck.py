@@ -11,9 +11,9 @@ from enum import StrEnum
 from typing import Protocol
 
 from google import genai
-from google.genai import errors, types
+from google.genai import errors, live_music, types
 
-from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, MIME_TYPE, FrameSplitter
+from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, matches_mime_type
 from sobafm.plan import MusicPlan
 
 log = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ PAUSE_AT_S = 60.0  # generation pauses at this much buffered audio...
 RESUME_BELOW_S = 45.0  # ...and resumes below this
 RATE_WINDOW_S = 10.0  # generating time before the rate is meaningful
 CONNECT_TIMEOUT_S = 15.0  # connecting and starting playback
+REGULATE_TIMEOUT_S = 0.5  # a pause or resume, which a closing session can stall
 
 
 class MusicSession(Protocol):
@@ -86,6 +87,7 @@ class Deck:
         self.state = State.CONNECTING
         self.end_reason: EndReason | None = None
         self.detail: str | None = None
+        self.close_code: int | None = None  # how a closed session ended, such as 1008 on refusal
         self.paused = False
         self._connect = connect
         self._clock = clock
@@ -130,14 +132,25 @@ class Deck:
         if self._task is None:
             log.debug("Deck %d plays %r", self.number, self.plan.title)
             self._task = asyncio.create_task(self._run(), name=f"deck {self.number}")
+            self._task.add_done_callback(self._cancelled)
 
     def retire(self) -> None:
-        """End the session; frames already buffered stay playable."""
+        """End the session; frames already buffered stay playable.
+
+        A deck still connecting is cancelled, rather than finishing a setup that can stall,
+        unless a cancellation is pending already, such as the connect timeout's: another would
+        cut short the SDK's close of the socket. A generating deck ends through `_retiring`, so
+        once the SDK has reported Lyria's close, the deck keeps its end reason and close code.
+        """
         self._retiring.set()
+        task = self._task
+        if self.state is State.CONNECTING and task is not None and not task.cancelling():
+            task.cancel()
 
     async def wait_ended(self) -> None:
+        """Wait for the session to end, however it ends."""
         if self._task is not None:
-            await self._task
+            await asyncio.wait({self._task})
 
     async def regulate(self) -> None:
         """Pause generation when the buffer is full and resume it as the buffer drains."""
@@ -151,8 +164,11 @@ class Deck:
         else:
             return
         try:
-            await (session.pause() if pause else session.play())
-        except Exception:  # noqa: BLE001 - the session is ending, and the receive task records why
+            # Bounded, so a socket whose close hangs cannot stall the station's ticks. A pause
+            # abandoned on a backed-up socket still arrives, and the next tick sends it again.
+            async with asyncio.timeout(REGULATE_TIMEOUT_S):
+                await (session.pause() if pause else session.play())
+        except Exception:  # noqa: BLE001 - the session is ending, or the next tick retries
             log.debug("Deck %d could not %s", self.number, "pause" if pause else "resume")
             return
         if self._session is session:
@@ -163,25 +179,28 @@ class Deck:
         try:
             async with asyncio.timeout(CONNECT_TIMEOUT_S) as connecting:
                 async with self._connect() as session:
-                    if self._retiring.is_set():  # retired while connecting: never start playback
-                        reason = EndReason.RETIRED
-                    else:
-                        await session.set_weighted_prompts(prompts=self.plan.weighted_prompts())
-                        await session.set_music_generation_config(config=self.plan.to_config())
-                        await session.play()
-                        connecting.reschedule(None)
-                        reason = await self._generate(session)
+                    await session.set_weighted_prompts(prompts=self.plan.weighted_prompts())
+                    await session.set_music_generation_config(config=self.plan.to_config())
+                    await session.play()
+                    connecting.reschedule(None)
+                    reason = await self._generate(session)
             self._end(reason)
         except errors.APIError as error:
             # A WebSocket close carries its reason in `details`, which the SDK leaves untyped.
             cause: object = error.message or getattr(error, "details", None) or "no reason"
+            self.close_code = error.code
             self._end(EndReason.CLOSED, f"code {error.code}: {cause}")
-        except asyncio.CancelledError:
-            self._end(EndReason.RETIRED)
-            raise
         except Exception as error:  # a deck failure must never stop the station
             log.warning("Deck %d failed", self.number, exc_info=True)
-            self._end(EndReason.FAILED, f"{type(error).__name__}: {error}"[:200])
+            if isinstance(error, live_music.ConnectionClosed) and error.rcvd is not None:
+                self.close_code = error.rcvd.code  # closed during setup, as on a refusal
+            detail = type(error).__name__ + (f": {error}" if str(error) else "")
+            self._end(EndReason.FAILED, detail[:200])
+
+    def _cancelled(self, task: asyncio.Task[None]) -> None:
+        """Record a deck cancelled by `retire()` while connecting, or at shutdown, as retired."""
+        if task.cancelled():
+            self._end(EndReason.RETIRED)
 
     async def _generate(self, session: MusicSession) -> EndReason:
         """Receive audio until Lyria ends or refuses the session, or the deck is retired."""
@@ -206,7 +225,7 @@ class Deck:
                 return EndReason.FILTERED
             content = message.server_content
             for chunk in (content.audio_chunks or []) if content else []:
-                if chunk.mime_type not in (None, MIME_TYPE):
+                if chunk.mime_type is not None and not matches_mime_type(chunk.mime_type):
                     raise ValueError(f"unexpected audio format {chunk.mime_type}")
                 data = chunk.data or b""
                 self._audio_bytes += len(data)

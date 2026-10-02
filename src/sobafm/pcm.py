@@ -1,5 +1,7 @@
 """The PCM format Lyria RealTime produces and Discord encodes: 16-bit, 48 kHz, stereo."""
 
+from email.message import Message
+
 SAMPLE_RATE = 48_000
 CHANNELS = 2
 SAMPLE_WIDTH = 2  # bytes per sample
@@ -8,6 +10,29 @@ FRAME_SECONDS = 0.02
 FRAME_BYTES = 3_840  # one 20 ms frame, the unit discord.py reads
 SILENCE = bytes(FRAME_BYTES)
 MIME_TYPE = "audio/l16;rate=48000;channels=2"  # how Lyria RealTime labels this format
+
+
+def _essentials(mime_type: str) -> tuple[str, object, object]:
+    """The type, rate, and channels, parsed by the standard library's MIME parser."""
+    header = Message()
+    header["Content-Type"] = mime_type
+    parameters = dict(header.get_params(failobj=[])[1:])  # the first is the type itself
+    return header.get_content_type(), parameters.get("rate"), parameters.get("channels")
+
+
+_FORMAT = _essentials(MIME_TYPE)
+
+
+def matches_mime_type(mime_type: str) -> bool:
+    """Whether `mime_type` has `MIME_TYPE`'s type, rate, and channels.
+
+    Names can be in any case, and parameters in any order and quoted. Other parameters are
+    ignored.
+    """
+    try:
+        return _essentials(mime_type) == _FORMAT
+    except ValueError:  # such as a lone surrogate, which the parser cannot encode
+        return False
 
 
 class FrameSplitter:
