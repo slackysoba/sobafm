@@ -1,6 +1,7 @@
 """Test doubles for Lyria RealTime sessions, the voice player, and the clock."""
 
 import asyncio
+import threading
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Literal
@@ -117,6 +118,7 @@ class FakePlayer:
     def __init__(self) -> None:
         self.playing = False
         self.connected = True
+        self.failure: Exception | None = None  # raised by play(), such as OpusNotLoaded
         self.plays = 0
         self.source: discord.AudioSource | None = None
         self._after: Callable[[Exception | None], Any] | None = None
@@ -131,6 +133,8 @@ class FakePlayer:
         after: Callable[[Exception | None], Any] | None = None,
         signal_type: Literal["auto", "voice", "music"] = "auto",
     ) -> None:
+        if self.failure is not None:
+            raise self.failure
         if not self.connected:
             raise discord.ClientException("Not connected to voice.")
         if self.playing:
@@ -146,7 +150,9 @@ class FakePlayer:
             self.end_thread()
 
     def end_thread(self) -> None:
-        """End the player thread, as discord.py does, calling `after`."""
-        if self._after is not None:
-            self._after(None)
+        """End the player thread, calling `after` from a thread as discord.py does."""
+        if (after := self._after) is not None:
             self._after = None
+            thread = threading.Thread(target=after, args=(None,))
+            thread.start()
+            thread.join()

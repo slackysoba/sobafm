@@ -94,10 +94,13 @@ def test_reads_server_options(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert (settings.data_dir, settings.dev_guild_id, settings.max_sessions) == (tmp_path, 1234, 8)
 
 
-def test_rejects_a_session_cap_below_one_program(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("cap", ["1", "3"])
+def test_rejects_a_session_cap_that_is_not_whole_programs(
+    monkeypatch: pytest.MonkeyPatch, cap: str
+) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
-    monkeypatch.setenv("SOBAFM_MAX_SESSIONS", "1")
+    monkeypatch.setenv("SOBAFM_MAX_SESSIONS", cap)
 
     with pytest.raises(ValidationError):
         load_settings(env_file=None)

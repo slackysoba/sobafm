@@ -549,7 +549,7 @@ async def test_leaving_voice_closes_the_station(bot: SobaFM) -> None:
 
     await bot.on_voice_lost(guild)
 
-    station.close.assert_awaited_once()
+    station.close.assert_awaited_once_with(Outcome.DISCONNECTED)
     assert guild.id not in bot.stations
 
 
