@@ -60,10 +60,10 @@ A pull request can build on another that is still in review:
 
 1. Branch from that pull request's branch, base the new pull request on it, and say in the description which pull request it builds on. Keep it rebased on that branch while both are in review.
 2. Before merging the base pull request, change each dependent's base to `main`: `gh pr list --base <branch>` lists them, and `gh pr edit <number> --base main` changes one.
-3. Merge with `gh pr merge <number> --squash`, without `--delete-branch`, and decline gh's offer to delete the branch. The repository deletes merged branches itself and retargets the pull requests based on them. When gh deletes the branch right after the merge, GitHub closes those pull requests instead ([cli/cli#14223](https://github.com/cli/cli/issues/14223)).
-4. Rebase each dependent onto `main`, replaying only its own commits: `git rebase --onto origin/main <base head>`, where `<base head>` is the base pull request's last commit (`gh pr view <base> --json headRefOid --jq .headRefOid`). Then remove the note about the base from its description, which becomes the squash commit message.
+3. Merge with `gh pr merge <number> --squash`, without `--delete-branch`. The repository deletes merged branches itself and retargets the pull requests based on them. When gh deletes the branch right after the merge, GitHub closes those pull requests instead ([cli/cli#14223](https://github.com/cli/cli/issues/14223)).
+4. Rebase each dependent onto `main`, replaying only its own commits: after `git fetch origin`, run `git rebase --onto origin/main <base head>`, where `<base head>` is the base pull request's last commit (`gh pr view <base> --json headRefOid --jq .headRefOid`), and push with `--force-with-lease`. Then remove the note about the base from its description, which becomes the squash commit message.
 
-If a dependent is closed anyway, do not push to its branch: a closed pull request cannot be reopened once its branch is force-pushed. Restore the base branch, reopen the dependent, change its base to `main`, and then rebase it.
+If a dependent is closed anyway, restore the base branch, reopen the dependent, change its base to `main`, delete the restored branch, and then rebase the dependent. GitHub reopens a pull request only while its branch is at the commit it had when it closed, so if the branch has been pushed since, first force-push it back to that commit (`gh pr view <number> --json headRefOid --jq .headRefOid`).
 
 ## Templates and coding agents
 
