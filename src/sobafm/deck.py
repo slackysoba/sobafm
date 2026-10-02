@@ -13,6 +13,7 @@ from typing import Protocol
 from google import genai
 from google.genai import errors, live_music, types
 
+from sobafm.interpreter import as_token
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, matches_mime_type
 from sobafm.plan import MusicPlan
 
@@ -27,6 +28,14 @@ RESUME_BELOW_S = 45.0  # ...and resumes below this
 RATE_WINDOW_S = 10.0  # generating time before the rate is meaningful
 CONNECT_TIMEOUT_S = 15.0  # connecting and starting playback
 REGULATE_TIMEOUT_S = 0.5  # a pause or resume, which a closing session can stall
+
+
+def close_detail(code: int, reason: object) -> str:
+    """A close's code, with its reason only if that is a token, as free text could quote the key.
+
+    Gemini's error messages can quote the API key (OPS-5), and Lyria's close reasons may too.
+    """
+    return f"code {code}: {token}" if (token := as_token(reason)) else f"code {code}"
 
 
 class MusicSession(Protocol):
@@ -187,13 +196,19 @@ class Deck:
             self._end(reason)
         except errors.APIError as error:
             # A WebSocket close carries its reason in `details`, which the SDK leaves untyped.
-            cause: object = error.message or getattr(error, "details", None) or "no reason"
+            reason: object = error.message or getattr(error, "details", None)
             self.close_code = error.code
-            self._end(EndReason.CLOSED, f"code {error.code}: {cause}")
+            self._end(EndReason.CLOSED, close_detail(error.code, reason))
+        except live_music.ConnectionClosed as error:
+            # Closed during setup, as on a refusal. A traceback would quote the close reason.
+            close = error.rcvd
+            self.close_code = close.code if close else None
+            detail = close_detail(close.code, close.reason) if close else "no close frame"
+            detail = f"{type(error).__name__}: {detail}"
+            log.warning("Deck %d failed: %s", self.number, detail)
+            self._end(EndReason.FAILED, detail)
         except Exception as error:  # a deck failure must never stop the station
             log.warning("Deck %d failed", self.number, exc_info=True)
-            if isinstance(error, live_music.ConnectionClosed) and error.rcvd is not None:
-                self.close_code = error.rcvd.code  # closed during setup, as on a refusal
             detail = type(error).__name__ + (f": {error}" if str(error) else "")
             self._end(EndReason.FAILED, detail[:200])
 
