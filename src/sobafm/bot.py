@@ -2,7 +2,10 @@
 
 import asyncio
 import logging
+import math
+import time
 from collections import defaultdict
+from collections.abc import Callable
 from typing import cast
 
 import discord
@@ -13,12 +16,11 @@ from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
 from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, SessionPool, Station
-from sobafm.store import Store
+from sobafm.store import GuildSettings, Store
 
 log = logging.getLogger(__name__)
 
 REQUIRED_PERMISSIONS = {"view_channel": "View Channel", "connect": "Connect", "speak": "Speak"}
-VOLUME = 0.5  # per-server volume arrives with settings in M3
 START_TIMEOUT_S = 75.0  # covers one refused start and its retry
 
 PLAY_REPLIES = {
@@ -54,7 +56,14 @@ class Voice(discord.VoiceClient):
 
 
 class SobaFM(discord.Client):
-    def __init__(self, settings: Settings, store: Store, connect: Connect | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: Store,
+        connect: Connect | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
         intents.voice_states = True
@@ -70,6 +79,9 @@ class SobaFM(discord.Client):
         add_commands(self.tree, self)
         self.voices: set[Voice] = set()
         self.voice_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.cooldowns: dict[int, float] = {}  # when each server's change cooldown started
+        self.settings_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._clock = clock
 
     async def close(self) -> None:
         """Close every station, ending its Lyria sessions, before disconnecting."""
@@ -77,8 +89,8 @@ class SobaFM(discord.Client):
         self.stations.clear()
         await super().close()
 
-    def station(self, guild: discord.Guild) -> Station:
-        """The guild's station, created and started on first use."""
+    def station(self, guild: discord.Guild, volume: float) -> Station:
+        """The guild's station, created at `volume` and started on first use."""
         station = self.stations.get(guild.id)
         if station is None:
             station = Station(
@@ -86,7 +98,7 @@ class SobaFM(discord.Client):
                 lambda: listeners(guild),
                 self.open_session,
                 self.pool,
-                volume=VOLUME,
+                volume=volume,
             )
             station.start()
             self.stations[guild.id] = station
@@ -96,8 +108,13 @@ class SobaFM(discord.Client):
         if (station := self.stations.pop(guild.id, None)) is not None:
             await station.close(outcome)
 
-    def play_problem(self, member: discord.Member, request: str) -> str | None:
-        """Why `member` cannot request this music right now, if they cannot."""
+    async def admit(self, member: discord.Member, request: str) -> str | None:
+        """Admit a request and start the server's change cooldown, or say why it can't play.
+
+        The check and the start of the cooldown happen without an await between them, so
+        concurrent requests cannot both get past it. The start time in `cooldowns` identifies
+        the request: one that ends without playing frees it with `free_cooldown()`.
+        """
         if not request.strip():
             return "Describe the music you want, for example: rainy lo-fi with soft piano."
         voice = cast(discord.VoiceClient | None, member.guild.voice_client)
@@ -105,16 +122,45 @@ class SobaFM(discord.Client):
             return "SobaFM isn't in a voice channel. Ask a server manager to use /join."
         if member.voice is None or member.voice.channel != voice.channel:
             return f"Join {voice.channel.mention} to request music."
+        settings = await self.store.settings(member.guild.id)
+        now = self._clock()
+        wait = settings.cooldown_seconds - (now - self.cooldowns.get(member.guild.id, -math.inf))
+        if wait > 0:
+            return f"The music changed recently. Try again in {seconds(math.ceil(wait))}."
+        self.cooldowns[member.guild.id] = now
         return None
 
-    async def play(self, member: discord.Member, request: str) -> str:
-        """Start or replace the program, and describe the outcome once it plays or fails."""
-        plan = MusicPlan.from_request(request)
-        started = self.station(member.guild).play(plan, member.mention)
+    def free_cooldown(self, guild: discord.Guild, cooldown: float | None) -> None:
+        """Free the cooldown that started at `cooldown`, unless another has started since."""
+        if cooldown is not None and self.cooldowns.get(guild.id) == cooldown:
+            del self.cooldowns[guild.id]
+
+    async def play(self, member: discord.Member, request: str, cooldown: float | None) -> str:
+        """Start or replace the program, and describe the outcome once it plays or fails.
+
+        `cooldown` is when `admit()` started this request's cooldown, if it did. A request that
+        ends without playing frees it, even after the reply.
+        """
+        playing = False  # or may still play
         try:
-            outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
-        except TimeoutError:
-            return "The music is taking longer than usual to start."
+            plan = MusicPlan.from_request(request)
+            settings = await self.store.settings(member.guild.id)
+            started = self.station(member.guild, settings.volume).play(plan, member.mention)
+            try:
+                outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
+            except TimeoutError:
+
+                def settled(done: asyncio.Future[Outcome]) -> None:
+                    if done.result() is not Outcome.PLAYING:
+                        self.free_cooldown(member.guild, cooldown)
+
+                started.add_done_callback(settled)
+                playing = True
+                return "The music is taking longer than usual to start."
+            playing = outcome is Outcome.PLAYING
+        finally:
+            if not playing:
+                self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
             title = discord.utils.escape_markdown(plan.title)
             return f"Now playing **{title}**, requested by {member.mention}."
@@ -136,6 +182,36 @@ class SobaFM(discord.Client):
             return "Nothing is playing."
         station.stop()
         return "Stopped the music."
+
+    async def configure(
+        self,
+        guild: discord.Guild,
+        *,
+        duration_minutes: int | None = None,
+        volume_percent: int | None = None,
+        cooldown_seconds: int | None = None,
+    ) -> str:
+        """Apply the given settings, and describe the server's settings."""
+        changes = {
+            "duration_minutes": duration_minutes,
+            "volume_percent": volume_percent,
+            "cooldown_seconds": cooldown_seconds,
+        }
+        updates = {name: value for name, value in changes.items() if value is not None}
+        async with self.settings_locks[guild.id]:  # so concurrent changes cannot undo each other
+            settings = await self.store.settings(guild.id)
+            if updates:
+                settings = GuildSettings.model_validate(settings.model_dump() | updates)
+                await self.store.save_settings(guild.id, settings)
+                if (station := self.stations.get(guild.id)) is not None:
+                    station.mixer.set_volume(settings.volume)
+        heading = "Saved. SobaFM's settings" if updates else "SobaFM's settings"
+        return (
+            f"{heading} for this server:\n"
+            f"- Play duration: {settings.duration_minutes} minutes\n"
+            f"- Volume: {settings.volume_percent}%\n"
+            f"- Change cooldown: {seconds(settings.cooldown_seconds)}"
+        )
 
     async def setup_hook(self) -> None:
         await self.store.initialize()
@@ -286,6 +362,10 @@ def listeners(guild: discord.Guild) -> int:
         if (member is None or not member.bot) and not (state.self_deaf or state.deaf):
             count += 1
     return count
+
+
+def seconds(count: int) -> str:
+    return f"{count} second" if count == 1 else f"{count} seconds"
 
 
 def missing_permissions(channel: discord.VoiceChannel) -> list[str]:
