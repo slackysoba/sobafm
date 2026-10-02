@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -9,15 +10,18 @@ import discord
 import pytest
 from discord.errors import ConnectionClosed
 from discord.voice_state import VoiceConnectionState
+from google.genai import errors, types
 from pydantic import ValidationError
 
 import sobafm.bot
-from sobafm.bot import PLAY_REPLIES, SobaFM, Voice, listeners
+from sobafm.bot import PLAY_REPLIES, REFUSALS, SobaFM, Voice, listeners
 from sobafm.config import load_settings
-from sobafm.plan import MusicPlan
-from sobafm.station import Outcome, Station
+from sobafm.interpreter import Interpreter
+from sobafm.interpreter import Outcome as Interpreted
+from sobafm.plan import MusicPlan, Prompt
+from sobafm.station import Outcome, Program, Station
 from sobafm.store import GuildSettings, Store
-from tests.doubles import FakeClock, FakeLyria, settle
+from tests.doubles import FakeClock, FakeGemini, FakeLyria, answer, settle
 
 GUILD_ID = 1
 CHANNEL_ID = 10
@@ -105,14 +109,29 @@ def bot_voice_update(guild: Any, before: Any, after: Any) -> tuple[Any, Any, Any
 
 
 @pytest.fixture
+def gemini() -> FakeGemini:
+    return FakeGemini()
+
+
+@pytest.fixture
 async def bot(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lyria: FakeLyria, clock: FakeClock
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    lyria: FakeLyria,
+    gemini: FakeGemini,
+    clock: FakeClock,
 ) -> SobaFM:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", "key")
     store = Store(tmp_path / "sobafm.db")
     await store.initialize()
-    bot = SobaFM(load_settings(env_file=None), store, connect=lyria.connect, clock=clock)
+    bot = SobaFM(
+        load_settings(env_file=None),
+        store,
+        connect=lyria.connect,
+        interpreter=Interpreter(gemini, "gemini-test"),
+        clock=clock,
+    )
     CHANNELS.clear()
     monkeypatch.setattr(bot, "get_channel", CHANNELS.get)
     return bot
@@ -735,6 +754,94 @@ async def test_play_reports_what_is_playing(bot: SobaFM, monkeypatch: pytest.Mon
         "Now playing **ambient drones**, requested by <@5>."
     )
     assert station.play.call_args.args[0].prompts[0].text == "ambient drones"
+
+
+LOFI = MusicPlan(title="Rainy lo-fi", prompts=[Prompt(text="lo-fi hip hop")], bpm=80)
+
+
+async def test_play_refines_the_current_plan(bot: SobaFM, gemini: FakeGemini) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    station = fake_station()
+    station.program = fake(Program, plan=LOFI)
+    bot.stations[guild.id] = station
+    refined = {"title": "Faster lo-fi", "prompts": [{"text": "lo-fi hip hop"}], "bpm": 100}
+    gemini.response = answer(json.dumps({"kind": "refine", "plan": refined}))
+
+    reply = await bot.play(member, "faster", None)
+
+    assert json.loads(gemini.calls[-1]["contents"])["current_plan"] == LOFI.model_dump(mode="json")
+    assert station.play.call_args.args[0].bpm == 100
+    assert reply == "Now playing **Faster lo-fi**, requested by <@5>."
+
+
+@pytest.mark.parametrize(
+    ("response", "refusal"),
+    [
+        (answer(json.dumps({"kind": "not_music"})), REFUSALS[Interpreted.NOT_MUSIC]),
+        (answer("", finish=types.FinishReason.SAFETY), REFUSALS[Interpreted.BLOCKED]),
+    ],
+    ids=["not music", "blocked"],
+)
+async def test_play_refuses_without_touching_the_music(
+    bot: SobaFM,
+    gemini: FakeGemini,
+    lyria: FakeLyria,
+    response: types.GenerateContentResponse,
+    refusal: str,
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    bot.stations[guild.id] = station
+    gemini.response = response
+    cooldown = await admitted(bot, member, "what's the weather?")
+
+    reply = await bot.play(member, "what's the weather?", cooldown)
+
+    assert reply == refusal
+    station.play.assert_not_called()  # the current music keeps playing
+    assert lyria.sessions == []
+    assert await bot.admit(member, "jazz") is None  # nothing changed, so no cooldown
+
+
+async def test_play_says_when_the_request_was_used_as_typed(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.error = errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}})
+
+    reply = await bot.play(member, "rainy lo-fi", None)
+
+    assert reply == (
+        "Now playing **rainy lo-fi**, requested by <@5>."
+        " Gemini couldn't interpret the request, so it was used as typed."
+    )
+    assert station.play.call_args.args[0] == MusicPlan.from_request("rainy lo-fi")
+
+
+async def test_play_escapes_the_title(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
+    plan = {"title": "**Loud** _lo-fi_", "prompts": [{"text": "lo-fi"}]}
+    gemini.response = answer(json.dumps({"kind": "new", "plan": plan}))
+
+    reply = await bot.play(member, "lo-fi", None)
+
+    assert reply == "Now playing **\\*\\*Loud\\*\\* \\_lo-fi\\_**, requested by <@5>."
 
 
 @pytest.mark.parametrize("outcome", [Outcome.BUSY, Outcome.REFUSED, Outcome.FAILED])

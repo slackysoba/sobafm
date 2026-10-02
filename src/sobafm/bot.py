@@ -11,11 +11,13 @@ from typing import cast
 import discord
 from discord import app_commands
 from discord.types.voice import GuildVoiceState
+from google import genai
 
 from sobafm.commands import add_commands
 from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
-from sobafm.plan import MusicPlan
+from sobafm.interpreter import Interpreter
+from sobafm.interpreter import Outcome as Interpreted
 from sobafm.station import Outcome, SessionPool, Station
 from sobafm.store import GuildSettings, Store
 
@@ -34,6 +36,14 @@ PLAY_REPLIES = {
     Outcome.REPLACED: "A newer request replaced this one before it started.",
     Outcome.STOPPED: "The music was stopped before this request started.",
 }
+REFUSALS = {  # the current music keeps playing
+    Interpreted.NOT_MUSIC: (
+        "That doesn't sound like a request for music, so nothing changed. Try something like: "
+        "rainy lo-fi with soft piano."
+    ),
+    Interpreted.BLOCKED: "Gemini's safety filters blocked that request, so nothing changed.",
+}
+FALLBACK_NOTE = " Gemini couldn't interpret the request, so it was used as typed."
 
 
 class Voice(discord.VoiceClient):
@@ -87,6 +97,7 @@ class SobaFM(discord.Client):
         store: Store,
         connect: Connect | None = None,
         *,
+        interpreter: Interpreter | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         intents = discord.Intents.none()
@@ -96,6 +107,10 @@ class SobaFM(discord.Client):
         self.settings = settings
         self.store = store
         self.open_session = connect or lyria(settings.gemini_api_key.get_secret_value())
+        self.interpreter = interpreter or Interpreter(
+            genai.Client(api_key=settings.gemini_api_key.get_secret_value()).aio,
+            settings.gemini_model,
+        )
         self.pool = SessionPool(settings.max_sessions)
         self.stations: dict[int, Station] = {}
         self.tree = app_commands.CommandTree(
@@ -161,14 +176,20 @@ class SobaFM(discord.Client):
             del self.cooldowns[guild.id]
 
     async def play(self, member: discord.Member, request: str, cooldown: float | None) -> str:
-        """Start or replace the program, and describe the outcome once it plays or fails.
+        """Interpret the request, start or replace the program, and describe the outcome once
+        it plays or fails.
 
-        `cooldown` is when `admit()` started this request's cooldown, if it did. A request that
-        ends without playing frees it, even after the reply.
+        A relative request refines the current program's plan. `cooldown` is when `admit()`
+        started this request's cooldown, if it did. A request that ends without playing,
+        including one Gemini refuses, frees it, even after the reply.
         """
         playing = False  # or may still play
         try:
-            plan = MusicPlan.from_request(request)
+            station = self.stations.get(member.guild.id)
+            current = station.program.plan if station and station.program else None
+            result = await self.interpreter.interpret(request, current)
+            if (plan := result.plan) is None:
+                return REFUSALS[result.outcome]
             settings = await self.store.settings(member.guild.id)
             started = self.station(member.guild, settings.volume).play(plan, member.mention)
             try:
@@ -188,7 +209,8 @@ class SobaFM(discord.Client):
                 self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
             title = discord.utils.escape_markdown(plan.title)
-            return f"Now playing **{title}**, requested by {member.mention}."
+            reply = f"Now playing **{title}**, requested by {member.mention}."
+            return reply + FALLBACK_NOTE if result.outcome is Interpreted.FALLBACK else reply
         return PLAY_REPLIES[outcome]
 
     def stop_problem(self, member: discord.Member) -> str | None:
