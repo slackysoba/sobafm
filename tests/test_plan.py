@@ -55,6 +55,12 @@ def test_config_carries_the_plan() -> None:
     assert config.music_generation_mode == types.MusicGenerationMode.VOCALIZATION
 
 
+def test_titles_read_on_one_line() -> None:
+    plan = MusicPlan(title=" Rainy\n lo-fi\u3000", prompts=[Prompt(text="lo-fi")])
+
+    assert plan.title == "Rainy lo-fi"
+
+
 @pytest.mark.parametrize(
     "fields",
     [
@@ -63,6 +69,7 @@ def test_config_carries_the_plan() -> None:
         {"density": 1.5},
         {"prompts": []},
         {"title": ""},
+        {"title": " \n\t"},
     ],
 )
 def test_rejects_values_outside_lyria_ranges(fields: dict[str, object]) -> None:

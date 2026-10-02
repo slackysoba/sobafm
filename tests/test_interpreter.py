@@ -1,7 +1,5 @@
-import asyncio
 import json
 import logging
-from typing import Any
 
 import pytest
 from google import genai
@@ -10,6 +8,7 @@ from google.genai import errors, types
 import sobafm.interpreter
 from sobafm.interpreter import CONFIG, Interpreter, Outcome
 from sobafm.plan import MusicPlan, Prompt
+from tests.doubles import FakeGemini, answer
 
 LOFI = MusicPlan(
     title="Rainy lo-fi",
@@ -22,35 +21,6 @@ LOFI = MusicPlan(
     vocalization=True,
 )
 NEW_PLAN = {"title": "Night drive", "prompts": [{"text": "synthwave", "weight": 1.0}], "bpm": 110}
-
-
-class FakeGemini:
-    """Answers `models.generate_content` like the Google Gen AI SDK's async client."""
-
-    def __init__(self, response: types.GenerateContentResponse | None = None) -> None:
-        self.models = self
-        self.response = response or types.GenerateContentResponse()
-        self.error: Exception | None = None
-        self.delay = 0.0
-        self.calls: list[dict[str, Any]] = []
-
-    async def generate_content(
-        self, *, model: str, contents: str, config: types.GenerateContentConfig
-    ) -> types.GenerateContentResponse:
-        self.calls.append({"model": model, "contents": contents, "config": config})
-        await asyncio.sleep(self.delay)
-        if self.error is not None:
-            raise self.error
-        return self.response
-
-
-def answer(
-    text: str, finish: types.FinishReason = types.FinishReason.STOP
-) -> types.GenerateContentResponse:
-    content = types.Content(role="model", parts=[types.Part(text=text)])
-    return types.GenerateContentResponse(
-        candidates=[types.Candidate(content=content, finish_reason=finish)]
-    )
 
 
 def answer_json(**fields: object) -> types.GenerateContentResponse:

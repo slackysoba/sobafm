@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -9,15 +10,18 @@ import discord
 import pytest
 from discord.errors import ConnectionClosed
 from discord.voice_state import VoiceConnectionState
+from google.genai import errors, types
 from pydantic import ValidationError
 
 import sobafm.bot
-from sobafm.bot import PLAY_REPLIES, SobaFM, Voice, listeners
+from sobafm.bot import PLAY_REPLIES, REFUSALS, SobaFM, Voice, listeners
 from sobafm.config import load_settings
-from sobafm.plan import MusicPlan
-from sobafm.station import Outcome, Station
+from sobafm.interpreter import Interpreter
+from sobafm.interpreter import Outcome as Interpreted
+from sobafm.plan import MusicPlan, Prompt
+from sobafm.station import Outcome, Program, Station
 from sobafm.store import GuildSettings, Store
-from tests.doubles import FakeClock, FakeLyria, settle
+from tests.doubles import FakeClock, FakeGemini, FakeLyria, answer, settle
 
 GUILD_ID = 1
 CHANNEL_ID = 10
@@ -105,14 +109,29 @@ def bot_voice_update(guild: Any, before: Any, after: Any) -> tuple[Any, Any, Any
 
 
 @pytest.fixture
+def gemini() -> FakeGemini:
+    return FakeGemini()
+
+
+@pytest.fixture
 async def bot(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lyria: FakeLyria, clock: FakeClock
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    lyria: FakeLyria,
+    gemini: FakeGemini,
+    clock: FakeClock,
 ) -> SobaFM:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("GEMINI_API_KEY", "key")
     store = Store(tmp_path / "sobafm.db")
     await store.initialize()
-    bot = SobaFM(load_settings(env_file=None), store, connect=lyria.connect, clock=clock)
+    bot = SobaFM(
+        load_settings(env_file=None),
+        store,
+        connect=lyria.connect,
+        interpreter=Interpreter(gemini, "gemini-test"),
+        clock=clock,
+    )
     CHANNELS.clear()
     monkeypatch.setattr(bot, "get_channel", CHANNELS.get)
     return bot
@@ -737,6 +756,314 @@ async def test_play_reports_what_is_playing(bot: SobaFM, monkeypatch: pytest.Mon
     assert station.play.call_args.args[0].prompts[0].text == "ambient drones"
 
 
+LOFI = MusicPlan(title="Rainy lo-fi", prompts=[Prompt(text="lo-fi hip hop")], bpm=80)
+
+
+async def test_play_refines_the_current_plan(bot: SobaFM, gemini: FakeGemini) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    station = fake_station()
+    station.program = fake(Program, plan=LOFI)
+    bot.stations[guild.id] = station
+    refined = {"title": "Faster lo-fi", "prompts": [{"text": "lo-fi hip hop"}], "bpm": 100}
+    gemini.response = answer(json.dumps({"kind": "refine", "plan": refined}))
+
+    reply = await bot.play(member, "faster", None)
+
+    assert json.loads(gemini.calls[-1]["contents"])["current_plan"] == LOFI.model_dump(mode="json")
+    assert station.play.call_args.args[0].bpm == 100
+    assert reply == "Now playing **Faster lo-fi**, requested by <@5>."
+
+
+@pytest.mark.parametrize(
+    ("response", "refusal"),
+    [
+        (answer(json.dumps({"kind": "not_music"})), REFUSALS[Interpreted.NOT_MUSIC]),
+        (answer("", finish=types.FinishReason.SAFETY), REFUSALS[Interpreted.BLOCKED]),
+    ],
+    ids=["not music", "blocked"],
+)
+async def test_play_refuses_without_touching_the_music(
+    bot: SobaFM, gemini: FakeGemini, response: types.GenerateContentResponse, refusal: str
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    station.program = fake(Program, plan=LOFI)
+    bot.stations[guild.id] = station
+    gemini.response = response
+    cooldown = await admitted(bot, member, "what's the weather?")
+
+    reply = await bot.play(member, "what's the weather?", cooldown)
+
+    assert reply == refusal
+    assert station.method_calls == []  # the current music keeps playing
+    assert await bot.admit(member, "jazz") is None  # nothing changed, so no cooldown
+
+
+async def test_a_refused_request_never_reaches_lyria(
+    bot: SobaFM, gemini: FakeGemini, lyria: FakeLyria
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    gemini.response = answer(json.dumps({"kind": "not_music"}))
+
+    await bot.play(in_voice(channel, channel), "what's the weather?", None)
+
+    assert guild.id not in bot.stations
+    assert lyria.sessions == []
+    assert bot.stop(guild) == "Nothing is playing."  # nothing is left being interpreted
+
+
+async def test_a_newer_request_supersedes_one_being_interpreted(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay = 0.05
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()  # Gemini is slow with the older request...
+    gemini.delay = 0
+
+    await bot.play(member, "lo-fi", None)  # ...and answers the newer one first
+
+    assert bot.stop(guild) == "Nothing is playing."  # the replaced request is no longer tracked
+    assert await older == PLAY_REPLIES[Outcome.REPLACED]
+    assert [call.args[0].title for call in station.play.call_args_list] == ["lo-fi"]
+
+
+async def test_an_older_request_answered_first_plays_until_a_newer_one(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay = 0.01
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()  # the older request is with Gemini when the newer one arrives
+    gemini.delay = 0.05
+
+    newer = await bot.play(member, "lo-fi", None)
+
+    assert (await older).startswith("Now playing **jazz**")
+    assert newer.startswith("Now playing **lo-fi**")
+    assert [call.args[0].title for call in station.play.call_args_list] == ["jazz", "lo-fi"]
+
+
+async def test_a_refused_request_leaves_an_older_one_to_play(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay = 0.05
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()
+    gemini.delay, gemini.response = 0, answer(json.dumps({"kind": "not_music"}))
+
+    assert await bot.play(member, "what's the weather?", None) == REFUSALS[Interpreted.NOT_MUSIC]
+    assert (await older).startswith("Now playing **jazz**")
+    assert [call.args[0].title for call in station.play.call_args_list] == ["jazz"]
+
+
+async def test_a_request_that_ends_first_leaves_newer_ones_to_stop(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay, gemini.response = 0.01, answer(json.dumps({"kind": "not_music"}))
+    older = asyncio.create_task(bot.play(member, "what's the weather?", None))
+    await settle()
+    gemini.delay, gemini.response = 0.05, None
+    newer = asyncio.create_task(bot.play(member, "jazz", None))
+    assert await older == REFUSALS[Interpreted.NOT_MUSIC]  # while the newer one is with Gemini
+
+    assert bot.stop(guild) == "Stopped the request before it played."
+    assert await newer == PLAY_REPLIES[Outcome.STOPPED]
+    station.play.assert_not_called()
+
+
+async def test_stop_supersedes_a_request_being_interpreted(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay = 0.05
+    request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
+    await settle()
+
+    assert bot.stop(guild) == "Stopped the request before it played."
+    assert await request == PLAY_REPLIES[Outcome.STOPPED]
+    station.play.assert_not_called()
+
+
+async def test_a_stopped_request_stays_stopped_when_a_newer_one_plays(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
+    gemini.delay = 0.05
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()
+    assert bot.stop(guild) == "Stopped the request before it played."
+    gemini.delay = 0
+
+    assert (await bot.play(member, "lo-fi", None)).startswith("Now playing **lo-fi**")
+    assert bot.stop(guild) == "Nothing is playing."  # the stopped request is no longer tracked
+    assert await older == PLAY_REPLIES[Outcome.STOPPED]
+
+
+async def test_a_request_the_station_rejects_leaves_older_ones_to_play(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    station = fake_station()
+    station.play.side_effect = [RuntimeError("a bug"), station.play.return_value]
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.delay = 0.05
+    older = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()
+    gemini.delay = 0
+
+    with pytest.raises(RuntimeError):
+        await bot.play(member, "lo-fi", None)
+
+    assert (await older).startswith("Now playing **jazz**")
+
+
+async def test_a_request_from_before_leaving_creates_no_station(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    guild.voice_client = None  # SobaFM left before the request was tracked
+
+    assert await bot.play(member, "jazz", None) == PLAY_REPLIES[Outcome.DISCONNECTED]
+    assert guild.id not in bot.stations
+
+
+async def test_closing_ends_requests_being_interpreted(bot: SobaFM, gemini: FakeGemini) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    gemini.delay = 0.05
+    request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
+    await settle()
+
+    await bot.close()
+
+    assert await request == PLAY_REPLIES[Outcome.STOPPED]
+    assert guild.id not in bot.stations
+
+
+async def test_stop_supersedes_a_request_reading_its_settings(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    read = asyncio.Event()
+    settings = bot.store.settings
+
+    async def slow_settings(guild_id: int) -> GuildSettings:
+        await read.wait()
+        return await settings(guild_id)
+
+    monkeypatch.setattr(bot.store, "settings", slow_settings)
+    request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
+    await settle()  # interpreted, and waiting for the server's settings
+
+    assert bot.stop(guild) == "Stopped the request before it played."
+    read.set()
+    assert await request == PLAY_REPLIES[Outcome.STOPPED]
+    station.play.assert_not_called()
+
+
+async def test_leaving_supersedes_a_request_being_interpreted(
+    bot: SobaFM, gemini: FakeGemini
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    gemini.delay = 0.05
+    request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
+    await settle()
+
+    await bot.close_station(guild, Outcome.DISCONNECTED)
+
+    assert await request == PLAY_REPLIES[Outcome.DISCONNECTED]
+    assert guild.id not in bot.stations  # no station for a server SobaFM has left
+
+
+async def test_a_slow_start_says_when_the_request_was_used_as_typed(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slow_station(bot, monkeypatch)
+    guild = make_guild()
+    channel = make_channel(guild)
+    gemini.error = errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}})
+
+    reply = await bot.play(in_voice(channel, channel), "rainy lo-fi", None)
+
+    assert reply == (
+        "The music is taking longer than usual to start."
+        " Gemini couldn't interpret the request, so it was used as typed."
+    )
+
+
+async def test_play_says_when_the_request_was_used_as_typed(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    station = fake_station()
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    gemini.error = errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}})
+
+    reply = await bot.play(member, "rainy lo-fi", None)
+
+    assert reply == (
+        "Now playing **rainy lo-fi**, requested by <@5>."
+        " Gemini couldn't interpret the request, so it was used as typed."
+    )
+    assert station.play.call_args.args[0] == MusicPlan.from_request("rainy lo-fi")
+
+
+async def test_play_escapes_the_title(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
+    plan = {"title": "**Loud**\n_lo-fi_", "prompts": [{"text": "lo-fi"}]}  # on two lines
+    gemini.response = answer(json.dumps({"kind": "new", "plan": plan}))
+
+    reply = await bot.play(member, "lo-fi", None)
+
+    assert reply == "Now playing **\\*\\*Loud\\*\\* \\_lo-fi\\_**, requested by <@5>."
+
+
 @pytest.mark.parametrize("outcome", [Outcome.BUSY, Outcome.REFUSED, Outcome.FAILED])
 async def test_play_explains_failures(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome
@@ -815,7 +1142,9 @@ async def test_play_command_answers_publicly_once_the_music_starts(
     await command.callback(interaction, request="ambient")
 
     interaction.response.defer.assert_awaited_once_with()
-    interaction.followup.send.assert_awaited_once_with("Now playing **ambient**.")
+    interaction.followup.send.assert_awaited_once_with(
+        "Now playing **ambient**.", suppress_embeds=True
+    )
 
 
 async def test_play_command_explains_problems_privately(

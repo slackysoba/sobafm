@@ -1,6 +1,7 @@
-"""Test doubles for Lyria RealTime sessions, the voice player, and the clock."""
+"""Test doubles for Lyria RealTime sessions, Gemini, the voice player, and the clock."""
 
 import asyncio
+import json
 import threading
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ import discord
 from google.genai import errors, types
 
 from sobafm.pcm import BYTES_PER_SECOND, MIME_TYPE
+from sobafm.plan import MusicPlan
 
 
 class FakeSession:
@@ -178,3 +180,40 @@ def _call_from_thread(after: Callable[[Exception | None], Any]) -> None:
     thread = threading.Thread(target=after, args=(None,))
     thread.start()
     thread.join()
+
+
+def answer(
+    text: str, finish: types.FinishReason = types.FinishReason.STOP
+) -> types.GenerateContentResponse:
+    """Gemini's response with `text` as its answer."""
+    content = types.Content(role="model", parts=[types.Part(text=text)])
+    return types.GenerateContentResponse(
+        candidates=[types.Candidate(content=content, finish_reason=finish)]
+    )
+
+
+class FakeGemini:
+    """Answers `models.generate_content` like the Google Gen AI SDK's async client.
+
+    Without a `response`, it reads each request as new music described by the request itself.
+    """
+
+    def __init__(self, response: types.GenerateContentResponse | None = None) -> None:
+        self.models = self
+        self.response = response
+        self.error: Exception | None = None
+        self.delay = 0.0
+        self.calls: list[dict[str, Any]] = []
+
+    async def generate_content(
+        self, *, model: str, contents: str, config: types.GenerateContentConfig
+    ) -> types.GenerateContentResponse:
+        self.calls.append({"model": model, "contents": contents, "config": config})
+        response, error = self.response, self.error  # as set when the call is made
+        await asyncio.sleep(self.delay)
+        if error is not None:
+            raise error
+        if response is not None:
+            return response
+        plan = MusicPlan.from_request(json.loads(contents)["request"])
+        return answer(json.dumps({"kind": "new", "plan": plan.model_dump(mode="json")}))

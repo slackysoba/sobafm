@@ -6,7 +6,7 @@
 
 ## Summary
 
-SobaFM is a single Python process built on discord.py. It keeps one **station** per server. A station holds the current **program**, asks Gemini to interpret each request into a `MusicPlan`, and keeps audio flowing by filling **decks** (frame buffers fed by Lyria RealTime sessions) and crossfading between them in a **mixer** that discord.py reads every 20 ms.
+SobaFM is a single Python process built on discord.py. It asks Gemini to interpret each request into a `MusicPlan`, and keeps one **station** per server. A station holds the current **program** and keeps audio flowing by filling **decks** (frame buffers fed by Lyria RealTime sessions) and crossfading between them in a **mixer** that discord.py reads every 20 ms.
 
 ## Scope
 
@@ -43,8 +43,8 @@ In scope: the v1 [requirements](requirements.md). Out of scope: hosting several 
 flowchart LR
     member([Member]) -- "slash command" --> commands[Commands]
     subgraph process [SobaFM process]
-        commands --> station["Station (one per server)"]
-        station -- "request and current plan" --> interpreter[Interpreter]
+        commands -- "request and current plan" --> interpreter[Interpreter]
+        commands -- "MusicPlan" --> station["Station (one per server)"]
         station -- "MusicPlan" --> decks["Decks (live and next)"]
         decks -- "20 ms frames" --> mixer[Mixer]
     end
@@ -58,7 +58,7 @@ flowchart LR
 | --- | --- |
 | `__main__` | Entry point: configuration, logging, signal handling, and a startup watchdog |
 | `config` | Typed settings from the environment and `.env`; secrets held as `SecretStr` |
-| `bot` | The discord.py client: intents, command sync, the station registry, and voice-state events |
+| `bot` | The discord.py client: intents, command sync, the station registry, interpreting and playing requests, and voice-state events |
 | `commands` | Slash command handlers: checks, deferral, and replies with mentions disabled |
 | `station` | One per server: the desired program, the reconcile loop, listener tracking, and the voice channel status |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |
@@ -136,7 +136,7 @@ class Prompt(BaseModel):
 
 
 class MusicPlan(BaseModel):
-    title: str  # 1 to 60 characters
+    title: str  # 1 to 60 characters, with whitespace collapsed
     prompts: list[Prompt]  # 1 to 4 prompts
     bpm: int | None  # 60 to 200
     scale: Scale | None  # the SDK's scale enum
@@ -186,10 +186,11 @@ CREATE TABLE guild (
 
 ## State and lifecycle
 
+- **Request:** admitted by `/play`, then interpreted by Gemini. While Gemini interprets it, the first newer request to reach the station ends it as replaced. `/stop` and `/leave` end it as stopped, and losing the channel or shutting down ends it too. A refused request ends nothing, so the newest request Gemini accepts wins.
 - **Program:** created by an accepted `/play` and replaced by the next one; cleared when its end time passes, by `/stop` or `/leave`, after the empty-channel grace period, or when SobaFM loses its channel. The phase shown by `/now` (idle, starting, playing, or stopping) is derived from the program and the mixer rather than stored.
 - **Deck:** `connecting`, then `generating` (paused or not), then `ended` with a reason: retired, closed with a close code, failed, or filtered. A deck is ready once it holds the pre-roll. Its generation rate is audio seconds received per unpaused wall-clock second, measured after 10 seconds.
 - **Startup:** load and validate configuration, check that the Opus library loads, open the store, connect to the gateway, and sync commands. Each server's remembered channel is rejoined when that server becomes available: at startup, after a new gateway session, or when an outage ends. The watchdog exits with an error if the gateway is not ready within 120 seconds, so the process supervisor restarts SobaFM.
-- **Shutdown:** on `SIGTERM`, cancel station tasks (which closes their Lyria sessions), disconnect from voice, and close the client.
+- **Shutdown:** on `SIGTERM`, end the requests being interpreted, cancel station tasks (which closes their Lyria sessions), disconnect from voice, and close the client.
 
 ## Failure behavior
 
