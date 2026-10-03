@@ -14,6 +14,25 @@ def test_from_request_uses_the_text_as_the_only_prompt() -> None:
     ]
 
 
+BIDI_CONTROLS = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+
+
+def test_drops_bidirectional_controls() -> None:
+    plan = MusicPlan(
+        title=f"Rai{BIDI_CONTROLS}ny lo-fi\u202e by <@5>",  # invisible, so dropped within a word
+        prompts=[Prompt(text=f"\u2067lo-fi{BIDI_CONTROLS}")],
+    )
+
+    assert plan.title == "Rainy lo-fi by <@5>"
+    assert plan.prompts[0].text == "lo-fi"
+    assert MusicPlan.from_request(f"\u202e{'x' * 200}").title == "x" * 60
+
+
+def test_rejects_a_title_of_only_bidirectional_controls() -> None:
+    with pytest.raises(ValidationError):
+        MusicPlan(title=BIDI_CONTROLS, prompts=[Prompt(text="lo-fi")])
+
+
 def test_from_request_truncates_long_requests() -> None:
     plan = MusicPlan.from_request("x" * 500)
 
