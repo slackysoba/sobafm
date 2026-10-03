@@ -7,8 +7,19 @@ from typing import Any, cast
 
 import pytest
 from google.genai import live_music, types
-from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
+from websockets.datastructures import Headers
+from websockets.exceptions import (
+    ConnectionClosed,
+    ConnectionClosedError,
+    ConnectionClosedOK,
+    InvalidHeaderValue,
+    InvalidMessage,
+    InvalidStatus,
+    InvalidUpgrade,
+    NegotiationError,
+)
 from websockets.frames import Close
+from websockets.http11 import Response
 
 import sobafm.deck
 from sobafm.deck import (
@@ -579,6 +590,47 @@ async def test_records_a_quota_close_while_generating(
     )
     assert "(code 1011, exhausted)" in caplog.text
     assert "exceeded" not in caplog.text  # the reason is matched, never logged
+
+
+def malformed_reply() -> InvalidMessage:
+    """How websockets reports an unparseable handshake reply, its cause quoting the reply."""
+    error = InvalidMessage("did not receive a valid HTTP response")
+    error.__cause__ = ValueError("invalid HTTP reason phrase: AIzaFakeKey")
+    return error
+
+
+@pytest.mark.parametrize(
+    ("error", "detail", "failure"),
+    [
+        (InvalidUpgrade("Upgrade", "AIzaFakeKey"), "InvalidUpgrade", None),
+        (InvalidHeaderValue("Sec-WebSocket-Accept", "AIzaFakeKey"), "InvalidHeaderValue", None),
+        (NegotiationError("unsupported extension: AIzaFakeKey"), "NegotiationError", None),
+        (malformed_reply(), "InvalidMessage", None),
+        (
+            InvalidStatus(Response(429, "AIzaFakeKey", Headers())),
+            "InvalidStatus: HTTP 429",
+            Failure.EXHAUSTED,
+        ),
+    ],
+    ids=["upgrade", "header", "negotiation", "malformed reply", "refused"],
+)
+async def test_logs_a_failed_handshake_without_the_servers_text(
+    lyria: FakeLyria,
+    clock: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    detail: str,
+    failure: Failure | None,
+) -> None:
+    lyria.failure = error
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+
+    with caplog.at_level(logging.DEBUG):
+        deck.start()
+        await ended(deck)
+
+    assert (deck.end_reason, deck.detail, deck.failure) == (EndReason.FAILED, detail, failure)
+    assert "AIzaFakeKey" not in caplog.text  # in neither a message nor a traceback
 
 
 def received(close: Close | None, error: type[ConnectionClosed] = ConnectionClosedError) -> Any:

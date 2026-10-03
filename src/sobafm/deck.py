@@ -12,6 +12,7 @@ from typing import Protocol
 
 from google import genai
 from google.genai import errors, live_music, types
+from websockets.exceptions import InvalidStatus, WebSocketException
 
 from sobafm.failures import Failure, as_token, call_failure, close_failure
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, matches_mime_type
@@ -219,6 +220,14 @@ class Deck:
                 self.failure = Failure.UNAVAILABLE  # the connection dropped
                 detail = "no close frame received"
             detail = f"{type(error).__name__}: {detail}"
+            log.warning("Deck %d failed: %s", self.number, detail)
+            self._end(EndReason.FAILED, detail)
+        except WebSocketException as error:
+            # A failed handshake: its message, or its cause's, can quote the server's reply.
+            self.failure = call_failure(error)
+            detail = type(error).__name__
+            if isinstance(error, InvalidStatus):
+                detail += f": HTTP {error.response.status_code}"
             log.warning("Deck %d failed: %s", self.number, detail)
             self._end(EndReason.FAILED, detail)
         except Exception as error:  # a deck failure must never stop the station
