@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Self
@@ -153,6 +155,20 @@ def test_debug_logging_applies_to_sobafm_only(
     # the SDK's own logger, which logs Lyria's setup reply at INFO
     assert not live_music.logger.isEnabledFor(logging.INFO)
     assert live_music.logger.isEnabledFor(logging.WARNING)
+
+
+def test_logs_to_standard_output() -> None:
+    # In a fresh interpreter, since pytest's own logging handlers would keep basicConfig() idle.
+    script = (
+        "import logging; from sobafm.__main__ import configure_logging; "
+        "configure_logging('INFO'); logging.getLogger('sobafm.bot').info('Connected')"
+    )
+    logged = subprocess.run(  # noqa: S603 - a fixed script, run by this interpreter
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True, timeout=60
+    )
+
+    assert logged.stdout.rstrip().endswith("INFO sobafm.bot: Connected")
+    assert logged.stderr == ""
 
 
 class NeverReady:
