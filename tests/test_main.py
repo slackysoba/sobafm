@@ -200,10 +200,16 @@ def test_escapes_what_standard_output_cannot_encode() -> None:
 
 
 def test_logs_warnings_to_standard_output() -> None:
-    logged = run_with_logging("import warnings; warnings.warn('Something to know', stacklevel=1)")
+    logged = run_with_logging(
+        "import warnings; warnings.warn('Something to know', stacklevel=1); "
+        # The SDK's enum warning is ignored only from the module that raises it.
+        "warnings.warn_explicit('0 is not a valid count', UserWarning, 'types.py', 1, "
+        "module='google.genai.types')"
+    )
 
     assert "WARNING py.warnings:" in logged.stdout
     assert "UserWarning: Something to know" in logged.stdout
+    assert "UserWarning: 0 is not a valid count" in logged.stdout
     assert logged.stderr == ""
 
 
@@ -228,7 +234,7 @@ def test_ignores_the_sdks_warnings_that_quote_what_it_receives(option: str | Non
 UNKNOWN_VALUES_FROM_LYRIA = """
 import asyncio, base64, contextlib, json, types
 from google.genai import live_music
-from sobafm.deck import Deck, State
+from sobafm.deck import Deck
 from sobafm.plan import MusicPlan
 
 config = {"scale": "AIzaFakeKey\\nmore", "musicGenerationMode": "AIzaFakeKey"}
