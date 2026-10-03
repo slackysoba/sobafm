@@ -181,7 +181,8 @@ class SobaFM(discord.Client):
         self._clock = clock
 
     async def close(self) -> None:
-        """End the voice check, recoveries, requests, and stations, before disconnecting."""
+        """End the voice check, recoveries, pending edits of slow-start answers, requests, and
+        stations, before disconnecting."""
         self.check_voice.cancel()
         for announcement in self.announcements:
             announcement.cancel()
@@ -272,7 +273,7 @@ class SobaFM(discord.Client):
         ends them all. `cooldown` is when `admit()` started this request's cooldown, if it did.
         A request that ends without playing, including one Gemini refuses, frees it, even after
         the reply. When the start outlasts START_TIMEOUT_S, the answer says so, and `announce`
-        receives the answer once it plays or fails (FB-1).
+        receives the answer once it plays or doesn't (FB-1).
         """
         playing = False  # or may still play
         interpreting: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
