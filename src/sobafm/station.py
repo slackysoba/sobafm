@@ -332,7 +332,7 @@ class Station:
         return now - self._empty_since >= EMPTY_GRACE_S
 
     def _finish(self, outcome: Outcome) -> None:
-        self._credit_underruns()
+        self._watch_underruns()  # silence since the last tick, so the next tick won't count it
         if (heard := self._program_heard()) is not None:
             self._end_run()
             self._log_ended(heard, outcome)
@@ -373,7 +373,8 @@ class Station:
         self._underruns_counted = count
 
     def _watch_underruns(self) -> None:
-        """Log each run of silence as it starts, and its length once audio plays for a while.
+        """Log each run of silence in a program heard as it starts, and its length once audio
+        plays for a while.
 
         Reads stop while discord.py reconnects to voice, which ends nothing, and RECOVERED_S of
         audio must play before a run ends, so a stutter logs as one run.
@@ -383,7 +384,7 @@ class Station:
         new_underruns, new_played = underruns - self._underruns_seen, played - self._played_seen
         self._underruns_seen, self._played_seen = underruns, played
         if new_underruns:
-            if self._dry_since is None:
+            if self._dry_since is None and self._program_heard() is not None:
                 self._dry_since = underruns - new_underruns
                 log.warning("The live deck ran dry; playing silence")
             self._recovered = 0
@@ -395,7 +396,7 @@ class Station:
     def _end_run(self) -> None:
         """Log the length of the current run of silence, if there is one."""
         if self._dry_since is not None:
-            seconds = (self.mixer.underruns - self._dry_since) * FRAME_SECONDS
+            seconds = (self._underruns_seen - self._dry_since) * FRAME_SECONDS
             log.info("Silence lasted %.2f s", seconds)
             self._dry_since, self._recovered = None, 0
 

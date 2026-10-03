@@ -1161,6 +1161,30 @@ async def test_a_program_heard_again_after_a_failed_replacement_keeps_its_count(
     ]
 
 
+async def test_a_program_heard_again_rotates_without_ending(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's deck opens
+    rig.session(2).close(*INVALID_KEY)
+    await rig.tick()
+    await rig.tick()  # the program heard is current again, and opens its next deck
+    assert rig.station.program is heard
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        await rig.feed(-1, 10)
+        rig.listen(8 - HANDOVER_BELOW_S + 0.5)  # its live deck runs low
+        await rig.tick()  # so it hands over to its next deck
+        rig.listen(4)
+        await rig.tick()
+        rig.station.stop()
+
+    assert silence_lines(caplog) == ["Program ended (stopped) with 0.00 s of underrun"]
+
+
 @pytest.mark.parametrize("end", ["stop", "close"])
 async def test_a_program_ended_between_ticks_counts_its_latest_silence(
     rig: Rig, caplog: pytest.LogCaptureFixture, end: str
@@ -1173,6 +1197,7 @@ async def test_a_program_ended_between_ticks_counts_its_latest_silence(
         rig.listen(0.5)  # and half a second more before the next
         if end == "stop":
             rig.station.stop()
+            await rig.tick()  # which counts nothing again
         else:
             await rig.station.close(Outcome.DISCONNECTED)
 
@@ -1182,6 +1207,129 @@ async def test_a_program_ended_between_ticks_counts_its_latest_silence(
         "Silence lasted 1.50 s",
         f"Program ended ({outcome}) with 1.50 s of underrun",
     ]
+
+
+async def test_a_program_at_its_end_time_logs_its_silence_once(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig, duration_seconds=300)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # a second of silence
+        await rig.tick(299.5)  # 300 s after the request
+        assert rig.station.program is None
+        await rig.tick()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 1.00 s",
+        "Program ended (stopped) with 1.00 s of underrun",
+    ]
+
+
+async def test_a_program_ended_before_a_tick_saw_its_silence_logs_it(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(8.5)  # half a second of silence, which no tick has seen
+        rig.station.stop()
+        await rig.tick()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 0.50 s",
+        "Program ended (stopped) with 0.50 s of underrun",
+    ]
+
+
+async def test_silence_with_nothing_heard_is_not_a_run(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)
+        await rig.tick()
+        rig.station.stop()
+        rig.listen(1)  # discord.py reads the dry deck until a tick winds it down
+        await rig.tick()
+        await rig.tick()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 1.00 s",
+        "Program ended (stopped) with 1.00 s of underrun",
+    ]
+
+
+async def test_silence_with_nothing_heard_counts_for_no_later_program(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    rig.listen(8)  # the whole buffer, without silence
+    rig.station.stop()
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(1)  # silence that no program is heard in, until a tick winds the deck down
+        await rig.tick()
+        await rig.tick()
+        rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+        await rig.tick()
+        await rig.feed(-2, 10)
+        await rig.tick()
+        rig.listen(2)
+        await rig.tick()
+        rig.station.stop()
+
+    assert silence_lines(caplog) == ["Program ended (stopped) with 0.00 s of underrun"]
+
+
+async def test_ending_while_a_replacement_starts_logs_the_program_heard(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # the program heard runs dry while the replacement starts
+        await rig.tick()
+        rig.station.stop()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 1.00 s",
+        "Program ended (stopped) with 1.00 s of underrun",
+    ]
+
+
+async def test_failed_reads_end_no_run(
+    rig: Rig, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)
+        await rig.tick()
+        await rig.feed(0, 10)
+        failing = [True]
+
+        def scaled(frame: bytes, gain: float) -> bytes:
+            if failing[0]:
+                raise RuntimeError("a bug")
+            return frame
+
+        monkeypatch.setattr("sobafm.mixer._scaled", scaled)
+        rig.listen(2)  # reads fail, playing silence
+        await rig.tick()
+        assert silence_lines(caplog) == [DRY]
+        failing[0] = False
+        rig.listen(1)
+        await rig.tick()
+
+    assert silence_lines(caplog) == [DRY, "Silence lasted 1.00 s"]
 
 
 async def test_counts_no_underrun_without_a_program_heard(
