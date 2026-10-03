@@ -426,8 +426,9 @@ class Station:
         """Schedule a retry for a session that ended short of the pre-roll, or give up.
 
         Sessions that fail together count once, so both decks of a round share one retry. A
-        cause that retrying can't help ends a start whichever deck reports it. A program that has
-        started keeps retrying, because its buffers may outlast an outage.
+        cause that retrying can't help ends a start whichever deck reports it, unless another deck
+        of its plan may still start it. A program that has started keeps retrying, because its
+        buffers may outlast an outage.
         """
         program = self.program
         now = self._clock()

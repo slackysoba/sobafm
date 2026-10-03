@@ -11,7 +11,15 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError, Conne
 from websockets.frames import Close
 
 import sobafm.deck
-from sobafm.deck import PAUSE_AT_S, RESUME_BELOW_S, Deck, EndReason, MusicSession, State
+from sobafm.deck import (
+    PAUSE_AT_S,
+    PREROLL_S,
+    RESUME_BELOW_S,
+    Deck,
+    EndReason,
+    MusicSession,
+    State,
+)
 from sobafm.failures import Failure
 from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS
 from sobafm.plan import MusicPlan
@@ -539,6 +547,20 @@ async def test_names_the_cause_of_a_session_that_ended_short(
 
     assert "(code 1011, exhausted) after" in caplog.text  # it never held the pre-roll
     assert not deck.delivered_preroll
+
+
+async def test_delivers_the_preroll_with_exactly_its_audio(
+    lyria: FakeLyria, clock: FakeClock
+) -> None:
+    deck, session = await start_deck(lyria, clock)
+
+    session.send_audio(PREROLL_S - FRAME_SECONDS)
+    await settle()
+    assert not deck.delivered_preroll
+
+    session.send_audio(FRAME_SECONDS)
+    await settle()
+    assert deck.delivered_preroll
 
 
 async def test_records_a_quota_close_while_generating(
