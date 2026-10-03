@@ -12,7 +12,7 @@ from google.genai import errors, types
 from pydantic import BaseModel, ValidationError, model_validator
 
 from sobafm.failures import Failure, as_token, call_failure, error_reason
-from sobafm.plan import MusicPlan
+from sobafm.plan import MusicPlan, one_line
 
 log = logging.getLogger(__name__)
 
@@ -149,9 +149,9 @@ class Interpreter:
 
         Only the request and the current plan are sent (AI-6). Any failure of the model call
         falls back to the request text as the plan (AI-4), with the cause when SobaFM can tell
-        it. A blank request is refused.
+        it. A request that is blank on one line is refused.
         """
-        if not request.strip():
+        if not one_line(request):
             return Result(Outcome.NOT_MUSIC, None)
         log.debug("Interpreting %r", request)
         current_plan = current.model_dump(mode="json") if current else None

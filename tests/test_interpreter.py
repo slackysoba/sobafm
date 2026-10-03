@@ -90,10 +90,11 @@ async def test_refuses_not_music_even_with_an_invalid_plan() -> None:
     assert (result.outcome, result.plan) == (Outcome.NOT_MUSIC, None)
 
 
-async def test_refuses_a_blank_request_without_a_call() -> None:
+@pytest.mark.parametrize("request_text", [" 　", "\u202e \u2066"], ids=["blank", "bidi controls"])
+async def test_refuses_a_blank_request_without_a_call(request_text: str) -> None:
     gemini = FakeGemini()
 
-    result = await interpreter(gemini).interpret(" 　", None)
+    result = await interpreter(gemini).interpret(request_text, None)
 
     assert (result.outcome, gemini.calls) == (Outcome.NOT_MUSIC, [])
 

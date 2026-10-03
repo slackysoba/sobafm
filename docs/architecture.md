@@ -135,12 +135,12 @@ The interpreter is SobaFM's only Gemini stage. It makes one call for each accept
 
 ```python
 class Prompt(BaseModel):
-    text: str  # 1 to 120 characters, with whitespace collapsed
+    text: str  # 1 to 120 characters, with whitespace collapsed and bidirectional controls dropped
     weight: float  # 0.1 to 1.0
 
 
 class MusicPlan(BaseModel):
-    title: str  # 1 to 60 characters, with whitespace collapsed
+    title: str  # 1 to 60 characters, with whitespace collapsed and bidirectional controls dropped
     prompts: list[Prompt]  # 1 to 4 prompts
     bpm: int | None  # 60 to 200
     scale: Scale | None  # the SDK's scale enum
@@ -219,7 +219,7 @@ CREATE TABLE guild (
 
 - **Secrets** come only from the environment, are held as `SecretStr`, and are never logged. `.env` files are git-ignored.
 - **Data sent to Google:** the request text and current plan go to Gemini; prompts and generation settings go to Lyria RealTime. Discord identifiers are never sent. Google may review prompts sent on the free tier, which the README states (USE-1, USE-2).
-- **Model output is untrusted.** It is validated against the schema before use; text shown in Discord is escaped, length-capped, and sent with mentions disabled; nothing is executed.
+- **Model output is untrusted.** It is validated against the schema before use, which drops bidirectional controls, so text can't reorder what follows it. Text shown in Discord is escaped, including the `:` and `.` that links need, so no markup or link forms. It is length-capped and sent with mentions disabled, and nothing is executed.
 - **Prompt injection:** the instruction treats the request as data, and the schema limits what any request can produce.
 - **Least privilege:** two non-privileged gateway intents and four channel permissions.
 - **Logs:** request text appears only at debug level. Gemini's error statuses and reasons, and Lyria's close reasons, are logged only when they are tokens such as `RESOURCE_EXHAUSTED`, since free text could quote the API key. A frame from Lyria that the SDK can't parse or validate, or an unexpected audio format, is logged by a fixed description, without its content. Lyria's close reasons are matched for a rejected API key or an exhausted quota, but never logged, and a deck's summary names the cause of a session that ended short of the pre-roll. `SOBAFM_LOG_LEVEL` applies to SobaFM's own loggers: libraries stay at INFO, since at DEBUG the websockets library logs request headers, which carry the API key. The Google Gen AI SDK logs only warnings and errors, since at INFO it logs Lyria RealTime's setup reply verbatim.
