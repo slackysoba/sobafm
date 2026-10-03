@@ -996,6 +996,86 @@ async def test_a_new_request_restarts_the_grace_period(rig: Rig) -> None:
     assert rig.station.program is None
 
 
+async def test_logs_a_run_of_underruns_once_and_its_length(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # a second past the live deck's audio
+        await rig.tick()
+        rig.listen(1)  # still dry
+        await rig.tick()
+        assert not any(message.startswith("Silence lasted") for message in caplog.messages)
+        await rig.feed(0, 10)  # audio resumes
+        rig.listen(1)
+        await rig.tick()
+        rig.listen(1)
+        await rig.tick()
+
+    warnings = [
+        record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING
+    ]
+    assert warnings == ["The live deck ran dry; playing silence"]
+    lengths = [message for message in caplog.messages if message.startswith("Silence lasted")]
+    assert lengths == ["Silence lasted 2.00 s"]
+
+
+@pytest.mark.parametrize("end", ["stop", "replace"])
+async def test_logs_a_programs_total_underrun(
+    rig: Rig, caplog: pytest.LogCaptureFixture, end: str
+) -> None:
+    await start_playing(rig)
+    rig.listen(9)  # a second of silence
+    await rig.tick()
+    await rig.feed(0, 10)
+    rig.listen(1)
+    await rig.tick()
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        if end == "stop":
+            rig.station.stop()
+        else:
+            rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+
+    outcome = "stopped" if end == "stop" else "replaced"
+    assert f"Program ended ({outcome}) with 1.00 s of underrun" in caplog.messages
+
+
+async def test_silence_before_a_replacement_plays_is_not_its_own(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's deck opens
+    rig.listen(9)  # the program heard runs dry before the replacement plays
+    await rig.tick()
+    await rig.feed(-1, 10)
+    await rig.tick()
+    rig.listen(4)  # through the crossfade
+    await rig.tick()
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.station.stop()
+
+    assert "Program ended (stopped) with 0.00 s of underrun" in caplog.messages
+
+
+async def test_counts_no_underrun_without_a_program_playing(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(5)  # nothing plays yet, so nothing runs dry
+        await rig.tick()
+        rig.station.stop()
+
+    assert rig.station.mixer.underruns == 0
+    assert not any("underrun" in message or "dry" in message for message in caplog.messages)
+
+
 async def test_reports_the_time_left(rig: Rig) -> None:
     assert rig.station.time_left is None
 
