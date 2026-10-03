@@ -11,6 +11,7 @@ from typing import cast
 
 import discord
 from discord import app_commands
+from discord.ext import tasks
 from discord.types.voice import GuildVoiceState
 from google import genai
 
@@ -26,6 +27,11 @@ log = logging.getLogger(__name__)
 
 REQUIRED_PERMISSIONS = {"view_channel": "View Channel", "connect": "Connect", "speak": "Speak"}
 START_TIMEOUT_S = 75.0  # covers one refused start and its retry
+VOICE_CHECK_S = 10.0  # how often SobaFM looks for voice clients discord.py has stranded
+# discord.py can go without a connection task while it closes a voice websocket, which takes up
+# to its 30-second close timeout, so a client counts as stranded only after twice that.
+STRANDED_FOR_S = 60.0
+REJOIN_RETRY_S = 30.0  # between attempts to rejoin after replacing a stranded client
 
 PLAY_REPLIES = {
     Outcome.BUSY: "SobaFM is already playing in as many servers as it can. Try again later.",
@@ -58,9 +64,11 @@ class Voice(discord.VoiceClient):
         super().__init__(client, channel)
         self.sobafm = cast("SobaFM", client)
         self.joined = False  # set once the connection completes
+        self.stranded_since: float | None = None  # when SobaFM found it stranded
         self.sobafm.voices.add(self)
 
     def cleanup(self) -> None:
+        self.failure()  # marks an error that ended discord.py's runner as handled
         current = self.guild.voice_client is self
         if current:  # an old client must not unregister its replacement
             super().cleanup()
@@ -75,6 +83,30 @@ class Voice(discord.VoiceClient):
             # (voice_state.py, #46).
             self._connection._disconnected.clear()  # pyright: ignore[reportPrivateUsage]
 
+    def stranded(self) -> bool:
+        """Whether discord.py has stopped connecting this client without cleaning it up.
+
+        During a network outage, discord.py's voice runner can exit without calling `cleanup()`,
+        leaving the client registered with nothing to connect it (#47). A connected client always
+        has a running runner, so a stranded client can still report itself connected.
+        """
+        return all(task is None or task.done() for task in self._connection_tasks())
+
+    def failure(self) -> BaseException | None:
+        """The error that ended discord.py's voice runner, if one did, marked as handled."""
+        runner = self._connection_tasks()[1]
+        if runner is None or not runner.done() or runner.cancelled():
+            return None
+        return runner.exception()
+
+    def _connection_tasks(self) -> list[asyncio.Task[None] | None]:
+        """discord.py's connector and voice runner."""
+        connection = self._connection
+        return cast(
+            list[asyncio.Task[None] | None],
+            [connection._connector, connection._runner],  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+        )
+
     async def finish_connecting(self) -> None:
         """Wait until discord.py's connector connects or gives up.
 
@@ -86,7 +118,11 @@ class Voice(discord.VoiceClient):
                 asyncio.Task[None] | None,
                 self._connection._connector,  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
             )
-            if connector is None or connector.done():
+            if connector is None:
+                return
+            if connector.done():
+                if not connector.cancelled():
+                    connector.exception()  # discord.py logged it already
                 return
             await asyncio.wait({connector})
 
@@ -124,12 +160,17 @@ class SobaFM(discord.Client):
         # Each server's requests being interpreted, oldest first
         self.interpreting: defaultdict[int, list[asyncio.Future[Outcome]]] = defaultdict(list)
         self.settings_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.recoveries: dict[int, asyncio.Task[None]] = {}  # servers replacing a stranded client
         self._clock = clock
 
     async def close(self) -> None:
-        """End every request and station, closing Lyria sessions, before disconnecting."""
+        """End the voice check, recoveries, requests, and stations, before disconnecting."""
+        self.check_voice.cancel()
+        for recovery in self.recoveries.values():
+            recovery.cancel()
         for guild_id in list(self.interpreting):
             self.supersede(guild_id, Outcome.STOPPED)
+        await asyncio.gather(*self.recoveries.values(), return_exceptions=True)
         await asyncio.gather(*(station.close() for station in self.stations.values()))
         self.stations.clear()
         await super().close()
@@ -303,6 +344,7 @@ class SobaFM(discord.Client):
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
+        self.check_voice.start()
 
     async def on_ready(self) -> None:
         log.info("Connected as %s to %d servers", self.user, len(self.guilds))
@@ -330,8 +372,11 @@ class SobaFM(discord.Client):
                 return
             try:
                 await self.connect_to(channel)
-            except TimeoutError, discord.ClientException:
-                log.warning("Could not rejoin %s in %s", channel, guild, exc_info=True)
+            except Exception as error:  # the channel stays remembered for another attempt
+                expected = isinstance(error, OSError | discord.ClientException)  # as in an outage
+                log.warning(
+                    "Could not rejoin %s in %s: %r", channel, guild, error, exc_info=not expected
+                )
 
     async def join(self, member: discord.Member) -> str:
         """Connect to, or move to, the member's voice channel, and remember where SobaFM ends up."""
@@ -401,6 +446,64 @@ class SobaFM(discord.Client):
         voice.joined = True
         return voice
 
+    @tasks.loop(seconds=VOICE_CHECK_S)
+    async def check_voice(self) -> None:
+        """Start recovering each voice client discord.py strands, once it stays stranded."""
+        now = self._clock()
+        for voice in list(self.voices):
+            guild_id = voice.guild.id
+            if not voice.joined or voice is not voice.guild.voice_client or not voice.stranded():
+                voice.stranded_since = None
+            elif voice.stranded_since is None:
+                voice.stranded_since = now
+            elif now - voice.stranded_since >= STRANDED_FOR_S and guild_id not in self.recoveries:
+                self.recoveries[guild_id] = asyncio.create_task(self.recover_voice(voice))
+
+    async def recover_voice(self, voice: Voice) -> None:
+        """Replace a stranded voice client, then rejoin until back in voice or nothing to rejoin.
+
+        The outage that strands a client can also fail the first attempts to rejoin.
+        """
+        guild = voice.guild
+        try:
+            if not await self.replace_voice(voice):
+                return
+            while True:
+                await self.rejoin(guild)
+                # discord.py waits for a departure after a failed attempt, swallowing a cancel.
+                raise_swallowed_cancel()
+                if guild.voice_client is not None:
+                    return
+                if await self.store.remembered_channel(guild.id) is None:
+                    return
+                await asyncio.sleep(REJOIN_RETRY_S)
+        except Exception:
+            log.exception("Could not recover the voice connection in %s", guild)
+        finally:
+            self.recoveries.pop(guild.id, None)
+
+    async def replace_voice(self, voice: Voice) -> bool:
+        """End the program on a stranded voice client and close it, keeping the channel.
+
+        Returns whether it did, since the client can recover or be replaced meanwhile.
+        """
+        guild = voice.guild
+        async with self.voice_locks[guild.id]:
+            if guild.voice_client is not voice or not voice.stranded():
+                return False
+            log.warning(
+                "discord.py stopped reconnecting to voice in %s; rejoining",
+                guild,
+                exc_info=voice.failure(),
+            )
+            await self.close_station(guild, Outcome.DISCONNECTED)
+            voice.joined = False  # replaced rather than left, so the channel stays remembered
+            # discord.py waits up to 30 seconds for Discord to confirm the departure. A later
+            # confirmation would reach the new connection and end it.
+            await voice.disconnect(force=True)
+            raise_swallowed_cancel()
+        return True
+
     async def close_stale_voice(self, guild: discord.Guild) -> None:
         """Disconnect clients from earlier gateway sessions, which discord.py no longer tracks."""
         for voice in [v for v in self.voices if v.guild.id == guild.id]:
@@ -409,6 +512,7 @@ class SobaFM(discord.Client):
                 # discord.py no longer routes events to this client, so this waits out its timeout.
                 log.info("Closing the voice connection from an earlier session in %s", guild)
                 await voice.disconnect(force=True)
+                raise_swallowed_cancel()
 
     def voice_ended(self, voice: Voice, *, left: bool) -> None:
         """Stop tracking `voice`, and handle SobaFM leaving its channel unless shutting down."""
@@ -439,6 +543,12 @@ class SobaFM(discord.Client):
             return  # joins and departures are handled where SobaFM connects and disconnects
         if before.channel != after.channel:
             await self.store.remember_channel(member.guild.id, after.channel.id)
+
+
+def raise_swallowed_cancel() -> None:
+    """Raise a cancel that discord.py swallowed while it waited for a voice departure."""
+    if (task := asyncio.current_task()) is not None and task.cancelling():
+        raise asyncio.CancelledError
 
 
 async def move(voice: discord.VoiceClient, channel: discord.VoiceChannel) -> None:
