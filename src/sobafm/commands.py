@@ -55,6 +55,14 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
         reply = await bot.play(interaction.user, request, cooldown)
         await interaction.followup.send(reply, suppress_embeds=True)  # titles are model-written
 
+    @tree.command(description="Show what is playing")
+    @app_commands.guild_only()
+    async def now(interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            return  # unreachable: the command is guild-only
+        reply = bot.now(interaction.guild)
+        await interaction.response.send_message(reply, ephemeral=True, suppress_embeds=True)
+
     @tree.command(description="Stop the music")
     @app_commands.guild_only()
     async def stop(interaction: discord.Interaction) -> None:

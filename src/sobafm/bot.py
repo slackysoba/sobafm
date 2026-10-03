@@ -4,9 +4,11 @@ import asyncio
 import contextlib
 import logging
 import math
+import re
 import time
 from collections import defaultdict
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import cast
 
 import discord
@@ -20,6 +22,7 @@ from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
 from sobafm.interpreter import Interpreter
 from sobafm.interpreter import Outcome as Interpreted
+from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, SessionPool, Station
 from sobafm.store import GuildSettings, Store
 
@@ -50,7 +53,9 @@ REFUSALS = {  # the current music keeps playing
     ),
     Interpreted.BLOCKED: "Gemini's safety filters blocked that request, so nothing changed.",
 }
-FALLBACK_NOTE = " Gemini couldn't interpret the request, so it was used as typed."
+# Discord's inline markup: emphasis, spoilers, code, masked links, mentions, and timestamps
+MARKUP = re.compile(r"[\\*_~|`<\[\]]")
+FALLBACK_NOTE = "\nGemini couldn't interpret the request, so it was used as typed."
 
 
 class Voice(discord.VoiceClient):
@@ -185,6 +190,8 @@ class SobaFM(discord.Client):
                 self.open_session,
                 self.pool,
                 volume=volume,
+                channel=lambda: voice_channel_id(guild),
+                status=self.show_voice_status,
             )
             station.start()
             self.stations[guild.id] = station
@@ -261,6 +268,7 @@ class SobaFM(discord.Client):
                 return REFUSALS[result.outcome]
             if member.guild.voice_client is None:  # left before this request was tracked
                 return PLAY_REPLIES[Outcome.DISCONNECTED]
+            ends = discord.utils.utcnow() + timedelta(seconds=settings.duration_seconds)
             started = self.station(member.guild, settings.volume).play(
                 plan, member.mention, duration_seconds=settings.duration_seconds
             )
@@ -283,10 +291,31 @@ class SobaFM(discord.Client):
             if not playing:
                 self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
-            title = discord.utils.escape_markdown(plan.title)
-            reply = f"Now playing **{title}**, requested by {member.mention}."
-            return note(reply, result.outcome)
+            return note(f"Now playing {describe(plan, member.mention, ends)}", result.outcome)
         return PLAY_REPLIES[outcome]
+
+    async def show_voice_status(self, channel_id: int, status: str | None) -> bool:
+        """Show `status` on voice channel `channel_id`, or return False if SobaFM may not (FB-2).
+
+        Discord's errors propagate, for the station to log and retry.
+        """
+        channel = self.get_channel(channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            return False  # gone, or a Stage channel
+        if not channel.permissions_for(channel.guild.me).set_voice_channel_status:
+            return False
+        await channel.edit(status=status)
+        return True
+
+    def now(self, guild: discord.Guild) -> str:
+        """Describe the server's program for /now (CMD-3)."""
+        station = self.stations.get(guild.id)
+        program = station.program if station is not None else None
+        if station is None or program is None or (time_left := station.time_left) is None:
+            return "Nothing is playing."
+        ends = discord.utils.utcnow() + timedelta(seconds=time_left)
+        phase = "Now playing" if program.playing else "Starting"
+        return f"{phase} {describe(program.plan, program.requester, ends)}"
 
     def stop_problem(self, member: discord.Member) -> str | None:
         """Why `member` cannot stop the music, if they cannot."""
@@ -395,7 +424,9 @@ class SobaFM(discord.Client):
                 if voice is None:  # a move during the handshake can end elsewhere
                     destination = (await self.connect_to(channel)).channel
                 else:
-                    await move(voice, channel)
+                    station = self.stations.get(channel.guild.id)
+                    async with station.moving() if station else contextlib.nullcontext():
+                        await move(voice, channel)
                     destination = channel
             except TimeoutError, discord.ClientException:
                 log.warning("Could not connect to %s in %s", channel, channel.guild, exc_info=True)
@@ -563,6 +594,34 @@ async def move(voice: discord.VoiceClient, channel: discord.VoiceChannel) -> Non
     if not moved or not voice.is_connected():
         raise TimeoutError
     await channel.guild.change_voice_state(channel=channel, self_deaf=True)
+
+
+def describe(plan: MusicPlan, requester: str, ends: datetime) -> str:
+    """A program's title, requester, style, and end time, with model-written text escaped."""
+    style = ", ".join(prompt.text for prompt in plan.prompts)
+    if plan.bpm is not None:
+        style += f", {plan.bpm} BPM"
+    return (
+        f"**{escape(plan.title)}**, requested by {requester}.\n"
+        f"Style: {escape(style)}\n"
+        f"Ends {discord.utils.format_dt(ends, 'R')}."
+    )
+
+
+def escape(text: str) -> str:
+    """Model-written text with each character of Discord's inline markup escaped (FB-4).
+
+    Escaping each character keeps masked links, mentions, and timestamps from forming, which
+    `discord.utils.escape_markdown` misses inside a masked link. Markup that needs a line start
+    can't form, since the text never starts a line.
+    """
+    return MARKUP.sub(r"\\\g<0>", text)
+
+
+def voice_channel_id(guild: discord.Guild) -> int | None:
+    """SobaFM's voice channel, while it is connected there."""
+    voice = cast(discord.VoiceClient | None, guild.voice_client)
+    return voice.channel.id if voice is not None and voice.is_connected() else None
 
 
 def listeners(guild: discord.Guild) -> int:

@@ -97,6 +97,9 @@ A station stores only what should be happening: the program (plan, requester, an
 5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player, and fade in once it runs with voice connected. Restart the player if discord.py stopped it.
 6. **Hand over, or stop.** With a program, if the player runs with voice connected, no crossfade is in progress, and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck of the current plan with the most buffered audio. Without one, retire idle decks; once any fade or crossfade completes, fade out the live deck and then stop the player. With no player running, nothing reads the mixer, so the station stops at once.
 7. **Regulate.** Pause or resume each deck's generation at the flow-control thresholds.
+8. **Status.** Show the title being heard as the voice channel status (FB-2): a program's title once it plays, kept while a replacement starts, and cleared when the program ends or the station closes. Discord lets SobaFM change a channel's status only while connected there, so the station syncs only then. Each tick compares what SobaFM has set, and where, with what it should show, so a drag or a new gateway session catches up. One request runs at a time and is never cancelled. Closing, and `/join` before it moves SobaFM, clear the status, waiting at most 10 seconds for the request in flight and the clear after it. Without the Set Voice Channel Status permission, SobaFM sets nothing and checks again every 10 seconds. A refused request is logged once and retried after 10 seconds, doubling up to 5 minutes, and never affects playback.
+
+   A channel SobaFM was dragged out of keeps the title until it empties or SobaFM shows another title there, since only someone connected there, or with Manage Channels, can change it. So does a channel whose connection SobaFM lost, since that closes the station. A new gateway session keeps the station, which clears the title once SobaFM is back.
 
 The station never closes a deck the mixer still references. Commands only replace the desired program and wake the loop, so they need no lock: the latest request wins. The change cooldown (M3) is checked and started when a request arrives, before the model call. It is freed again if that request ends without playing, even after the reply, unless a later request has started it since. It is kept in memory, so a restart, which ends every program, clears it.
 
@@ -131,7 +134,7 @@ The interpreter is SobaFM's only Gemini stage. It makes one call for each accept
 
 ```python
 class Prompt(BaseModel):
-    text: str  # 1 to 120 characters
+    text: str  # 1 to 120 characters, with whitespace collapsed
     weight: float  # 0.1 to 1.0
 
 
@@ -187,10 +190,10 @@ CREATE TABLE guild (
 ## State and lifecycle
 
 - **Request:** admitted by `/play`, then interpreted by Gemini. While Gemini interprets it, the first newer request to reach the station ends it as replaced. `/stop` and `/leave` end it as stopped, and losing the channel or shutting down ends it too. A refused request ends nothing, so the newest request Gemini accepts wins.
-- **Program:** created by an accepted `/play` and replaced by the next one. Its end time is the play duration after the station accepts the request, so start-up time counts toward it. The program is cleared when its end time passes, by `/stop` or `/leave`, after the empty-channel grace period, or when SobaFM loses its channel. The phase shown by `/now` (idle, starting, playing, or stopping) is derived from the program and the mixer rather than stored.
+- **Program:** created by an accepted `/play` and replaced by the next one. Its end time is the play duration after the station accepts the request, so start-up time counts toward it. The program is cleared when its end time passes, by `/stop` or `/leave`, after the empty-channel grace period, or when SobaFM loses its channel. `/now` shows a program as starting until it plays, and as playing after.
 - **Deck:** `connecting`, then `generating` (paused or not), then `ended` with a reason: retired, closed, failed, or filtered. A deck records the close code when Lyria closes its session with a close frame, including a refusal during setup, which ends the deck as failed. A deck is ready once it holds the pre-roll. Its generation rate is audio seconds received per unpaused wall-clock second, measured after 10 seconds.
 - **Startup:** load and validate configuration, check that the Opus library loads, open the store, connect to the gateway, and sync commands. Each server's remembered channel is rejoined when that server becomes available: at startup, after a new gateway session, or when an outage ends. The watchdog exits with an error if the gateway is not ready within 120 seconds, so the process supervisor restarts SobaFM.
-- **Shutdown:** on `SIGTERM`, stop the voice check and any recoveries, end the requests being interpreted, cancel station tasks (which closes their Lyria sessions), disconnect from voice, and close the client.
+- **Shutdown:** on `SIGTERM`, stop the voice check and any recoveries, end the requests being interpreted, close each station, which ends its Lyria sessions and clears its voice channel status, waiting up to 10 seconds for Discord, then disconnect from voice and close the client.
 
 ## Failure behavior
 

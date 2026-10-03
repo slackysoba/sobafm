@@ -4,6 +4,8 @@ import itertools
 import json
 import logging
 import time
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -18,7 +20,7 @@ from google.genai import errors, types
 from pydantic import ValidationError
 
 import sobafm.bot
-from sobafm.bot import PLAY_REPLIES, REFUSALS, SobaFM, Voice, listeners
+from sobafm.bot import PLAY_REPLIES, REFUSALS, SobaFM, Voice, escape, listeners, voice_channel_id
 from sobafm.config import load_settings
 from sobafm.interpreter import Interpreter
 from sobafm.interpreter import Outcome as Interpreted
@@ -27,6 +29,7 @@ from sobafm.station import Outcome, Program, Station
 from sobafm.store import GuildSettings, Store
 from tests.doubles import FakeClock, FakeGemini, FakeLyria, answer, settle
 
+NOW = datetime(2026, 10, 2, 12, tzinfo=UTC)
 GUILD_ID = 1
 CHANNEL_ID = 10
 CHANNELS: dict[int, Any] = {}  # the latest channel made with each ID, which bot.get_channel finds
@@ -301,6 +304,30 @@ async def test_join_moves_from_another_channel_and_stays_deafened(bot: SobaFM) -
     guild.voice_client.move_to.assert_awaited_once_with(channel)
     guild.change_voice_state.assert_awaited_once_with(channel=channel, self_deaf=True)
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+
+
+async def test_join_clears_the_status_before_moving(bot: SobaFM) -> None:
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild, 11))
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def moving() -> AsyncGenerator[None]:
+        events.append("cleared")
+        yield
+        events.append("shown again")
+
+    bot.stations[GUILD_ID] = fake(Station, moving=moving)
+    move_to = guild.voice_client.move_to.side_effect
+
+    async def moved(destination: Any) -> None:
+        events.append("moved")
+        await move_to(destination)
+
+    guild.voice_client.move_to.side_effect = moved
+
+    assert await bot.join(make_member(make_channel(guild))) == "Moved to <#10>."
+    assert events == ["cleared", "moved", "shown again"]
 
 
 async def test_join_reports_a_failed_move(bot: SobaFM) -> None:
@@ -1141,6 +1168,18 @@ async def test_forgets_the_channel_when_removed_from_the_server(bot: SobaFM) -> 
     assert await bot.store.remembered_channel(GUILD_ID) is None
 
 
+@pytest.fixture
+def now(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """Freeze Discord's clock, so relative timestamps are known."""
+    monkeypatch.setattr(discord.utils, "utcnow", lambda: NOW)
+    return NOW
+
+
+def ends(seconds: float) -> str:
+    """How a reply shows an end time `seconds` from NOW."""
+    return f"<t:{int((NOW + timedelta(seconds=seconds)).timestamp())}:R>"
+
+
 def in_voice(member_channel: Any, bot_channel: Any) -> Any:
     """A member in `member_channel` while SobaFM is in `bot_channel`."""
     guild = bot_channel.guild
@@ -1176,7 +1215,9 @@ async def test_play_needs_the_caller_in_sobafms_channel(bot: SobaFM) -> None:
     assert await bot.admit(member, "ambient") == "Join <#10> to request music."
 
 
-async def test_play_reports_what_is_playing(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_play_reports_what_is_playing(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, now: datetime
+) -> None:
     guild = make_guild()
     channel = make_channel(guild)
     member = in_voice(channel, channel)
@@ -1186,7 +1227,9 @@ async def test_play_reports_what_is_playing(bot: SobaFM, monkeypatch: pytest.Mon
 
     assert await bot.admit(member, "ambient drones") is None
     assert await bot.play(member, "ambient drones", None) == (
-        "Now playing **ambient drones**, requested by <@5>."
+        "Now playing **ambient drones**, requested by <@5>.\n"
+        "Style: ambient drones\n"
+        f"Ends {ends(3600)}."
     )
     assert station.play.call_args.args[0].prompts[0].text == "ambient drones"
 
@@ -1209,7 +1252,9 @@ async def test_play_refines_the_current_plan(bot: SobaFM, gemini: FakeGemini) ->
 
     assert json.loads(gemini.calls[-1]["contents"])["current_plan"] == LOFI.model_dump(mode="json")
     assert station.play.call_args.args[0].bpm == 100
-    assert reply == "Now playing **Faster lo-fi**, requested by <@5>."
+    assert reply.startswith(
+        "Now playing **Faster lo-fi**, requested by <@5>.\nStyle: lo-fi hip hop, 100 BPM\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1459,12 +1504,26 @@ async def test_a_slow_start_says_when_the_request_was_used_as_typed(
 
     assert reply == (
         "The music is taking longer than usual to start."
-        " Gemini couldn't interpret the request, so it was used as typed."
+        "\nGemini couldn't interpret the request, so it was used as typed."
     )
 
 
+async def test_play_reports_the_end_time_from_when_the_station_took_the_request(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    times = iter([NOW])  # Discord's clock at the hand-off; later readings run 30 s on
+    monkeypatch.setattr(discord.utils, "utcnow", lambda: next(times, NOW + timedelta(seconds=30)))
+    guild = make_guild()
+    channel = make_channel(guild)
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
+
+    reply = await bot.play(in_voice(channel, channel), "ambient", None)
+
+    assert reply.endswith(f"Ends {ends(3600)}.")
+
+
 async def test_play_says_when_the_request_was_used_as_typed(
-    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch, now: datetime
 ) -> None:
     guild = make_guild()
     channel = make_channel(guild)
@@ -1477,8 +1536,10 @@ async def test_play_says_when_the_request_was_used_as_typed(
     reply = await bot.play(member, "rainy lo-fi", None)
 
     assert reply == (
-        "Now playing **rainy lo-fi**, requested by <@5>."
-        " Gemini couldn't interpret the request, so it was used as typed."
+        "Now playing **rainy lo-fi**, requested by <@5>.\n"
+        "Style: rainy lo-fi\n"
+        f"Ends {ends(3600)}.\n"
+        "Gemini couldn't interpret the request, so it was used as typed."
     )
     assert station.play.call_args.args[0] == MusicPlan.from_request("rainy lo-fi")
 
@@ -1491,12 +1552,15 @@ async def test_play_escapes_the_title(
     member = in_voice(channel, channel)
     member.mention = "<@5>"
     monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
-    plan = {"title": "**Loud**\n_lo-fi_", "prompts": [{"text": "lo-fi"}]}  # on two lines
+    prompt = "*lo-fi*\nEnds <t:0:R>."  # a line of its own, and a timestamp
+    plan = {"title": "**Loud**\n_lo-fi_", "prompts": [{"text": prompt}]}
     gemini.response = answer(json.dumps({"kind": "new", "plan": plan}))
 
     reply = await bot.play(member, "lo-fi", None)
 
-    assert reply == "Now playing **\\*\\*Loud\\*\\* \\_lo-fi\\_**, requested by <@5>."
+    title, style, _ = reply.splitlines()
+    assert title == "Now playing **\\*\\*Loud\\*\\* \\_lo-fi\\_**, requested by <@5>."
+    assert style == "Style: \\*lo-fi\\* Ends \\<t:0:R>."
 
 
 @pytest.mark.parametrize("outcome", [Outcome.BUSY, Outcome.REFUSED, Outcome.FAILED])
@@ -1509,6 +1573,126 @@ async def test_play_explains_failures(
     monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station(outcome)))
 
     assert await bot.play(member, "ambient", None) == PLAY_REPLIES[outcome]
+
+
+def playing_station(plan: MusicPlan, *, time_left: float, started: bool) -> Any:
+    """A station with `plan` as its program, which plays once `started`."""
+    program = Program(plan, "<@5>", ends_at=0.0)
+    if started:
+        program.settle(Outcome.PLAYING)
+    return fake(Station, program=program, time_left=time_left)
+
+
+async def test_now_says_when_nothing_is_playing(bot: SobaFM) -> None:
+    guild = make_guild()
+    assert bot.now(guild) == "Nothing is playing."
+
+    bot.stations[GUILD_ID] = fake(Station, program=None, time_left=None)
+    assert bot.now(guild) == "Nothing is playing."
+
+
+@pytest.mark.parametrize(("started", "phase"), [(False, "Starting"), (True, "Now playing")])
+async def test_now_describes_the_program(
+    bot: SobaFM, now: datetime, *, started: bool, phase: str
+) -> None:
+    bot.stations[GUILD_ID] = playing_station(LOFI, time_left=600, started=started)
+
+    assert bot.now(make_guild()) == (
+        f"{phase} **Rainy lo-fi**, requested by <@5>.\n"
+        "Style: lo-fi hip hop, 80 BPM\n"
+        f"Ends {ends(600)}."
+    )
+
+
+def status_channel(guild: Any, *, allowed: bool) -> Any:
+    """SobaFM's voice channel, where it may or may not set the status."""
+    channel = make_channel(guild)
+    channel.permissions_for.return_value = discord.Permissions(set_voice_channel_status=allowed)
+    channel.edit = AsyncMock()
+    return channel
+
+
+@pytest.mark.parametrize("status", ["Rainy lo-fi", None])
+async def test_sets_the_voice_channel_status(bot: SobaFM, status: str | None) -> None:
+    channel = status_channel(make_guild(), allowed=True)
+
+    assert await bot.show_voice_status(CHANNEL_ID, status)
+    channel.edit.assert_awaited_once_with(status=status)
+
+
+async def test_skips_the_status_without_permission(bot: SobaFM) -> None:
+    channel = status_channel(make_guild(), allowed=False)
+
+    assert not await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
+    channel.edit.assert_not_awaited()
+
+
+async def test_skips_the_status_of_a_stage_channel(bot: SobaFM) -> None:
+    channel = make_channel(make_guild(), kind=discord.StageChannel)
+    channel.permissions_for.return_value = discord.Permissions(set_voice_channel_status=True)
+    channel.edit = AsyncMock()
+
+    assert not await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
+    channel.edit.assert_not_awaited()
+
+
+async def test_skips_the_status_of_a_channel_that_is_gone(bot: SobaFM) -> None:
+    assert not await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
+
+
+async def test_leaves_a_refused_status_to_the_station(bot: SobaFM) -> None:
+    channel = status_channel(make_guild(), allowed=True)
+    channel.edit.side_effect = discord.HTTPException(MagicMock(status=403), "Missing Access")
+
+    with pytest.raises(discord.HTTPException):
+        await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
+
+
+async def test_shows_the_status_only_once_connected(bot: SobaFM) -> None:
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    guild.voice_client.is_connected.return_value = False  # still in the handshake
+
+    assert voice_channel_id(guild) is None
+
+    guild.voice_client.is_connected.return_value = True
+    assert voice_channel_id(guild) == CHANNEL_ID
+
+
+@pytest.mark.parametrize(
+    ("text", "escaped"),
+    [
+        (
+            "[a](b) **lofi** [Free Nitro](https://evil.example)",
+            "\\[a\\](b) \\*\\*lofi\\*\\* \\[Free Nitro\\](https://evil.example)",
+        ),
+        ("<t:0:R> <@5> <#10> <:x:1>", "\\<t:0:R> \\<@5> \\<#10> \\<:x:1>"),
+        ("a\\b ~~s~~ ||p|| `c` __u__", "a\\\\b \\~\\~s\\~\\~ \\|\\|p\\|\\| \\`c\\` \\_\\_u\\_\\_"),
+        ("Rainy lo-fi #2: 50% off > 3", "Rainy lo-fi #2: 50% off > 3"),
+    ],
+    ids=["masked links", "mentions and timestamps", "inline markup", "plain"],
+)
+def test_escapes_each_markup_character(text: str, escaped: str) -> None:
+    assert escape(text) == escaped
+
+
+async def test_a_station_shows_its_status_in_sobafms_channel(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shown = AsyncMock(return_value=True)
+    monkeypatch.setattr(bot, "show_voice_status", shown)
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    station = bot.station(guild, 0.5)
+    station.play(LOFI, "<@5>", duration_seconds=600)
+    assert station.program is not None
+    station.program.settle(Outcome.PLAYING)  # as the station does once the program is heard
+
+    await station.reconcile()
+    await settle()
+    await station.close()
+
+    assert shown.await_args_list == [((CHANNEL_ID, "Rainy lo-fi"),), ((CHANNEL_ID, None),)]
 
 
 async def test_stop_needs_the_channel_or_manage_server(bot: SobaFM) -> None:
@@ -1537,6 +1721,11 @@ async def test_leave_closes_the_station(bot: SobaFM) -> None:
     guild.voice_client = make_voice_client(make_channel(guild))
     station = fake_station()
     bot.stations[guild.id] = station
+
+    async def close(outcome: Outcome = Outcome.STOPPED) -> None:  # while SobaFM is still there
+        guild.voice_client.disconnect.assert_not_awaited()
+
+    station.close.side_effect = close
 
     await bot.leave(guild)
 
@@ -1593,6 +1782,19 @@ async def test_play_command_explains_problems_privately(
 
     interaction.response.send_message.assert_awaited_once_with("Join <#10> first.", ephemeral=True)
     interaction.response.defer.assert_not_awaited()
+
+
+async def test_now_command_replies_privately(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot, "now", MagicMock(return_value="Nothing is playing."))
+    interaction = make_interaction(make_member(None))
+    interaction.guild = make_guild()
+    command: Any = bot.tree.get_command("now")
+
+    await command.callback(interaction)
+
+    interaction.response.send_message.assert_awaited_once_with(
+        "Nothing is playing.", ephemeral=True, suppress_embeds=True
+    )
 
 
 async def test_stop_command_replies_privately(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:

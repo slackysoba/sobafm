@@ -28,12 +28,14 @@ def _known_scale(value: object) -> object:
 
 
 def _one_line(value: object) -> object:
-    """Collapse whitespace, so a title reads on one line and a blank one is empty."""
+    """Collapse whitespace, so text reads on one line and blank text is empty."""
     return " ".join(value.split()) if isinstance(value, str) else value
 
 
 class Prompt(BaseModel):
-    text: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
+    text: Annotated[str, BeforeValidator(_one_line)] = Field(
+        min_length=1, max_length=MAX_PROMPT_LENGTH
+    )
     weight: float = Field(default=1.0, ge=0.1, le=1.0)
 
 
