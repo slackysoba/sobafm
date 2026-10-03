@@ -193,7 +193,7 @@ CREATE TABLE guild (
 - **Program:** created by an accepted `/play` and replaced by the next one. Its end time is the play duration after the station accepts the request, so start-up time counts toward it. The program is cleared when its end time passes, by `/stop` or `/leave`, after the empty-channel grace period, or when SobaFM loses its channel. `/now` shows a program as starting until it plays, and as playing after.
 - **Deck:** `connecting`, then `generating` (paused or not), then `ended` with a reason: retired, closed, failed, or filtered. A deck records the close code when Lyria closes its session with a close frame, including a refusal during setup, which ends the deck as failed. A deck is ready once it holds the pre-roll. Its generation rate is audio seconds received per unpaused wall-clock second, measured after 10 seconds.
 - **Startup:** load and validate configuration, check that the Opus library loads, open the store, connect to the gateway, and sync commands. Each server's remembered channel is rejoined when that server becomes available: at startup, after a new gateway session, or when an outage ends. The watchdog exits with an error if the gateway is not ready within 120 seconds, so the process supervisor restarts SobaFM.
-- **Shutdown:** on `SIGTERM`, stop the voice check and any recoveries, end the requests being interpreted, cancel station tasks (which closes their Lyria sessions), disconnect from voice, and close the client.
+- **Shutdown:** on `SIGTERM`, stop the voice check and any recoveries, end the requests being interpreted, close each station, which ends its Lyria sessions and clears its voice channel status, waiting up to 10 seconds for Discord, then disconnect from voice and close the client.
 
 ## Failure behavior
 

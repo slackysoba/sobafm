@@ -19,6 +19,7 @@ from sobafm.station import (
     PLAYER_RETRY_S,
     REFUSAL_RETRY_S,
     SESSION_LIMIT_S,
+    STATUS_RETRY_MAX_S,
     STATUS_RETRY_S,
     Outcome,
     SessionPool,
@@ -815,6 +816,46 @@ async def test_shows_the_title_still_heard_where_sobafm_is_moved(rig: Rig) -> No
     assert rig.statuses == [(CHANNEL, LOFI.title), (11, LOFI.title)]
 
 
+async def test_a_request_after_a_stop_shows_nothing_until_it_plays(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.stop()
+    await rig.tick()
+
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()
+
+    assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None)]
+
+
+async def test_shows_the_title_still_heard_after_join_moves_sobafm(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+
+    async with rig.station.moving():
+        rig.move(11)
+    await rig.tick()
+
+    assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None), (11, LOFI.title)]
+
+
+async def test_moving_skips_a_clear_sobafm_can_no_longer_send(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sobafm.station.STATUS_TIMEOUT_S", 0.01)
+    answered, events = answering_late(rig, monkeypatch)
+    await start_playing(rig)  # the title's request is still in flight
+
+    async with rig.station.moving():  # stops waiting for it
+        rig.move(11)
+    answered.set()
+    await settle()
+
+    # The title landed in the old channel, which SobaFM has left and can no longer clear.
+    assert events == [f"sent {LOFI.title}", f"landed {LOFI.title}"]
+
+
 async def test_clears_the_status_on_close(rig: Rig) -> None:
     await start_playing(rig)
 
@@ -945,12 +986,12 @@ async def test_never_clears_a_status_sobafm_did_not_set(
     assert shown == [(CHANNEL, LOFI.title)]  # a member's own status stays
 
 
-def refusing(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
+def refusing(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, str | None]]:
     """Make Discord refuse every status request, recording each one."""
-    sent: list[str | None] = []
+    sent: list[tuple[int, str | None]] = []
 
     async def refuse(channel: int, status: str | None) -> bool:
-        sent.append(status)
+        sent.append((channel, status))
         raise discord.HTTPException(MagicMock(status=403), "Missing Access")
 
     monkeypatch.setattr(rig.station, "_set_status", refuse)
@@ -985,7 +1026,37 @@ async def test_tries_a_new_status_at_once(rig: Rig, monkeypatch: pytest.MonkeyPa
     await rig.feed(-1, 6)
     await rig.tick()
 
-    assert sent == [LOFI.title, SYNTHWAVE.title]  # with no wait after the title that failed
+    # with no wait after the title that failed
+    assert sent == [(CHANNEL, LOFI.title), (CHANNEL, SYNTHWAVE.title)]
+
+
+async def test_tries_the_title_at_once_where_sobafm_is_dragged(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent = refusing(rig, monkeypatch)
+    await start_playing(rig)
+
+    rig.move(11)
+    await rig.tick()
+
+    assert sent == [(CHANNEL, LOFI.title), (11, LOFI.title)]
+
+
+async def test_keeps_backing_off_from_a_status_refused_for_days(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await start_playing(rig)
+    sent = refusing(rig, monkeypatch)
+    rig.station.stop()  # the clear is refused, while SobaFM sits idle in the channel
+
+    for _ in range(1100):
+        await rig.tick(STATUS_RETRY_MAX_S)
+    attempts = len(sent)
+    await rig.tick()
+    await rig.tick()
+
+    assert attempts >= 1100
+    assert len(sent) == attempts  # still waiting between attempts
 
 
 async def test_counts_failures_afresh_once_a_status_shows(

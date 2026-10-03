@@ -132,6 +132,7 @@ class Station:
         self._channel = channel  # the ID of SobaFM's voice channel, if it is in one
         self._set_status = status  # shows a status on a channel, or says SobaFM may not
         self._shown: tuple[int, str] | None = None  # the status SobaFM set, and where
+        self._heard: str | None = None  # the title of the program heard, while one is
         self._status_task: asyncio.Task[None] | None = None  # the request in flight
         self._status_held = False  # while SobaFM moves
         self._unshown: tuple[int, str | None] | None = None  # the last status not shown, and where
@@ -260,25 +261,23 @@ class Station:
         """Show the title being heard as the voice channel status, one request at a time (FB-2).
 
         A program shows its title once it plays, and a replacement leaves the title still heard
-        until it plays itself. A drag to another channel is caught up on the next tick, and the
-        old channel keeps the status until it empties: only someone connected there, or with
-        Manage Channels, can change it.
+        until it plays itself, including after a move. A drag to another channel is caught up on
+        the next tick, and the old channel keeps the status until it empties or SobaFM shows
+        another title there: only someone connected there, or with Manage Channels, can change it.
         """
-        heard = self._shown[1] if self._shown is not None else None
-        if self.program is None:
-            title = None
-        elif self.program.playing:
-            title = self.program.plan.title
-        else:
-            title = heard
+        program = self.program
+        if program is None or program.playing:
+            self._heard = program.plan.title if program is not None else None
         busy = self._status_task is not None and not self._status_task.done()
         channel = self._channel()
         if busy or self._status_held or channel is None:
             return
         if self._shown is not None and self._shown[0] != channel:
-            self._shown, heard = None, None  # dragged without `moving()`
+            self._shown = None  # dragged without `moving()`
+        title = self._heard
+        shown = self._shown[1] if self._shown is not None else None
         unshown = self._unshown == (channel, title) and self._clock() < self._status_retry_at
-        if title != heard and not unshown:
+        if title != shown and not unshown:
             self._status_task = asyncio.create_task(self._show_status(channel, title))
 
     async def _show_status(self, channel: int, title: str | None) -> None:
@@ -290,7 +289,8 @@ class Station:
             if not failures:  # once for each status, since retries would repeat it
                 log.warning("Could not update the voice channel status", exc_info=True)
             failures += 1
-            delay = min(STATUS_RETRY_S * 2 ** (failures - 1), STATUS_RETRY_MAX_S)
+            # The exponent is bounded, so a status refused for days can't overflow the delay.
+            delay = min(STATUS_RETRY_S * 2 ** min(failures - 1, 16), STATUS_RETRY_MAX_S)
         else:
             if allowed:
                 self._shown = None if title is None else (channel, title)
