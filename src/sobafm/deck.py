@@ -251,7 +251,9 @@ class Deck:
             except StopAsyncIteration:
                 return EndReason.CLOSED
             except ValueError:  # the SDK's errors for a frame it can't parse or validate quote it
-                raise LyriaMessageError("unreadable message") from None
+                message = None
+            if message is None:  # raised outside the handler, so the SDK's error isn't attached
+                raise LyriaMessageError("unreadable message")
             if message.filtered_prompt is not None and self._audio_bytes == 0:
                 self.detail = message.filtered_prompt.filtered_reason
                 return EndReason.FILTERED

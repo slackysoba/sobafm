@@ -207,6 +207,8 @@ async def test_keeps_its_audio_when_receiving_fails(
     )
     assert deck.buffered_seconds == pytest.approx(4)
     assert "rainy" not in caplog.text  # the title can repeat the request
+    # An unexpected error keeps its traceback.
+    assert any(record.exc_info for record in caplog.records if record.levelno == logging.WARNING)
 
 
 async def test_accepts_its_format_in_any_case_and_order(lyria: FakeLyria, clock: FakeClock) -> None:
@@ -298,6 +300,9 @@ async def test_never_logs_a_frame_it_cannot_read(
         "LyriaMessageError: unreadable message",
     )
     assert "AIzaFakeKey" not in caplog.text  # in neither the messages nor a traceback
+    logged = next(record.exc_info[1] for record in caplog.records if record.exc_info)
+    assert logged is not None
+    assert logged.__context__ is None  # the SDK's error, which quotes the frame, isn't kept
 
 
 async def test_records_a_prompt_refused_before_any_audio(
