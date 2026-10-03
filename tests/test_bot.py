@@ -3,6 +3,7 @@ import contextlib
 import itertools
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -1758,15 +1759,15 @@ async def test_play_escapes_the_title(
     member = in_voice(channel, channel)
     member.mention = "<@5>"
     monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
-    prompt = "*lo-fi*\nEnds <t:0:R>."  # a line of its own, and a timestamp
-    plan = {"title": "**Loud**\n_lo-fi_", "prompts": [{"text": prompt}]}
+    prompt = "*lo-fi*\nEnds <t:0:R>. https://evil.example"  # a line, a timestamp, and a link
+    plan = {"title": "**Loud**\n_lo-fi_\u202e", "prompts": [{"text": prompt}]}
     gemini.response = answer(json.dumps({"kind": "new", "plan": plan}))
 
     reply = await bot.play(member, "lo-fi", None)
 
     title, style, _ = reply.splitlines()
     assert title == "Now playing **\\*\\*Loud\\*\\* \\_lo-fi\\_**, requested by <@5>."
-    assert style == "Style: \\*lo-fi\\* Ends \\<t:0:R>."
+    assert style == "Style: \\*lo-fi\\* Ends \\<t\\:0\\:R>\\. https\\://evil\\.example"
 
 
 @pytest.mark.parametrize(
@@ -1880,16 +1881,30 @@ async def test_shows_the_status_only_once_connected(bot: SobaFM) -> None:
     [
         (
             "[a](b) **lofi** [Free Nitro](https://evil.example)",
-            "\\[a\\](b) \\*\\*lofi\\*\\* \\[Free Nitro\\](https://evil.example)",
+            "\\[a\\](b) \\*\\*lofi\\*\\* \\[Free Nitro\\](https\\://evil\\.example)",
         ),
-        ("<t:0:R> <@5> <#10> <:x:1>", "\\<t:0:R> \\<@5> \\<#10> \\<:x:1>"),
+        ("<t:0:R> <@5> <#10> <:x:1>", "\\<t\\:0\\:R> \\<@5> \\<#10> \\<\\:x\\:1>"),
         ("a\\b ~~s~~ ||p|| `c` __u__", "a\\\\b \\~\\~s\\~\\~ \\|\\|p\\|\\| \\`c\\` \\_\\_u\\_\\_"),
-        ("Rainy lo-fi #2: 50% off > 3", "Rainy lo-fi #2: 50% off > 3"),
+        (
+            "lo-fi https://evil.example steam://run/1 discord.gg/x",
+            "lo-fi https\\://evil\\.example steam\\://run/1 discord\\.gg/x",
+        ),
+        ("Rainy lo-fi #2: 50% off > 3", "Rainy lo-fi #2\\: 50% off > 3"),
+        ("Rainy lo-fi", "Rainy lo-fi"),
     ],
-    ids=["masked links", "mentions and timestamps", "inline markup", "plain"],
+    ids=[
+        "masked links",
+        "mentions and timestamps",
+        "inline markup",
+        "links",
+        "punctuation",
+        "plain",
+    ],
 )
 def test_escapes_each_markup_character(text: str, escaped: str) -> None:
     assert escape(text) == escaped
+    # Discord shows a backslash before punctuation as the punctuation alone.
+    assert re.sub(r"\\([^0-9A-Za-z\s])", r"\1", escaped) == text
 
 
 async def test_a_station_shows_its_status_in_sobafms_channel(

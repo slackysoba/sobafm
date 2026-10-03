@@ -65,8 +65,9 @@ FALLBACK_NOTES: dict[Failure | None, str] = {  # why a request was played as typ
     Failure.UNAVAILABLE: "\nGemini is unavailable right now, so the request was used as typed.",
     None: "\nGemini couldn't interpret the request, so it was used as typed.",
 }
-# Discord's inline markup: emphasis, spoilers, code, masked links, mentions, and timestamps
-MARKUP = re.compile(r"[\\*_~|`<\[\]]")
+# Discord's inline markup: emphasis, spoilers, code, masked links, mentions, and timestamps,
+# and the `:` or `.` that every link needs, with or without a scheme
+MARKUP = re.compile(r"[\\*_~|`<\[\]:.]")
 
 
 class Voice(discord.VoiceClient):
@@ -656,8 +657,10 @@ def escape(text: str) -> str:
     """Model-written text with each character of Discord's inline markup escaped (FB-4).
 
     Escaping each character keeps masked links, mentions, and timestamps from forming, which
-    `discord.utils.escape_markdown` misses inside a masked link. Markup that needs a line start
-    can't form, since the text never starts a line.
+    `discord.utils.escape_markdown` misses inside a masked link. Escaping `:` and `.` keeps bare
+    URLs and invite links from forming. Discord shows each escaped character alone, so the text
+    reads as written. Markup that needs a line start can't form, since the text never starts a
+    line.
     """
     return MARKUP.sub(r"\\\g<0>", text)
 
