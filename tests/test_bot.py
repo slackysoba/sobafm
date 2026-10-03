@@ -1284,6 +1284,32 @@ async def test_play_refuses_without_touching_the_music(
     assert await bot.admit(member, "jazz") is None  # nothing changed, so no cooldown
 
 
+async def test_play_reports_a_rejected_key_once_lyria_rejects_it_too(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    station = fake_station(Outcome.REJECTED)
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    info = {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID"}
+    body = {"code": 400, "status": "INVALID_ARGUMENT", "details": [info]}
+    gemini.error = errors.ClientError(400, {"error": body})
+
+    reply = await bot.play(in_voice(channel, channel), "rainy lo-fi", None)
+
+    # Gemini's rejection falls back to the request text (AI-4), which Lyria RealTime rejects.
+    assert station.play.call_args.args[0] == MusicPlan.from_request("rainy lo-fi")
+    assert reply == PLAY_REPLIES[Outcome.REJECTED]
+
+
+def test_each_cause_has_its_own_reply() -> None:
+    assert "API key" in PLAY_REPLIES[Outcome.REJECTED]
+    assert "quota" in PLAY_REPLIES[Outcome.EXHAUSTED]
+    assert "unavailable" in PLAY_REPLIES[Outcome.UNAVAILABLE]
+    causes = [Outcome.REJECTED, Outcome.EXHAUSTED, Outcome.UNAVAILABLE, Outcome.FAILED]
+    assert len({PLAY_REPLIES[outcome] for outcome in causes}) == len(causes)
+
+
 async def test_a_refused_request_never_reaches_lyria(
     bot: SobaFM, gemini: FakeGemini, lyria: FakeLyria
 ) -> None:
@@ -1504,7 +1530,7 @@ async def test_a_slow_start_says_when_the_request_was_used_as_typed(
 
     assert reply == (
         "The music is taking longer than usual to start."
-        "\nGemini couldn't interpret the request, so it was used as typed."
+        "\nGemini is unavailable right now, so the request was used as typed."
     )
 
 
@@ -1522,8 +1548,28 @@ async def test_play_reports_the_end_time_from_when_the_station_took_the_request(
     assert reply.endswith(f"Ends {ends(3600)}.")
 
 
-async def test_play_says_when_the_request_was_used_as_typed(
-    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch, now: datetime
+@pytest.mark.parametrize(
+    ("error", "note"),
+    [
+        (
+            errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}}),
+            "Gemini is unavailable right now, so the request was used as typed.",
+        ),
+        (
+            errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}),
+            "Gemini's quota is used up for now, so the request was used as typed.",
+        ),
+        (RuntimeError("a bug"), "Gemini couldn't interpret the request, so it was used as typed."),
+    ],
+    ids=["outage", "quota", "other"],
+)
+async def test_play_says_why_the_request_was_used_as_typed(
+    bot: SobaFM,
+    gemini: FakeGemini,
+    monkeypatch: pytest.MonkeyPatch,
+    now: datetime,
+    error: Exception,
+    note: str,
 ) -> None:
     guild = make_guild()
     channel = make_channel(guild)
@@ -1531,15 +1577,14 @@ async def test_play_says_when_the_request_was_used_as_typed(
     member.mention = "<@5>"
     station = fake_station()
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
-    gemini.error = errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}})
+    gemini.error = error
 
     reply = await bot.play(member, "rainy lo-fi", None)
 
     assert reply == (
         "Now playing **rainy lo-fi**, requested by <@5>.\n"
         "Style: rainy lo-fi\n"
-        f"Ends {ends(3600)}.\n"
-        "Gemini couldn't interpret the request, so it was used as typed."
+        f"Ends {ends(3600)}.\n" + note
     )
     assert station.play.call_args.args[0] == MusicPlan.from_request("rainy lo-fi")
 
@@ -1563,7 +1608,17 @@ async def test_play_escapes_the_title(
     assert style == "Style: \\*lo-fi\\* Ends \\<t:0:R>."
 
 
-@pytest.mark.parametrize("outcome", [Outcome.BUSY, Outcome.REFUSED, Outcome.FAILED])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        Outcome.BUSY,
+        Outcome.REFUSED,
+        Outcome.REJECTED,
+        Outcome.EXHAUSTED,
+        Outcome.UNAVAILABLE,
+        Outcome.FAILED,
+    ],
+)
 async def test_play_explains_failures(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome
 ) -> None:

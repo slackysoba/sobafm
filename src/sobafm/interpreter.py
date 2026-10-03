@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import re
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -12,6 +11,7 @@ from typing import Literal, Protocol, Self, cast
 from google.genai import errors, types
 from pydantic import BaseModel, ValidationError, model_validator
 
+from sobafm.failures import Failure, as_token, call_failure, error_reason
 from sobafm.plan import MusicPlan
 
 log = logging.getLogger(__name__)
@@ -21,7 +21,6 @@ KEPT_FIELDS = ("bpm", "scale", "density", "brightness", "mute_drums", "vocalizat
 # How an unusable answer surfaces. The SDK parses a body with `json.loads`, so a malformed error
 # body also counts here.
 INVALID_OUTPUT = ValidationError | json.JSONDecodeError | errors.UnknownApiResponseError
-TOKEN = re.compile(r"[A-Z][A-Z0-9_]{0,62}")  # an API status or reason, such as API_KEY_INVALID
 SAFETY_FINISH_REASONS = {
     types.FinishReason.SAFETY,
     types.FinishReason.BLOCKLIST,
@@ -118,6 +117,7 @@ class Outcome(StrEnum):
 class Result:
     outcome: Outcome
     plan: MusicPlan | None  # None when the request is refused
+    failure: Failure | None = None  # why the model call failed, when known
 
 
 class Models(Protocol):
@@ -148,7 +148,8 @@ class Interpreter:
         """Interpret `request`, refining `current` when the request is relative to it.
 
         Only the request and the current plan are sent (AI-6). Any failure of the model call
-        falls back to the request text as the plan (AI-4). A blank request is refused.
+        falls back to the request text as the plan (AI-4), with the cause when SobaFM can tell
+        it. A blank request is refused.
         """
         if not request.strip():
             return Result(Outcome.NOT_MUSIC, None)
@@ -171,7 +172,8 @@ class Interpreter:
                 describe(error),
                 exc_info=not expected,
             )
-            result = Result(Outcome.FALLBACK, MusicPlan.from_request(request))
+            plan = MusicPlan.from_request(request)
+            result = Result(Outcome.FALLBACK, plan, call_failure(error))
         log.info("Interpretation took %.1f s: %s", time.monotonic() - started, result.outcome)
         return result
 
@@ -212,27 +214,10 @@ def describe(error: Exception) -> str:
             text = str(error.code)
             if status := as_token(error.status):
                 text += f" {status}"
-            if reason := as_token(_error_reason(error)):
+            if reason := as_token(error_reason(error)):
                 text += f" ({reason})"
             return text
         case _ if isinstance(error, INVALID_OUTPUT):
             return "invalid output"
         case _:
             return type(error).__name__
-
-
-def as_token(value: object) -> str | None:
-    """`value` if it is a token such as PERMISSION_DENIED, which cannot carry free text."""
-    return value if isinstance(value, str) and TOKEN.fullmatch(value) else None
-
-
-def _error_reason(error: errors.APIError) -> object:
-    """The `reason` of the error's `google.rpc.ErrorInfo`, such as API_KEY_INVALID."""
-    details: object = getattr(error, "details", None)
-    body = cast(dict[str, object], details).get("error") if isinstance(details, dict) else None
-    items = cast(dict[str, object], body).get("details") if isinstance(body, dict) else None
-    for item in cast(list[object], items) if isinstance(items, list) else []:
-        fields = cast(dict[str, object], item) if isinstance(item, dict) else {}
-        if str(fields.get("@type", "")).endswith("ErrorInfo"):
-            return fields.get("reason")
-    return None

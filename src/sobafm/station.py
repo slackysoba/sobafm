@@ -12,6 +12,7 @@ from typing import Any, Literal, Protocol
 import discord
 
 from sobafm.deck import Connect, Deck, EndReason, State
+from sobafm.failures import Failure
 from sobafm.mixer import Mixer
 from sobafm.plan import MusicPlan
 
@@ -55,7 +56,10 @@ class Outcome(StrEnum):
     PLAYING = "playing"
     BUSY = "busy"  # every program's worth of Lyria sessions is taken
     REFUSED = "refused"  # Lyria refused the prompt twice
-    FAILED = "failed"  # sessions could not be opened, or the player could not start
+    REJECTED = "rejected"  # Google rejected the API key
+    EXHAUSTED = "exhausted"  # a quota or rate limit
+    UNAVAILABLE = "unavailable"  # Lyria RealTime is down or unreachable
+    FAILED = "failed"  # sessions failed for another reason, or the player could not start
     DISCONNECTED = "disconnected"  # SobaFM lost its voice connection
     REPLACED = "replaced"  # a newer request replaced it before it started
     STOPPED = "stopped"
@@ -101,6 +105,13 @@ class Program:
             self.started.set_result(outcome)
 
 
+# A start that fails for these reasons fails at once, since retrying within seconds can't help.
+FAILED_STARTS: dict[Failure | None, Outcome] = {
+    Failure.REJECTED: Outcome.REJECTED,
+    Failure.EXHAUSTED: Outcome.EXHAUSTED,
+}
+
+
 class Station:
     """Plays one server's program. Only `reconcile()` and `close()` change decks."""
 
@@ -118,6 +129,8 @@ class Station:
     ) -> None:
         self.mixer = Mixer(volume)
         self.program: Program | None = None
+        # What played when the program was requested, which resumes if the program can't start
+        self._previous: Program | None = None
         self.decks: list[Deck] = []
         self._voice = voice
         self._listeners = listeners
@@ -158,6 +171,8 @@ class Station:
             return program.started
         if self.program is not None:
             self.program.settle(Outcome.REPLACED)
+            if self.program.playing:
+                self._previous = self.program
         self.program = program
         self._empty_since = None
         self.wake()
@@ -314,6 +329,15 @@ class Station:
         if self.program is not None:
             self.program.settle(outcome)
             self.program = None
+        self._previous = None
+
+    def _give_up(self, outcome: Outcome) -> None:
+        """End a program that could not start, returning to the program still heard (FB-3)."""
+        previous = self._previous
+        self._finish(outcome)
+        if previous is not None:
+            log.info("Returning to the program still playing")
+            self.program = previous
 
     def _wind_down(self, player: Player | None) -> None:
         """Without a program: drop idle decks, fade out, stop the player, and free sessions."""
@@ -409,16 +433,32 @@ class Station:
             program.refusals += 1
             program.retry_at = now + REFUSAL_RETRY_S
             if program.refusals >= 2 and not program.started.done():
-                log.info("Lyria refused the request twice: %s", deck.detail)
-                self._finish(Outcome.REFUSED)
+                log.info("Lyria refused the request twice")
+                self._give_up(Outcome.REFUSED)
+            return
+        starting = not program.started.done()
+        if (outcome := FAILED_STARTS.get(deck.failure)) and starting and not self._may_start(deck):
+            log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
+            self._give_up(outcome)
             return
         program.failures += 1
         program.retry_at = (
             now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
         )
-        if program.failures > len(CONNECT_BACKOFF_S) and not program.started.done():
-            log.warning("Could not open a Lyria RealTime session: %s", deck.detail)
-            self._finish(Outcome.FAILED)
+        if program.failures > len(CONNECT_BACKOFF_S) and starting:
+            unavailable = deck.failure is Failure.UNAVAILABLE
+            outcome = Outcome.UNAVAILABLE if unavailable else Outcome.FAILED
+            log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
+            self._give_up(outcome)
+
+    def _may_start(self, failed: Deck) -> bool:
+        """Whether another deck of the failed deck's plan is still open, or ready to go live."""
+        return any(
+            deck is not failed
+            and deck.plan is failed.plan
+            and (deck.state is not State.ENDED or deck.ready)
+            for deck in self.decks
+        )
 
     def _audible(self, player: Player | None) -> bool:
         """Whether a running player sends the mixer's audio to a connected voice channel."""
