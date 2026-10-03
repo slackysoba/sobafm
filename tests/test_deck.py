@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import ssl
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any, cast
@@ -12,10 +13,12 @@ from websockets.exceptions import (
     ConnectionClosed,
     ConnectionClosedError,
     ConnectionClosedOK,
+    InvalidHeaderFormat,
     InvalidHeaderValue,
     InvalidMessage,
     InvalidStatus,
     InvalidUpgrade,
+    InvalidURI,
     NegotiationError,
 )
 from websockets.frames import Close
@@ -604,6 +607,11 @@ def malformed_reply() -> InvalidMessage:
     [
         (InvalidUpgrade("Upgrade", "AIzaFakeKey"), "InvalidUpgrade", None),
         (InvalidHeaderValue("Sec-WebSocket-Accept", "AIzaFakeKey"), "InvalidHeaderValue", None),
+        (
+            InvalidHeaderFormat("Location", "expected token", "AIzaFakeKey", 0),
+            "InvalidHeaderFormat",
+            None,
+        ),
         (NegotiationError("unsupported extension: AIzaFakeKey"), "NegotiationError", None),
         (malformed_reply(), "InvalidMessage", None),
         (
@@ -611,8 +619,24 @@ def malformed_reply() -> InvalidMessage:
             "InvalidStatus: HTTP 429",
             Failure.EXHAUSTED,
         ),
+        # A redirect: to a URI that isn't ws or wss, or one websockets can't parse.
+        (InvalidURI("http://AIzaFakeKey/", "scheme isn't ws or wss"), "InvalidURI", None),
+        (
+            ValueError("Port could not be cast to integer value as 'AIzaFakeKey'"),
+            "ValueError",
+            None,
+        ),
     ],
-    ids=["upgrade", "header", "negotiation", "malformed reply", "refused"],
+    ids=[
+        "upgrade",
+        "header",
+        "header format",
+        "negotiation",
+        "malformed reply",
+        "refused",
+        "redirect scheme",
+        "redirect port",
+    ],
 )
 async def test_logs_a_failed_handshake_without_the_servers_text(
     lyria: FakeLyria,
@@ -630,7 +654,29 @@ async def test_logs_a_failed_handshake_without_the_servers_text(
         await ended(deck)
 
     assert (deck.end_reason, deck.detail, deck.failure) == (EndReason.FAILED, detail, failure)
-    assert "AIzaFakeKey" not in caplog.text  # in neither a message nor a traceback
+    warning = ("sobafm.deck", logging.WARNING, f"Deck {deck.number} failed: {detail}")
+    assert warning in caplog.record_tuples
+    assert not any(record.exc_info for record in caplog.records)
+    assert "AIzaFakeKey" not in caplog.text
+
+
+async def test_logs_an_ssl_error_with_its_text(
+    lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    reason = "certificate verify failed: unable to get local issuer certificate"
+    lyria.failure = ssl.SSLCertVerificationError(1, reason)  # also a ValueError
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+
+    with caplog.at_level(logging.DEBUG):
+        deck.start()
+        await ended(deck)
+
+    assert (deck.end_reason, deck.detail, deck.failure) == (
+        EndReason.FAILED,
+        f"SSLCertVerificationError: {reason}",
+        Failure.UNAVAILABLE,
+    )
+    assert any(record.exc_info for record in caplog.records)  # OpenSSL's text, not the server's
 
 
 def received(close: Close | None, error: type[ConnectionClosed] = ConnectionClosedError) -> Any:

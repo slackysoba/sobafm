@@ -222,19 +222,26 @@ class Deck:
             detail = f"{type(error).__name__}: {detail}"
             log.warning("Deck %d failed: %s", self.number, detail)
             self._end(EndReason.FAILED, detail)
-        except WebSocketException as error:
-            # A failed handshake: its message, or its cause's, can quote the server's reply.
+        except OSError as error:  # an SSL error is also a ValueError, but its text is OpenSSL's
+            self._fail(error)
+        except (WebSocketException, ValueError) as error:
+            # A failed handshake, or a redirect websockets can't follow: its message, or its
+            # cause's, can quote the server's reply.
             self.failure = call_failure(error)
             detail = type(error).__name__
             if isinstance(error, InvalidStatus):
                 detail += f": HTTP {error.response.status_code}"
             log.warning("Deck %d failed: %s", self.number, detail)
             self._end(EndReason.FAILED, detail)
-        except Exception as error:  # a deck failure must never stop the station
-            log.warning("Deck %d failed", self.number, exc_info=True)
-            self.failure = call_failure(error)
-            detail = type(error).__name__ + (f": {error}" if str(error) else "")
-            self._end(EndReason.FAILED, detail[:200])
+        except Exception as error:  # noqa: BLE001 - a deck failure must never stop the station
+            self._fail(error)
+
+    def _fail(self, error: Exception) -> None:
+        """End the deck after an error whose text can't quote the server, with its traceback."""
+        log.warning("Deck %d failed", self.number, exc_info=error)
+        self.failure = call_failure(error)
+        detail = type(error).__name__ + (f": {error}" if str(error) else "")
+        self._end(EndReason.FAILED, detail[:200])
 
     def _cancelled(self, task: asyncio.Task[None]) -> None:
         """Record a deck cancelled by `retire()` while connecting, or at shutdown, as retired."""
