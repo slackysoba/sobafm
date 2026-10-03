@@ -42,6 +42,7 @@ class Mixer(discord.AudioSource):
         self._gain = volume
         self._failing = False
         self.underruns = 0  # reads with a playing source but no frame from it
+        self.played = 0  # reads that returned audio
         self.errors = 0  # reads that failed; they play silence too
 
     @property
@@ -128,6 +129,7 @@ class Mixer(discord.AudioSource):
             if playing:
                 self.underruns += 1
             return SILENCE
+        self.played += 1
         mixed = _scaled(*frames[0])
         for frame, gain in frames[1:]:
             mixed = audioop.add(mixed, _scaled(frame, gain), SAMPLE_WIDTH)
