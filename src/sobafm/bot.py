@@ -20,7 +20,8 @@ from google import genai
 from sobafm.commands import add_commands
 from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
-from sobafm.interpreter import Interpreter
+from sobafm.failures import Failure
+from sobafm.interpreter import Interpreter, Result
 from sobafm.interpreter import Outcome as Interpreted
 from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, SessionPool, Station
@@ -41,6 +42,12 @@ PLAY_REPLIES = {
     Outcome.REFUSED: (
         "Lyria RealTime couldn't make music from that request. Try describing it differently."
     ),
+    Outcome.REJECTED: (
+        "Google rejected SobaFM's API key, so it can't make music. Ask whoever runs SobaFM to "
+        "check its Gemini API key."
+    ),
+    Outcome.EXHAUSTED: "SobaFM's Gemini API quota is used up for now. Try again later.",
+    Outcome.UNAVAILABLE: "Lyria RealTime is unavailable right now. Try again shortly.",
     Outcome.FAILED: "SobaFM couldn't start the music. Try again shortly.",
     Outcome.DISCONNECTED: "SobaFM lost its voice connection before the music started.",
     Outcome.REPLACED: "A newer request replaced this one before it started.",
@@ -52,10 +59,15 @@ REFUSALS = {  # the current music keeps playing
         "rainy lo-fi with soft piano."
     ),
     Interpreted.BLOCKED: "Gemini's safety filters blocked that request, so nothing changed.",
+    Interpreted.REJECTED: PLAY_REPLIES[Outcome.REJECTED],
+}
+FALLBACK_NOTES: dict[Failure | None, str] = {  # why a request was played as typed (AI-4)
+    Failure.EXHAUSTED: "\nGemini's quota is used up for now, so the request was used as typed.",
+    Failure.UNAVAILABLE: "\nGemini is unavailable right now, so the request was used as typed.",
+    None: "\nGemini couldn't interpret the request, so it was used as typed.",
 }
 # Discord's inline markup: emphasis, spoilers, code, masked links, mentions, and timestamps
 MARKUP = re.compile(r"[\\*_~|`<\[\]]")
-FALLBACK_NOTE = "\nGemini couldn't interpret the request, so it was used as typed."
 
 
 class Voice(discord.VoiceClient):
@@ -283,7 +295,7 @@ class SobaFM(discord.Client):
 
                 started.add_done_callback(settled)
                 playing = True
-                return note("The music is taking longer than usual to start.", result.outcome)
+                return note("The music is taking longer than usual to start.", result)
             playing = outcome is Outcome.PLAYING
         finally:
             with contextlib.suppress(ValueError):  # ended or handed over already
@@ -291,7 +303,7 @@ class SobaFM(discord.Client):
             if not playing:
                 self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
-            return note(f"Now playing {describe(plan, member.mention, ends)}", result.outcome)
+            return note(f"Now playing {describe(plan, member.mention, ends)}", result)
         return PLAY_REPLIES[outcome]
 
     async def show_voice_status(self, channel_id: int, status: str | None) -> bool:
@@ -642,9 +654,11 @@ def listeners(guild: discord.Guild) -> int:
     return count
 
 
-def note(reply: str, interpreted: Interpreted) -> str:
-    """`reply`, saying so when Gemini couldn't interpret the request and it was used as typed."""
-    return reply + FALLBACK_NOTE if interpreted is Interpreted.FALLBACK else reply
+def note(reply: str, interpreted: Result) -> str:
+    """`reply`, saying why the request was used as typed, if it was (AI-4)."""
+    if interpreted.outcome is not Interpreted.FALLBACK:
+        return reply
+    return reply + FALLBACK_NOTES.get(interpreted.failure, FALLBACK_NOTES[None])
 
 
 def seconds(count: int) -> str:

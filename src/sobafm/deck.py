@@ -13,7 +13,7 @@ from typing import Protocol
 from google import genai
 from google.genai import errors, live_music, types
 
-from sobafm.interpreter import as_token
+from sobafm.failures import Failure, as_token, call_failure, close_failure
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, matches_mime_type
 from sobafm.plan import MusicPlan
 
@@ -105,6 +105,7 @@ class Deck:
         self.end_reason: EndReason | None = None
         self.detail: str | None = None
         self.close_code: int | None = None  # how a closed session ended, such as 1008 on refusal
+        self.failure: Failure | None = None  # why the session failed, when known
         self.paused = False
         self._connect = connect
         self._clock = clock
@@ -206,19 +207,23 @@ class Deck:
             # A WebSocket close carries its reason in `details`, which the SDK leaves untyped.
             cause: object = error.message or getattr(error, "details", None)
             self.close_code = error.code
+            self.failure = close_failure(error.code, cause)
             self._end(EndReason.CLOSED, close_detail(error.code, cause))
         except live_music.ConnectionClosed as error:
             # Closed during setup, as on a refusal. A traceback would quote the close reason.
             if (close := error.rcvd) is not None:
                 self.close_code = close.code
+                self.failure = close_failure(close.code, close.reason)
                 detail = close_detail(close.code, close.reason)
             else:
+                self.failure = Failure.UNAVAILABLE  # the connection dropped
                 detail = "no close frame received"
             detail = f"{type(error).__name__}: {detail}"
             log.warning("Deck %d failed: %s", self.number, detail)
             self._end(EndReason.FAILED, detail)
         except Exception as error:  # a deck failure must never stop the station
             log.warning("Deck %d failed", self.number, exc_info=True)
+            self.failure = call_failure(error)
             detail = type(error).__name__ + (f": {error}" if str(error) else "")
             self._end(EndReason.FAILED, detail[:200])
 

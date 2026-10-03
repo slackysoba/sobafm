@@ -66,6 +66,7 @@ flowchart LR
 | `pcm` | PCM format constants, the silence frame, and the chunk-to-frame splitter |
 | `plan` | `MusicPlan` and its mapping to Lyria prompts and the full generation config |
 | `interpreter` | The Gemini call, its instruction, and the refusal and fallback policies |
+| `failures` | The failures of Gemini and Lyria RealTime a requester can act on, a rejected API key, an exhausted quota, or an outage, and which parts of Google's errors are safe to log |
 | `store` | Per-server state in SQLite |
 
 `scripts/lyria_probe.py` measures Lyria RealTime's behavior and is kept so the measurements can be repeated after SDK or model changes.
@@ -93,7 +94,7 @@ A station stores only what should be happening: the program (plan, requester, an
 1. **End.** If SobaFM has lost its voice connection, the program's end time has passed, or the channel has had no listeners for 60 seconds, clear the program.
 2. **Discard.** Drop ended decks the mixer no longer references once they are empty or replaced. A deck that ended without audio counts as a failed or refused start.
 3. **Retire.** Stop the session of any deck that has reached the session limit or belongs to a replaced plan. Its buffered audio stays playable.
-4. **Generate.** Keep a next deck filling for the current plan beside the live one, within the global session cap. Retry failed connections with backoff, and retry a refused start once after 30 seconds.
+4. **Generate.** Keep a next deck filling for the current plan beside the live one, within the global session cap. Retry failed connections with backoff, and retry a refused start once after 30 seconds. A start fails at once when Google rejects the API key or the quota is exhausted, since retrying within seconds can't help. When a replacement fails to start, the program still heard becomes the program again (FB-3).
 5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player, and fade in once it runs with voice connected. Restart the player if discord.py stopped it.
 6. **Hand over, or stop.** With a program, if the player runs with voice connected, no crossfade is in progress, and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck of the current plan with the most buffered audio. Without one, retire idle decks; once any fade or crossfade completes, fade out the live deck and then stop the player. With no player running, nothing reads the mixer, so the station stops at once.
 7. **Regulate.** Pause or resume each deck's generation at the flow-control thresholds.
@@ -129,7 +130,7 @@ The interpreter is SobaFM's only Gemini stage. It makes one call for each accept
 
 - **Input:** the request text and the current plan, sent as data in the user turn. The system instruction distills the [Lyria prompt guide](https://ai.google.dev/gemini-api/docs/lyria-prompt-guide), asks for instrumental descriptors in English, and has names of artists and works translated into descriptive terms.
 - **Output:** JSON constrained by the schema below through [structured output](https://ai.google.dev/gemini-api/docs/structured-output), then validated with Pydantic.
-- **Policy:** `not_music`, safety-blocked, and blank requests are refused. A timeout (10 seconds), rate limit, server error, or invalid output falls back to the request text, truncated to 120 characters, as a single prompt. For `refine`, the values an answer leaves out or unset are copied from the current plan: tempo, key, density, brightness, drum muting, and wordless vocals. API errors are logged by code, status, and error reason, never by message, since Gemini's messages can quote the API key. Other failures are logged by exception type, with a traceback when unexpected.
+- **Policy:** `not_music`, safety-blocked, and blank requests are refused, and so is every request while Google rejects the API key, which Lyria RealTime uses too. A timeout (10 seconds), rate limit, server error, connection failure, or invalid output falls back to the request text, truncated to 120 characters, as a single prompt, and the reply names an exhausted quota or an outage as the cause. For `refine`, the values an answer leaves out or unset are copied from the current plan: tempo, key, density, brightness, drum muting, and wordless vocals. API errors are logged by code, status, and error reason, never by message, since Gemini's messages can quote the API key. Other failures are logged by exception type, with a traceback when unexpected.
 - **Model:** `gemini-3.5-flash-lite` by default, set with `SOBAFM_GEMINI_MODEL`. The call uses the minimal thinking level and no tools; sampling parameters are not sent.
 
 ```python
@@ -199,11 +200,12 @@ CREATE TABLE guild (
 
 | Failure | Behavior |
 | --- | --- |
-| Gemini timeout, rate limit, server error, or invalid output | Fall back to the request text and say so in the reply |
+| Gemini timeout, rate limit, server error, connection failure, or invalid output | Fall back to the request text, and say so in the reply, naming an exhausted quota or an outage as the cause |
 | Not-music request or Gemini safety block | Refuse with a short explanation; nothing reaches Lyria |
-| Lyria filters a prompt | Discard the new deck, keep the current music, and tell the requester. Keeping the current music arrives with #38; until then a refused replacement ends the program |
-| Lyria refuses the connection (authentication, quota, or close code `1008`) | Reply with a specific error; the station stays idle. Specific replies arrive with #38; until then the start is retried with backoff and then reported as a failure |
-| Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills. Failed starts are retried after 2, 5, then every 15 seconds; a program that has not started yet reports the failure after the third retry |
+| Google rejects the API key in the Gemini call | Refuse the request, since Lyria RealTime would reject the key too, and ask the requester to have the operator check it; the current music keeps playing |
+| Lyria filters a prompt | Discard the new deck, keep the current music, and tell the requester |
+| Lyria rejects the API key (close code `1007`), or the quota is exhausted | Report it at once with a specific reply, since retrying within seconds can't help; a failed replacement keeps the current music. Lyria reports an exhausted quota only in the free-text reason of a `1011` close, which SobaFM matches but never logs |
+| Lyria session closes during a program | Its buffer keeps playing while a replacement deck fills. Failed starts are retried after 2, 5, then every 15 seconds; a program that has not started yet reports the failure after the third retry, as an outage when the connection failed or Lyria closed with `1006`, `1011`, or `1013` |
 | Generation stalls or slows | The live deck's buffer absorbs it; below 4 seconds, the station hands over to the next deck. Remaining underruns play silence and are logged |
 | Lyria refuses a new session's start (`filtered_prompt` with no audio) | Retry once after 30 seconds, then report the prompt as filtered |
 | No session capacity left in the process | Each program reserves two sessions; a request beyond the reservations is told that SobaFM is busy in other servers |
@@ -221,7 +223,7 @@ CREATE TABLE guild (
 - **Model output is untrusted.** It is validated against the schema before use; text shown in Discord is escaped, length-capped, and sent with mentions disabled; nothing is executed.
 - **Prompt injection:** the instruction treats the request as data, and the schema limits what any request can produce.
 - **Least privilege:** two non-privileged gateway intents and four channel permissions.
-- **Logs:** request text appears only at debug level. Gemini's error statuses and reasons, and Lyria's close reasons, are logged only when they are tokens such as `RESOURCE_EXHAUSTED`, since free text could quote the API key. A frame from Lyria that the SDK can't parse or validate, or an unexpected audio format, is logged by a fixed description, without its content. `SOBAFM_LOG_LEVEL` applies to SobaFM's own loggers: libraries stay at INFO, since at DEBUG the websockets library logs request headers, which carry the API key. The Google Gen AI SDK logs only warnings and errors, since at INFO it logs Lyria RealTime's setup reply verbatim.
+- **Logs:** request text appears only at debug level. Gemini's error statuses and reasons, and Lyria's close reasons, are logged only when they are tokens such as `RESOURCE_EXHAUSTED`, since free text could quote the API key. A frame from Lyria that the SDK can't parse or validate, or an unexpected audio format, is logged by a fixed description, without its content. Lyria's close reasons are matched for an exhausted quota, but never logged. `SOBAFM_LOG_LEVEL` applies to SobaFM's own loggers: libraries stay at INFO, since at DEBUG the websockets library logs request headers, which carry the API key. The Google Gen AI SDK logs only warnings and errors, since at INFO it logs Lyria RealTime's setup reply verbatim.
 
 ## Testing
 

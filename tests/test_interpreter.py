@@ -6,6 +6,7 @@ from google import genai
 from google.genai import errors, types
 
 import sobafm.interpreter
+from sobafm.failures import Failure
 from sobafm.interpreter import CONFIG, Interpreter, Outcome
 from sobafm.plan import MusicPlan, Prompt
 from tests.doubles import FakeGemini, answer
@@ -118,6 +119,46 @@ async def test_refuses_requests_that_safety_filters_block(
     result = await interpreter(FakeGemini(response)).interpret("…", None)
 
     assert (result.outcome, result.plan) == (Outcome.BLOCKED, None)
+
+
+async def test_refuses_a_request_when_google_rejects_the_key() -> None:
+    gemini = FakeGemini()
+    info = {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID"}
+    gemini.error = errors.ClientError(
+        400, {"error": {"code": 400, "status": "INVALID_ARGUMENT", "details": [info]}}
+    )
+
+    result = await interpreter(gemini).interpret("rainy lo-fi", None)
+
+    assert (result.outcome, result.plan, result.failure) == (
+        Outcome.REJECTED,
+        None,
+        Failure.REJECTED,
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "failure"),
+    [
+        (
+            errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}),
+            Failure.EXHAUSTED,
+        ),
+        (
+            errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}}),
+            Failure.UNAVAILABLE,
+        ),
+        (RuntimeError("an unexpected bug"), None),
+    ],
+    ids=["quota", "outage", "bug"],
+)
+async def test_says_why_it_fell_back(error: Exception, failure: Failure | None) -> None:
+    gemini = FakeGemini()
+    gemini.error = error
+
+    result = await interpreter(gemini).interpret("rainy lo-fi", None)
+
+    assert (result.outcome, result.failure) == (Outcome.FALLBACK, failure)
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 
 import discord
 import pytest
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 from sobafm.deck import PAUSE_AT_S, Deck, State
 from sobafm.pcm import FRAME_SECONDS
@@ -31,6 +33,7 @@ HOUR_S = 3600.0
 CHANNEL = 10  # SobaFM's voice channel
 LOFI = MusicPlan.from_request("rainy lo-fi")
 SYNTHWAVE = MusicPlan.from_request("synthwave")
+JAZZ = MusicPlan.from_request("jazz")
 
 
 @dataclass
@@ -288,14 +291,107 @@ async def test_backs_off_between_failed_starts(rig: Rig) -> None:
     assert len(rig.lyria.sessions) == 2
 
 
-async def test_reports_failed_connections_after_backing_off(rig: Rig) -> None:
-    rig.lyria.failure = OSError("unreachable")
+@pytest.mark.parametrize(
+    ("failure", "outcome"),
+    [(OSError("unreachable"), Outcome.UNAVAILABLE), (ValueError("a bug"), Outcome.FAILED)],
+    ids=["outage", "other"],
+)
+async def test_reports_failed_connections_after_backing_off(
+    rig: Rig, failure: Exception, outcome: Outcome
+) -> None:
+    rig.lyria.failure = failure
     started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
 
-    for _ in range(8):
+    for _ in range(3):
         await rig.tick(16)
+    assert not started.done()  # still backing off
 
-    assert started.result() is Outcome.FAILED
+    for _ in range(5):
+        await rig.tick(16)
+    assert started.result() is outcome
+
+
+def closed_during_setup(code: int, reason: str) -> ConnectionClosedError:
+    """How connecting fails when Lyria RealTime closes the session during setup."""
+    close = Close(code, reason)
+    return ConnectionClosedError(close, close, rcvd_then_sent=True)
+
+
+INVALID_KEY = (1007, "API key not valid. Please pass a valid API key.")
+QUOTA = (1011, "You exceeded your current quota, please check your plan and billing details.")
+
+
+@pytest.mark.parametrize(
+    ("close", "outcome"),
+    [(INVALID_KEY, Outcome.REJECTED), (QUOTA, Outcome.EXHAUSTED)],
+    ids=["rejected key", "quota"],
+)
+async def test_fails_at_once_when_retrying_cannot_help(
+    rig: Rig, close: tuple[int, str], outcome: Outcome
+) -> None:
+    rig.lyria.failure = closed_during_setup(*close)
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+
+    await rig.tick()
+    await rig.tick()
+
+    assert started.result() is outcome
+    assert rig.station.program is None
+
+
+@pytest.mark.parametrize("cause", ["refused", "rejected key"])
+async def test_a_failed_replacement_returns_to_the_program_heard(rig: Rig, cause: str) -> None:
+    await start_playing(rig, duration_seconds=300)
+    heard = rig.station.program
+    replaced = rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()  # retires the next deck, whose session the replacement takes
+    if cause == "refused":
+        await rig.tick()
+        rig.session(2).refuse()
+        await rig.tick()
+        await rig.tick(REFUSAL_RETRY_S)
+        rig.session(3).refuse()
+    else:
+        rig.lyria.failure = closed_during_setup(*INVALID_KEY)  # for the program heard too
+        await rig.tick()
+    await rig.tick()
+    await rig.tick()  # the program heard opens a next session, or fails to and plays on
+
+    assert replaced.result() is (Outcome.REFUSED if cause == "refused" else Outcome.REJECTED)
+    assert rig.station.program is heard  # with its own end time
+    assert live_deck(rig).plan is LOFI
+    assert not rig.station.mixer.switching  # still playing, not fading out
+    rig.listen(2)
+    assert rig.station.mixer.underruns == 0
+
+
+async def test_a_failed_request_returns_past_requests_that_never_played(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    rig.lyria.failure = closed_during_setup(*INVALID_KEY)
+    latest = rig.station.play(JAZZ, "A third member", duration_seconds=HOUR_S)
+
+    for _ in range(3):
+        await rig.tick()
+
+    assert latest.result() is Outcome.REJECTED
+    assert rig.station.program is heard
+
+
+async def test_a_failed_request_after_a_stop_stays_stopped(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    rig.station.stop()
+    rig.lyria.failure = closed_during_setup(*INVALID_KEY)
+    latest = rig.station.play(JAZZ, "A third member", duration_seconds=HOUR_S)
+
+    for _ in range(3):
+        await rig.tick()
+
+    assert latest.result() is Outcome.REJECTED
+    assert rig.station.program is None
+    assert rig.station.mixer.switching  # fading out
 
 
 async def test_reserves_two_sessions_for_each_program(lyria: FakeLyria, clock: FakeClock) -> None:
