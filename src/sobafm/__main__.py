@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import io
 import logging
 import signal
 import sys
@@ -49,6 +50,11 @@ def configure_logging(level: str) -> None:
     include the Gemini API key. The Google Gen AI SDK logs only warnings and errors, since at INFO
     it logs Lyria RealTime's setup reply verbatim.
     """
+    stdout: object = sys.stdout
+    if isinstance(stdout, io.TextIOWrapper):
+        # As standard error does, so a record standard output can't encode, such as a channel
+        # name with an emoji when output goes to a file on Windows, is escaped rather than lost.
+        stdout.reconfigure(errors="backslashreplace")
     logging.basicConfig(stream=sys.stdout, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger().setLevel(logging.INFO)
     logging.getLogger("google_genai").setLevel(logging.WARNING)

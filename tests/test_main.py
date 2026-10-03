@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -157,17 +158,39 @@ def test_debug_logging_applies_to_sobafm_only(
     assert live_music.logger.isEnabledFor(logging.WARNING)
 
 
-def test_logs_to_standard_output() -> None:
-    # In a fresh interpreter, since pytest's own logging handlers would keep basicConfig() idle.
+def log_in_child(message: str, **env: str) -> subprocess.CompletedProcess[str]:
+    """Log `message`, a Python string literal, through SobaFM's logging in a fresh interpreter.
+
+    pytest's own logging handlers would keep basicConfig() idle in this process, and inherited
+    warning settings would add output of their own.
+    """
     script = (
         "import logging; from sobafm.__main__ import configure_logging; "
-        "configure_logging('INFO'); logging.getLogger('sobafm.bot').info('Connected')"
+        f"configure_logging('INFO'); logging.getLogger('sobafm.bot').info({message})"
     )
-    logged = subprocess.run(  # noqa: S603 - a fixed script, run by this interpreter
-        [sys.executable, "-c", script], capture_output=True, text=True, check=True, timeout=60
+    child = {k: v for k, v in os.environ.items() if k not in {"PYTHONWARNINGS", "PYTHONDEVMODE"}}
+    return subprocess.run(  # noqa: S603 - a fixed script, run by this interpreter
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+        env=child | env,
     )
 
+
+def test_logs_to_standard_output() -> None:
+    logged = log_in_child("'Connected'")
+
     assert logged.stdout.rstrip().endswith("INFO sobafm.bot: Connected")
+    assert logged.stderr == ""
+
+
+def test_escapes_what_standard_output_cannot_encode() -> None:
+    # As when output is redirected on Windows, whose locale encoding has no emoji.
+    logged = log_in_child("'Left voice in \\U0001f3b5 Lounge'", PYTHONIOENCODING="ascii")
+
+    assert logged.stdout.rstrip().endswith("INFO sobafm.bot: Left voice in \\U0001f3b5 Lounge")
     assert logged.stderr == ""
 
 
