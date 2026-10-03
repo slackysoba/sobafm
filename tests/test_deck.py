@@ -608,7 +608,7 @@ def malformed_reply() -> InvalidMessage:
         (InvalidUpgrade("Upgrade", "AIzaFakeKey"), "InvalidUpgrade", None),
         (InvalidHeaderValue("Sec-WebSocket-Accept", "AIzaFakeKey"), "InvalidHeaderValue", None),
         (
-            InvalidHeaderFormat("Location", "expected token", "AIzaFakeKey", 0),
+            InvalidHeaderFormat("Connection", "expected token", "Upgrade, @AIzaFakeKey", 9),
             "InvalidHeaderFormat",
             None,
         ),
@@ -676,7 +676,7 @@ async def test_logs_an_ssl_error_with_its_text(
         f"SSLCertVerificationError: {reason}",
         Failure.UNAVAILABLE,
     )
-    assert any(record.exc_info for record in caplog.records)  # OpenSSL's text, not the server's
+    assert any(record.exc_info for record in caplog.records)  # OpenSSL's text, for diagnosis
 
 
 def received(close: Close | None, error: type[ConnectionClosed] = ConnectionClosedError) -> Any:

@@ -222,11 +222,14 @@ class Deck:
             detail = f"{type(error).__name__}: {detail}"
             log.warning("Deck %d failed: %s", self.number, detail)
             self._end(EndReason.FAILED, detail)
-        except OSError as error:  # an SSL error is also a ValueError, but its text is OpenSSL's
+        except OSError as error:
+            # A certificate error is also a ValueError. Its text is OpenSSL's, which can name a
+            # redirect's host; #85 refuses redirects.
             self._fail(error)
         except (WebSocketException, ValueError) as error:
             # A failed handshake, or a redirect websockets can't follow: its message, or its
-            # cause's, can quote the server's reply.
+            # cause's, can quote the server's reply. Any other ValueError, such as one from a
+            # bug in SobaFM, is described by its type too.
             self.failure = call_failure(error)
             detail = type(error).__name__
             if isinstance(error, InvalidStatus):
@@ -237,7 +240,7 @@ class Deck:
             self._fail(error)
 
     def _fail(self, error: Exception) -> None:
-        """End the deck after an error whose text can't quote the server, with its traceback."""
+        """End the deck after an error not expected to quote the server, with its traceback."""
         log.warning("Deck %d failed", self.number, exc_info=error)
         self.failure = call_failure(error)
         detail = type(error).__name__ + (f": {error}" if str(error) else "")
