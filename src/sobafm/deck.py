@@ -12,6 +12,7 @@ from typing import Protocol
 
 from google import genai
 from google.genai import errors, live_music, types
+from websockets.exceptions import InvalidStatus, WebSocketException
 
 from sobafm.failures import Failure, as_token, call_failure, close_failure
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, matches_mime_type
@@ -221,11 +222,29 @@ class Deck:
             detail = f"{type(error).__name__}: {detail}"
             log.warning("Deck %d failed: %s", self.number, detail)
             self._end(EndReason.FAILED, detail)
-        except Exception as error:  # a deck failure must never stop the station
-            log.warning("Deck %d failed", self.number, exc_info=True)
+        except OSError as error:
+            # A certificate error is also a ValueError. Its text is OpenSSL's, which can name a
+            # redirect's host; #85 refuses redirects.
+            self._fail(error)
+        except (WebSocketException, ValueError) as error:
+            # A failed handshake, or a redirect websockets can't follow: its message, or its
+            # cause's, can quote the server's reply. Any other ValueError, such as one from a
+            # bug in SobaFM, is described by its type too.
             self.failure = call_failure(error)
-            detail = type(error).__name__ + (f": {error}" if str(error) else "")
-            self._end(EndReason.FAILED, detail[:200])
+            detail = type(error).__name__
+            if isinstance(error, InvalidStatus):
+                detail += f": HTTP {error.response.status_code}"
+            log.warning("Deck %d failed: %s", self.number, detail)
+            self._end(EndReason.FAILED, detail)
+        except Exception as error:  # noqa: BLE001 - a deck failure must never stop the station
+            self._fail(error)
+
+    def _fail(self, error: Exception) -> None:
+        """End the deck after an error not expected to quote the server, with its traceback."""
+        log.warning("Deck %d failed", self.number, exc_info=error)
+        self.failure = call_failure(error)
+        detail = type(error).__name__ + (f": {error}" if str(error) else "")
+        self._end(EndReason.FAILED, detail[:200])
 
     def _cancelled(self, task: asyncio.Task[None]) -> None:
         """Record a deck cancelled by `retire()` while connecting, or at shutdown, as retired."""

@@ -1,14 +1,28 @@
 import asyncio
 import contextlib
 import logging
+import ssl
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from google.genai import live_music, types
-from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
+from websockets.datastructures import Headers
+from websockets.exceptions import (
+    ConnectionClosed,
+    ConnectionClosedError,
+    ConnectionClosedOK,
+    InvalidHeaderFormat,
+    InvalidHeaderValue,
+    InvalidMessage,
+    InvalidStatus,
+    InvalidUpgrade,
+    InvalidURI,
+    NegotiationError,
+)
 from websockets.frames import Close
+from websockets.http11 import Response
 
 import sobafm.deck
 from sobafm.deck import (
@@ -579,6 +593,90 @@ async def test_records_a_quota_close_while_generating(
     )
     assert "(code 1011, exhausted)" in caplog.text
     assert "exceeded" not in caplog.text  # the reason is matched, never logged
+
+
+def malformed_reply() -> InvalidMessage:
+    """How websockets reports an unparseable handshake reply, its cause quoting the reply."""
+    error = InvalidMessage("did not receive a valid HTTP response")
+    error.__cause__ = ValueError("invalid HTTP reason phrase: AIzaFakeKey")
+    return error
+
+
+@pytest.mark.parametrize(
+    ("error", "detail", "failure"),
+    [
+        (InvalidUpgrade("Upgrade", "AIzaFakeKey"), "InvalidUpgrade", None),
+        (InvalidHeaderValue("Sec-WebSocket-Accept", "AIzaFakeKey"), "InvalidHeaderValue", None),
+        (
+            InvalidHeaderFormat("Connection", "expected token", "Upgrade, @AIzaFakeKey", 9),
+            "InvalidHeaderFormat",
+            None,
+        ),
+        (NegotiationError("unsupported extension: AIzaFakeKey"), "NegotiationError", None),
+        (malformed_reply(), "InvalidMessage", None),
+        (
+            InvalidStatus(Response(429, "AIzaFakeKey", Headers())),
+            "InvalidStatus: HTTP 429",
+            Failure.EXHAUSTED,
+        ),
+        # A redirect: to a URI that isn't ws or wss, or one websockets can't parse.
+        (InvalidURI("http://AIzaFakeKey/", "scheme isn't ws or wss"), "InvalidURI", None),
+        (
+            ValueError("Port could not be cast to integer value as 'AIzaFakeKey'"),
+            "ValueError",
+            None,
+        ),
+    ],
+    ids=[
+        "upgrade",
+        "header",
+        "header format",
+        "negotiation",
+        "malformed reply",
+        "refused",
+        "redirect scheme",
+        "redirect port",
+    ],
+)
+async def test_logs_a_failed_handshake_without_the_servers_text(
+    lyria: FakeLyria,
+    clock: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    detail: str,
+    failure: Failure | None,
+) -> None:
+    lyria.failure = error
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+
+    with caplog.at_level(logging.DEBUG):
+        deck.start()
+        await ended(deck)
+
+    assert (deck.end_reason, deck.detail, deck.failure) == (EndReason.FAILED, detail, failure)
+    warning = ("sobafm.deck", logging.WARNING, f"Deck {deck.number} failed: {detail}")
+    assert warning in caplog.record_tuples
+    assert not any(record.exc_info for record in caplog.records)
+    assert "AIzaFakeKey" not in caplog.text
+
+
+async def test_logs_an_ssl_error_with_its_text(
+    lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    reason = "certificate verify failed: unable to get local issuer certificate"
+    lyria.failure = ssl.SSLCertVerificationError(1, reason)  # also a ValueError
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+
+    with caplog.at_level(logging.DEBUG):
+        deck.start()
+        await ended(deck)
+
+    assert (deck.end_reason, deck.detail, deck.failure) == (
+        EndReason.FAILED,
+        f"SSLCertVerificationError: {reason}",
+        Failure.UNAVAILABLE,
+    )
+    assert any(record.exc_info for record in caplog.records)  # OpenSSL's text, for diagnosis
 
 
 def received(close: Close | None, error: type[ConnectionClosed] = ConnectionClosedError) -> Any:
