@@ -59,7 +59,6 @@ REFUSALS = {  # the current music keeps playing
         "rainy lo-fi with soft piano."
     ),
     Interpreted.BLOCKED: "Gemini's safety filters blocked that request, so nothing changed.",
-    Interpreted.REJECTED: PLAY_REPLIES[Outcome.REJECTED],
 }
 FALLBACK_NOTES: dict[Failure | None, str] = {  # why a request was played as typed (AI-4)
     Failure.EXHAUSTED: "\nGemini's quota is used up for now, so the request was used as typed.",

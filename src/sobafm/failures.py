@@ -6,11 +6,14 @@ from typing import cast
 
 import aiohttp
 from google.genai import errors
+from websockets.exceptions import InvalidMessage, InvalidStatus
 
 TOKEN = re.compile(r"[A-Z][A-Z0-9_]{0,62}")  # an API status or reason, such as API_KEY_INVALID
 # How Google's live APIs word the close for an exhausted quota, which shares code 1011 with outages
 EXHAUSTED_REASON = re.compile(r"quota|exhausted", re.IGNORECASE)
-REJECTED_CLOSE = 1007  # how Lyria RealTime closes a session whose API key it rejects
+# And the close for a rejected API key, since code 1007 closes for any invalid argument
+REJECTED_REASON = re.compile(r"api[ _]?key", re.IGNORECASE)
+NORMAL_CLOSE = 1000
 UNAVAILABLE_CLOSES = {1006, 1011, 1013}  # a dropped connection, an internal error, try again later
 
 
@@ -28,18 +31,29 @@ def as_token(value: object) -> str | None:
 def call_failure(error: BaseException) -> Failure | None:
     """Why an API call failed, when the cause is one a requester can act on."""
     match error:
-        case errors.APIError() if error.code in (401, 403) or (
-            as_token(error_reason(error)) == "API_KEY_INVALID"
-        ):
+        case errors.APIError() if as_token(error_reason(error)) == "API_KEY_INVALID":
             return Failure.REJECTED
-        case errors.APIError() if error.code == 429:
-            return Failure.EXHAUSTED
-        case errors.APIError() if error.code >= 500:
+        case errors.APIError():
+            return status_failure(error.code)
+        case InvalidStatus():  # Lyria RealTime refused the WebSocket upgrade
+            return status_failure(error.response.status_code)
+        case InvalidMessage() if isinstance(error.__cause__, EOFError):  # the upgrade dropped
             return Failure.UNAVAILABLE
-        case OSError() | aiohttp.ClientConnectionError():  # including timeouts
-            return Failure.UNAVAILABLE
+        case OSError() | aiohttp.ClientConnectionError() | aiohttp.ClientPayloadError():
+            return Failure.UNAVAILABLE  # including timeouts, and a response cut off
         case _:
             return None
+
+
+def status_failure(status: int) -> Failure | None:
+    """Why an HTTP request failed, from its status code."""
+    if status in (401, 403):
+        return Failure.REJECTED
+    if status == 429:
+        return Failure.EXHAUSTED
+    if 500 <= status < 600:
+        return Failure.UNAVAILABLE
+    return None
 
 
 def close_failure(code: int, reason: object) -> Failure | None:
@@ -47,9 +61,11 @@ def close_failure(code: int, reason: object) -> Failure | None:
 
     The reason is free text that could quote the API key, so it is matched but never kept.
     """
+    if code == NORMAL_CLOSE:
+        return None
     if isinstance(reason, str) and EXHAUSTED_REASON.search(reason):
         return Failure.EXHAUSTED
-    if code == REJECTED_CLOSE:
+    if isinstance(reason, str) and REJECTED_REASON.search(reason):
         return Failure.REJECTED
     if code in UNAVAILABLE_CLOSES:
         return Failure.UNAVAILABLE

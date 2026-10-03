@@ -309,16 +309,35 @@ async def test_never_logs_a_frame_it_cannot_read(
     assert logged.__context__ is None  # the SDK's error, which quotes the frame, isn't kept
 
 
+@pytest.mark.parametrize(
+    ("reason", "detail"),
+    [
+        ("Prompt 'rainy lo-fi by A. Artist' is not allowed.", None),
+        ("PROHIBITED_CONTENT", "PROHIBITED_CONTENT"),
+    ],
+    ids=["free text", "token"],
+)
 async def test_records_a_prompt_refused_before_any_audio(
-    lyria: FakeLyria, clock: FakeClock
+    lyria: FakeLyria,
+    clock: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+    reason: str,
+    detail: str | None,
 ) -> None:
     deck, session = await start_deck(lyria, clock)
 
-    session.refuse("Not allowed.")
-    await ended(deck)
+    with caplog.at_level(logging.DEBUG, logger="sobafm.deck"):
+        session.refuse(reason)
+        await ended(deck)
 
-    assert (deck.end_reason, deck.detail) == (EndReason.FILTERED, "Not allowed.")
+    assert (deck.end_reason, deck.detail) == (EndReason.FILTERED, detail)
     assert session.closed
+    # The reason could quote the request, so only the debug log may carry it (OPS-5).
+    above_debug = [
+        record.getMessage() for record in caplog.records if record.levelno > logging.DEBUG
+    ]
+    assert not any("A. Artist" in message for message in above_debug)
+    assert any(reason in record.getMessage() for record in caplog.records)
 
 
 async def test_ignores_a_refusal_after_audio_started(lyria: FakeLyria, clock: FakeClock) -> None:
@@ -478,8 +497,15 @@ SUSPENDED = "Consumer 'api_key:AIzaFakeKey' has been suspended."  # free text th
 
 
 @pytest.mark.parametrize(
-    ("reason", "detail"),
-    [("RESOURCE_EXHAUSTED", "code 1008: RESOURCE_EXHAUSTED"), (SUSPENDED, "code 1008")],
+    ("reason", "detail", "summary"),
+    [
+        (
+            "RESOURCE_EXHAUSTED",
+            "code 1008: RESOURCE_EXHAUSTED",
+            "(code 1008: RESOURCE_EXHAUSTED, exhausted)",
+        ),
+        (SUSPENDED, "code 1008", "(code 1008, rejected)"),
+    ],
     ids=["token", "free text"],
 )
 async def test_logs_a_close_reason_only_as_a_token(
@@ -488,6 +514,7 @@ async def test_logs_a_close_reason_only_as_a_token(
     caplog: pytest.LogCaptureFixture,
     reason: str,
     detail: str,
+    summary: str,
 ) -> None:
     deck, session = await start_deck(lyria, clock)
 
@@ -496,8 +523,26 @@ async def test_logs_a_close_reason_only_as_a_token(
         await ended(deck)
 
     assert deck.detail == detail
-    assert f"({detail})" in caplog.text
+    assert summary in caplog.text  # with the cause, since the session never played
     assert "AIzaFakeKey" not in caplog.text
+
+
+async def test_records_a_quota_close_while_generating(
+    lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    deck, session = await start_deck(lyria, clock)
+
+    with caplog.at_level(logging.DEBUG):
+        session.close(1011, "You exceeded your current quota, please check your plan.")
+        await ended(deck)
+
+    assert (deck.end_reason, deck.close_code, deck.failure) == (
+        EndReason.CLOSED,
+        1011,
+        Failure.EXHAUSTED,
+    )
+    assert "(code 1011, exhausted)" in caplog.text
+    assert "exceeded" not in caplog.text  # the reason is matched, never logged
 
 
 def received(close: Close | None, error: type[ConnectionClosed] = ConnectionClosedError) -> Any:
@@ -508,7 +553,12 @@ def received(close: Close | None, error: type[ConnectionClosed] = ConnectionClos
 @pytest.mark.parametrize(
     ("closed", "code", "detail", "failure"),
     [
-        (received(Close(1008, SUSPENDED)), 1008, "ConnectionClosedError: code 1008", None),
+        (
+            received(Close(1008, SUSPENDED)),
+            1008,
+            "ConnectionClosedError: code 1008",
+            Failure.REJECTED,
+        ),
         (
             received(Close(1008, "RESOURCE_EXHAUSTED")),
             1008,

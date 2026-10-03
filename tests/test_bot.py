@@ -1262,12 +1262,11 @@ async def test_play_refines_the_current_plan(bot: SobaFM, gemini: FakeGemini) ->
     [
         (answer(json.dumps({"kind": "not_music"})), REFUSALS[Interpreted.NOT_MUSIC]),
         (answer("", finish=types.FinishReason.SAFETY), REFUSALS[Interpreted.BLOCKED]),
-        (None, PLAY_REPLIES[Outcome.REJECTED]),
     ],
-    ids=["not music", "blocked", "rejected key"],
+    ids=["not music", "blocked"],
 )
 async def test_play_refuses_without_touching_the_music(
-    bot: SobaFM, gemini: FakeGemini, response: types.GenerateContentResponse | None, refusal: str
+    bot: SobaFM, gemini: FakeGemini, response: types.GenerateContentResponse, refusal: str
 ) -> None:
     guild = make_guild()
     channel = make_channel(guild)
@@ -1275,12 +1274,7 @@ async def test_play_refuses_without_touching_the_music(
     station = fake_station()
     station.program = fake(Program, plan=LOFI)
     bot.stations[guild.id] = station
-    if response is None:  # Google rejects the API key, which Lyria RealTime would reject too
-        info = {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID"}
-        body = {"code": 400, "status": "INVALID_ARGUMENT", "details": [info]}
-        gemini.error = errors.ClientError(400, {"error": body})
-    else:
-        gemini.response = response
+    gemini.response = response
     cooldown = await admitted(bot, member, "what's the weather?")
 
     reply = await bot.play(member, "what's the weather?", cooldown)
@@ -1288,6 +1282,32 @@ async def test_play_refuses_without_touching_the_music(
     assert reply == refusal
     assert station.method_calls == []  # the current music keeps playing
     assert await bot.admit(member, "jazz") is None  # nothing changed, so no cooldown
+
+
+async def test_play_reports_a_rejected_key_once_lyria_rejects_it_too(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    station = fake_station(Outcome.REJECTED)
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    info = {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID"}
+    body = {"code": 400, "status": "INVALID_ARGUMENT", "details": [info]}
+    gemini.error = errors.ClientError(400, {"error": body})
+
+    reply = await bot.play(in_voice(channel, channel), "rainy lo-fi", None)
+
+    # Gemini's rejection falls back to the request text (AI-4), which Lyria RealTime rejects.
+    assert station.play.call_args.args[0] == MusicPlan.from_request("rainy lo-fi")
+    assert reply == PLAY_REPLIES[Outcome.REJECTED]
+
+
+def test_each_cause_has_its_own_reply() -> None:
+    assert "API key" in PLAY_REPLIES[Outcome.REJECTED]
+    assert "quota" in PLAY_REPLIES[Outcome.EXHAUSTED]
+    assert "unavailable" in PLAY_REPLIES[Outcome.UNAVAILABLE]
+    causes = [Outcome.REJECTED, Outcome.EXHAUSTED, Outcome.UNAVAILABLE, Outcome.FAILED]
+    assert len({PLAY_REPLIES[outcome] for outcome in causes}) == len(causes)
 
 
 async def test_a_refused_request_never_reaches_lyria(

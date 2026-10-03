@@ -121,7 +121,7 @@ async def test_refuses_requests_that_safety_filters_block(
     assert (result.outcome, result.plan) == (Outcome.BLOCKED, None)
 
 
-async def test_refuses_a_request_when_google_rejects_the_key() -> None:
+async def test_falls_back_when_google_rejects_the_key() -> None:
     gemini = FakeGemini()
     info = {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID"}
     gemini.error = errors.ClientError(
@@ -130,9 +130,10 @@ async def test_refuses_a_request_when_google_rejects_the_key() -> None:
 
     result = await interpreter(gemini).interpret("rainy lo-fi", None)
 
+    # As AI-4 says; Lyria RealTime, which uses the same key, then reports the rejection.
     assert (result.outcome, result.plan, result.failure) == (
-        Outcome.REJECTED,
-        None,
+        Outcome.FALLBACK,
+        MusicPlan.from_request("rainy lo-fi"),
         Failure.REJECTED,
     )
 

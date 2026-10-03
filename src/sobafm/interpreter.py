@@ -109,7 +109,6 @@ CONFIG = types.GenerateContentConfig(
 class Outcome(StrEnum):
     INTERPRETED = "interpreted"
     FALLBACK = "fallback"  # the model call failed, so the plan is the request text
-    REJECTED = "rejected"  # Google rejected the API key, which Lyria RealTime uses too
     NOT_MUSIC = "not_music"
     BLOCKED = "blocked"  # Gemini's safety filters blocked the request
 
@@ -148,9 +147,9 @@ class Interpreter:
     async def interpret(self, request: str, current: MusicPlan | None) -> Result:
         """Interpret `request`, refining `current` when the request is relative to it.
 
-        Only the request and the current plan are sent (AI-6). A failed model call falls back to
-        the request text as the plan (AI-4), unless Google rejected the API key, which Lyria
-        RealTime would reject too. A blank request is refused.
+        Only the request and the current plan are sent (AI-6). Any failure of the model call
+        falls back to the request text as the plan (AI-4), with the cause when SobaFM can tell
+        it. A blank request is refused.
         """
         if not request.strip():
             return Result(Outcome.NOT_MUSIC, None)
@@ -173,10 +172,8 @@ class Interpreter:
                 describe(error),
                 exc_info=not expected,
             )
-            if (failure := call_failure(error)) is Failure.REJECTED:
-                result = Result(Outcome.REJECTED, None, failure)
-            else:
-                result = Result(Outcome.FALLBACK, MusicPlan.from_request(request), failure)
+            plan = MusicPlan.from_request(request)
+            result = Result(Outcome.FALLBACK, plan, call_failure(error))
         log.info("Interpretation took %.1f s: %s", time.monotonic() - started, result.outcome)
         return result
 

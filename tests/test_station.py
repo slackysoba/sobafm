@@ -6,8 +6,10 @@ from unittest.mock import MagicMock
 
 import discord
 import pytest
-from websockets.exceptions import ConnectionClosedError
+from websockets.datastructures import Headers
+from websockets.exceptions import ConnectionClosedError, InvalidStatus
 from websockets.frames import Close
+from websockets.http11 import Response
 
 from sobafm.deck import PAUSE_AT_S, Deck, State
 from sobafm.pcm import FRAME_SECONDS
@@ -322,14 +324,19 @@ QUOTA = (1011, "You exceeded your current quota, please check your plan and bill
 
 
 @pytest.mark.parametrize(
-    ("close", "outcome"),
-    [(INVALID_KEY, Outcome.REJECTED), (QUOTA, Outcome.EXHAUSTED)],
-    ids=["rejected key", "quota"],
+    ("failure", "outcome"),
+    [
+        (closed_during_setup(*INVALID_KEY), Outcome.REJECTED),
+        (closed_during_setup(*QUOTA), Outcome.EXHAUSTED),
+        (InvalidStatus(Response(403, "Forbidden", Headers())), Outcome.REJECTED),
+        (InvalidStatus(Response(429, "Too Many Requests", Headers())), Outcome.EXHAUSTED),
+    ],
+    ids=["rejected key", "quota", "upgrade forbidden", "upgrade rate-limited"],
 )
 async def test_fails_at_once_when_retrying_cannot_help(
-    rig: Rig, close: tuple[int, str], outcome: Outcome
+    rig: Rig, failure: Exception, outcome: Outcome
 ) -> None:
-    rig.lyria.failure = closed_during_setup(*close)
+    rig.lyria.failure = failure
     started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
 
     await rig.tick()
@@ -337,6 +344,74 @@ async def test_fails_at_once_when_retrying_cannot_help(
 
     assert started.result() is outcome
     assert rig.station.program is None
+
+
+@pytest.mark.parametrize(
+    ("audio_s", "ended", "outcome"),
+    [(3, False, Outcome.PLAYING), (7, True, Outcome.PLAYING), (3, True, Outcome.EXHAUSTED)],
+    ids=["still open", "ready", "short of its pre-roll"],
+)
+async def test_a_quota_close_waits_while_another_deck_may_start(
+    rig: Rig, audio_s: float, ended: bool, outcome: Outcome
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.feed(0, audio_s)
+    if ended:
+        rig.session(0).close(1011)  # an outage ends the first deck
+
+    rig.session(1).close(1011, QUOTA[1])  # the second closes for the quota
+    await rig.tick()
+    await rig.tick()
+    if not ended:
+        assert not started.done()
+        await rig.feed(0, 3)  # the open deck reaches its pre-roll
+        await rig.tick()
+
+    assert started.result() is outcome
+
+
+async def test_a_playing_program_survives_a_rejected_next_session(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    rig.session(0).close(1011)  # Lyria ends the live session; its buffer plays on
+    rig.listen(3)  # leaving less than the pre-roll, so no other deck could start a program
+
+    rig.session(1).close(*INVALID_KEY)
+    await rig.tick()
+    await rig.tick()
+
+    assert rig.station.program is heard  # a started program keeps retrying instead
+    assert live_deck(rig).plan is LOFI
+
+
+async def test_logs_why_a_start_failed_without_lyrias_text(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.lyria.failure = closed_during_setup(*QUOTA)
+    rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+
+    with caplog.at_level(logging.DEBUG):
+        await rig.tick()
+        await rig.tick()
+
+    assert "Could not open a Lyria RealTime session (exhausted)" in caplog.text
+    assert "exceeded" not in caplog.text
+
+
+async def test_a_replacement_that_fails_in_an_outage_returns_to_the_program_heard(
+    rig: Rig,
+) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    rig.lyria.failure = OSError("unreachable")
+    replaced = rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+
+    for _ in range(10):  # the first round waits for the next deck's session to close
+        await rig.tick(16)
+
+    assert replaced.result() is Outcome.UNAVAILABLE
+    assert rig.station.program is heard
 
 
 @pytest.mark.parametrize("cause", ["refused", "rejected key"])

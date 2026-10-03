@@ -433,21 +433,32 @@ class Station:
             program.refusals += 1
             program.retry_at = now + REFUSAL_RETRY_S
             if program.refusals >= 2 and not program.started.done():
-                log.info("Lyria refused the request twice: %s", deck.detail)
+                log.info("Lyria refused the request twice")
                 self._give_up(Outcome.REFUSED)
             return
-        if (outcome := FAILED_STARTS.get(deck.failure)) and not program.started.done():
-            log.warning("Could not open a Lyria RealTime session: %s", deck.detail)
+        starting = not program.started.done()
+        if (outcome := FAILED_STARTS.get(deck.failure)) and starting and not self._may_start(deck):
+            log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
             self._give_up(outcome)
             return
         program.failures += 1
         program.retry_at = (
             now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
         )
-        if program.failures > len(CONNECT_BACKOFF_S) and not program.started.done():
-            log.warning("Could not open a Lyria RealTime session: %s", deck.detail)
+        if program.failures > len(CONNECT_BACKOFF_S) and starting:
             unavailable = deck.failure is Failure.UNAVAILABLE
-            self._give_up(Outcome.UNAVAILABLE if unavailable else Outcome.FAILED)
+            outcome = Outcome.UNAVAILABLE if unavailable else Outcome.FAILED
+            log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
+            self._give_up(outcome)
+
+    def _may_start(self, failed: Deck) -> bool:
+        """Whether another deck of the failed deck's plan is still open, or ready to go live."""
+        return any(
+            deck is not failed
+            and deck.plan is failed.plan
+            and (deck.state is not State.ENDED or deck.ready)
+            for deck in self.decks
+        )
 
     def _audible(self, player: Player | None) -> bool:
         """Whether a running player sends the mixer's audio to a connected voice channel."""

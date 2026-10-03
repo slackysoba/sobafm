@@ -260,7 +260,9 @@ class Deck:
             if message is None:  # raised outside the handler, so the SDK's error isn't attached
                 raise LyriaMessageError("unreadable message")
             if message.filtered_prompt is not None and self._audio_bytes == 0:
-                self.detail = message.filtered_prompt.filtered_reason
+                reason = message.filtered_prompt.filtered_reason
+                log.debug("Deck %d: Lyria filtered the prompt: %s", self.number, reason)
+                self.detail = as_token(reason)  # free text could quote the request
                 return EndReason.FILTERED
             content = message.server_content
             for chunk in (content.audio_chunks or []) if content else []:
@@ -286,11 +288,14 @@ class Deck:
         self.end_reason = reason
         self.detail = detail or self.detail
         rate = self.rate
+        notes = [self.detail] if self.detail else []
+        if self.failure is not None and not self.has_audio:  # why a session never played
+            notes.append(self.failure)
         log.info(
             "Deck %d %s%s after %.0f s: %.0f s of audio%s",
             self.number,
             reason,
-            f" ({self.detail})" if self.detail else "",
+            f" ({', '.join(notes)})" if notes else "",
             self.age,
             self._audio_bytes / BYTES_PER_SECOND,
             f" at {rate:.2f}x real time" if rate is not None else "",
