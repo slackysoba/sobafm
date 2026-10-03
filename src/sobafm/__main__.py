@@ -50,7 +50,7 @@ def configure_logging(level: str) -> None:
     Libraries stay at INFO: at DEBUG, the websockets library logs request headers, which
     include the Gemini API key. The Google Gen AI SDK logs only warnings and errors, since at INFO
     it logs Lyria RealTime's setup reply verbatim. Python warnings are logged too, except two of
-    the SDK's: one quotes values Lyria sends, and the other is expected.
+    the SDK's: one quotes values Lyria and Gemini send, and the other is expected.
     """
     stdout: object = sys.stdout
     if isinstance(stdout, io.TextIOWrapper):
@@ -59,11 +59,12 @@ def configure_logging(level: str) -> None:
         stdout.reconfigure(errors="backslashreplace")
     logging.basicConfig(stream=sys.stdout, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.captureWarnings(True)
-    # The SDK's warning about an unknown enum value quotes the value, which Lyria sends.
+    # The SDK's warning about an unknown enum value quotes the value, which Lyria or Gemini
+    # sent and could span lines.
     warnings.filterwarnings(
-        "ignore", ".* is not a valid ", UserWarning, module=r"google\.genai\._common"
+        "ignore", "(?s).* is not a valid ", UserWarning, module=r"google\.genai\._common"
     )
-    # ADR-0004 records that Lyria RealTime is experimental, which the SDK warns about.
+    # ADR-0004 builds on the experimental lyria-realtime-exp model, which the SDK warns about.
     warnings.filterwarnings("ignore", "Realtime music generation is experimental")
     logging.getLogger().setLevel(logging.INFO)
     logging.getLogger("google_genai").setLevel(logging.WARNING)

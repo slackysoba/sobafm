@@ -35,6 +35,7 @@ def logging_levels() -> Iterator[None]:
     yield
     for logger, level in zip(loggers, levels, strict=True):
         logger.setLevel(level)
+    logging.captureWarnings(False)  # pytest restores the filters, but not this
 
 
 @pytest.fixture
@@ -165,8 +166,8 @@ def run_with_logging(code: str, **env: str) -> subprocess.CompletedProcess[str]:
     warning settings would add output of their own.
     """
     script = (
-        "import logging; from sobafm.__main__ import configure_logging; "
-        f"configure_logging('INFO'); {code}"
+        "import logging\nfrom sobafm.__main__ import configure_logging\n"
+        f"configure_logging('INFO')\n{code}"
     )
     child = {k: v for k, v in os.environ.items() if k not in {"PYTHONWARNINGS", "PYTHONDEVMODE"}}
     return subprocess.run(  # noqa: S603 - a fixed script, run by this interpreter
@@ -206,15 +207,74 @@ def test_logs_warnings_to_standard_output() -> None:
     assert logged.stderr == ""
 
 
-def test_ignores_the_sdks_warnings_about_lyria() -> None:
-    # An unknown enum value in a message from Lyria, and the first Lyria RealTime connection
-    logged = run_with_logging(
-        "from google.genai import types; from sobafm.deck import lyria; "
-        "types.Scale('AIzaFakeKey'); lyria('placeholder-key')()"
-    )
+# Unknown enum values, one spanning lines, and the first Lyria RealTime connection
+SDK_WARNINGS = (
+    "from google.genai import types; from sobafm.deck import lyria; "
+    "types.Scale('AIzaFakeKey'); types.Scale('AIzaFakeKey\\nmore'); lyria('placeholder-key')()"
+)
+
+
+@pytest.mark.parametrize("option", [None, "default"], ids=["no option", "PYTHONWARNINGS"])
+def test_ignores_the_sdks_warnings_that_quote_what_it_receives(option: str | None) -> None:
+    logged = run_with_logging(SDK_WARNINGS, **({"PYTHONWARNINGS": option} if option else {}))
 
     assert "AIzaFakeKey" not in logged.stdout + logged.stderr
     assert "experimental" not in logged.stdout + logged.stderr
+    if option is None:  # otherwise, imports warn before the setup
+        assert logged.stderr == ""
+
+
+# A deck over the SDK's own session, receiving one frame whose metadata has unknown values
+UNKNOWN_VALUES_FROM_LYRIA = """
+import asyncio, base64, contextlib, json, types
+from google.genai import live_music
+from sobafm.deck import Deck, State
+from sobafm.plan import MusicPlan
+
+config = {"scale": "AIzaFakeKey\\nmore", "musicGenerationMode": "AIzaFakeKey"}
+chunk = {
+    "data": base64.b64encode(bytes(3840)).decode(),
+    "mimeType": "audio/l16;rate=48000;channels=2",
+    "sourceMetadata": {"musicGenerationConfig": config},
+}
+frames = [json.dumps({"serverContent": {"audioChunks": [chunk]}}).encode()]
+
+
+class Socket:
+    async def send(self, message):
+        pass
+
+    async def recv(self, decode=None):
+        if not frames:
+            await asyncio.Event().wait()
+        return frames.pop()
+
+
+@contextlib.asynccontextmanager
+async def connect():
+    client = types.SimpleNamespace(vertexai=False)
+    yield live_music.AsyncMusicSession(api_client=client, websocket=Socket())
+
+
+async def run():
+    deck = Deck(connect, MusicPlan.from_request("ambient"))
+    deck.start()
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if deck.frames:
+            break
+    print("deck:", deck.state, len(deck.frames))
+
+
+asyncio.run(run())
+"""
+
+
+def test_parses_a_message_from_lyria_without_quoting_its_unknown_values() -> None:
+    logged = run_with_logging(UNKNOWN_VALUES_FROM_LYRIA)
+
+    assert "deck: generating 1" in logged.stdout  # it keeps the audio and keeps generating
+    assert "AIzaFakeKey" not in logged.stdout + logged.stderr
     assert logged.stderr == ""
 
 
