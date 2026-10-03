@@ -14,6 +14,7 @@ import discord
 from sobafm.deck import Connect, Deck, EndReason, State
 from sobafm.failures import Failure
 from sobafm.mixer import Mixer
+from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan
 
 log = logging.getLogger(__name__)
@@ -95,6 +96,7 @@ class Program:
     refusals: int = 0
     failures: int = 0
     retry_at: float = 0.0
+    underruns: int = 0  # frames of silence while it played
 
     @property
     def playing(self) -> bool:
@@ -135,6 +137,8 @@ class Station:
         self._voice = voice
         self._listeners = listeners
         self._empty_since: float | None = None
+        self._underruns_seen = 0  # the mixer's count at the last tick
+        self._dry_since: int | None = None  # the count when the current run of underruns began
         self._connect = connect
         self._pool = pool
         self._clock = clock
@@ -170,6 +174,7 @@ class Station:
             program.settle(Outcome.BUSY)
             return program.started
         if self.program is not None:
+            self._log_underrun(self.program, Outcome.REPLACED)
             self.program.settle(Outcome.REPLACED)
             if self.program.playing:
                 self._previous = self.program
@@ -249,6 +254,7 @@ class Station:
 
     async def reconcile(self) -> None:
         """Apply the reconcile rules once, in order."""
+        self._watch_underruns()
         player = self._voice()
         if self.program is not None and player is None:
             log.info("Voice connection lost; ending the program")
@@ -327,6 +333,7 @@ class Station:
 
     def _finish(self, outcome: Outcome) -> None:
         if self.program is not None:
+            self._log_underrun(self.program, outcome)
             self.program.settle(outcome)
             self.program = None
         self._previous = None
@@ -338,6 +345,27 @@ class Station:
         if previous is not None:
             log.info("Returning to the program still playing")
             self.program = previous
+
+    def _watch_underruns(self) -> None:
+        """Log each run of underruns, when listeners hear silence, and count it for the program."""
+        count = self.mixer.underruns  # read on the player thread's behalf; an int read is atomic
+        new = count - self._underruns_seen
+        self._underruns_seen = count
+        if self.program is not None and self.program.playing:
+            self.program.underruns += new
+        if new and self._dry_since is None:
+            self._dry_since = count - new
+            log.warning("The live deck ran dry; playing silence")
+        elif not new and self._dry_since is not None:
+            log.info("Silence lasted %.2f s", (count - self._dry_since) * FRAME_SECONDS)
+            self._dry_since = None
+
+    @staticmethod
+    def _log_underrun(program: Program, outcome: Outcome) -> None:
+        """Log a program's total underrun as it ends, if it played (NFR-2)."""
+        if program.playing:
+            seconds = program.underruns * FRAME_SECONDS
+            log.info("Program ended (%s) with %.2f s of underrun", outcome, seconds)
 
     def _wind_down(self, player: Player | None) -> None:
         """Without a program: drop idle decks, fade out, stop the player, and free sessions."""
