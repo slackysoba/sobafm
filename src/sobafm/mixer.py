@@ -129,10 +129,10 @@ class Mixer(discord.AudioSource):
             if playing:
                 self.underruns += 1
             return SILENCE
-        self.played += 1
         mixed = _scaled(*frames[0])
         for frame, gain in frames[1:]:
             mixed = audioop.add(mixed, _scaled(frame, gain), SAMPLE_WIDTH)
+        self.played += 1  # once it has mixed, so a failed read never counts
         return mixed
 
 
