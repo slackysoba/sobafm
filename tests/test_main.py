@@ -172,7 +172,8 @@ def log_in_child(message: str, **env: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603 - a fixed script, run by this interpreter
         [sys.executable, "-c", script],
         capture_output=True,
-        text=True,
+        encoding="ascii",  # explicit, as the child's records are escaped to ASCII here
+        errors="backslashreplace",
         check=True,
         timeout=60,
         env=child | env,
