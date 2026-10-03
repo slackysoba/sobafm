@@ -4,7 +4,7 @@ import itertools
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -1518,6 +1518,96 @@ async def test_leaving_supersedes_a_request_being_interpreted(
     assert guild.id not in bot.stations  # no station for a server SobaFM has left
 
 
+async def test_a_slow_start_announces_the_program_once_it_plays(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch, now: datetime
+) -> None:
+    started = slow_station(bot, monkeypatch)
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    gemini.error = errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}})
+    announced: list[str] = []
+
+    async def announce(answer: str) -> None:
+        announced.append(answer)
+
+    reply = await bot.play(member, "rainy lo-fi", None, announce)
+    assert reply.startswith("The music is taking longer than usual to start.")
+    await settle()
+    assert announced == []
+
+    started.set_result(Outcome.PLAYING)
+    await settle()
+
+    assert announced == [
+        "Now playing **rainy lo-fi**, requested by <@5>.\n"
+        "Style: rainy lo-fi\n"
+        f"Ends {ends(3600)}.\n"
+        "Gemini is unavailable right now, so the request was used as typed."
+    ]
+
+
+@pytest.mark.parametrize("outcome", [Outcome.UNAVAILABLE, Outcome.REPLACED, Outcome.STOPPED])
+async def test_a_slow_start_announces_why_it_didnt_play(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, outcome: Outcome
+) -> None:
+    started = slow_station(bot, monkeypatch)
+    guild = make_guild()
+    channel = make_channel(guild)
+    announced: list[str] = []
+
+    async def announce(answer: str) -> None:
+        announced.append(answer)
+
+    await bot.play(in_voice(channel, channel), "ambient", None, announce)
+    started.set_result(outcome)
+    await settle()
+
+    assert announced == [PLAY_REPLIES[outcome]]
+
+
+async def test_a_failed_announcement_is_logged(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    started = slow_station(bot, monkeypatch)
+    guild = make_guild()
+    channel = make_channel(guild)
+
+    async def announce(answer: str) -> None:  # the interaction's token has expired
+        raise discord.NotFound(MagicMock(status=404), "Unknown Webhook")
+
+    await bot.play(in_voice(channel, channel), "ambient", None, announce)
+    with caplog.at_level(logging.WARNING, logger="sobafm.bot"):
+        started.set_result(Outcome.PLAYING)
+        await settle()
+
+    assert "Could not update the answer to a slow start" in caplog.text
+    assert not bot.announcements
+
+
+async def test_closing_cancels_pending_announcements(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = slow_station(bot, monkeypatch)
+    guild = make_guild()
+    channel = make_channel(guild)
+    announced: list[str] = []
+
+    async def announce(answer: str) -> None:
+        announced.append(answer)
+
+    await bot.play(in_voice(channel, channel), "ambient", None, announce)
+    await settle()  # the announcement waits for the start to settle
+    async with asyncio.timeout(1):
+        await bot.close()
+
+    assert not started.cancelled()  # the program's own future is left alone
+    started.set_result(Outcome.STOPPED)
+    await settle()
+    assert announced == []
+
+
 async def test_a_slow_start_says_when_the_request_was_used_as_typed(
     bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1822,8 +1912,31 @@ async def test_play_command_answers_publicly_once_the_music_starts(
 
     interaction.response.defer.assert_awaited_once_with()
     interaction.followup.send.assert_awaited_once_with(
-        "Now playing **ambient**.", suppress_embeds=True
+        "Now playing **ambient**.", suppress_embeds=True, wait=True
     )
+
+
+async def test_play_command_edits_a_slow_starts_answer(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    announced: list[Callable[[str], Awaitable[object]]] = []
+
+    async def play(*args: Any) -> str:
+        announced.append(args[3])
+        return "The music is taking longer than usual to start."
+
+    monkeypatch.setattr(bot, "admit", AsyncMock(return_value=None))
+    monkeypatch.setattr(bot, "play", play)
+    interaction = make_interaction(make_member(None))
+    message = fake(discord.WebhookMessage, edit=AsyncMock())
+    interaction.followup.send.return_value = message
+    command: Any = bot.tree.get_command("play")
+
+    await command.callback(interaction, request="ambient")
+    async with asyncio.timeout(1):
+        await announced[0]("Now playing **ambient**.")
+
+    message.edit.assert_awaited_once_with(content="Now playing **ambient**.")
 
 
 async def test_play_command_explains_problems_privately(
