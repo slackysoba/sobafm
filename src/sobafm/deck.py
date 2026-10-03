@@ -63,6 +63,14 @@ def lyria(api_key: str) -> Connect:
     return lambda: client.aio.live.music.connect(model=MODEL)
 
 
+class LyriaMessageError(Exception):
+    """A message from Lyria RealTime that SobaFM can't use.
+
+    It carries a fixed description: the original error could quote anything Lyria sent, such as
+    the frame the SDK failed to parse, so neither its text nor its traceback is kept (OPS-5).
+    """
+
+
 class State(StrEnum):
     CONNECTING = "connecting"
     GENERATING = "generating"
@@ -236,18 +244,24 @@ class Deck:
             await asyncio.gather(receiving, retiring, return_exceptions=True)
 
     async def _receive(self, session: MusicSession) -> EndReason:
-        async for message in session.receive():
+        messages = aiter(session.receive())
+        while True:
+            try:
+                message = await anext(messages)
+            except StopAsyncIteration:
+                return EndReason.CLOSED
+            except ValueError:  # the SDK's errors for a frame it can't parse or validate quote it
+                raise LyriaMessageError("unreadable message") from None
             if message.filtered_prompt is not None and self._audio_bytes == 0:
                 self.detail = message.filtered_prompt.filtered_reason
                 return EndReason.FILTERED
             content = message.server_content
             for chunk in (content.audio_chunks or []) if content else []:
                 if chunk.mime_type is not None and not matches_mime_type(chunk.mime_type):
-                    raise ValueError(f"unexpected audio format {chunk.mime_type}")
+                    raise LyriaMessageError("unexpected audio format")
                 data = chunk.data or b""
                 self._audio_bytes += len(data)
                 self.frames.extend(self._splitter.split(data))
-        return EndReason.CLOSED
 
     def _set_generating(self, generating: bool) -> None:
         """Start or stop the clock behind `rate`."""

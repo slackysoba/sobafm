@@ -1,14 +1,17 @@
 import asyncio
+import contextlib
 import logging
-from typing import Any
+from collections.abc import AsyncGenerator
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
-from google.genai import types
+from google.genai import live_music, types
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
 
 import sobafm.deck
-from sobafm.deck import PAUSE_AT_S, RESUME_BELOW_S, Deck, EndReason, State
+from sobafm.deck import PAUSE_AT_S, RESUME_BELOW_S, Deck, EndReason, MusicSession, State
 from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS
 from sobafm.plan import MusicPlan
 from tests.doubles import FakeClock, FakeLyria, FakeSession, settle
@@ -216,14 +219,85 @@ async def test_accepts_its_format_in_any_case_and_order(lyria: FakeLyria, clock:
     assert deck.buffered_seconds == pytest.approx(2)
 
 
-async def test_fails_on_an_unexpected_audio_format(lyria: FakeLyria, clock: FakeClock) -> None:
+async def test_fails_on_an_unexpected_audio_format(
+    lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
     deck, session = await start_deck(lyria, clock)
 
-    session.send_audio(2, mime_type="audio/l16;rate=24000;channels=1")
+    with caplog.at_level(logging.DEBUG):
+        session.send_audio(2, mime_type="audio/l16;rate=24000;key=AIzaFakeKey")
+        await ended(deck)
+
+    assert (deck.end_reason, deck.detail) == (
+        EndReason.FAILED,
+        "LyriaMessageError: unexpected audio format",
+    )
+    assert not deck.frames
+    assert "AIzaFakeKey" not in caplog.text  # the format Lyria sent is free text
+
+
+class EndingSession(FakeSession):
+    """A session whose stream ends without an error."""
+
+    async def receive(self) -> AsyncGenerator[types.LiveMusicServerMessage]:
+        for message in ():
+            yield message
+
+
+async def test_records_a_stream_that_ends_as_closed(clock: FakeClock) -> None:
+    @contextlib.asynccontextmanager
+    async def connect() -> AsyncGenerator[MusicSession]:
+        yield EndingSession()
+
+    deck = Deck(connect, MusicPlan.from_request("ambient"), clock=clock)
+
+    deck.start()
     await ended(deck)
 
-    assert deck.end_reason is EndReason.FAILED
-    assert not deck.frames
+    assert (deck.end_reason, deck.detail) == (EndReason.CLOSED, None)
+
+
+class OneFrameSocket:
+    """A WebSocket that takes what a session sends, answers with one raw frame, then waits."""
+
+    def __init__(self, frame: bytes) -> None:
+        self.frames = [frame]
+
+    async def send(self, message: str) -> None:
+        pass
+
+    async def recv(self, decode: bool | None = None) -> bytes:
+        if not self.frames:
+            await asyncio.Event().wait()
+        return self.frames.pop()
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [b"not JSON: api_key:AIzaFakeKey", b'{"serverContent": {"audioChunks": "AIzaFakeKey"}}'],
+    ids=["unparseable", "invalid"],
+)
+async def test_never_logs_a_frame_it_cannot_read(
+    clock: FakeClock, caplog: pytest.LogCaptureFixture, frame: bytes
+) -> None:
+    @contextlib.asynccontextmanager
+    async def connect() -> AsyncGenerator[MusicSession]:  # the SDK's own session
+        client, socket = SimpleNamespace(vertexai=False), OneFrameSocket(frame)
+        yield live_music.AsyncMusicSession(
+            api_client=cast(Any, client), websocket=cast(Any, socket)
+        )
+
+    deck = Deck(connect, MusicPlan.from_request("ambient"), clock=clock)
+
+    with caplog.at_level(logging.DEBUG):
+        deck.start()
+        await ended(deck)
+
+    assert (deck.end_reason, deck.detail) == (
+        EndReason.FAILED,
+        "LyriaMessageError: unreadable message",
+    )
+    assert "AIzaFakeKey" not in caplog.text  # in neither the messages nor a traceback
 
 
 async def test_records_a_prompt_refused_before_any_audio(
