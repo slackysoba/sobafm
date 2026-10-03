@@ -1,8 +1,10 @@
 """Slash commands.
 
-Replies are private, except /play's answer once the request plays, fails, or is refused.
+Replies are private, except /play's answer once the request plays, fails, or is refused. A slow
+start's answer is edited once it plays or fails.
 """
 
+import asyncio
 import contextlib
 import logging
 from typing import TYPE_CHECKING
@@ -52,8 +54,17 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
         except Exception:  # such as an expired interaction, so nothing will play
             bot.free_cooldown(interaction.user.guild, cooldown)
             raise
-        reply = await bot.play(interaction.user, request, cooldown)
-        await interaction.followup.send(reply, suppress_embeds=True)  # titles are model-written
+        sent: asyncio.Future[discord.WebhookMessage] = asyncio.get_running_loop().create_future()
+
+        async def announce(answer: str) -> None:  # a slow start's answer, once it plays or fails
+            await (await sent).edit(content=answer)
+
+        reply = await bot.play(interaction.user, request, cooldown, announce)
+        try:  # titles are model-written, so links get no preview, then or after an edit
+            sent.set_result(await interaction.followup.send(reply, suppress_embeds=True, wait=True))
+        except BaseException:
+            sent.cancel()  # nothing to edit
+            raise
 
     @tree.command(description="Show what is playing")
     @app_commands.guild_only()
