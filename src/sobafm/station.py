@@ -407,39 +407,46 @@ class Station:
         program.settle(Outcome.PLAYING)
 
     def _discard(self) -> None:
-        """Drop ended decks the mixer no longer uses once they are empty or replaced."""
+        """Drop ended decks the mixer no longer uses, unless one is ready for the current plan.
+
+        An ended deck can't fill any further, so one short of the pre-roll could never go live.
+        """
         keep: list[Deck] = []
         for deck in self.decks:
             if deck.state is State.ENDED and not self.mixer.uses(deck):
-                if not deck.has_audio:
+                if not deck.delivered_preroll:
                     self._count_failure(deck)
                 replaced = self.program is None or deck.plan is not self.program.plan
-                if replaced or not deck.frames:
+                if replaced or not deck.ready:
                     continue
             keep.append(deck)
         self.decks = keep
 
     def _count_failure(self, deck: Deck) -> None:
-        """Schedule a retry for a session that ended without audio, or give up.
+        """Schedule a retry for a session that ended short of the pre-roll, or give up.
 
-        Sessions that fail together count once, so both decks of a round share one retry.
-        A program that has started keeps retrying, because its buffers may outlast an outage.
+        Sessions that fail together count once, so both decks of a round share one retry. A
+        cause that retrying can't help ends a start whichever deck reports it, unless another deck
+        of its plan may still start it. A program that has started keeps retrying, because its
+        buffers may outlast an outage.
         """
         program = self.program
         now = self._clock()
-        if program is None or deck.plan is not program.plan or now < program.retry_at:
-            return
-        if deck.end_reason is EndReason.FILTERED:
-            program.refusals += 1
-            program.retry_at = now + REFUSAL_RETRY_S
-            if program.refusals >= 2 and not program.started.done():
-                log.info("Lyria refused the request twice")
-                self._give_up(Outcome.REFUSED)
+        if program is None or deck.plan is not program.plan:
             return
         starting = not program.started.done()
         if (outcome := FAILED_STARTS.get(deck.failure)) and starting and not self._may_start(deck):
             log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
             self._give_up(outcome)
+            return
+        if now < program.retry_at:
+            return
+        if deck.end_reason is EndReason.FILTERED:
+            program.refusals += 1
+            program.retry_at = now + REFUSAL_RETRY_S
+            if program.refusals >= 2 and starting:
+                log.info("Lyria refused the request twice")
+                self._give_up(Outcome.REFUSED)
             return
         program.failures += 1
         program.retry_at = (

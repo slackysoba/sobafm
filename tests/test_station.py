@@ -11,7 +11,7 @@ from websockets.exceptions import ConnectionClosedError, InvalidStatus
 from websockets.frames import Close
 from websockets.http11 import Response
 
-from sobafm.deck import PAUSE_AT_S, Deck, State
+from sobafm.deck import PAUSE_AT_S, PREROLL_S, Deck, State
 from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan
 from sobafm.station import (
@@ -175,6 +175,10 @@ async def test_hands_over_when_the_live_deck_runs_low(rig: Rig) -> None:
     assert live_deck(rig) is not first
     assert live_deck(rig).plan is LOFI
     assert rig.station.mixer.underruns == 0
+    rig.listen(1)
+    await rig.tick()  # the drained deck, now ended, is discarded
+    assert rig.station.program is not None
+    assert rig.station.program.failures == 0  # a handover isn't a failed session
 
 
 async def test_retires_sessions_before_lyrias_limit(rig: Rig) -> None:
@@ -188,6 +192,8 @@ async def test_retires_sessions_before_lyrias_limit(rig: Rig) -> None:
     await rig.tick()  # new sessions open once the retired ones have closed
     assert len(rig.lyria.sessions) == 4
     assert live_deck(rig).buffered_seconds > 0
+    assert rig.station.program is not None
+    assert rig.station.program.failures == 0  # nor is a rotation
 
 
 async def test_a_retired_live_deck_plays_out_its_buffer(rig: Rig) -> None:
@@ -467,6 +473,102 @@ async def test_a_failed_request_after_a_stop_stays_stopped(rig: Rig) -> None:
     assert latest.result() is Outcome.REJECTED
     assert rig.station.program is None
     assert rig.station.mixer.switching  # fading out
+
+
+def cut_short(rig: Rig, seconds: float = 2.0) -> None:
+    """Have each open session send `seconds` of audio, then close, as Lyria might in an outage."""
+    for session in rig.lyria.sessions:
+        if not session.closed and not session.ending:
+            session.send_audio(seconds)
+            session.close(1011)
+
+
+@pytest.mark.parametrize("seconds", [2.0, PREROLL_S - FRAME_SECONDS], ids=["2 s", "a frame short"])
+async def test_backs_off_from_sessions_that_end_short_of_the_preroll(
+    rig: Rig, seconds: float
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+
+    for _ in range(40):  # ten seconds of ticks
+        await rig.tick()
+        cut_short(rig, seconds)
+    assert len(rig.lyria.sessions) <= 6  # rounds after the backoff, not at every tick
+    assert len(rig.station.decks) <= 2  # short decks can't go live, so none are kept
+
+    for _ in range(8):
+        await rig.tick(16)
+        cut_short(rig, seconds)
+    assert started.result() is Outcome.UNAVAILABLE
+
+
+async def test_a_playing_program_survives_repeated_short_sessions(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+
+    for _ in range(12):  # more short sessions than the backoff has steps
+        for session in rig.lyria.sessions[1:]:
+            if not session.closed and not session.ending:
+                session.send_audio(2)
+                session.close(1011)
+        await rig.tick(16)
+
+    assert rig.station.program is heard  # a started program keeps retrying
+    assert heard is not None
+    assert heard.failures > 3
+
+
+async def test_a_playing_program_survives_refused_next_sessions(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+
+    for _ in range(3):  # each round's next session is refused
+        rig.lyria.sessions[-1].refuse()
+        await rig.tick()
+        await rig.tick(REFUSAL_RETRY_S)
+
+    assert rig.station.program is heard
+
+
+async def test_a_rejected_key_fails_a_start_when_its_decks_fail_in_turn(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    rig.session(0).close(*INVALID_KEY)  # while the other deck is still open
+    await rig.tick()
+    await rig.tick()
+    assert not started.done()
+
+    rig.session(1).close(*INVALID_KEY)  # inside the retry window the first one set
+    await rig.tick()
+    await rig.tick()
+
+    assert started.result() is Outcome.REJECTED
+
+
+async def test_a_playing_program_backs_off_from_a_short_session(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.session(1).send_audio(2)  # the next deck's session ends short of the pre-roll
+    rig.session(1).close(1011)
+
+    await rig.tick()
+    await rig.tick()
+    assert len(rig.lyria.sessions) == 2  # no new session at once
+
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 3
+    assert rig.station.program is not None
+
+
+async def test_keeps_an_ended_deck_that_holds_its_preroll(rig: Rig) -> None:
+    await start_playing(rig)
+    await rig.feed(1, 10)
+    next_deck = rig.station.decks[1]
+    rig.session(1).close(1011)
+
+    await rig.tick()
+    await rig.tick()
+
+    assert next_deck in rig.station.decks  # ready to go live, though its session ended
+    assert len(rig.lyria.sessions) == 3  # and not a failure: its replacement opens at once
 
 
 async def test_reserves_two_sessions_for_each_program(lyria: FakeLyria, clock: FakeClock) -> None:
