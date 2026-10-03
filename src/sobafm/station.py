@@ -135,6 +135,7 @@ class Station:
         # What played when the program was requested, which resumes if the program can't start
         self._previous: Program | None = None
         self.decks: list[Deck] = []
+        self._seen_ended: set[Deck] = set()  # decks seen to have ended, so each end counts once
         self._voice = voice
         self._listeners = listeners
         self._empty_since: float | None = None
@@ -211,6 +212,7 @@ class Station:
             deck.retire()
         await asyncio.gather(*(deck.wait_ended() for deck in self.decks))
         self.decks.clear()
+        self._seen_ended.clear()
         self._pool.release(self)
         self.mixer.switch_to(None, 0)
         if (player := self._voice()) is not None:
@@ -470,28 +472,35 @@ class Station:
         self._settle_playing(program)
 
     def _discard(self) -> None:
-        """Drop ended decks the mixer no longer uses, unless one is ready for the current plan.
+        """Count sessions that ended early, then drop ended decks the mixer no longer uses,
+        except the one ready for the current plan with the most audio.
 
-        An ended deck can't fill any further, so one short of the pre-roll could never go live.
+        An ended deck can't fill any further: one short of the pre-roll could never go live, and
+        a handover needs only one.
         """
-        keep: list[Deck] = []
         for deck in self.decks:
-            if deck.state is State.ENDED and not self.mixer.uses(deck):
-                if not deck.delivered_preroll:
+            if deck.state is State.ENDED and deck not in self._seen_ended:
+                self._seen_ended.add(deck)
+                if deck.end_reason is not EndReason.RETIRED or not deck.delivered_preroll:
                     self._count_failure(deck)
-                replaced = self.program is None or deck.plan is not self.program.plan
-                if replaced or not deck.ready:
-                    continue
-            keep.append(deck)
-        self.decks = keep
+        ended = [d for d in self.decks if d.state is State.ENDED and not self.mixer.uses(d)]
+        plan = None if self.program is None else self.program.plan
+        spare = max(
+            (deck for deck in ended if deck.plan is plan and deck.ready),
+            key=lambda deck: deck.buffered_seconds,
+            default=None,
+        )
+        self.decks = [deck for deck in self.decks if deck not in ended or deck is spare]
+        self._seen_ended.intersection_update(self.decks)
 
     def _count_failure(self, deck: Deck) -> None:
-        """Schedule a retry for a session that ended short of the pre-roll, or give up.
+        """Schedule a retry for a session that ended early, or give up.
 
-        Sessions that fail together count once, so both decks of a round share one retry. A
-        cause that retrying can't help ends a start whichever deck reports it, unless another deck
-        of its plan may still start it. A program that has started keeps retrying, because its
-        buffers may outlast an outage.
+        A session ends early when it fails, or Lyria ends it, before SobaFM retires it, or when
+        it ends short of the pre-roll. Sessions that fail together count once, so both decks of a
+        round share one retry. A cause that retrying can't help ends a start whichever deck
+        reports it, unless another deck of its plan may still start it. A program that has
+        started keeps retrying, because its buffers may outlast an outage.
         """
         program = self.program
         now = self._clock()

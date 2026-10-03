@@ -218,6 +218,7 @@ async def test_a_retired_live_deck_plays_out_its_buffer(rig: Rig) -> None:
 async def test_keeps_an_ended_deck_the_mixer_still_plays(rig: Rig) -> None:
     await start_playing(rig)
     first = live_deck(rig)
+    rig.listen(3)  # leaving less than the pre-roll, so it couldn't go live again
 
     rig.session(0).close(1011)
     await rig.tick()
@@ -260,7 +261,9 @@ async def test_keeps_playing_when_lyria_closes_the_live_session(rig: Rig) -> Non
 
     assert live_deck(rig) is not first
     assert rig.station.mixer.underruns == 0
-    assert len(rig.lyria.sessions) == 3  # a replacement for the closed session
+    assert len(rig.lyria.sessions) == 2
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 3  # a replacement for the closed session, after the backoff
 
 
 async def test_retries_a_refused_start_once(rig: Rig) -> None:
@@ -568,7 +571,78 @@ async def test_keeps_an_ended_deck_that_holds_its_preroll(rig: Rig) -> None:
     await rig.tick()
 
     assert next_deck in rig.station.decks  # ready to go live, though its session ended
-    assert len(rig.lyria.sessions) == 3  # and not a failure: its replacement opens at once
+    assert len(rig.lyria.sessions) == 2  # its replacement opens after the backoff
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 3
+
+
+async def test_keeps_one_ended_deck_ready_for_the_current_plan(rig: Rig) -> None:
+    await start_playing(rig)
+    await rig.feed(1, 10)
+    rig.session(1).close(1011)
+    await rig.tick()
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    await rig.feed(2, 20)
+    rig.session(2).close(1011)  # a second ended deck, with more audio
+
+    await rig.tick()
+    await rig.tick()
+
+    ended = [deck for deck in rig.station.decks if deck is not live_deck(rig)]
+    assert [deck.buffered_seconds for deck in ended if deck.state is State.ENDED] == [20]
+
+
+async def test_backs_off_from_sessions_retired_before_their_preroll(rig: Rig) -> None:
+    rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()  # its sessions open, and never send audio
+    await rig.tick(SESSION_LIMIT_S)  # so they are retired at the session limit
+
+    await rig.tick()
+    await rig.tick()
+    assert len(rig.lyria.sessions) == 2  # no new sessions at once
+
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 4
+
+
+def end_after_preroll(rig: Rig) -> None:
+    """Have each open session send its pre-roll and a little more, then close."""
+    cut_short(rig, PREROLL_S + 1)
+
+
+async def test_a_playing_program_backs_off_from_sessions_that_end_after_the_preroll(
+    rig: Rig,
+) -> None:
+    await start_playing(rig)
+
+    for _ in range(40):  # ten seconds of ticks
+        end_after_preroll(rig)
+        await rig.tick()
+        rig.listen(0.25)
+
+    assert len(rig.lyria.sessions) <= 6  # rounds after the backoff, not at every tick
+    assert len(rig.station.decks) <= 4  # the live and incoming decks, a spare, and one filling
+    assert rig.station.program is not None
+    assert rig.station.program.playing
+
+
+async def test_a_start_that_cannot_be_heard_backs_off_from_sessions_that_end_after_the_preroll(
+    rig: Rig,
+) -> None:
+    rig.player.connected = False
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+
+    for _ in range(40):  # ten seconds of ticks
+        await rig.tick()
+        end_after_preroll(rig)
+    assert len(rig.lyria.sessions) <= 6
+    assert len(rig.station.decks) <= 3  # a spare and two filling
+
+    for _ in range(8):
+        await rig.tick(16)
+        end_after_preroll(rig)
+    assert started.result() is Outcome.UNAVAILABLE
+    assert len(rig.station.decks) <= 3
 
 
 async def test_reserves_two_sessions_for_each_program(lyria: FakeLyria, clock: FakeClock) -> None:
