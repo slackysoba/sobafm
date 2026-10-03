@@ -28,8 +28,9 @@ REFUSAL_RETRY_S = 30.0
 CONNECT_BACKOFF_S = (2.0, 5.0, 15.0)
 PLAYER_RETRY_S = 1.0  # starting discord.py's player, at most once per interval
 EMPTY_GRACE_S = 60.0  # how long a program plays to an empty channel (PLAY-4)
-STATUS_TIMEOUT_S = 10.0  # how long closing waits for a voice channel status request
-STATUS_RETRY_S = 10.0  # after a voice channel status request fails
+STATUS_TIMEOUT_S = 10.0  # how long closing or moving waits for voice channel status requests
+STATUS_RETRY_S = 10.0  # before checking a status again, doubling while requests for it fail
+STATUS_RETRY_MAX_S = 300.0  # the longest wait between them
 
 
 class Player(Protocol):
@@ -129,11 +130,13 @@ class Station:
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._channel = channel  # the ID of SobaFM's voice channel, if it is in one
-        self._set_status = status  # shows a status on a channel, saying whether that settled it
-        self._shown: tuple[int, str] | None = None  # the status SobaFM shows, and where
-        self._status_task: asyncio.Task[None] | None = None
+        self._set_status = status  # shows a status on a channel, or says SobaFM may not
+        self._shown: tuple[int, str] | None = None  # the status SobaFM set, and where
+        self._status_task: asyncio.Task[None] | None = None  # the request in flight
+        self._status_held = False  # while SobaFM moves
+        self._unshown: tuple[int, str | None] | None = None  # the last status not shown, and where
+        self._status_failures = 0  # failed requests for `_unshown`
         self._status_retry_at = 0.0
-        self._status_held = False
 
     @property
     def time_left(self) -> float | None:
@@ -176,7 +179,6 @@ class Station:
 
         It also clears the voice channel status, which needs SobaFM still in the channel.
         """
-        self._status_held = True
         self._finish(outcome)
         if self._task is not None:
             self._task.cancel()
@@ -189,30 +191,34 @@ class Station:
         self.mixer.switch_to(None, 0)
         if (player := self._voice()) is not None:
             player.stop()
-        await self.clear_status()
+        await self._clear_status()
 
     @contextlib.asynccontextmanager
     async def moving(self) -> AsyncGenerator[None]:
         """Clear the voice channel status before SobaFM moves, and show it again after."""
         self._status_held = True
         try:
-            await self.clear_status()
+            await self._clear_status()
             yield
         finally:
             self._status_held = False
 
-    async def clear_status(self) -> None:
-        """Clear the voice channel status, if SobaFM shows one in the channel it is in.
+    async def _clear_status(self) -> None:
+        """Clear the voice channel status, if SobaFM set one in the channel it is in.
 
-        The waits are bounded but never cancel a request: discord.py's rate limiter mishandles a
-        request cancelled while it waits.
+        The clear follows any request in flight, so requests never overlap, and this waits for
+        both at most STATUS_TIMEOUT_S. Neither is cancelled: discord.py's rate limiter
+        mishandles a request cancelled while it waits.
         """
-        if self._status_task is not None:
-            await asyncio.wait({self._status_task}, timeout=STATUS_TIMEOUT_S)
+        self._status_task = asyncio.create_task(self._clear_after(self._status_task))
+        await asyncio.wait({self._status_task}, timeout=STATUS_TIMEOUT_S)
+
+    async def _clear_after(self, request: asyncio.Task[None] | None) -> None:
+        if request is not None:
+            await asyncio.wait({request})
         channel = self._channel()
         if channel is not None and self._shown is not None and self._shown[0] == channel:
-            self._status_task = asyncio.create_task(self._show_status(channel, None))
-            await asyncio.wait({self._status_task}, timeout=STATUS_TIMEOUT_S)
+            await self._show_status(channel, None)
 
     async def _run(self) -> None:
         while True:
@@ -254,33 +260,45 @@ class Station:
         """Show the title being heard as the voice channel status, one request at a time (FB-2).
 
         A program shows its title once it plays, and a replacement leaves the title still heard
-        until it plays itself. Moves and reconnects are caught up on the next tick. After a move,
-        the old channel keeps the status until it empties, since only a member there may clear
-        it.
+        until it plays itself. A drag to another channel is caught up on the next tick, and the
+        old channel keeps the status until it empties: only someone connected there, or with
+        Manage Channels, can change it.
         """
-        program = self.program
-        if program is not None and not program.playing:
-            return
-        title = program.plan.title if program is not None else None
+        heard = self._shown[1] if self._shown is not None else None
+        if self.program is None:
+            title = None
+        elif self.program.playing:
+            title = self.program.plan.title
+        else:
+            title = heard
         busy = self._status_task is not None and not self._status_task.done()
         channel = self._channel()
-        if busy or self._status_held or channel is None or self._clock() < self._status_retry_at:
+        if busy or self._status_held or channel is None:
             return
         if self._shown is not None and self._shown[0] != channel:
-            self._shown = None  # moved without `moving()`
-        if (self._shown[1] if self._shown is not None else None) != title:
+            self._shown, heard = None, None  # dragged without `moving()`
+        unshown = self._unshown == (channel, title) and self._clock() < self._status_retry_at
+        if title != heard and not unshown:
             self._status_task = asyncio.create_task(self._show_status(channel, title))
 
     async def _show_status(self, channel: int, title: str | None) -> None:
+        """Show `title` on `channel`, or schedule another attempt."""
+        failures = self._status_failures if self._unshown == (channel, title) else 0
         try:
-            settled = await self._set_status(channel, title)
+            allowed = await self._set_status(channel, title)
         except Exception:  # the status is cosmetic, so it must never affect playback
-            log.exception("Could not update the voice channel status")
-            settled = False
-        if settled:
-            self._shown = None if title is None else (channel, title)
+            if not failures:  # once for each status, since retries would repeat it
+                log.warning("Could not update the voice channel status", exc_info=True)
+            failures += 1
+            delay = min(STATUS_RETRY_S * 2 ** (failures - 1), STATUS_RETRY_MAX_S)
         else:
-            self._status_retry_at = self._clock() + STATUS_RETRY_S
+            if allowed:
+                self._shown = None if title is None else (channel, title)
+                self._unshown = None
+                return
+            delay = STATUS_RETRY_S  # checking the permission again sends no request
+        self._unshown, self._status_failures = (channel, title), failures
+        self._status_retry_at = self._clock() + delay
 
     def _abandoned(self) -> bool:
         """Whether the channel has had no listeners for the whole grace period."""

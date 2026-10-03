@@ -20,7 +20,7 @@ from google.genai import errors, types
 from pydantic import ValidationError
 
 import sobafm.bot
-from sobafm.bot import PLAY_REPLIES, REFUSALS, SobaFM, Voice, listeners
+from sobafm.bot import PLAY_REPLIES, REFUSALS, SobaFM, Voice, escape, listeners, voice_channel_id
 from sobafm.config import load_settings
 from sobafm.interpreter import Interpreter
 from sobafm.interpreter import Outcome as Interpreted
@@ -1623,7 +1623,7 @@ async def test_sets_the_voice_channel_status(bot: SobaFM, status: str | None) ->
 async def test_skips_the_status_without_permission(bot: SobaFM) -> None:
     channel = status_channel(make_guild(), allowed=False)
 
-    assert await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")  # settled: nothing to retry
+    assert not await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
     channel.edit.assert_not_awaited()
 
 
@@ -1632,24 +1632,48 @@ async def test_skips_the_status_of_a_stage_channel(bot: SobaFM) -> None:
     channel.permissions_for.return_value = discord.Permissions(set_voice_channel_status=True)
     channel.edit = AsyncMock()
 
-    assert await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
+    assert not await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
     channel.edit.assert_not_awaited()
 
 
 async def test_skips_the_status_of_a_channel_that_is_gone(bot: SobaFM) -> None:
-    assert await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
+    assert not await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
 
 
-async def test_retries_a_status_discord_refuses(
-    bot: SobaFM, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_leaves_a_refused_status_to_the_station(bot: SobaFM) -> None:
     channel = status_channel(make_guild(), allowed=True)
-    channel.edit.side_effect = discord.HTTPException(MagicMock(status=500), "unavailable")
+    channel.edit.side_effect = discord.HTTPException(MagicMock(status=403), "Missing Access")
 
-    with caplog.at_level(logging.WARNING, logger="sobafm.bot"):
-        assert not await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
+    with pytest.raises(discord.HTTPException):
+        await bot.show_voice_status(CHANNEL_ID, "Rainy lo-fi")
 
-    assert "Could not set the voice channel status" in caplog.text
+
+async def test_shows_the_status_only_once_connected(bot: SobaFM) -> None:
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    guild.voice_client.is_connected.return_value = False  # still in the handshake
+
+    assert voice_channel_id(guild) is None
+
+    guild.voice_client.is_connected.return_value = True
+    assert voice_channel_id(guild) == CHANNEL_ID
+
+
+@pytest.mark.parametrize(
+    ("text", "escaped"),
+    [
+        (
+            "[a](b) **lofi** [Free Nitro](https://evil.example)",
+            "\\[a\\](b) \\*\\*lofi\\*\\* \\[Free Nitro\\](https://evil.example)",
+        ),
+        ("<t:0:R> <@5> <#10> <:x:1>", "\\<t:0:R> \\<@5> \\<#10> \\<:x:1>"),
+        ("a\\b ~~s~~ ||p|| `c` __u__", "a\\\\b \\~\\~s\\~\\~ \\|\\|p\\|\\| \\`c\\` \\_\\_u\\_\\_"),
+        ("Rainy lo-fi #2: 50% off > 3", "Rainy lo-fi #2: 50% off > 3"),
+    ],
+    ids=["masked links", "mentions and timestamps", "inline markup", "plain"],
+)
+def test_escapes_each_markup_character(text: str, escaped: str) -> None:
+    assert escape(text) == escaped
 
 
 async def test_a_station_shows_its_status_in_sobafms_channel(

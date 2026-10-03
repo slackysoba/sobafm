@@ -2,6 +2,7 @@ import asyncio
 import logging
 import threading
 from dataclasses import dataclass
+from unittest.mock import MagicMock
 
 import discord
 import pytest
@@ -803,6 +804,17 @@ async def test_clears_the_status_before_a_move(rig: Rig) -> None:
     assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None), (11, LOFI.title)]
 
 
+async def test_shows_the_title_still_heard_where_sobafm_is_moved(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+
+    rig.move(11)
+    await rig.tick()
+
+    assert rig.statuses == [(CHANNEL, LOFI.title), (11, LOFI.title)]
+
+
 async def test_clears_the_status_on_close(rig: Rig) -> None:
     await start_playing(rig)
 
@@ -820,82 +832,191 @@ async def test_close_leaves_a_status_it_never_showed(rig: Rig) -> None:
     assert rig.statuses == []
 
 
+async def test_close_leaves_a_channel_sobafm_was_dragged_out_of(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.move(11)  # not yet caught up: SobaFM set no status there, and can't clear the old one
+
+    await rig.station.close()
+
+    assert rig.statuses == [(CHANNEL, LOFI.title)]
+
+
+def answering_late(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> tuple[asyncio.Event, list[str]]:
+    """Make Discord answer status requests once the event is set, recording each one."""
+    answered = asyncio.Event()
+    events: list[str] = []
+
+    async def late(channel: int, status: str | None) -> bool:
+        events.append(f"sent {status}")
+        await answered.wait()
+        events.append(f"landed {status}")
+        return True
+
+    monkeypatch.setattr(rig.station, "_set_status", late)
+    return answered, events
+
+
 async def test_sends_one_status_request_at_a_time(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    answered = asyncio.Event()
-    shown: list[tuple[int, str | None]] = []
-
-    async def slow(channel: int, status: str | None) -> bool:  # Discord answers late
-        await answered.wait()
-        shown.append((channel, status))
-        return True
-
-    monkeypatch.setattr(rig.station, "_set_status", slow)
     await start_playing(rig)
+    answered, events = answering_late(rig, monkeypatch)
     rig.station.stop()
     await rig.tick()
     await rig.tick()
-    assert shown == []  # the title's request is still in flight, and nothing cancels it
+    assert events == ["sent None"]  # in flight, and neither repeated nor cancelled
 
     answered.set()
     await rig.tick()
 
-    assert shown == [(CHANNEL, LOFI.title), (CHANNEL, None)]
+    assert events == ["sent None", "landed None"]
 
 
-async def test_retries_a_status_discord_refused(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
-    answers = iter([False, True])
-    shown: list[tuple[int, str | None]] = []
+async def test_close_clears_a_title_that_lands_meanwhile(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answered, events = answering_late(rig, monkeypatch)
+    await start_playing(rig)  # the title's request is in flight
+    closing = asyncio.create_task(rig.station.close())
+    await settle()
 
-    async def flaky(channel: int, status: str | None) -> bool:
-        shown.append((channel, status))
-        return next(answers)
+    answered.set()
+    async with asyncio.timeout(1):
+        await closing
 
-    monkeypatch.setattr(rig.station, "_set_status", flaky)
-    await start_playing(rig)
-    await rig.tick(STATUS_RETRY_S - 0.5)
-    assert shown == [(CHANNEL, LOFI.title)]
-
-    await rig.tick(0.5)
-    await rig.tick()
-
-    assert shown == [(CHANNEL, LOFI.title), (CHANNEL, LOFI.title)]  # then settled
+    assert events == [f"sent {LOFI.title}", f"landed {LOFI.title}", "sent None", "landed None"]
 
 
 async def test_close_waits_a_bounded_time_for_the_status(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    await start_playing(rig)
     monkeypatch.setattr("sobafm.station.STATUS_TIMEOUT_S", 0.01)
-    answered = asyncio.Event()
-    finished: list[str | None] = []
-
-    async def hang(channel: int, status: str | None) -> bool:  # Discord never answers in time
-        await answered.wait()
-        finished.append(status)
-        return True
-
-    monkeypatch.setattr(rig.station, "_set_status", hang)
+    answered, events = answering_late(rig, monkeypatch)
+    await start_playing(rig)  # Discord doesn't answer the title's request in time
 
     async with asyncio.timeout(1):
         await rig.station.close()
-
     answered.set()
     await settle()
-    assert finished == [None]  # the clear was left running rather than cancelled
+
+    # Nothing was cancelled, and the clear followed the title.
+    assert events == [f"sent {LOFI.title}", f"landed {LOFI.title}", "sent None", "landed None"]
 
 
-async def test_a_failing_status_never_affects_playback(
+async def test_checks_again_for_a_status_sobafm_may_not_set(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    allowed = [False]
+    shown: list[tuple[int, str | None]] = []
+
+    async def show(channel: int, status: str | None) -> bool:
+        shown.append((channel, status))
+        return allowed[0]
+
+    monkeypatch.setattr(rig.station, "_set_status", show)
+    await start_playing(rig)
+    await rig.tick(STATUS_RETRY_S - 0.25)
+    assert shown == [(CHANNEL, LOFI.title)]
+
+    allowed[0] = True  # a manager grants the permission
+    await rig.tick(0.25)
+    rig.station.stop()
+    await rig.tick()
+
+    assert shown == [(CHANNEL, LOFI.title), (CHANNEL, LOFI.title), (CHANNEL, None)]
+
+
+async def test_never_clears_a_status_sobafm_did_not_set(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shown: list[tuple[int, str | None]] = []
+
+    async def not_allowed(channel: int, status: str | None) -> bool:
+        shown.append((channel, status))
+        return False
+
+    monkeypatch.setattr(rig.station, "_set_status", not_allowed)
+    await start_playing(rig)
+
+    rig.station.stop()
+    await rig.tick()
+    await rig.station.close()
+
+    assert shown == [(CHANNEL, LOFI.title)]  # a member's own status stays
+
+
+def refusing(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
+    """Make Discord refuse every status request, recording each one."""
+    sent: list[str | None] = []
+
+    async def refuse(channel: int, status: str | None) -> bool:
+        sent.append(status)
+        raise discord.HTTPException(MagicMock(status=403), "Missing Access")
+
+    monkeypatch.setattr(rig.station, "_set_status", refuse)
+    return sent
+
+
+async def test_backs_off_from_a_status_discord_keeps_refusing(
     rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    async def fail(channel: int, status: str | None) -> bool:
-        raise RuntimeError("a bug")
+    sent = refusing(rig, monkeypatch)
 
-    monkeypatch.setattr(rig.station, "_set_status", fail)
-
-    with caplog.at_level(logging.ERROR, logger="sobafm.station"):
+    with caplog.at_level(logging.WARNING, logger="sobafm.station"):
         await start_playing(rig)
+        for attempt, delay in enumerate([10, 20, 40, 80, 160, 300, 300], start=2):
+            await rig.tick(delay - 0.25)
+            assert len(sent) == attempt - 1
+            await rig.tick(0.25)
+            assert len(sent) == attempt
 
-    assert "Could not update the voice channel status" in caplog.text
-    assert rig.station.program is not None
+    assert caplog.text.count("Could not update the voice channel status") == 1
+    assert rig.station.program is not None  # the status never affects playback
+
+
+async def test_tries_a_new_status_at_once(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    sent = refusing(rig, monkeypatch)
+    await start_playing(rig)
+    await rig.feed(1, 60)
+
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    for _ in range(4):
+        await rig.tick()
+    await rig.feed(-1, 6)
+    await rig.tick()
+
+    assert sent == [LOFI.title, SYNTHWAVE.title]  # with no wait after the title that failed
+
+
+async def test_counts_failures_afresh_once_a_status_shows(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    refusals = iter([True, False, False, True])  # whether Discord refuses each request
+    sent: list[str | None] = []
+
+    async def answer(channel: int, status: str | None) -> bool:
+        sent.append(status)
+        if next(refusals, False):
+            raise discord.HTTPException(MagicMock(status=500), "unavailable")
+        return True
+
+    monkeypatch.setattr(rig.station, "_set_status", answer)
+    again = MusicPlan.from_request("rainy lo-fi")  # a later program with the same title
+    with caplog.at_level(logging.WARNING, logger="sobafm.station"):
+        await start_playing(rig)
+        await rig.tick(STATUS_RETRY_S)
+        rig.station.stop()
+        await rig.tick()
+        rig.station.play(again, "Member", duration_seconds=HOUR_S)
+        await rig.tick()
+        await rig.feed(-1, 10)
+        rig.listen(3)
+        await rig.tick()
+        assert sent == [LOFI.title, LOFI.title, None, LOFI.title]
+
+        await rig.tick(STATUS_RETRY_S - 0.25)
+        assert len(sent) == 4
+        await rig.tick(0.25)
+
+    assert sent == [LOFI.title, LOFI.title, None, LOFI.title, LOFI.title]
+    assert caplog.text.count("Could not update the voice channel status") == 2

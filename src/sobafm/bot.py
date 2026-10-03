@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import math
+import re
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -52,6 +53,8 @@ REFUSALS = {  # the current music keeps playing
     ),
     Interpreted.BLOCKED: "Gemini's safety filters blocked that request, so nothing changed.",
 }
+# Discord's inline markup: emphasis, spoilers, code, masked links, mentions, and timestamps
+MARKUP = re.compile(r"[\\*_~|`<\[\]]")
 FALLBACK_NOTE = "\nGemini couldn't interpret the request, so it was used as typed."
 
 
@@ -292,22 +295,16 @@ class SobaFM(discord.Client):
         return PLAY_REPLIES[outcome]
 
     async def show_voice_status(self, channel_id: int, status: str | None) -> bool:
-        """Show `status` on voice channel `channel_id`, if SobaFM may set it there (FB-2).
+        """Show `status` on voice channel `channel_id`, or return False if SobaFM may not (FB-2).
 
-        Returns whether that settled it, rather than calling for another attempt.
+        Discord's errors propagate, for the station to log and retry.
         """
         channel = self.get_channel(channel_id)
         if not isinstance(channel, discord.VoiceChannel):
-            return True  # gone, so there is nothing to show
+            return False  # gone, or a Stage channel
         if not channel.permissions_for(channel.guild.me).set_voice_channel_status:
-            return True  # skipped silently, as FB-2 allows
-        try:
-            await channel.edit(status=status)
-        except discord.HTTPException:
-            log.warning(
-                "Could not set the voice channel status in %s", channel.guild, exc_info=True
-            )
             return False
+        await channel.edit(status=status)
         return True
 
     def now(self, guild: discord.Guild) -> str:
@@ -612,13 +609,19 @@ def describe(plan: MusicPlan, requester: str, ends: datetime) -> str:
 
 
 def escape(text: str) -> str:
-    """Model-written text with Discord's markdown escaped, and its mentions and timestamps too."""
-    return discord.utils.escape_markdown(text).replace("<", "\\<")
+    """Model-written text with each character of Discord's inline markup escaped (FB-4).
+
+    Escaping each character keeps masked links, mentions, and timestamps from forming, which
+    `discord.utils.escape_markdown` misses inside a masked link. Markup that needs a line start
+    can't form, since the text never starts a line.
+    """
+    return MARKUP.sub(r"\\\g<0>", text)
 
 
 def voice_channel_id(guild: discord.Guild) -> int | None:
+    """SobaFM's voice channel, while it is connected there."""
     voice = cast(discord.VoiceClient | None, guild.voice_client)
-    return voice.channel.id if voice is not None else None
+    return voice.channel.id if voice is not None and voice.is_connected() else None
 
 
 def listeners(guild: discord.Guild) -> int:
