@@ -132,9 +132,9 @@ class Deck:
         return self.buffered_seconds >= PREROLL_S
 
     @property
-    def has_audio(self) -> bool:
-        """Whether the session produced any audio."""
-        return self._audio_bytes > 0
+    def delivered_preroll(self) -> bool:
+        """Whether the session produced the pre-roll's worth of audio, as one that went live did."""
+        return self._audio_bytes >= PREROLL_S * BYTES_PER_SECOND
 
     @property
     def rate(self) -> float | None:
@@ -289,7 +289,7 @@ class Deck:
         self.detail = detail or self.detail
         rate = self.rate
         notes = [self.detail] if self.detail else []
-        if self.failure is not None and not self.has_audio:  # why a session never played
+        if self.failure is not None and not self.delivered_preroll:  # why it couldn't go live
             notes.append(self.failure)
         log.info(
             "Deck %d %s%s after %.0f s: %.0f s of audio%s",

@@ -527,6 +527,20 @@ async def test_logs_a_close_reason_only_as_a_token(
     assert "AIzaFakeKey" not in caplog.text
 
 
+async def test_names_the_cause_of_a_session_that_ended_short(
+    lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    deck, session = await start_deck(lyria, clock)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.deck"):
+        session.send_audio(2)
+        session.close(1011, "You exceeded your current quota, please check your plan.")
+        await ended(deck)
+
+    assert "(code 1011, exhausted) after" in caplog.text  # it never held the pre-roll
+    assert not deck.delivered_preroll
+
+
 async def test_records_a_quota_close_while_generating(
     lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
 ) -> None:
