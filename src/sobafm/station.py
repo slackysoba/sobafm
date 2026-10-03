@@ -14,6 +14,7 @@ import discord
 from sobafm.deck import Connect, Deck, EndReason, State
 from sobafm.failures import Failure
 from sobafm.mixer import Mixer
+from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ FADE_OUT_S = 3.0
 REFUSAL_RETRY_S = 30.0
 CONNECT_BACKOFF_S = (2.0, 5.0, 15.0)
 PLAYER_RETRY_S = 1.0  # starting discord.py's player, at most once per interval
+RECOVERED_S = 1.0  # audio after a run of underruns that ends it, so a stutter is one run
 EMPTY_GRACE_S = 60.0  # how long a program plays to an empty channel (PLAY-4)
 STATUS_TIMEOUT_S = 10.0  # how long closing or moving waits for voice channel status requests
 STATUS_RETRY_S = 10.0  # before checking a status again, doubling while requests for it fail
@@ -95,6 +97,7 @@ class Program:
     refusals: int = 0
     failures: int = 0
     retry_at: float = 0.0
+    underruns: int = 0  # frames of silence while it played
 
     @property
     def playing(self) -> bool:
@@ -135,6 +138,11 @@ class Station:
         self._voice = voice
         self._listeners = listeners
         self._empty_since: float | None = None
+        self._underruns_counted = 0  # the mixer's count when the program heard was last credited
+        self._underruns_seen = 0  # and at the last tick, with the count of reads with audio
+        self._played_seen = 0
+        self._dry_since: int | None = None  # the count when the current run of silence began
+        self._recovered = 0  # reads with audio since the run's last underrun
         self._connect = connect
         self._pool = pool
         self._clock = clock
@@ -145,7 +153,6 @@ class Station:
         self._channel = channel  # the ID of SobaFM's voice channel, if it is in one
         self._set_status = status  # shows a status on a channel, or says SobaFM may not
         self._shown: tuple[int, str] | None = None  # the status SobaFM set, and where
-        self._heard: str | None = None  # the title of the program heard, while one is
         self._status_task: asyncio.Task[None] | None = None  # the request in flight
         self._status_held = False  # while SobaFM moves
         self._unshown: tuple[int, str | None] | None = None  # the last status not shown, and where
@@ -249,6 +256,7 @@ class Station:
 
     async def reconcile(self) -> None:
         """Apply the reconcile rules once, in order."""
+        self._watch_underruns()
         player = self._voice()
         if self.program is not None and player is None:
             log.info("Voice connection lost; ending the program")
@@ -280,16 +288,14 @@ class Station:
         the next tick, and the old channel keeps the status until it empties or SobaFM shows
         another title there: only someone connected there, or with Manage Channels, can change it.
         """
-        program = self.program
-        if program is None or program.playing:
-            self._heard = program.plan.title if program is not None else None
         busy = self._status_task is not None and not self._status_task.done()
         channel = self._channel()
         if busy or self._status_held or channel is None:
             return
         if self._shown is not None and self._shown[0] != channel:
             self._shown = None  # dragged without `moving()`
-        title = self._heard
+        heard = self._program_heard()
+        title = heard.plan.title if heard is not None else None
         shown = self._shown[1] if self._shown is not None else None
         unshown = self._unshown == (channel, title) and self._clock() < self._status_retry_at
         if title != shown and not unshown:
@@ -326,6 +332,10 @@ class Station:
         return now - self._empty_since >= EMPTY_GRACE_S
 
     def _finish(self, outcome: Outcome) -> None:
+        self._watch_underruns()  # silence since the last tick, so the next tick won't count it
+        if (heard := self._program_heard()) is not None:
+            self._end_run()
+            self._log_ended(heard, outcome)
         if self.program is not None:
             self.program.settle(outcome)
             self.program = None
@@ -334,10 +344,66 @@ class Station:
     def _give_up(self, outcome: Outcome) -> None:
         """End a program that could not start, returning to the program still heard (FB-3)."""
         previous = self._previous
-        self._finish(outcome)
-        if previous is not None:
-            log.info("Returning to the program still playing")
-            self.program = previous
+        if previous is None or self.program is None:
+            self._finish(outcome)
+            return
+        self.program.settle(outcome)  # it never played, and the program heard plays on
+        self.program, self._previous = previous, None
+        log.info("Returning to the program still playing")
+
+    def _settle_playing(self, program: Program) -> None:
+        """Settle `program` as playing, so the program it replaced is no longer heard."""
+        self._credit_underruns()
+        program.settle(Outcome.PLAYING)
+        if (previous := self._previous) is not None:
+            self._log_ended(previous, Outcome.REPLACED)
+            self._previous = None
+
+    def _program_heard(self) -> Program | None:
+        """The program listeners hear: the program once it plays, or the one it is replacing."""
+        if self.program is not None and self.program.playing:
+            return self.program
+        return self._previous
+
+    def _credit_underruns(self) -> None:
+        """Count the mixer's new underruns toward the program heard (NFR-2)."""
+        count = self.mixer.underruns  # written on discord.py's player thread; reading is atomic
+        if (heard := self._program_heard()) is not None:
+            heard.underruns += count - self._underruns_counted
+        self._underruns_counted = count
+
+    def _watch_underruns(self) -> None:
+        """Log each run of silence in a program heard as it starts, and its length once audio
+        plays for a while.
+
+        Reads stop while discord.py reconnects to voice, which ends nothing, and RECOVERED_S of
+        audio must play before a run ends, so a stutter logs as one run.
+        """
+        self._credit_underruns()
+        underruns, played = self.mixer.underruns, self.mixer.played
+        new_underruns, new_played = underruns - self._underruns_seen, played - self._played_seen
+        self._underruns_seen, self._played_seen = underruns, played
+        if new_underruns:
+            if self._dry_since is None and self._program_heard() is not None:
+                self._dry_since = underruns - new_underruns
+                log.warning("The live deck ran dry; playing silence")
+            self._recovered = 0
+        elif self._dry_since is not None:
+            self._recovered += new_played
+            if self._recovered * FRAME_SECONDS >= RECOVERED_S:
+                self._end_run()
+
+    def _end_run(self) -> None:
+        """Log the length of the current run of silence, if there is one."""
+        if self._dry_since is not None:
+            seconds = (self._underruns_seen - self._dry_since) * FRAME_SECONDS
+            log.info("Silence lasted %.2f s", seconds)
+            self._dry_since, self._recovered = None, 0
+
+    @staticmethod
+    def _log_ended(program: Program, outcome: Outcome) -> None:
+        seconds = program.underruns * FRAME_SECONDS
+        log.info("Program ended (%s) with %.2f s of underrun", outcome, seconds)
 
     def _wind_down(self, player: Player | None) -> None:
         """Without a program: drop idle decks, fade out, stop the player, and free sessions."""
@@ -385,7 +451,7 @@ class Station:
         if deck is None or not self._audible(player):
             return
         self.mixer.switch_to(deck, FADE_IN_S)
-        program.settle(Outcome.PLAYING)
+        self._settle_playing(program)
         log.info("Program started on deck %d", deck.number)
 
     def _hand_over(self, program: Program, player: Player | None) -> None:
@@ -404,7 +470,7 @@ class Station:
             return
         self.mixer.switch_to(deck, CROSSFADE_S)
         live.retire()
-        program.settle(Outcome.PLAYING)
+        self._settle_playing(program)
 
     def _discard(self) -> None:
         """Drop ended decks the mixer no longer uses, unless one is ready for the current plan.
