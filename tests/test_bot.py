@@ -2063,7 +2063,7 @@ async def test_a_shutdown_during_the_answer_leaves_play_answered(
 
 
 async def test_a_failed_answer_leaves_nothing_to_announce(
-    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     started, interaction, message = slow_play_command(bot, monkeypatch)
     interaction.followup.send.side_effect = discord.NotFound(MagicMock(status=404), "expired")
@@ -2071,10 +2071,12 @@ async def test_a_failed_answer_leaves_nothing_to_announce(
 
     with pytest.raises(discord.NotFound):
         await command.callback(interaction, request="ambient")
-    started.set_result(Outcome.PLAYING)
-    await settle()
+    with caplog.at_level(logging.WARNING):
+        started.set_result(Outcome.PLAYING)
+        await settle()
 
     assert not bot.announcements  # the announcement ended quietly
+    assert not caplog.records
     message.edit.assert_not_awaited()
 
 

@@ -1,7 +1,7 @@
 """Slash commands.
 
 Replies are private, except /play's answer once the request plays, fails, or is refused. A slow
-start's answer is edited once it plays or fails.
+start's answer is edited once it plays or doesn't.
 """
 
 import asyncio
@@ -57,7 +57,7 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
         sent: asyncio.Future[discord.WebhookMessage] = asyncio.get_running_loop().create_future()
 
         async def announce(answer: str) -> None:  # a slow start's answer, once it plays or doesn't
-            # Shielded, so a shutdown that cancels this leaves the answer's send to finish.
+            # Shielded, so cancelling this at shutdown leaves `sent` for /play to set.
             await (await asyncio.shield(sent)).edit(content=answer)
 
         reply = await bot.play(interaction.user, request, cooldown, announce)
