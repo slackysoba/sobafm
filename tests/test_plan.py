@@ -21,6 +21,25 @@ def test_from_request_truncates_long_requests() -> None:
     assert len(plan.title) == 60
 
 
+def test_with_request_adds_a_lighter_prompt_and_keeps_the_settings() -> None:
+    prompts = [Prompt(text="rainy lo-fi")]
+    current = MusicPlan(title="Rainy", prompts=prompts, bpm=80, mute_drums=True)
+
+    plan = current.with_request("  darker\n")
+
+    assert [(p.text, p.weight) for p in plan.prompts] == [("rainy lo-fi", 1.0), ("darker", 0.5)]
+    assert (plan.title, plan.bpm, plan.mute_drums) == ("Rainy", 80, True)
+
+
+def test_with_request_on_a_full_plan_drops_the_last_lowest_weight_prompt() -> None:
+    weights = [("a", 1.0), ("b", 0.4), ("c", 0.4), ("d", 1.0)]
+    current = MusicPlan(title="Busy", prompts=[Prompt(text=t, weight=w) for t, w in weights])
+
+    plan = current.with_request("e")
+
+    assert [p.text for p in plan.prompts] == ["a", "b", "d", "e"]
+
+
 def test_config_is_complete_with_fixed_sampling_values() -> None:
     config = MusicPlan.from_request("ambient").to_config()
 

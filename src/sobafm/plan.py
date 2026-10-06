@@ -11,6 +11,8 @@ TEMPERATURE = 1.1
 TOP_K = 40
 
 MAX_PROMPT_LENGTH = 120
+MAX_PROMPTS = 4
+ADDED_WEIGHT = 0.5  # a request added to the current music, so it nudges rather than replaces
 MAX_TITLE_LENGTH = 60
 
 
@@ -45,7 +47,7 @@ class MusicPlan(BaseModel):
     title: Annotated[str, BeforeValidator(_one_line)] = Field(
         min_length=1, max_length=MAX_TITLE_LENGTH
     )
-    prompts: list[Prompt] = Field(min_length=1, max_length=4)
+    prompts: list[Prompt] = Field(min_length=1, max_length=MAX_PROMPTS)
     bpm: int | None = Field(default=None, ge=60, le=200)
     scale: Annotated[types.Scale | None, BeforeValidator(_known_scale)] = None
     density: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -58,6 +60,17 @@ class MusicPlan(BaseModel):
         """A plan that plays the request text itself as the only prompt; it must not be blank."""
         text = " ".join(request.split())[:MAX_PROMPT_LENGTH]
         return cls(title=text[:MAX_TITLE_LENGTH], prompts=[Prompt(text=text)])
+
+    def with_request(self, request: str) -> MusicPlan:
+        """This plan with the request text added as a lighter prompt, keeping every setting.
+
+        A full plan drops its lowest-weight prompt, the latest of equals, to make room.
+        """
+        added = Prompt(text=" ".join(request.split())[:MAX_PROMPT_LENGTH], weight=ADDED_WEIGHT)
+        kept = list(self.prompts)
+        if len(kept) >= MAX_PROMPTS:
+            kept.remove(min(reversed(kept), key=lambda prompt: prompt.weight))
+        return self.model_copy(update={"prompts": [*kept, added]})
 
     def weighted_prompts(self) -> list[types.WeightedPrompt]:
         return [types.WeightedPrompt(text=p.text, weight=p.weight) for p in self.prompts]
