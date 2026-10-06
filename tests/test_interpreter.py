@@ -207,7 +207,8 @@ async def test_falls_back_to_the_request_text(
         gemini.response = answer(failure)
 
     with caplog.at_level(logging.WARNING, logger="sobafm.interpreter"):
-        result = await interpreter(gemini).interpret("rainy lo-fi", LOFI)
+        async with asyncio.timeout(1):  # far past TIMEOUT_S, so a late timeout fails
+            result = await interpreter(gemini).interpret("rainy lo-fi", LOFI)
 
     assert (result.outcome, result.plan) == (
         Outcome.FALLBACK,

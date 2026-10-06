@@ -210,7 +210,7 @@ class FakeGemini:
         self.models = self
         self.response = response
         self.error: Exception | None = None
-        self.held: asyncio.Event | None = None  # a call made while this is set waits for it
+        self.held: asyncio.Event | None = None  # a call made while this holds an event waits for it
         self.calls: list[dict[str, Any]] = []
 
     async def generate_content(

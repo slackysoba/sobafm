@@ -1335,6 +1335,7 @@ async def test_a_newer_request_supersedes_one_being_interpreted(
     held = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()  # Gemini holds the older request...
+    assert len(gemini.calls) == 1
     gemini.held = None
 
     await bot.play(member, "lo-fi", None)  # ...and answers the newer one first
@@ -1356,9 +1357,11 @@ async def test_an_older_request_answered_first_plays_until_a_newer_one(
     first = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()  # the older request is with Gemini when the newer one arrives
+    assert len(gemini.calls) == 1
     second = gemini.held = asyncio.Event()
     newer = asyncio.create_task(bot.play(member, "lo-fi", None))
     await settle()
+    assert len(gemini.calls) == 2
 
     first.set()  # Gemini answers the older request first
     assert (await older).startswith("Now playing **jazz**")
@@ -1378,6 +1381,7 @@ async def test_a_refused_request_leaves_an_older_one_to_play(
     held = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
     gemini.held, gemini.response = None, answer(json.dumps({"kind": "not_music"}))
 
     assert await bot.play(member, "what's the weather?", None) == REFUSALS[Interpreted.NOT_MUSIC]
@@ -1398,10 +1402,12 @@ async def test_a_request_that_ends_first_leaves_newer_ones_to_stop(
     gemini.response = answer(json.dumps({"kind": "not_music"}))
     older = asyncio.create_task(bot.play(member, "what's the weather?", None))
     await settle()
+    assert len(gemini.calls) == 1
     second = gemini.held = asyncio.Event()
     gemini.response = None
     newer = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()
+    assert len(gemini.calls) == 2
     first.set()
     assert await older == REFUSALS[Interpreted.NOT_MUSIC]  # while the newer one is with Gemini
 
@@ -1421,6 +1427,7 @@ async def test_stop_supersedes_a_request_being_interpreted(
     held = gemini.held = asyncio.Event()
     request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
 
     assert bot.stop(guild) == "Stopped the request before it played."
     held.set()
@@ -1438,6 +1445,7 @@ async def test_a_stopped_request_stays_stopped_when_a_newer_one_plays(
     held = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
     assert bot.stop(guild) == "Stopped the request before it played."
     gemini.held = None
 
@@ -1459,6 +1467,7 @@ async def test_a_request_the_station_rejects_leaves_older_ones_to_play(
     held = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
     gemini.held = None
 
     with pytest.raises(RuntimeError):
@@ -1484,6 +1493,7 @@ async def test_closing_ends_requests_being_interpreted(bot: SobaFM, gemini: Fake
     held = gemini.held = asyncio.Event()
     request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
 
     await bot.close()
 
@@ -1524,6 +1534,7 @@ async def test_leaving_supersedes_a_request_being_interpreted(
     held = gemini.held = asyncio.Event()
     request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
 
     await bot.close_station(guild, Outcome.DISCONNECTED)
 
