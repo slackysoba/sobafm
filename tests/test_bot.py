@@ -1269,6 +1269,18 @@ async def test_the_voice_check_leaves_a_playing_stations_title(bot: SobaFM) -> N
     assert titles == [(CHANNEL_ID, "Rainy lo-fi")]
 
 
+async def test_a_failing_status_sync_leaves_the_voice_check_running(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    statuses = bot.statuses_for(make_guild())
+    monkeypatch.setattr(statuses, "show", MagicMock(side_effect=RuntimeError("a bug")))
+
+    with caplog.at_level(logging.ERROR, logger="sobafm.bot"):
+        await bot.check_voice()  # an error would stop discord.py's loop, and with it recoveries
+
+    assert "Could not sync voice channel statuses" in caplog.text
+
+
 async def test_the_voice_check_retries_a_refused_clear(bot: SobaFM, clock: FakeClock) -> None:
     guild = make_guild()
     channel = make_channel(guild)

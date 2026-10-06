@@ -561,9 +561,12 @@ class SobaFM(discord.Client):
                 voice.stranded_since = now
             elif now - voice.stranded_since >= STRANDED_FOR_S and guild_id not in self.recoveries:
                 self.recoveries[guild_id] = asyncio.create_task(self.recover_voice(voice))
-        for guild_id, statuses in self.statuses.items():
-            if guild_id not in self.stations:
-                statuses.show(None)
+        try:  # the status is cosmetic: an error here must not stop recovering clients
+            for guild_id, statuses in self.statuses.items():
+                if guild_id not in self.stations:
+                    statuses.show(None)
+        except Exception:
+            log.exception("Could not sync voice channel statuses")
 
     async def recover_voice(self, voice: Voice) -> None:
         """Replace a stranded voice client, then rejoin until back in voice or nothing to rejoin.
