@@ -96,6 +96,7 @@ class Program:
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
     refusals: int = 0
+    refused_until: float = 0.0  # a refusal's round, in which another refusal doesn't count
     failures: int = 0
     retry_at: float = 0.0
     underruns: int = 0  # frames of silence while it played
@@ -109,11 +110,14 @@ class Program:
             self.started.set_result(outcome)
 
 
-# A start that fails for these reasons fails at once, since retrying within seconds can't help.
-FAILED_STARTS: dict[Failure | None, Outcome] = {
+# What a start that fails for each cause reports; any other cause reports FAILED
+START_OUTCOMES: dict[Failure | None, Outcome] = {
     Failure.REJECTED: Outcome.REJECTED,
     Failure.EXHAUSTED: Outcome.EXHAUSTED,
+    Failure.UNAVAILABLE: Outcome.UNAVAILABLE,
 }
+# A start that fails for these causes fails at once, since retrying within seconds can't help.
+FAILED_STARTS = {Failure.REJECTED, Failure.EXHAUSTED}
 
 
 class Station:
@@ -346,12 +350,17 @@ class Station:
         self._previous = None
 
     def _give_up(self, outcome: Outcome) -> None:
-        """End a program that could not start, returning to the program still heard (FB-3)."""
+        """End a program that could not start, returning to the program still heard (FB-3)
+        unless its end time has passed."""
         previous = self._previous
         if previous is None or self.program is None:
             self._finish(outcome)
             return
-        self.program.settle(outcome)  # it never played, and the program heard plays on
+        self.program.settle(outcome)  # it never played
+        if self._clock() >= previous.ends_at:
+            log.info("Play duration elapsed; ending the program")
+            self._finish(Outcome.STOPPED)
+            return
         self.program, self._previous = previous, None
         log.info("Returning to the program still playing")
 
@@ -505,35 +514,37 @@ class Station:
 
         A session ends early when it fails, or Lyria ends it, before SobaFM retires it, or when
         it ends short of the pre-roll. Sessions that fail together count once, so both decks of a
-        round share one retry. A cause that retrying can't help ends a start whichever deck
-        reports it, unless another deck of its plan may still start it. A program that has
-        started keeps retrying, because its buffers may outlast an outage.
+        round share one retry, and a refusal counts once a round even when a failure in that round
+        counted first. A cause that retrying can't help ends a start whichever deck reports it,
+        unless another deck of its plan may still start it. A program that has started keeps
+        retrying, because its buffers may outlast an outage.
         """
         program = self.program
         now = self._clock()
         if program is None or deck.plan is not program.plan:
             return
         starting = not program.started.done()
-        if (outcome := FAILED_STARTS.get(deck.failure)) and starting and not self._may_start(deck):
+        outcome = START_OUTCOMES.get(deck.failure, Outcome.FAILED)
+        if deck.failure in FAILED_STARTS and starting and not self._may_start(deck):
             log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
             self._give_up(outcome)
             return
-        if now < program.retry_at:
-            return
         if deck.end_reason is EndReason.FILTERED:
+            if now < program.refused_until:  # its round's other session was refused too
+                return
             program.refusals += 1
-            program.retry_at = now + REFUSAL_RETRY_S
+            program.refused_until = program.retry_at = now + REFUSAL_RETRY_S
             if program.refusals >= 2 and starting:
                 log.info("Lyria refused the request twice")
                 self._give_up(Outcome.REFUSED)
+            return
+        if now < program.retry_at:
             return
         program.failures += 1
         program.retry_at = (
             now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
         )
         if program.failures > len(CONNECT_BACKOFF_S) and starting:
-            unavailable = deck.failure is Failure.UNAVAILABLE
-            outcome = Outcome.UNAVAILABLE if unavailable else Outcome.FAILED
             log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
             self._give_up(outcome)
 

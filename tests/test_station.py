@@ -410,6 +410,74 @@ async def test_logs_why_a_start_failed_without_lyrias_text(
     assert "exceeded" not in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("close", "outcome"),
+    [(INVALID_KEY, Outcome.REJECTED), (QUOTA, Outcome.EXHAUSTED)],
+    ids=["rejected key", "quota"],
+)
+async def test_a_start_that_backs_off_reports_the_cause_that_ends_it(
+    rig: Rig, caplog: pytest.LogCaptureFixture, close: tuple[int, str], outcome: Outcome
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+
+    with caplog.at_level(logging.WARNING, logger="sobafm.station"):
+        for _ in range(len(CONNECT_BACKOFF_S) + 1):
+            # Each round, one session closes for the cause while the other is still open...
+            first, second = rig.lyria.sessions[-2:]
+            first.close(*close)
+            await rig.tick()
+            second.close(1011)  # ...and the other closes in an outage
+            await rig.tick()
+            await rig.tick(16)  # after the backoff
+
+    assert started.result() is outcome
+    assert f"Could not open a Lyria RealTime session ({outcome})" in caplog.text
+
+
+async def test_a_refusal_counts_after_a_failure_in_its_round(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    rig.session(0).send_audio(2)  # one session ends short, which counts first
+    rig.session(0).close(1011)
+    await rig.tick()
+    rig.session(1).refuse()  # and the other is refused within the failure's window
+    await rig.tick()
+
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 2  # the refusal's window holds the next round
+    await rig.tick(REFUSAL_RETRY_S)
+    assert len(rig.lyria.sessions) == 4
+
+    rig.session(2).refuse()
+    rig.session(3).refuse()
+    await rig.tick()
+    await rig.tick()
+
+    assert started.result() is Outcome.REFUSED
+
+
+async def test_a_replacement_failing_after_the_program_heard_ends_returns_to_nothing(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig, duration_seconds=300)
+    replaced = rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's session opens
+    rig.clock.now += 300  # and the program heard's end time passes while it starts
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.session(-1).close(*INVALID_KEY)
+        await rig.tick()
+
+    assert replaced.result() is Outcome.REJECTED
+    assert rig.station.program is None
+    assert "Program ended (stopped)" in caplog.text
+    sessions = len(rig.lyria.sessions)
+    await rig.tick()
+    assert len(rig.lyria.sessions) == sessions  # no session for a program that has ended
+
+
 async def test_a_replacement_that_fails_in_an_outage_returns_to_the_program_heard(
     rig: Rig,
 ) -> None:
