@@ -620,7 +620,8 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
     voice = make_voice(bot, guild, current=True)
     connection: Any = VoiceConnectionState(voice)  # discord.py's own, with its reader paused
     cast(Any, voice)._connection = connection
-    timed_out = asyncio.Event()  # ends a reconnect that gets no reply, when the test is ready
+    waiting = asyncio.Event()  # set once the reconnect waits for Discord's reply
+    timed_out = asyncio.Event()  # ends that wait as a timeout, when the test is ready
     if failure == "reset connection":
         # an unhandled close starts a reconnect, whose voice state update finds the gateway
         # connection reset
@@ -631,11 +632,12 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
         # it closed itself
         connection.ws = ClosingSocket(4006, 1000)
 
-        async def no_reply(**_: object) -> None:  # the handshake, until the test times it out
+        async def no_reply(*_: object, **__: object) -> None:  # the wait for Discord's reply
+            waiting.set()
             await timed_out.wait()
             raise TimeoutError
 
-        connection._inner_connect = no_reply
+        monkeypatch.setattr(connection, "_wait_for_state", no_reply)
     else:
         # a resume, which keeps the connected state, finds the gateway connection reset
         connection.state = ConnectionFlowState.connected
@@ -645,7 +647,8 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
         connection._runner = asyncio.create_task(connection._poll_voice_ws(reconnect=True))
         await settle()
         if failure == "lost voice state update":
-            assert not voice.stranded()  # while the reconnect waits for Discord's reply
+            assert waiting.is_set()  # the reconnect sent its rejoin request, and awaits the reply
+            assert not voice.stranded()
             timed_out.set()
             await connection._runner
         else:
