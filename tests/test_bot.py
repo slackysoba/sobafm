@@ -1223,6 +1223,142 @@ async def test_rejoining_leaves_a_station_to_show_its_own_title(bot: SobaFM) -> 
     assert titles == [(CHANNEL_ID, "Rainy lo-fi")]  # still showing what is heard
 
 
+async def test_a_servers_stations_share_its_statuses(bot: SobaFM) -> None:
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    first = bot.station(guild, 0.5)
+    await bot.close_station(guild)
+
+    assert bot.station(guild, 0.5).statuses is first.statuses
+    await bot.close_station(guild)
+
+
+async def test_the_voice_check_clears_a_left_title_once_back_without_a_station(
+    bot: SobaFM,
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.voice_client = make_voice_client(channel)
+    shown = await show_a_title_then_close(bot, guild, connected=False)
+    guild.voice_client = make_voice_client(channel)  # moved back, not through connect_to()
+
+    await bot.check_voice()
+    await settle()
+
+    assert shown.await_args_list[-1].args == (CHANNEL_ID, None)
+    assert bot.statuses[GUILD_ID].shown == {}
+
+
+async def test_the_voice_check_leaves_a_playing_stations_title(bot: SobaFM) -> None:
+    shown = AsyncMock(return_value=True)
+    bot.show_voice_status = shown  # pyright: ignore[reportAttributeAccessIssue]
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    station = bot.station(guild, 0.5)
+    station.play(LOFI, "<@5>", duration_seconds=600)
+    assert station.program is not None
+    station.program.settle(Outcome.PLAYING)
+    await station.reconcile()
+    await settle()
+
+    await bot.check_voice()
+    await settle()
+    titles = [call.args for call in shown.await_args_list]
+    await bot.close_station(guild)
+
+    assert titles == [(CHANNEL_ID, "Rainy lo-fi")]
+
+
+async def test_the_voice_check_retries_a_refused_clear(bot: SobaFM, clock: FakeClock) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.voice_client = make_voice_client(channel)
+    shown = await show_a_title_then_close(bot, guild, connected=False)
+    guild.voice_client = make_voice_client(channel)
+    shown.side_effect = [discord.HTTPException(MagicMock(status=500), "unavailable"), True]
+
+    await bot.check_voice()  # refused
+    await settle()
+    await bot.check_voice()  # too soon to try again
+    await settle()
+    assert bot.statuses[GUILD_ID].shown == {CHANNEL_ID: "Rainy lo-fi"}
+    clock.now += 10
+    await bot.check_voice()
+    await settle()
+
+    assert bot.statuses[GUILD_ID].shown == {}
+
+
+async def test_connecting_clears_a_title_once_a_closed_stations_request_lands(
+    bot: SobaFM,
+) -> None:
+    answered = asyncio.Event()
+    sent: list[tuple[int, str | None]] = []
+
+    async def late(channel_id: int, status: str | None) -> bool:
+        sent.append((channel_id, status))
+        await answered.wait()
+        return True
+
+    bot.show_voice_status = late  # pyright: ignore[reportAttributeAccessIssue]
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.voice_client = make_voice_client(channel)
+    station = bot.station(guild, 0.5)
+    station.play(LOFI, "<@5>", duration_seconds=600)
+    assert station.program is not None
+    station.program.settle(Outcome.PLAYING)
+    await station.reconcile()  # the title's request is held, as by a rate limit
+    guild.voice_client.is_connected.return_value = False
+    await bot.close_station(guild, Outcome.DISCONNECTED)
+    guild.voice_client = None
+    guild.get_channel.return_value = channel
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)  # SobaFM rejoins while the title is still in flight
+
+    answered.set()
+    await settle()
+
+    assert sent == [(CHANNEL_ID, "Rainy lo-fi"), (CHANNEL_ID, None)]
+    assert bot.statuses[GUILD_ID].shown == {}
+
+
+@pytest.mark.parametrize("departure", ["disconnects", "moves away", "SobaFM leaves"])
+async def test_forgets_a_title_whatever_departure_empties_its_channel(
+    bot: SobaFM, departure: str
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.voice_client = make_voice_client(channel)
+    await show_a_title_then_close(bot, guild, connected=False)
+    guild.get_channel.return_value = channel
+    channel.voice_states = {}
+    if departure == "SobaFM leaves":
+        member, before, after = bot_voice_update(guild, channel, None)
+    else:
+        member = make_member(None)
+        member.guild = guild
+        before = fake(discord.VoiceState, channel=channel)
+        elsewhere = make_channel(guild, 11) if departure == "moves away" else None
+        after = fake(discord.VoiceState, channel=elsewhere)
+
+    await bot.on_voice_state_update(member, before, after)
+
+    assert bot.statuses[GUILD_ID].shown == {}
+
+
+async def test_forgets_a_title_in_a_deleted_channel(bot: SobaFM) -> None:
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    await show_a_title_then_close(bot, guild, connected=False)
+    guild.voice_client = None
+    guild.get_channel.return_value = None  # the channel is gone
+
+    await bot.on_guild_available(guild)
+
+    assert bot.statuses[GUILD_ID].shown == {}
+
+
 async def test_forgets_titles_in_a_server_it_is_removed_from(bot: SobaFM) -> None:
     guild = make_guild()
     guild.voice_client = make_voice_client(make_channel(guild))

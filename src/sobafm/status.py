@@ -56,7 +56,8 @@ class Statuses:
             self._task = asyncio.create_task(self._show(channel, title))
 
     def clear_soon(self) -> None:
-        """Clear the status of SobaFM's channel, if SobaFM set it, after any request in flight."""
+        """Clear the status of SobaFM's channel after any request in flight, if SobaFM set it and
+        is still there then."""
         if (channel := self._channel()) is not None:
             self._task = asyncio.create_task(self._clear_after(self._task, channel))
 

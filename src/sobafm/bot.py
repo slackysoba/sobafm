@@ -217,8 +217,7 @@ class SobaFM(discord.Client):
         """The voice channel statuses SobaFM sets in the guild, kept across its stations."""
         if (statuses := self.statuses.get(guild.id)) is None:
             statuses = Statuses(
-                lambda: voice_channel_id(guild),
-                self.show_voice_status,
+                lambda: voice_channel_id(guild), self.show_voice_status, clock=self._clock
             )
             self.statuses[guild.id] = statuses
         return statuses
@@ -541,7 +540,6 @@ class SobaFM(discord.Client):
                 await voice.disconnect(force=True)
             raise TimeoutError
         voice.joined = True
-        # A title SobaFM left here is cleared, unless a station shows what is heard instead.
         statuses = self.statuses.get(current.guild.id)
         if statuses is not None and current.guild.id not in self.stations:
             statuses.clear_soon()
@@ -549,7 +547,11 @@ class SobaFM(discord.Client):
 
     @tasks.loop(seconds=VOICE_CHECK_S)
     async def check_voice(self) -> None:
-        """Start recovering each voice client discord.py strands, once it stays stranded."""
+        """Start recovering each voice client discord.py strands, once it stays stranded, and
+        clear a title SobaFM left in its channel where no station shows what is heard.
+
+        Clearing here also covers a move back into such a channel, and retries a refused clear.
+        """
         now = self._clock()
         for voice in list(self.voices):
             guild_id = voice.guild.id
@@ -559,6 +561,9 @@ class SobaFM(discord.Client):
                 voice.stranded_since = now
             elif now - voice.stranded_since >= STRANDED_FOR_S and guild_id not in self.recoveries:
                 self.recoveries[guild_id] = asyncio.create_task(self.recover_voice(voice))
+        for guild_id, statuses in self.statuses.items():
+            if guild_id not in self.stations:
+                statuses.show(None)
 
     async def recover_voice(self, voice: Voice) -> None:
         """Replace a stranded voice client, then rejoin until back in voice or nothing to rejoin.
