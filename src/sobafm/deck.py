@@ -6,7 +6,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, suppress
 from enum import StrEnum
 from typing import Protocol
 
@@ -256,6 +256,10 @@ class Deck:
     def _cancelled(self, task: asyncio.Task[None]) -> None:
         """Record a deck cancelled by `retire()` while connecting, or at shutdown, as retired."""
         if task.cancelled():
+            # The task keeps its CancelledError, whose traceback holds this deck's frames, and the
+            # deck holds the task: a cycle that would keep the deck until a collection (#89).
+            with suppress(asyncio.CancelledError):
+                task.result()
             self._end(EndReason.RETIRED)
 
     async def _generate(self, session: MusicSession) -> EndReason:
@@ -312,9 +316,9 @@ class Deck:
     ) -> None:
         """Record how the session ended, logging the deck's summary.
 
-        `error`, recorded and logged by now, drops its traceback: its frames hold this deck, and
-        the session can hold the error, a cycle that would keep the deck's audio until a garbage
-        collection (#89).
+        `error`, recorded and logged where SobaFM logs it, drops its traceback. The traceback
+        holds `_generate()`'s frame, whose receive task holds the error: a cycle that would keep
+        this deck and its audio until a garbage collection (#89).
         """
         if error is not None:
             error.__traceback__ = None

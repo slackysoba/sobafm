@@ -1,7 +1,9 @@
 import asyncio
 import contextlib
+import gc
 import logging
 import ssl
+import weakref
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any, cast
@@ -180,6 +182,25 @@ async def test_retired_while_connecting_never_starts_playback(
     assert lyria.sessions == []
 
 
+async def test_frees_a_deck_retired_while_connecting_without_collecting_cycles(
+    lyria: FakeLyria, clock: FakeClock
+) -> None:
+    lyria.stall = True
+    gc.disable()  # so only reference counting can free it
+    try:
+        deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+        deck.start()
+        await settle()  # connecting
+        deck.retire()
+        await ended(deck)
+        dropped = weakref.ref(deck)
+        del deck
+
+        assert dropped() is None
+    finally:
+        gc.enable()
+
+
 async def test_fails_when_connecting_stalls(
     lyria: FakeLyria, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -233,8 +254,8 @@ async def test_keeps_its_audio_when_receiving_fails(
     )
     assert deck.buffered_seconds == pytest.approx(4)
     assert "rainy" not in caplog.text  # the title can repeat the request
-    # An unexpected error keeps its traceback.
-    assert any(record.exc_info for record in caplog.records if record.levelno == logging.WARNING)
+    # An unexpected error keeps its traceback in the log, though the deck then drops it.
+    assert "Traceback (most recent call last)" in caplog.text
 
 
 async def test_accepts_its_format_in_any_case_and_order(lyria: FakeLyria, clock: FakeClock) -> None:
