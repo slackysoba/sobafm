@@ -234,9 +234,9 @@ class Deck:
             # A certificate error is also a ValueError, and its text is OpenSSL's.
             self._fail(error)
         except (WebSocketException, ValueError) as error:
-            # A failed handshake, or a redirect websockets can't follow: its message, or its
-            # cause's, can quote the server's reply. Any other ValueError, such as one from a
-            # bug in SobaFM, is described by its type too.
+            # A failed handshake, or a redirect: its message, or its cause's, can quote the
+            # server's reply. Any other ValueError, such as one from a bug in SobaFM, is
+            # described by its type too.
             self.failure = call_failure(error)
             detail = type(error).__name__
             if isinstance(error, InvalidStatus):

@@ -119,8 +119,8 @@ async def test_gemini_follows_no_redirect(caplog: pytest.LogCaptureFixture, libr
     assert result.outcome is Outcome.FALLBACK
     assert "Interpreter failed (307)" in caplog.text
     [request] = asked
-    assert b"AIzaFakeKey" in request  # the API key's header, which the redirect's target
-    assert reached == []  # never received
+    assert b"AIzaFakeKey" in request
+    assert reached == []  # the key's header never reached the target
     assert f"127.0.0.1:{target_port}" not in caplog.text
 
 

@@ -123,8 +123,10 @@ async def settle() -> None:
 
 
 async def serve(reply: bytes, seen: list[bytes]) -> tuple[asyncio.Server, int]:
-    """Start a local server, returning it and its port, that records each request's head in
-    `seen` and answers it with `reply`."""
+    """Start a local server on a free port, returning it and the port.
+
+    It records each request's head in `seen` and answers it with `reply`.
+    """
 
     async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         seen.append(await reader.readuntil(b"\r\n\r\n"))

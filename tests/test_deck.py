@@ -688,8 +688,8 @@ async def test_follows_no_redirect_while_connecting(caplog: pytest.LogCaptureFix
 
     assert (deck.end_reason, deck.detail) == (EndReason.FAILED, "SecurityError")
     [request] = asked
-    assert b"AIzaFakeKey" in request  # the API key's header, which the redirect's target
-    assert reached == []  # never received
+    assert b"AIzaFakeKey" in request
+    assert reached == []  # the key's header never reached the target
     assert f"127.0.0.1:{target_port}" not in caplog.text
 
 

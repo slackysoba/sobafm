@@ -22,7 +22,7 @@ from pydantic import ValidationError
 import sobafm.bot
 from sobafm.bot import PLAY_REPLIES, REFUSALS, SobaFM, Voice, escape, listeners, voice_channel_id
 from sobafm.config import load_settings
-from sobafm.interpreter import GEMINI_HTTP, Interpreter
+from sobafm.interpreter import Interpreter
 from sobafm.interpreter import Outcome as Interpreted
 from sobafm.plan import MusicPlan, Prompt
 from sobafm.station import Outcome, Program, Station
@@ -154,9 +154,11 @@ async def test_gives_gemini_the_options_that_refuse_redirects(
     bot = SobaFM(load_settings(env_file=None), Store(tmp_path / "sobafm.db"))
 
     gemini: Any = bot.interpreter._gemini  # pyright: ignore[reportPrivateUsage]
-    options = gemini._api_client._http_options  # the SDK's, as the interpreter's client got them
+    client = gemini._api_client  # the SDK's, as the interpreter's client built it
 
-    assert options.async_client_args == GEMINI_HTTP.async_client_args
+    assert client._http_options.async_client_args["allow_redirects"] is False  # aiohttp's
+    assert client._async_httpx_client.follow_redirects is False
+    assert client._httpx_client.follow_redirects is False
     await bot.close()
 
 

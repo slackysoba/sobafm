@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["google-genai>=2.26"]
+# dependencies = ["google-genai>=2.26", "websockets>=16.1.1"]
 # ///
 """Measure Lyria RealTime session behavior for the playback engine decision (#11).
 
