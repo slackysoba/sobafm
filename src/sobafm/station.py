@@ -138,8 +138,9 @@ class Station:
         self._voice = voice
         self._listeners = listeners
         self._empty_since: float | None = None
-        self._underruns_counted = 0  # the mixer's count when the program heard was last credited
-        self._underruns_seen = 0  # and at the last tick, with the count of reads with audio
+        # The mixer's counts of underruns and of reads with audio when last watched: at each
+        # tick, and before the program heard changes
+        self._underruns_seen = 0
         self._played_seen = 0
         self._dry_since: int | None = None  # the count when the current run of silence began
         self._recovered = 0  # reads with audio since the run's last underrun
@@ -353,7 +354,7 @@ class Station:
 
     def _settle_playing(self, program: Program) -> None:
         """Settle `program` as playing, so the program it replaced is no longer heard."""
-        self._credit_underruns()
+        self._watch_underruns()
         program.settle(Outcome.PLAYING)
         if (previous := self._previous) is not None:
             self._log_ended(previous, Outcome.REPLACED)
@@ -365,26 +366,22 @@ class Station:
             return self.program
         return self._previous
 
-    def _credit_underruns(self) -> None:
-        """Count the mixer's new underruns toward the program heard (NFR-2)."""
-        count = self.mixer.underruns  # written on discord.py's player thread; reading is atomic
-        if (heard := self._program_heard()) is not None:
-            heard.underruns += count - self._underruns_counted
-        self._underruns_counted = count
-
     def _watch_underruns(self) -> None:
-        """Log each run of silence in a program heard as it starts, and its length once audio
-        plays for a while.
+        """Count new underruns toward the program heard (NFR-2), and log each run of silence in
+        it as it starts, and its length once audio plays for a while.
 
-        Reads stop while discord.py reconnects to voice, which ends nothing, and RECOVERED_S of
-        audio must play before a run ends, so a stutter logs as one run.
+        It runs at each tick and before the program heard changes, so each underrun counts
+        once. Reads stop while discord.py reconnects to voice, which ends nothing, and
+        RECOVERED_S of audio must play before a run ends, so a stutter logs as one run.
         """
-        self._credit_underruns()
+        # Written on discord.py's player thread. Each is read once, so a run and a total agree.
         underruns, played = self.mixer.underruns, self.mixer.played
         new_underruns, new_played = underruns - self._underruns_seen, played - self._played_seen
         self._underruns_seen, self._played_seen = underruns, played
+        if (heard := self._program_heard()) is not None:
+            heard.underruns += new_underruns
         if new_underruns:
-            if self._dry_since is None and self._program_heard() is not None:
+            if self._dry_since is None and heard is not None:
                 self._dry_since = underruns - new_underruns
                 log.warning("The live deck ran dry; playing silence")
             self._recovered = 0

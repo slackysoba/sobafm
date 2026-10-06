@@ -1016,10 +1016,10 @@ async def test_logs_a_run_of_silence_once_and_its_length(
         rig.listen(1)  # still dry
         await rig.tick()
         await rig.feed(0, 10)  # audio resumes
-        rig.listen(0.5)
+        rig.listen(1 - FRAME_SECONDS)
         await rig.tick()
         assert silence_lines(caplog) == [DRY]  # not over until audio has played a while
-        rig.listen(0.5)
+        rig.listen(FRAME_SECONDS)
         await rig.tick()
         assert silence_lines(caplog) == [DRY, "Silence lasted 2.00 s"]  # after a second of it
         rig.listen(1)
@@ -1119,6 +1119,8 @@ async def test_silence_while_a_replacement_starts_counts_for_the_program_heard(
         await rig.tick()
         await rig.feed(-1, 10)
         await rig.tick()  # the replacement plays
+        # The silence continues into the replacement, so its run is still open.
+        assert silence_lines(caplog) == [DRY, "Program ended (replaced) with 1.00 s of underrun"]
         rig.listen(4)
         await rig.tick()
         await rig.feed(-1, 10)  # its next deck fills
@@ -1134,6 +1136,22 @@ async def test_silence_while_a_replacement_starts_counts_for_the_program_heard(
         "Silence lasted 1.00 s",
         "Program ended (stopped) with 0.00 s of underrun",
     ]
+
+
+async def test_silence_just_before_a_replacement_plays_is_logged_before_its_total(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's deck opens
+    await rig.feed(-1, 10)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # the program heard runs dry, which no tick has seen
+        await rig.tick()  # and the replacement plays
+
+    assert silence_lines(caplog) == [DRY, "Program ended (replaced) with 1.00 s of underrun"]
 
 
 async def test_a_program_heard_again_after_a_failed_replacement_keeps_its_count(
