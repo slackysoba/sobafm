@@ -796,6 +796,31 @@ async def test_records_a_close_during_setup_without_free_text(
     assert "suspended" not in caplog.text
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        received(Close(1008, "Request contains an invalid argument.")),
+        InvalidStatus(Response(403, "Forbidden", Headers())),
+    ],
+    ids=["closed during setup", "rejected handshake"],
+)
+async def test_frees_a_deck_whose_setup_failed_without_collecting_cycles(
+    lyria: FakeLyria, clock: FakeClock, failure: Exception
+) -> None:
+    lyria.failure = failure  # which the double keeps, as websockets' protocol does
+    gc.disable()  # so only reference counting can free it
+    try:
+        deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+        deck.start()
+        await ended(deck)
+        dropped = weakref.ref(deck)
+        del deck
+
+        assert dropped() is None
+    finally:
+        gc.enable()
+
+
 async def test_retiring_while_lyria_closes_keeps_the_close_code(
     lyria: FakeLyria, clock: FakeClock
 ) -> None:

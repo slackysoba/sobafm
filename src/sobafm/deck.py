@@ -316,9 +316,11 @@ class Deck:
     ) -> None:
         """Record how the session ended, logging the deck's summary.
 
-        `error`, recorded and logged where SobaFM logs it, drops its traceback. The traceback
-        holds `_generate()`'s frame, whose receive task holds the error: a cycle that would keep
-        this deck and its audio until a garbage collection (#89).
+        Drops `error`'s traceback, whose frames hold this deck, once it is recorded and logged
+        where SobaFM logs it. Something holds the error in turn: `_generate()`'s receive task
+        after a failure while streaming, websockets' `ClientProtocol.handshake_exc` after a
+        failed handshake. Either cycle would keep the deck and its audio until a garbage
+        collection (#89).
         """
         if error is not None:
             error.__traceback__ = None
