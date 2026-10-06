@@ -1200,11 +1200,12 @@ async def test_play_needs_sobafm_in_a_voice_channel(bot: SobaFM) -> None:
     )
 
 
-async def test_play_needs_a_description(bot: SobaFM) -> None:
+@pytest.mark.parametrize("request_text", ["   ", "\u202e \u2066"], ids=["blank", "bidi controls"])
+async def test_play_needs_a_description(bot: SobaFM, request_text: str) -> None:
     guild = make_guild()
     channel = make_channel(guild)
 
-    assert await bot.admit(in_voice(channel, channel), "   ") == (
+    assert await bot.admit(in_voice(channel, channel), request_text) == (
         "Describe the music you want, for example: rainy lo-fi with soft piano."
     )
 
@@ -1817,6 +1818,19 @@ async def test_now_describes_the_program(
     assert bot.now(make_guild()) == (
         f"{phase} **Rainy lo-fi**, requested by <@5>.\n"
         "Style: lo-fi hip hop, 80 BPM\n"
+        f"Ends {ends(600)}."
+    )
+
+
+async def test_now_escapes_the_program(bot: SobaFM, now: datetime) -> None:
+    plan = MusicPlan(
+        title="Lo-fi\u202e https://evil.example", prompts=[Prompt(text="discord.gg/x")]
+    )
+    bot.stations[GUILD_ID] = playing_station(plan, time_left=600, started=True)
+
+    assert bot.now(make_guild()) == (
+        "Now playing **Lo-fi https\\://evil\\.example**, requested by <@5>.\n"
+        "Style: discord\\.gg/x\n"
         f"Ends {ends(600)}."
     )
 

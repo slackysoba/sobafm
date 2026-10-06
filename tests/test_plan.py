@@ -25,7 +25,14 @@ def test_drops_bidirectional_controls() -> None:
 
     assert plan.title == "Rainy lo-fi by <@5>"
     assert plan.prompts[0].text == "lo-fi"
-    assert MusicPlan.from_request(f"\u202e{'x' * 200}").title == "x" * 60
+    long = MusicPlan.from_request(BIDI_CONTROLS * 6 + "x" * 200)  # more controls than a title holds
+    assert (long.title, long.prompts[0].text) == ("x" * 60, "x" * 120)
+
+
+def test_keeps_joiners() -> None:
+    # Emoji sequences and some scripts need them, and they don't reorder text.
+    title = "lo-fi \U0001f469\u200d\U0001f4bb \u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"
+    assert MusicPlan(title=title, prompts=[Prompt(text="lo-fi")]).title == title
 
 
 def test_rejects_a_title_of_only_bidirectional_controls() -> None:

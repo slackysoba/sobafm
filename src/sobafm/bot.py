@@ -23,7 +23,7 @@ from sobafm.deck import Connect, lyria
 from sobafm.failures import Failure
 from sobafm.interpreter import Interpreter, Result
 from sobafm.interpreter import Outcome as Interpreted
-from sobafm.plan import MusicPlan
+from sobafm.plan import MusicPlan, one_line
 from sobafm.station import Outcome, SessionPool, Station
 from sobafm.store import GuildSettings, Store
 
@@ -240,7 +240,7 @@ class SobaFM(discord.Client):
         concurrent requests cannot both get past it. The start time in `cooldowns` identifies
         the request: one that ends without playing frees it with `free_cooldown()`.
         """
-        if not request.strip():
+        if not one_line(request):
             return "Describe the music you want, for example: rainy lo-fi with soft piano."
         voice = cast(discord.VoiceClient | None, member.guild.voice_client)
         if voice is None:
