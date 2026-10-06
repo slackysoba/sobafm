@@ -782,6 +782,28 @@ async def test_drops_an_ended_deck_of_a_replaced_plan(rig: Rig) -> None:
     assert replaced not in rig.station.decks
 
 
+@pytest.mark.parametrize("end", ["closed", "failed"])
+async def test_frees_a_dropped_deck_without_collecting_cycles(rig: Rig, end: str) -> None:
+    await start_playing(rig)
+    rig.session(1).send_audio(2)  # the next deck's session ends short of the pre-roll, on an error
+    if end == "closed":
+        rig.session(1).close(1011)
+    else:
+        rig.session(1).fail(RuntimeError("a frame the SDK couldn't read"))
+    dropped = weakref.ref(rig.station.decks[1])
+    gc.disable()  # so only reference counting can free it
+    # pytest keeps each log record, whose traceback would hold the deck; SobaFM's handler doesn't.
+    logging.disable(logging.CRITICAL)
+    try:
+        await rig.tick()
+        await rig.tick()
+
+        assert dropped() is None
+    finally:
+        logging.disable(logging.NOTSET)
+        gc.enable()
+
+
 async def test_frees_the_decks_it_drops(rig: Rig) -> None:
     await start_playing(rig)
     rig.session(1).send_audio(2)  # the next deck's session ends short of the pre-roll
