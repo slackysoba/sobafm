@@ -25,6 +25,7 @@ from sobafm.interpreter import Interpreter, Result
 from sobafm.interpreter import Outcome as Interpreted
 from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, SessionPool, Station
+from sobafm.status import Statuses
 from sobafm.store import GuildSettings, Store
 
 log = logging.getLogger(__name__)
@@ -166,8 +167,7 @@ class SobaFM(discord.Client):
         )
         self.pool = SessionPool(settings.max_sessions)
         self.stations: dict[int, Station] = {}
-        # Statuses that closed stations set and couldn't clear, and where, by server
-        self.left_statuses: dict[int, tuple[int, str]] = {}
+        self.statuses: dict[int, Statuses] = {}  # each server's, which outlive its stations
         self.tree = app_commands.CommandTree(
             self, allowed_installs=app_commands.AppInstallationType(guild=True, user=False)
         )
@@ -207,30 +207,34 @@ class SobaFM(discord.Client):
                 self.open_session,
                 self.pool,
                 volume=volume,
-                channel=lambda: voice_channel_id(guild),
-                status=self.show_voice_status,
-                shown=self.left_statuses.pop(guild.id, None),
+                statuses=self.statuses_for(guild),
             )
             station.start()
             self.stations[guild.id] = station
         return station
 
+    def statuses_for(self, guild: discord.Guild) -> Statuses:
+        """The voice channel statuses SobaFM sets in the guild, kept across its stations."""
+        if (statuses := self.statuses.get(guild.id)) is None:
+            statuses = Statuses(
+                lambda: voice_channel_id(guild),
+                self.show_voice_status,
+            )
+            self.statuses[guild.id] = statuses
+        return statuses
+
     async def close_station(self, guild: discord.Guild, outcome: Outcome = Outcome.STOPPED) -> None:
         self.supersede(guild.id, outcome)
         if (station := self.stations.pop(guild.id, None)) is not None:
             await station.close(outcome)
-            # SobaFM had left the channel, so a station clears the status once it is back
-            if station.shown is not None:
-                self.left_statuses[guild.id] = station.shown
 
-    async def clear_left_status(self, guild: discord.Guild) -> None:
-        """Have a station clear the status a closed one left, now that SobaFM is back in voice.
-
-        The station shows a new program's title instead if one plays first, and drops the record
-        if SobaFM is in another channel, where it can't change the status.
-        """
-        if guild.id in self.left_statuses and guild.id not in self.stations:
-            self.station(guild, (await self.store.settings(guild.id)).volume)
+    def forget_emptied(self, guild: discord.Guild) -> None:
+        """Forget the titles SobaFM left in channels that have emptied, which Discord clears."""
+        if (statuses := self.statuses.get(guild.id)) is not None:
+            for channel_id in list(statuses.shown):
+                channel = guild.get_channel(channel_id)
+                if not isinstance(channel, discord.VoiceChannel) or not channel.voice_states:
+                    statuses.forget(channel_id)
 
     def supersede(self, guild_id: int, outcome: Outcome) -> bool:
         """End the server's requests being interpreted with `outcome`, and say if there were any."""
@@ -439,11 +443,12 @@ class SobaFM(discord.Client):
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Rejoin at startup, after a new gateway session, and when an outage ends."""
+        self.forget_emptied(guild)  # channels may have emptied while the gateway was away
         await self.rejoin(guild)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         await self.store.forget_channel(guild.id)
-        self.left_statuses.pop(guild.id, None)
+        self.statuses.pop(guild.id, None)
 
     async def rejoin(self, guild: discord.Guild) -> None:
         """Reconnect to the server's remembered channel, or forget it if SobaFM can't."""
@@ -513,7 +518,8 @@ class SobaFM(discord.Client):
         Closing can outlast the gateway session `channel` comes from, so the channel is looked up
         again. The client counts as joined only once discord.py reports it connected: it can give
         up on rejected handshakes without an error, and a move or a voice server change during
-        the handshake restarts its connector, cancelling `connect()`.
+        the handshake restarts its connector, cancelling `connect()`. Once connected, it clears a
+        title SobaFM left in the channel, unless a station is there to show what is heard.
         """
         await self.close_stale_voice(channel.guild)
         current = self.get_channel(channel.id)
@@ -535,7 +541,10 @@ class SobaFM(discord.Client):
                 await voice.disconnect(force=True)
             raise TimeoutError
         voice.joined = True
-        await self.clear_left_status(current.guild)
+        # A title SobaFM left here is cleared, unless a station shows what is heard instead.
+        statuses = self.statuses.get(current.guild.id)
+        if statuses is not None and current.guild.id not in self.stations:
+            statuses.clear_soon()
         return voice
 
     @tasks.loop(seconds=VOICE_CHECK_S)
@@ -630,7 +639,10 @@ class SobaFM(discord.Client):
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
     ) -> None:
-        """Adopt the channel an administrator moves SobaFM to."""
+        """Forget a title in a channel that empties, and adopt the channel an administrator
+        moves SobaFM to."""
+        if before.channel is not None and before.channel != after.channel:
+            self.forget_emptied(member.guild)
         if member.id != member.guild.me.id or before.channel is None or after.channel is None:
             return  # joins and departures are handled where SobaFM connects and disconnects
         if before.channel != after.channel:
