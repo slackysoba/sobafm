@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from google import genai
 from google.genai import live_music, types
 from websockets.datastructures import Headers
 from websockets.exceptions import (
@@ -37,7 +38,7 @@ from sobafm.deck import (
 from sobafm.failures import Failure
 from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS
 from sobafm.plan import MusicPlan
-from tests.doubles import FakeClock, FakeLyria, FakeSession, settle
+from tests.doubles import FakeClock, FakeLyria, FakeSession, serve, settle
 
 
 async def start_deck(lyria: FakeLyria, clock: FakeClock) -> tuple[Deck, FakeSession]:
@@ -658,6 +659,38 @@ async def test_logs_a_failed_handshake_without_the_servers_text(
     assert warning in caplog.record_tuples
     assert not any(record.exc_info for record in caplog.records)
     assert "AIzaFakeKey" not in caplog.text
+
+
+@pytest.mark.filterwarnings("ignore:Realtime music generation is experimental")
+async def test_follows_no_redirect_while_connecting(caplog: pytest.LogCaptureFixture) -> None:
+    asked: list[bytes] = []
+    reached: list[bytes] = []
+    target, target_port = await serve(b"HTTP/1.1 503 Service Unavailable\r\n\r\n", reached)
+    origin, origin_port = await serve(
+        f"HTTP/1.1 302 Found\r\nLocation: ws://127.0.0.1:{target_port}/\r\n"
+        "Content-Length: 0\r\n\r\n".encode(),
+        asked,
+    )
+    connect = sobafm.deck.lyria("AIzaFakeKey")
+    client = next(
+        cell.cell_contents
+        for cell in connect.__closure__ or ()
+        if isinstance(cell.cell_contents, genai.Client)
+    )
+    client._api_client._websocket_base_url = lambda: f"ws://127.0.0.1:{origin_port}"  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+
+    async with origin, target:
+        deck = Deck(connect, MusicPlan.from_request("ambient"))
+        with caplog.at_level(logging.INFO):  # production's level
+            deck.start()
+            async with asyncio.timeout(10):
+                await deck.wait_ended()
+
+    assert (deck.end_reason, deck.detail) == (EndReason.FAILED, "SecurityError")
+    [request] = asked
+    assert b"AIzaFakeKey" in request
+    assert reached == []  # the key's header never reached the target
+    assert f"127.0.0.1:{target_port}" not in caplog.text
 
 
 async def test_logs_an_ssl_error_with_its_text(

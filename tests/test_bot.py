@@ -146,6 +146,22 @@ async def bot(
     return bot
 
 
+async def test_gives_gemini_the_options_that_refuse_redirects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", "key")
+    bot = SobaFM(load_settings(env_file=None), Store(tmp_path / "sobafm.db"))
+
+    gemini: Any = bot.interpreter._gemini  # pyright: ignore[reportPrivateUsage]
+    client = gemini._api_client  # the SDK's, as the interpreter's client built it
+
+    assert client._http_options.async_client_args["allow_redirects"] is False  # aiohttp's
+    assert client._async_httpx_client.follow_redirects is False
+    assert client._httpx_client.follow_redirects is False
+    await bot.close()
+
+
 def slow_station(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> asyncio.Future[Outcome]:
     """Make the next request outlast the reply, returning the outcome the station will settle."""
     monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
