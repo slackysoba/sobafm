@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -201,7 +202,7 @@ async def test_falls_back_to_the_request_text(
         gemini.error = failure
     elif failure == "timeout":
         monkeypatch.setattr(sobafm.interpreter, "TIMEOUT_S", 0.01)
-        gemini.delay = 1  # the answer is valid but late
+        gemini.held = asyncio.Event()  # the answer is valid but never comes in time
     else:
         gemini.response = answer(failure)
 

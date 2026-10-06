@@ -210,15 +210,16 @@ class FakeGemini:
         self.models = self
         self.response = response
         self.error: Exception | None = None
-        self.delay = 0.0
+        self.held: asyncio.Event | None = None  # a call made while this is set waits for it
         self.calls: list[dict[str, Any]] = []
 
     async def generate_content(
         self, *, model: str, contents: str, config: types.GenerateContentConfig
     ) -> types.GenerateContentResponse:
         self.calls.append({"model": model, "contents": contents, "config": config})
-        response, error = self.response, self.error  # as set when the call is made
-        await asyncio.sleep(self.delay)
+        response, error, held = self.response, self.error, self.held  # as set when it's made
+        if held is not None:
+            await held.wait()
         if error is not None:
             raise error
         if response is not None:
