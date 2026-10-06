@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -201,12 +202,13 @@ async def test_falls_back_to_the_request_text(
         gemini.error = failure
     elif failure == "timeout":
         monkeypatch.setattr(sobafm.interpreter, "TIMEOUT_S", 0.01)
-        gemini.delay = 1  # the answer is valid but late
+        gemini.held = asyncio.Event()  # the answer is valid but never comes in time
     else:
         gemini.response = answer(failure)
 
     with caplog.at_level(logging.WARNING, logger="sobafm.interpreter"):
-        result = await interpreter(gemini).interpret("rainy lo-fi", LOFI)
+        async with asyncio.timeout(1):  # far past TIMEOUT_S, so a late timeout fails
+            result = await interpreter(gemini).interpret("rainy lo-fi", LOFI)
 
     assert (result.outcome, result.plan) == (
         Outcome.FALLBACK,
