@@ -2071,6 +2071,7 @@ async def test_a_failed_answer_leaves_nothing_to_announce(
 
     with pytest.raises(discord.NotFound):
         await command.callback(interaction, request="ambient")
+    caplog.clear()  # what /play logged, which a lower --log-level captures
     with caplog.at_level(logging.WARNING):
         started.set_result(Outcome.PLAYING)
         await settle()
