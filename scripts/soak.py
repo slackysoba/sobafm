@@ -18,6 +18,8 @@ actions stays on the checklist in the issue.
 """
 
 import argparse
+import contextlib
+import os
 import re
 import statistics
 import subprocess
@@ -34,31 +36,62 @@ LEVEL = re.compile(r"^\S+ \S+ (?P<level>WARNING|ERROR|CRITICAL) ")
 FLAT_GROWTH = 0.10  # a rise past this fraction between the run's start and end is a leak
 
 
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def tree_rss_mib(process: psutil.Process) -> float:
+    """The process's memory with its children's: `uv run` starts SobaFM as a child."""
+    total = 0
+    for member in [process, *process.children(recursive=True)]:
+        with contextlib.suppress(psutil.NoSuchProcess):
+            total += member.memory_info().rss
+    return total / 2**20
+
+
+def stop(bot: subprocess.Popen[str]) -> None:
+    """End SobaFM and the processes it started, giving them a moment to log."""
+    if bot.poll() is not None:
+        return
+    process = psutil.Process(bot.pid)
+    family = [process, *process.children(recursive=True)]
+    for member in family:
+        with contextlib.suppress(psutil.NoSuchProcess):
+            member.terminate()
+    _, alive = psutil.wait_procs(family, timeout=30)
+    for member in alive:
+        with contextlib.suppress(psutil.NoSuchProcess):
+            member.kill()
+
+
 def run(out: Path, minutes: float) -> int:
     out.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + minutes * 60
+    # The script's own environment holds only psutil, so SobaFM runs in the project's.
+    command = ["uv", "run", "--locked", "--project", str(ROOT), "python", "-m", "sobafm"]
+    environment = {**os.environ, "PYTHONUTF8": "1"}  # the log is read back as UTF-8
     with (out / "sobafm.log").open("w", encoding="utf-8") as log:
-        bot = subprocess.Popen(
-            [sys.executable, "-m", "sobafm"], stdout=log, stderr=subprocess.STDOUT, text=True
+        bot = subprocess.Popen(  # noqa: S603 - a fixed command
+            command, stdout=log, stderr=subprocess.STDOUT, text=True, env=environment, cwd=ROOT
         )
-        process = psutil.Process(bot.pid)
         with (out / "memory.csv").open("w", encoding="utf-8") as memory:
             memory.write("minute,rss_mib\n")
             minute = 0
             try:
                 while bot.poll() is None and time.monotonic() < deadline:
-                    rss = process.memory_info().rss / 2**20
-                    memory.write(f"{minute},{rss:.1f}\n")
-                    memory.flush()
+                    with contextlib.suppress(psutil.NoSuchProcess):
+                        memory.write(f"{minute},{tree_rss_mib(psutil.Process(bot.pid)):.1f}\n")
+                        memory.flush()
                     minute += 1
                     time.sleep(SAMPLE_S)
             except KeyboardInterrupt:
                 pass
             finally:
-                if bot.poll() is None:
-                    bot.terminate()
-                    bot.wait(timeout=30)
+                stop(bot)
+    code = bot.returncode
     print(f"Wrote {out}; run `soak.py report {out}`")
+    if minute < 2 and code not in (0, None):
+        print(f"SobaFM exited early with code {code}; see {out / 'sobafm.log'}", file=sys.stderr)
+        return 1
     return 0
 
 
