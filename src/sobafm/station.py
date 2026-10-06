@@ -130,7 +130,9 @@ class Station:
         channel: Callable[[], int | None],
         status: Callable[[int, str | None], Coroutine[Any, Any, bool]],
         clock: Callable[[], float] = time.monotonic,
+        shown: tuple[int, str] | None = None,
     ) -> None:
+        """`shown` is a status an earlier station set and couldn't clear, and where."""
         self.mixer = Mixer(volume)
         self.program: Program | None = None
         # What played when the program was requested, which resumes if the program can't start
@@ -156,12 +158,17 @@ class Station:
         self._task: asyncio.Task[None] | None = None
         self._channel = channel  # the ID of SobaFM's voice channel, if it is in one
         self._set_status = status  # shows a status on a channel, or says SobaFM may not
-        self._shown: tuple[int, str] | None = None  # the status SobaFM set, and where
+        self._shown = shown  # the status SobaFM set, and where
         self._status_task: asyncio.Task[None] | None = None  # the request in flight
         self._status_held = False  # while SobaFM moves
         self._unshown: tuple[int, str | None] | None = None  # the last status not shown, and where
         self._status_failures = 0  # failed requests for `_unshown`
         self._status_retry_at = 0.0
+
+    @property
+    def shown(self) -> tuple[int, str] | None:
+        """The voice channel status SobaFM set and hasn't cleared, and where."""
+        return self._shown
 
     @property
     def time_left(self) -> float | None:

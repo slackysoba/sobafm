@@ -166,6 +166,8 @@ class SobaFM(discord.Client):
         )
         self.pool = SessionPool(settings.max_sessions)
         self.stations: dict[int, Station] = {}
+        # Statuses that closed stations set and couldn't clear, and where, by server
+        self.left_statuses: dict[int, tuple[int, str]] = {}
         self.tree = app_commands.CommandTree(
             self, allowed_installs=app_commands.AppInstallationType(guild=True, user=False)
         )
@@ -207,6 +209,7 @@ class SobaFM(discord.Client):
                 volume=volume,
                 channel=lambda: voice_channel_id(guild),
                 status=self.show_voice_status,
+                shown=self.left_statuses.pop(guild.id, None),
             )
             station.start()
             self.stations[guild.id] = station
@@ -216,6 +219,18 @@ class SobaFM(discord.Client):
         self.supersede(guild.id, outcome)
         if (station := self.stations.pop(guild.id, None)) is not None:
             await station.close(outcome)
+            # SobaFM had left the channel, so a station clears the status once it is back
+            if station.shown is not None:
+                self.left_statuses[guild.id] = station.shown
+
+    async def clear_left_status(self, guild: discord.Guild) -> None:
+        """Have a station clear the status a closed one left, now that SobaFM is back in voice.
+
+        The station shows a new program's title instead if one plays first, and drops the record
+        if SobaFM is in another channel, where it can't change the status.
+        """
+        if guild.id in self.left_statuses and guild.id not in self.stations:
+            self.station(guild, (await self.store.settings(guild.id)).volume)
 
     def supersede(self, guild_id: int, outcome: Outcome) -> bool:
         """End the server's requests being interpreted with `outcome`, and say if there were any."""
@@ -428,6 +443,7 @@ class SobaFM(discord.Client):
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         await self.store.forget_channel(guild.id)
+        self.left_statuses.pop(guild.id, None)
 
     async def rejoin(self, guild: discord.Guild) -> None:
         """Reconnect to the server's remembered channel, or forget it if SobaFM can't."""
@@ -519,6 +535,7 @@ class SobaFM(discord.Client):
                 await voice.disconnect(force=True)
             raise TimeoutError
         voice.joined = True
+        await self.clear_left_status(current.guild)
         return voice
 
     @tasks.loop(seconds=VOICE_CHECK_S)

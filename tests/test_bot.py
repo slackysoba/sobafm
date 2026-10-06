@@ -1090,6 +1090,73 @@ async def test_rejoins_when_the_server_becomes_available(bot: SobaFM) -> None:
 
     channel.connect.assert_awaited_once_with(self_deaf=True, cls=Voice)
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+    assert GUILD_ID not in bot.stations  # no status was left to clear
+
+
+async def test_keeps_a_status_a_closed_station_could_not_clear(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot, "show_voice_status", AsyncMock(return_value=True))
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    station = bot.station(guild, 0.5)
+    station.play(LOFI, "<@5>", duration_seconds=600)
+    assert station.program is not None
+    station.program.settle(Outcome.PLAYING)
+    await station.reconcile()
+    await settle()
+    guild.voice_client.is_connected.return_value = False  # SobaFM loses its connection
+
+    await bot.close_station(guild, Outcome.DISCONNECTED)
+
+    assert bot.left_statuses == {GUILD_ID: (CHANNEL_ID, "Rainy lo-fi")}
+
+
+async def test_keeps_no_status_a_closed_station_cleared(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot, "show_voice_status", AsyncMock(return_value=True))
+    guild = make_guild()
+    guild.voice_client = make_voice_client(make_channel(guild))
+    station = bot.station(guild, 0.5)
+    station.play(LOFI, "<@5>", duration_seconds=600)
+    assert station.program is not None
+    station.program.settle(Outcome.PLAYING)
+    await station.reconcile()
+    await settle()
+
+    await bot.close_station(guild)  # still in the channel, so it clears the status
+
+    assert bot.left_statuses == {}
+
+
+async def test_clears_a_status_left_behind_once_it_rejoins(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shown = AsyncMock(return_value=True)
+    monkeypatch.setattr(bot, "show_voice_status", shown)
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    bot.left_statuses[GUILD_ID] = (CHANNEL_ID, "Rainy lo-fi")
+
+    await bot.on_guild_available(guild)
+    station = bot.stations[GUILD_ID]
+    await station.reconcile()
+    await settle()
+    await station.close()
+
+    shown.assert_awaited_once_with(CHANNEL_ID, None)
+    assert bot.left_statuses == {}
+
+
+async def test_forgets_a_status_left_in_a_server_it_is_removed_from(bot: SobaFM) -> None:
+    bot.left_statuses[GUILD_ID] = (CHANNEL_ID, "Rainy lo-fi")
+
+    await bot.on_guild_remove(make_guild())
+
+    assert bot.left_statuses == {}
 
 
 async def test_rejoin_first_closes_a_client_from_an_earlier_session(bot: SobaFM) -> None:

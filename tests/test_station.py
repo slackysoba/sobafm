@@ -1612,6 +1612,69 @@ async def test_clears_the_status_once_back_in_the_channel(rig: Rig) -> None:
     assert rig.statuses == [(CHANNEL, LOFI.title), (CHANNEL, None)]
 
 
+def left_station(rig: Rig) -> Station:
+    """A station in the rig's server that starts with a status an earlier one left."""
+
+    async def show(channel: int, status: str | None) -> bool:
+        rig.statuses.append((channel, status))
+        return True
+
+    return Station(
+        lambda: rig.voice[0] if rig.voice else None,
+        lambda: rig.listeners[0],
+        rig.lyria.connect,
+        SessionPool(4),
+        volume=1.0,
+        channel=lambda: rig.channel[0] if rig.voice else None,
+        status=show,
+        clock=rig.clock,
+        shown=(CHANNEL, "Left behind"),
+    )
+
+
+async def test_reports_a_status_it_could_not_clear(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.disconnect()  # SobaFM loses its voice connection
+
+    await rig.station.close(Outcome.DISCONNECTED)
+
+    assert rig.station.shown == (CHANNEL, LOFI.title)
+    assert rig.statuses == [(CHANNEL, LOFI.title)]
+
+
+async def test_clears_a_status_an_earlier_station_left(rig: Rig) -> None:
+    station = left_station(rig)
+
+    await station.reconcile()
+    await settle()
+
+    assert rig.statuses == [(CHANNEL, None)]
+    assert station.shown is None
+
+
+async def test_a_new_program_replaces_a_status_an_earlier_station_left(rig: Rig) -> None:
+    station = left_station(rig)
+    rig.station = station
+    rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.feed(-2, 10)
+    await rig.tick()  # the program plays
+    await rig.tick()
+
+    assert rig.statuses[-1] == (CHANNEL, LOFI.title)  # never cleared after it shows
+
+
+async def test_leaves_a_status_in_a_channel_sobafm_is_not_in(rig: Rig) -> None:
+    rig.move(CHANNEL + 1)  # SobaFM is back, in another channel
+    station = left_station(rig)
+
+    await station.reconcile()
+    await settle()
+
+    assert rig.statuses == []
+    assert station.shown is None
+
+
 async def test_shows_the_title_where_sobafm_is_moved(rig: Rig) -> None:
     await start_playing(rig)
 
