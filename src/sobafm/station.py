@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import time
+import weakref
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -135,6 +136,8 @@ class Station:
         # What played when the program was requested, which resumes if the program can't start
         self._previous: Program | None = None
         self.decks: list[Deck] = []
+        # Decks seen to have ended, so each end counts once; weak, so a dropped deck is freed
+        self._seen_ended: weakref.WeakSet[Deck] = weakref.WeakSet()
         self._voice = voice
         self._listeners = listeners
         self._empty_since: float | None = None
@@ -470,28 +473,41 @@ class Station:
         self._settle_playing(program)
 
     def _discard(self) -> None:
-        """Drop ended decks the mixer no longer uses, unless one is ready for the current plan.
+        """Count how sessions ended, then drop ended decks the mixer no longer uses, except the
+        one ready for the current plan with the most audio, while no open deck is ready.
 
-        An ended deck can't fill any further, so one short of the pre-roll could never go live.
+        A session that lasted until SobaFM retired it, at the session limit or at a handover,
+        returns the program's backoff to its first step. That happens before the failures seen
+        with it count, so their order doesn't matter. An ended deck can't fill any further: one
+        short of the pre-roll could never go live, and a handover needs only one ready deck.
         """
-        keep: list[Deck] = []
-        for deck in self.decks:
-            if deck.state is State.ENDED and not self.mixer.uses(deck):
-                if not deck.delivered_preroll:
-                    self._count_failure(deck)
-                replaced = self.program is None or deck.plan is not self.program.plan
-                if replaced or not deck.ready:
-                    continue
-            keep.append(deck)
-        self.decks = keep
+        seen = [d for d in self.decks if d.state is State.ENDED and d not in self._seen_ended]
+        self._seen_ended.update(seen)
+        early = [
+            d for d in seen if d.end_reason is not EndReason.RETIRED or not d.delivered_preroll
+        ]
+        lasted = [deck for deck in seen if deck not in early]
+        if self.program is not None and any(deck.plan is self.program.plan for deck in lasted):
+            self.program.failures = 0
+        for deck in early:
+            self._count_failure(deck)
+        plan = None if self.program is None else self.program.plan
+        unused = [deck for deck in self.decks if not self.mixer.uses(deck)]
+        ended = [deck for deck in unused if deck.state is State.ENDED]
+        ready = [deck for deck in unused if deck.plan is plan and deck.ready]
+        spare = None
+        if all(deck.state is State.ENDED for deck in ready):
+            spare = max(ready, key=lambda deck: deck.buffered_seconds, default=None)
+        self.decks = [deck for deck in self.decks if deck not in ended or deck is spare]
 
     def _count_failure(self, deck: Deck) -> None:
-        """Schedule a retry for a session that ended short of the pre-roll, or give up.
+        """Schedule a retry for a session that ended early, or give up.
 
-        Sessions that fail together count once, so both decks of a round share one retry. A
-        cause that retrying can't help ends a start whichever deck reports it, unless another deck
-        of its plan may still start it. A program that has started keeps retrying, because its
-        buffers may outlast an outage.
+        A session ends early when it fails, or Lyria ends it, before SobaFM retires it, or when
+        it ends short of the pre-roll. Sessions that fail together count once, so both decks of a
+        round share one retry. A cause that retrying can't help ends a start whichever deck
+        reports it, unless another deck of its plan may still start it. A program that has
+        started keeps retrying, because its buffers may outlast an outage.
         """
         program = self.program
         now = self._clock()
