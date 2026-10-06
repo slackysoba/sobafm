@@ -486,22 +486,29 @@ class Station:
         one ready for the current plan with the most audio, while no open deck is ready.
 
         A session that lasted until SobaFM retired it, at the session limit or at a handover,
-        returns the program's backoff to its first step. That happens before the failures seen
-        with it count, and those count causes that end a start at once first, then refusals, so
-        the order of the decks doesn't decide a start's outcome. An ended deck can't fill any
-        further: one short of the pre-roll could never go live, and a handover needs only one
-        ready deck.
+        returns the program's backoff to its first step. That happens before the current plan's
+        failures seen with it count, and they count in a fixed order: causes that end a start at
+        once, then refusals, then other recognized causes, then the rest. So the order of the
+        decks doesn't decide a start's outcome. An ended deck can't fill any further: one short
+        of the pre-roll could never go live, and a handover needs only one ready deck.
         """
         seen = [d for d in self.decks if d.state is State.ENDED and d not in self._seen_ended]
         self._seen_ended.update(seen)
+        plan = None if self.program is None else self.program.plan
         early = [
             d for d in seen if d.end_reason is not EndReason.RETIRED or not d.delivered_preroll
         ]
         lasted = [deck for deck in seen if deck not in early]
-        if self.program is not None and any(deck.plan is self.program.plan for deck in lasted):
+        if self.program is not None and any(deck.plan is plan for deck in lasted):
             self.program.failures = 0
+        # Only the plan current now: a give-up can return to the program heard mid-loop.
+        early = [deck for deck in early if deck.plan is plan]
         early.sort(
-            key=lambda d: (d.failure not in FAILED_STARTS, d.end_reason is not EndReason.FILTERED)
+            key=lambda d: (
+                d.failure not in FAILED_STARTS,
+                d.end_reason is not EndReason.FILTERED,
+                d.failure is None,
+            )
         )
         for deck in early:
             self._count_failure(deck)

@@ -454,6 +454,65 @@ async def test_the_last_rounds_cause_doesnt_depend_on_deck_order(rig: Rig, first
     assert started.result() is Outcome.EXHAUSTED
 
 
+@pytest.mark.parametrize("first", ["outage", "refusal"])
+async def test_the_last_rounds_second_refusal_doesnt_depend_on_deck_order(
+    rig: Rig, first: str
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for session in rig.lyria.sessions[-2:]:
+        session.refuse()  # a refused round first
+    await rig.tick()
+    await rig.tick(REFUSAL_RETRY_S)
+    for _ in range(len(CONNECT_BACKOFF_S)):  # then rounds lost to an outage
+        for session in rig.lyria.sessions[-2:]:
+            session.close(1011)
+        await rig.tick()
+        await rig.tick(16)
+
+    earlier, later = rig.lyria.sessions[-2:]
+    outage, refused = (earlier, later) if first == "outage" else (later, earlier)
+    outage.close(1011)  # in the last round, one closes as the other is refused, in one tick
+    refused.refuse()
+    await rig.tick()
+
+    assert started.result() is Outcome.REFUSED
+
+
+@pytest.mark.parametrize("first", ["outage", "unrecognized"])
+async def test_the_last_rounds_recognized_cause_comes_first(rig: Rig, first: str) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for _ in range(len(CONNECT_BACKOFF_S)):
+        for session in rig.lyria.sessions[-2:]:
+            session.close(1011)
+        await rig.tick()
+        await rig.tick(16)
+
+    earlier, later = rig.lyria.sessions[-2:]
+    outage, other = (earlier, later) if first == "outage" else (later, earlier)
+    outage.close(1011)
+    other.close(1008, "Request contains an invalid argument.")  # a cause SobaFM doesn't name
+    await rig.tick()
+
+    assert started.result() is Outcome.UNAVAILABLE
+
+
+async def test_a_failed_replacement_leaves_the_program_heard_its_own_count(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    assert heard is not None
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's session opens
+    rig.session(0).close(1011)  # the heard program's live session ends early
+    rig.session(-1).close(*INVALID_KEY)  # as the replacement's is rejected, in one tick
+    await rig.tick()
+
+    assert rig.station.program is heard
+    assert heard.failures == 0  # counted while the replacement was current, so not at all
+
+
 async def test_a_rounds_refusals_count_once_however_far_apart(rig: Rig) -> None:
     started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
     await rig.tick()
