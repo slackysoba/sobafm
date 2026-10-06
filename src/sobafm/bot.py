@@ -7,7 +7,7 @@ import math
 import re
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import cast
 
@@ -177,11 +177,15 @@ class SobaFM(discord.Client):
         self.interpreting: defaultdict[int, list[asyncio.Future[Outcome]]] = defaultdict(list)
         self.settings_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.recoveries: dict[int, asyncio.Task[None]] = {}  # servers replacing a stranded client
+        self.announcements: set[asyncio.Task[None]] = set()  # answers to slow starts, pending
         self._clock = clock
 
     async def close(self) -> None:
-        """End the voice check, recoveries, requests, and stations, before disconnecting."""
+        """End the voice check, recoveries, pending edits of slow-start answers, requests, and
+        stations, before disconnecting."""
         self.check_voice.cancel()
+        for announcement in self.announcements:
+            announcement.cancel()
         for recovery in self.recoveries.values():
             recovery.cancel()
         for guild_id in list(self.interpreting):
@@ -255,14 +259,21 @@ class SobaFM(discord.Client):
         if cooldown is not None and self.cooldowns.get(guild.id) == cooldown:
             del self.cooldowns[guild.id]
 
-    async def play(self, member: discord.Member, request: str, cooldown: float | None) -> str:
+    async def play(
+        self,
+        member: discord.Member,
+        request: str,
+        cooldown: float | None,
+        announce: Callable[[str], Awaitable[object]] | None = None,
+    ) -> str:
         """Interpret the request, play it, and describe the outcome once it plays or fails.
 
         A relative request refines the current program's plan. A request that reaches the
         station ends the older ones still being interpreted, and /stop or leaving the channel
         ends them all. `cooldown` is when `admit()` started this request's cooldown, if it did.
         A request that ends without playing, including one Gemini refuses, frees it, even after
-        the reply.
+        the reply. When the start outlasts START_TIMEOUT_S, the answer says so, and `announce`
+        receives the answer once it plays or doesn't (FB-1).
         """
         playing = False  # or may still play
         interpreting: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
@@ -293,6 +304,9 @@ class SobaFM(discord.Client):
                         self.free_cooldown(member.guild, cooldown)
 
                 started.add_done_callback(settled)
+                if announce is not None:
+                    answer = note(f"Now playing {describe(plan, member.mention, ends)}", result)
+                    self.announce_when_settled(started, answer, announce)
                 playing = True
                 return note("The music is taking longer than usual to start.", result)
             playing = outcome is Outcome.PLAYING
@@ -304,6 +318,25 @@ class SobaFM(discord.Client):
         if outcome is Outcome.PLAYING:
             return note(f"Now playing {describe(plan, member.mention, ends)}", result)
         return PLAY_REPLIES[outcome]
+
+    def announce_when_settled(
+        self,
+        started: asyncio.Future[Outcome],
+        playing: str,
+        announce: Callable[[str], Awaitable[object]],
+    ) -> None:
+        """Pass `announce` the answer to a slow start once it settles: `playing`, or why not."""
+
+        async def run() -> None:
+            outcome = await asyncio.shield(started)  # cancelling this leaves the program alone
+            try:
+                await announce(playing if outcome is Outcome.PLAYING else PLAY_REPLIES[outcome])
+            except Exception:  # the answer is cosmetic, so a failed edit changes nothing else
+                log.warning("Could not update the answer to a slow start", exc_info=True)
+
+        task = asyncio.create_task(run(), name="announcement")
+        self.announcements.add(task)
+        task.add_done_callback(self.announcements.discard)
 
     async def show_voice_status(self, channel_id: int, status: str | None) -> bool:
         """Show `status` on voice channel `channel_id`, or return False if SobaFM may not (FB-2).
