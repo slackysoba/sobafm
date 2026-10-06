@@ -487,8 +487,10 @@ class Station:
 
         A session that lasted until SobaFM retired it, at the session limit or at a handover,
         returns the program's backoff to its first step. That happens before the failures seen
-        with it count, so their order doesn't matter. An ended deck can't fill any further: one
-        short of the pre-roll could never go live, and a handover needs only one ready deck.
+        with it count, and those count causes that end a start at once first, then refusals, so
+        the order of the decks doesn't decide a start's outcome. An ended deck can't fill any
+        further: one short of the pre-roll could never go live, and a handover needs only one
+        ready deck.
         """
         seen = [d for d in self.decks if d.state is State.ENDED and d not in self._seen_ended]
         self._seen_ended.update(seen)
@@ -498,6 +500,9 @@ class Station:
         lasted = [deck for deck in seen if deck not in early]
         if self.program is not None and any(deck.plan is self.program.plan for deck in lasted):
             self.program.failures = 0
+        early.sort(
+            key=lambda d: (d.failure not in FAILED_STARTS, d.end_reason is not EndReason.FILTERED)
+        )
         for deck in early:
             self._count_failure(deck)
         plan = None if self.program is None else self.program.plan

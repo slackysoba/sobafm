@@ -435,6 +435,39 @@ async def test_a_start_that_backs_off_reports_the_cause_that_ends_it(
     assert f"Could not open a Lyria RealTime session ({outcome})" in caplog.text
 
 
+@pytest.mark.parametrize("first", ["outage", "quota"])
+async def test_the_last_rounds_cause_doesnt_depend_on_deck_order(rig: Rig, first: str) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for _ in range(len(CONNECT_BACKOFF_S)):  # rounds lost to an outage
+        for session in rig.lyria.sessions[-2:]:
+            session.close(1011)
+        await rig.tick()
+        await rig.tick(16)
+
+    earlier, later = rig.lyria.sessions[-2:]
+    outage, quota = (earlier, later) if first == "outage" else (later, earlier)
+    outage.close(1011)  # in the last round, both close in one tick
+    quota.close(*QUOTA)
+    await rig.tick()
+
+    assert started.result() is Outcome.EXHAUSTED
+
+
+async def test_a_rounds_refusals_count_once_however_far_apart(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    rig.session(0).refuse()
+    await rig.tick()
+    await rig.tick(10)  # each session's setup can take seconds
+    rig.session(1).refuse()
+    await rig.tick()
+
+    assert not started.done()  # one refusal, so the start is retried once
+    await rig.tick(REFUSAL_RETRY_S)
+    assert len(rig.lyria.sessions) == 4
+
+
 async def test_a_refusal_counts_after_a_failure_in_its_round(rig: Rig) -> None:
     started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
     await rig.tick()
@@ -465,6 +498,7 @@ async def test_a_replacement_failing_after_the_program_heard_ends_returns_to_not
     await rig.tick()
     await rig.tick()  # the replacement's session opens
     rig.clock.now += 300  # and the program heard's end time passes while it starts
+    sessions = len(rig.lyria.sessions)
 
     with caplog.at_level(logging.INFO, logger="sobafm.station"):
         rig.session(-1).close(*INVALID_KEY)
@@ -473,7 +507,6 @@ async def test_a_replacement_failing_after_the_program_heard_ends_returns_to_not
     assert replaced.result() is Outcome.REJECTED
     assert rig.station.program is None
     assert "Program ended (stopped)" in caplog.text
-    sessions = len(rig.lyria.sessions)
     await rig.tick()
     assert len(rig.lyria.sessions) == sessions  # no session for a program that has ended
 
