@@ -2,11 +2,12 @@ import asyncio
 import contextlib
 import logging
 import ssl
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from google import genai
 from google.genai import live_music, types
 from websockets.datastructures import Headers
 from websockets.exceptions import (
@@ -658,6 +659,48 @@ async def test_logs_a_failed_handshake_without_the_servers_text(
     assert warning in caplog.record_tuples
     assert not any(record.exc_info for record in caplog.records)
     assert "AIzaFakeKey" not in caplog.text
+
+
+async def serve(handle: Callable[[bytes], bytes], seen: list[bytes]) -> asyncio.Server:
+    """A local server that records each request's head and answers it with `handle`."""
+
+    async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        head = await reader.readuntil(b"\r\n\r\n")
+        seen.append(head)
+        writer.write(handle(head))
+        await writer.drain()
+        writer.close()
+
+    return await asyncio.start_server(respond, "127.0.0.1", 0)
+
+
+@pytest.mark.filterwarnings("ignore:Realtime music generation is experimental")
+async def test_follows_no_redirect_while_connecting() -> None:
+    reached: list[bytes] = []
+    target = await serve(lambda _: b"HTTP/1.1 503 Service Unavailable\r\n\r\n", reached)
+    target_port = target.sockets[0].getsockname()[1]
+    redirect = (
+        f"HTTP/1.1 302 Found\r\nLocation: ws://127.0.0.1:{target_port}/\r\n"
+        "Content-Length: 0\r\n\r\n"
+    ).encode()
+    origin = await serve(lambda _: redirect, [])
+    origin_port = origin.sockets[0].getsockname()[1]
+    connect = sobafm.deck.lyria("AIzaFakeKey")
+    client = next(
+        cell.cell_contents
+        for cell in connect.__closure__ or ()
+        if isinstance(cell.cell_contents, genai.Client)
+    )
+    client._api_client._websocket_base_url = lambda: f"ws://127.0.0.1:{origin_port}"  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+
+    async with origin, target:
+        deck = Deck(connect, MusicPlan.from_request("ambient"))
+        deck.start()
+        async with asyncio.timeout(10):
+            await deck.wait_ended()
+
+    assert (deck.end_reason, deck.detail) == (EndReason.FAILED, "SecurityError")
+    assert reached == []  # the API key's header never reached the redirect's target
 
 
 async def test_logs_an_ssl_error_with_its_text(

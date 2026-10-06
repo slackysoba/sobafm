@@ -16,6 +16,10 @@ from sobafm.plan import MusicPlan
 
 log = logging.getLogger(__name__)
 
+# Gemini's requests follow no redirects, which would take the API key's header to another server
+# (#85). aiohttp takes this per request; the SDK drops it for httpx, which follows none anyway.
+GEMINI_HTTP = types.HttpOptions(async_client_args={"allow_redirects": False})
+
 TIMEOUT_S = 10.0
 KEPT_FIELDS = ("bpm", "scale", "density", "brightness", "mute_drums", "vocalization")
 # How an unusable answer surfaces. The SDK parses a body with `json.loads`, so a malformed error

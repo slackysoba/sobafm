@@ -217,7 +217,7 @@ CREATE TABLE guild (
 
 ## Security and privacy
 
-- **Secrets** come only from the environment, are held as `SecretStr`, and are never logged. `.env` files are git-ignored.
+- **Secrets** come only from the environment, are held as `SecretStr`, and are never logged. `.env` files are git-ignored. Connections to Gemini and Lyria RealTime follow no redirects, since the SDK sends the API key in a header that a redirect would take to another server.
 - **Data sent to Google:** the request text and current plan go to Gemini; prompts and generation settings go to Lyria RealTime. Discord identifiers are never sent. Google may review prompts sent on the free tier, which the README states (USE-1, USE-2).
 - **Model output is untrusted.** It is validated against the schema before use; text shown in Discord is escaped, length-capped, and sent with mentions disabled; nothing is executed.
 - **Prompt injection:** the instruction treats the request as data, and the schema limits what any request can produce.

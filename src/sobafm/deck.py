@@ -10,6 +10,7 @@ from contextlib import AbstractAsyncContextManager
 from enum import StrEnum
 from typing import Protocol
 
+import websockets.asyncio.client
 from google import genai
 from google.genai import errors, live_music, types
 from websockets.exceptions import InvalidStatus, WebSocketException
@@ -56,6 +57,12 @@ class MusicSession(Protocol):
 
 
 type Connect = Callable[[], AbstractAsyncContextManager[MusicSession]]
+
+
+# The SDK sends the API key in a header, and websockets follows redirects while connecting, taking
+# that header to whatever server a redirect names. With a limit of one connection it follows none,
+# and a redirect fails as SecurityError (#85).
+websockets.asyncio.client.MAX_REDIRECTS = 1
 
 
 def lyria(api_key: str) -> Connect:
@@ -223,8 +230,7 @@ class Deck:
             log.warning("Deck %d failed: %s", self.number, detail)
             self._end(EndReason.FAILED, detail)
         except OSError as error:
-            # A certificate error is also a ValueError. Its text is OpenSSL's, which can name a
-            # redirect's host; #85 refuses redirects.
+            # A certificate error is also a ValueError, and its text is OpenSSL's.
             self._fail(error)
         except (WebSocketException, ValueError) as error:
             # A failed handshake, or a redirect websockets can't follow: its message, or its
