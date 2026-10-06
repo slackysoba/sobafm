@@ -28,7 +28,7 @@ from pathlib import Path
 import psutil
 
 SAMPLE_S = 60
-UNDERRUN = re.compile(r"Program ended \((?P<outcome>[^)]*)\) with (?P<seconds>[\d.]+) s of underrun")
+UNDERRUN = re.compile(r"Program ended \([^)]*\) with (?P<seconds>[\d.]+) s of underrun")
 DECK_END = re.compile(r"Deck (?P<number>\d+) (?P<reason>\S+)(?: \([^)]*\))? after (?P<age>\d+) s")
 LEVEL = re.compile(r"^\S+ \S+ (?P<level>WARNING|ERROR|CRITICAL) ")
 FLAT_GROWTH = 0.10  # a rise past this fraction between the run's start and end is a leak
@@ -78,7 +78,8 @@ def report(out: Path) -> int:
     ]
     print(f"Programs ended:      {programs}")
     print(f"Total underrun:      {underrun:.2f} s (limit 2 s)")
-    print(f"Decks ended:         {len(decks)} ({', '.join(f'{k}: {v}' for k, v in reasons.items())})")
+    counts = ", ".join(f"{reason}: {count}" for reason, count in reasons.items())
+    print(f"Decks ended:         {len(decks)} ({counts})")
     print("                     rotations need at least 6 in a 60 minute run")
     print(f"Warnings and errors: {len(problems)}")
     for line in problems[:20]:
