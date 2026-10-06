@@ -620,6 +620,7 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
     voice = make_voice(bot, guild, current=True)
     connection: Any = VoiceConnectionState(voice)  # discord.py's own, with its reader paused
     cast(Any, voice)._connection = connection
+    timed_out = asyncio.Event()  # ends a reconnect that gets no reply, when the test is ready
     if failure == "reset connection":
         # an unhandled close starts a reconnect, whose voice state update finds the gateway
         # connection reset
@@ -629,7 +630,12 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
         # the reconnect gets no reply, so it times out, and the runner then polls the websocket
         # it closed itself
         connection.ws = ClosingSocket(4006, 1000)
-        connection.timeout = 0.2
+
+        async def no_reply(**_: object) -> None:  # the handshake, until the test times it out
+            await timed_out.wait()
+            raise TimeoutError
+
+        connection._inner_connect = no_reply
     else:
         # a resume, which keeps the connected state, finds the gateway connection reset
         connection.state = ConnectionFlowState.connected
@@ -640,6 +646,7 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
         await settle()
         if failure == "lost voice state update":
             assert not voice.stranded()  # while the reconnect waits for Discord's reply
+            timed_out.set()
             await connection._runner
         else:
             with pytest.raises(aiohttp.ClientConnectionResetError):
