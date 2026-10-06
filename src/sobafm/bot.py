@@ -66,8 +66,9 @@ FALLBACK_NOTES: dict[Failure | None, str] = {  # why a request was played as typ
     None: "\nGemini couldn't interpret the request, so it was used as typed.",
 }
 # Discord's inline markup: emphasis, spoilers, code, masked links, mentions, and timestamps,
-# and the `:` or `.` that every link needs, with or without a scheme
-MARKUP = re.compile(r"[\\*_~|`<\[\]:.]")
+# and the `:` or `.` that every link needs, with or without a scheme, with the full stops that
+# domain names treat as `.` (U+3002, U+FF0E, U+FF61)
+MARKUP = re.compile(r"[\\*_~|`<\[\]:.\u3002\uff0e\uff61]")
 
 
 class Voice(discord.VoiceClient):

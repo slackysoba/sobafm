@@ -1534,7 +1534,8 @@ async def test_a_slow_start_announces_the_program_once_it_plays(
     async def announce(answer: str) -> None:
         announced.append(answer)
 
-    reply = await bot.play(member, "rainy lo-fi", None, announce)
+    # Played as typed, so the request reaches the answer, which must be escaped.
+    reply = await bot.play(member, "rainy lo-fi\u202e discord.gg/x", None, announce)
     assert reply.startswith("The music is taking longer than usual to start.")
     await settle()
     assert announced == []
@@ -1543,8 +1544,8 @@ async def test_a_slow_start_announces_the_program_once_it_plays(
     await settle()
 
     assert announced == [
-        "Now playing **rainy lo-fi**, requested by <@5>.\n"
-        "Style: rainy lo-fi\n"
+        "Now playing **rainy lo-fi discord\\.gg/x**, requested by <@5>.\n"
+        "Style: rainy lo-fi discord\\.gg/x\n"
         f"Ends {ends(3600)}.\n"
         "Gemini is unavailable right now, so the request was used as typed."
     ]
@@ -1903,6 +1904,10 @@ async def test_shows_the_status_only_once_connected(bot: SobaFM) -> None:
             "lo-fi https://evil.example steam://run/1 discord.gg/x",
             "lo-fi https\\://evil\\.example steam\\://run/1 discord\\.gg/x",
         ),
+        (
+            "discord\u3002gg/x discord\uff0egg/x discord\uff61gg/x",
+            "discord\\\u3002gg/x discord\\\uff0egg/x discord\\\uff61gg/x",
+        ),
         ("Rainy lo-fi #2: 50% off > 3", "Rainy lo-fi #2\\: 50% off > 3"),
         ("Rainy lo-fi", "Rainy lo-fi"),
     ],
@@ -1911,6 +1916,7 @@ async def test_shows_the_status_only_once_connected(bot: SobaFM) -> None:
         "mentions and timestamps",
         "inline markup",
         "links",
+        "lookalike dots",
         "punctuation",
         "plain",
     ],
