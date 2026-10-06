@@ -60,8 +60,9 @@ type Connect = Callable[[], AbstractAsyncContextManager[MusicSession]]
 
 
 # The SDK sends the API key in a header, and websockets follows redirects while connecting, taking
-# that header to whatever server a redirect names. With a limit of one connection it follows none,
-# and a redirect fails as SecurityError (#85).
+# that header to whatever server a redirect names. With a limit of one connection it follows none:
+# a redirect fails as SecurityError, or as InvalidURI or ValueError if its Location isn't a valid
+# WebSocket URI (#85).
 websockets.asyncio.client.MAX_REDIRECTS = 1
 
 

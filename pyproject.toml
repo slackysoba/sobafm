@@ -86,4 +86,6 @@ filterwarnings = [
     # and positional re.sub() arguments in discord.py's escape_markdown.
     "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
     "ignore:'count' is passed as positional argument:DeprecationWarning:discord.utils",
+    # google-genai's async client subclasses aiohttp's session, which aiohttp discourages.
+    "ignore:Inheritance class AiohttpClientSession:DeprecationWarning",
 ]

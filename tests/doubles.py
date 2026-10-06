@@ -1,4 +1,4 @@
-"""Test doubles for Lyria RealTime sessions, Gemini, the voice player, and the clock."""
+"""Test doubles for Lyria RealTime sessions, Gemini, the voice player, the clock, and servers."""
 
 import asyncio
 import json
@@ -120,6 +120,20 @@ async def settle() -> None:
     """Let pending tasks run until they block."""
     for _ in range(20):
         await asyncio.sleep(0)
+
+
+async def serve(reply: bytes, seen: list[bytes]) -> tuple[asyncio.Server, int]:
+    """Start a local server, returning it and its port, that records each request's head in
+    `seen` and answers it with `reply`."""
+
+    async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        seen.append(await reader.readuntil(b"\r\n\r\n"))
+        writer.write(reply)
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(respond, "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1]
 
 
 class FakePlayer:

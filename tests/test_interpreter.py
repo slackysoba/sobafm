@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 
+import httpx
 import pytest
 from google import genai
 from google.genai import errors, types
@@ -10,7 +11,7 @@ import sobafm.interpreter
 from sobafm.failures import Failure
 from sobafm.interpreter import CONFIG, GEMINI_HTTP, Interpreter, Outcome
 from sobafm.plan import MusicPlan, Prompt
-from tests.doubles import FakeGemini, answer
+from tests.doubles import FakeGemini, answer, serve
 
 LOFI = MusicPlan(
     title="Rainy lo-fi",
@@ -91,36 +92,36 @@ async def test_refuses_not_music_even_with_an_invalid_plan() -> None:
     assert (result.outcome, result.plan) == (Outcome.NOT_MUSIC, None)
 
 
-async def test_gemini_follows_no_redirect() -> None:
+@pytest.mark.parametrize("library", ["aiohttp", "httpx"])
+async def test_gemini_follows_no_redirect(caplog: pytest.LogCaptureFixture, library: str) -> None:
+    asked: list[bytes] = []
     reached: list[bytes] = []
-
-    async def serve(answer: bytes, seen: list[bytes]) -> asyncio.Server:
-        async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-            seen.append(await reader.readuntil(b"\r\n\r\n"))
-            writer.write(answer)
-            await writer.drain()
-            writer.close()
-
-        return await asyncio.start_server(respond, "127.0.0.1", 0)
-
-    target = await serve(
+    target, target_port = await serve(
         b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n", reached
     )
-    target_port = target.sockets[0].getsockname()[1]
-    origin = await serve(
+    origin, origin_port = await serve(
         f"HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{target_port}/\r\n"
         "Content-Length: 0\r\nConnection: close\r\n\r\n".encode(),
-        [],
+        asked,
     )
-    origin_port = origin.sockets[0].getsockname()[1]
-    options = GEMINI_HTTP.model_copy(update={"base_url": f"http://127.0.0.1:{origin_port}"})
+    args = dict(GEMINI_HTTP.async_client_args or {})
+    if library == "httpx":
+        args["transport"] = httpx.AsyncHTTPTransport()  # which makes the SDK use httpx
+    options = GEMINI_HTTP.model_copy(
+        update={"base_url": f"http://127.0.0.1:{origin_port}", "async_client_args": args}
+    )
     gemini = genai.Client(api_key="AIzaFakeKey", http_options=options).aio
 
-    async with origin, target:
-        result = await Interpreter(gemini, "gemini-test").interpret("rainy lo-fi", None)
+    async with origin, target, gemini:
+        with caplog.at_level(logging.INFO):  # production's level
+            result = await Interpreter(gemini, "gemini-test").interpret("rainy lo-fi", None)
 
     assert result.outcome is Outcome.FALLBACK
-    assert reached == []  # the API key's header never reached the redirect's target
+    assert "Interpreter failed (307)" in caplog.text
+    [request] = asked
+    assert b"AIzaFakeKey" in request  # the API key's header, which the redirect's target
+    assert reached == []  # never received
+    assert f"127.0.0.1:{target_port}" not in caplog.text
 
 
 async def test_refuses_a_blank_request_without_a_call() -> None:

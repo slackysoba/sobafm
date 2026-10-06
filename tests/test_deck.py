@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import logging
 import ssl
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -38,7 +38,7 @@ from sobafm.deck import (
 from sobafm.failures import Failure
 from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS
 from sobafm.plan import MusicPlan
-from tests.doubles import FakeClock, FakeLyria, FakeSession, settle
+from tests.doubles import FakeClock, FakeLyria, FakeSession, serve, settle
 
 
 async def start_deck(lyria: FakeLyria, clock: FakeClock) -> tuple[Deck, FakeSession]:
@@ -661,30 +661,16 @@ async def test_logs_a_failed_handshake_without_the_servers_text(
     assert "AIzaFakeKey" not in caplog.text
 
 
-async def serve(handle: Callable[[bytes], bytes], seen: list[bytes]) -> asyncio.Server:
-    """A local server that records each request's head and answers it with `handle`."""
-
-    async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        head = await reader.readuntil(b"\r\n\r\n")
-        seen.append(head)
-        writer.write(handle(head))
-        await writer.drain()
-        writer.close()
-
-    return await asyncio.start_server(respond, "127.0.0.1", 0)
-
-
 @pytest.mark.filterwarnings("ignore:Realtime music generation is experimental")
-async def test_follows_no_redirect_while_connecting() -> None:
+async def test_follows_no_redirect_while_connecting(caplog: pytest.LogCaptureFixture) -> None:
+    asked: list[bytes] = []
     reached: list[bytes] = []
-    target = await serve(lambda _: b"HTTP/1.1 503 Service Unavailable\r\n\r\n", reached)
-    target_port = target.sockets[0].getsockname()[1]
-    redirect = (
+    target, target_port = await serve(b"HTTP/1.1 503 Service Unavailable\r\n\r\n", reached)
+    origin, origin_port = await serve(
         f"HTTP/1.1 302 Found\r\nLocation: ws://127.0.0.1:{target_port}/\r\n"
-        "Content-Length: 0\r\n\r\n"
-    ).encode()
-    origin = await serve(lambda _: redirect, [])
-    origin_port = origin.sockets[0].getsockname()[1]
+        "Content-Length: 0\r\n\r\n".encode(),
+        asked,
+    )
     connect = sobafm.deck.lyria("AIzaFakeKey")
     client = next(
         cell.cell_contents
@@ -695,12 +681,16 @@ async def test_follows_no_redirect_while_connecting() -> None:
 
     async with origin, target:
         deck = Deck(connect, MusicPlan.from_request("ambient"))
-        deck.start()
-        async with asyncio.timeout(10):
-            await deck.wait_ended()
+        with caplog.at_level(logging.INFO):  # production's level
+            deck.start()
+            async with asyncio.timeout(10):
+                await deck.wait_ended()
 
     assert (deck.end_reason, deck.detail) == (EndReason.FAILED, "SecurityError")
-    assert reached == []  # the API key's header never reached the redirect's target
+    [request] = asked
+    assert b"AIzaFakeKey" in request  # the API key's header, which the redirect's target
+    assert reached == []  # never received
+    assert f"127.0.0.1:{target_port}" not in caplog.text
 
 
 async def test_logs_an_ssl_error_with_its_text(
