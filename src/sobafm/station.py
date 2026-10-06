@@ -99,6 +99,7 @@ class Program:
     refused_until: float = 0.0  # a refusal's round, in which another refusal doesn't count
     failures: int = 0
     retry_at: float = 0.0
+    deferred: Outcome | None = None  # the cause of a last-round failure that waits for a deck
     underruns: int = 0  # frames of silence while it played
 
     @property
@@ -275,7 +276,7 @@ class Station:
         if self.program is not None and self._abandoned():
             log.info("No listeners for %d seconds; ending the program", EMPTY_GRACE_S)
             self._finish(Outcome.STOPPED)
-        self._discard()
+        self._discard(player)
         if self.program is not None:
             self._retire(self.program)
             self._generate(self.program)
@@ -481,7 +482,7 @@ class Station:
         live.retire()
         self._settle_playing(program)
 
-    def _discard(self) -> None:
+    def _discard(self, player: Player | None) -> None:
         """Count how sessions ended, then drop ended decks the mixer no longer uses, except the
         one ready for the current plan with the most audio, while no open deck is ready.
 
@@ -512,7 +513,7 @@ class Station:
             )
         )
         for deck in early:
-            self._count_failure(deck)
+            self._count_failure(deck, player)
         plan = None if self.program is None else self.program.plan
         unused = [deck for deck in self.decks if not self.mixer.uses(deck)]
         ended = [deck for deck in unused if deck.state is State.ENDED]
@@ -522,14 +523,16 @@ class Station:
             spare = max(ready, key=lambda deck: deck.buffered_seconds, default=None)
         self.decks = [deck for deck in self.decks if deck not in ended or deck is spare]
 
-    def _count_failure(self, deck: Deck) -> None:
+    def _count_failure(self, deck: Deck, player: Player | None) -> None:
         """Schedule a retry for a session that ended early, or give up.
 
         A session ends early when it fails, or Lyria ends it, before SobaFM retires it, or when
         it ends short of the pre-roll. Sessions that fail together count once, so both decks of a
         round share one retry, and a refusal counts once a round even when a failure in that round
-        counted first. A cause that retrying can't help ends a start whichever deck reports it,
-        unless another deck of its plan may still start it. A program that has started keeps
+        counted first. A cause that retrying can't help ends a start whichever deck reports it, and
+        so do a second refusal and the last retry's failure, unless another deck of its plan may
+        still start it. Then the start waits, and the next deck of its plan to fail ends it, with
+        the cause that retrying can't help if one was seen. A program that has started keeps
         retrying, because its buffers may outlast an outage.
         """
         program = self.program
@@ -538,35 +541,49 @@ class Station:
             return
         starting = not program.started.done()
         outcome = START_OUTCOMES.get(deck.failure, Outcome.FAILED)
-        if deck.failure in FAILED_STARTS and starting and not self._may_start(deck):
+        if deck.failure in FAILED_STARTS and starting and not self._may_start(deck, player):
             log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
             self._give_up(outcome)
             return
         if deck.end_reason is EndReason.FILTERED:
-            if now < program.refused_until:  # its round's other session was refused too
-                return
-            program.refusals += 1
-            program.refused_until = program.retry_at = now + REFUSAL_RETRY_S
-            if program.refusals >= 2 and starting:
+            if now >= program.refused_until:  # else its round's other session was refused too
+                program.refusals += 1
+                program.refused_until = program.retry_at = now + REFUSAL_RETRY_S
+            # A later refusal re-checks, so a start that waited gives up once no deck can start it.
+            if program.refusals >= 2 and starting and not self._may_start(deck, player):
                 log.info("Lyria refused the request twice")
                 self._give_up(Outcome.REFUSED)
             return
-        if now < program.retry_at:
+        spent = program.failures > len(CONNECT_BACKOFF_S)  # the last round has failed already
+        if now < program.retry_at and not spent:
             return
-        program.failures += 1
-        program.retry_at = (
-            now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
-        )
-        if program.failures > len(CONNECT_BACKOFF_S) and starting:
-            log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
-            self._give_up(outcome)
+        if not spent:
+            program.failures += 1
+            program.retry_at = (
+                now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
+            )
+        if program.failures <= len(CONNECT_BACKOFF_S) or not starting:
+            return
+        if self._may_start(deck, player):
+            # Keep the cause that retrying can't help over a plain outage.
+            if program.deferred is None or deck.failure in FAILED_STARTS:
+                program.deferred = outcome
+            return
+        outcome = program.deferred or outcome
+        log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
+        self._give_up(outcome)
 
-    def _may_start(self, failed: Deck) -> bool:
-        """Whether another deck of the failed deck's plan is still open, or ready to go live."""
+    def _may_start(self, failed: Deck, player: Player | None) -> bool:
+        """Whether another deck of the failed deck's plan is still open, or ready to go live.
+
+        An ended deck with audio can go live only while the voice is connected, so a start that
+        can't be heard gives up instead of waiting for it.
+        """
+        voice = player is not None and player.is_connected()
         return any(
             deck is not failed
             and deck.plan is failed.plan
-            and (deck.state is not State.ENDED or deck.ready)
+            and (deck.state is not State.ENDED or (voice and deck.ready))
             for deck in self.decks
         )
 

@@ -2103,3 +2103,98 @@ async def test_counts_failures_afresh_once_a_status_shows(
 
     assert sent == [LOFI.title, LOFI.title, None, LOFI.title, LOFI.title]
     assert caplog.text.count("Could not update the voice channel status") == 2
+
+
+async def lose_rounds(rig: Rig, rounds: int) -> None:
+    """End `rounds` rounds of a start's two sessions in an outage, each after the backoff."""
+    for _ in range(rounds):
+        for session in rig.lyria.sessions[-2:]:
+            session.close(1011)
+        await rig.tick()
+        await rig.tick(16)
+
+
+@pytest.mark.parametrize("ended", [False, True], ids=["still open", "ended but ready"])
+async def test_the_last_rounds_outage_waits_while_another_deck_may_start(
+    rig: Rig, ended: bool
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await lose_rounds(rig, len(CONNECT_BACKOFF_S))
+    await rig.feed(-2, 7)  # one deck of the last round holds more than the pre-roll
+    if ended:
+        rig.session(-2).close(1011)  # its session ends in an outage, with its audio kept
+        await rig.tick()
+
+    rig.session(-1).close(1011)  # as the other's session ends in an outage
+    await rig.tick()
+    await rig.tick()
+
+    assert started.result() is Outcome.PLAYING
+
+
+async def test_the_last_rounds_outage_gives_up_when_the_other_deck_ends_too(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await lose_rounds(rig, len(CONNECT_BACKOFF_S))
+
+    rig.session(-1).close(1011)  # the last round's first session ends
+    await rig.tick()
+    assert not started.done()  # while the other is still open
+    rig.session(-2).close(1011)
+    await rig.tick()
+
+    assert started.result() is Outcome.UNAVAILABLE
+
+
+async def test_the_last_rounds_second_refusal_waits_while_another_deck_may_start(
+    rig: Rig,
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for session in rig.lyria.sessions[-2:]:
+        session.refuse()  # a refused round first
+    await rig.tick()
+    await rig.tick(REFUSAL_RETRY_S)
+    await rig.feed(-2, 7)  # one deck of the next round holds more than the pre-roll
+
+    rig.session(-1).refuse()  # as the other is refused a second time
+    await rig.tick()
+    await rig.tick()
+
+    assert started.result() is Outcome.PLAYING
+
+
+async def test_the_last_rounds_second_refusal_gives_up_when_the_other_deck_ends_too(
+    rig: Rig,
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for session in rig.lyria.sessions[-2:]:
+        session.refuse()
+    await rig.tick()
+    await rig.tick(REFUSAL_RETRY_S)
+
+    rig.session(-1).refuse()  # the second refusal, while the other session is still open
+    await rig.tick()
+    assert not started.done()
+    rig.session(-2).refuse()
+    await rig.tick()
+
+    assert started.result() is Outcome.REFUSED
+
+
+async def test_the_last_rounds_outage_then_a_later_quota_close_reports_the_quota(
+    rig: Rig,
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await lose_rounds(rig, len(CONNECT_BACKOFF_S))
+
+    rig.session(-1).close(1011)
+    await rig.tick()
+    assert not started.done()
+    rig.session(-2).close(*QUOTA)  # a tick later, as in round 1
+    await rig.tick()
+
+    assert started.result() is Outcome.EXHAUSTED
