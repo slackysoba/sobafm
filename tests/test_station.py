@@ -510,7 +510,7 @@ async def test_a_failed_replacement_leaves_the_program_heard_its_own_count(rig: 
     await rig.tick()
 
     assert rig.station.program is heard
-    assert heard.failures == 0  # counted while the replacement was current, so not at all
+    assert heard.failures == 0  # seen while the replacement was current, so it never counts
 
 
 async def test_a_rounds_refusals_count_once_however_far_apart(rig: Rig) -> None:

@@ -489,8 +489,9 @@ class Station:
         returns the program's backoff to its first step. That happens before the current plan's
         failures seen with it count, and they count in a fixed order: causes that end a start at
         once, then refusals, then other recognized causes, then the rest. So the order of the
-        decks doesn't decide a start's outcome. An ended deck can't fill any further: one short
-        of the pre-roll could never go live, and a handover needs only one ready deck.
+        decks doesn't decide a start's outcome, except between a rejected key and the quota. An
+        ended deck can't fill any further: one short of the pre-roll could never go live, and a
+        handover needs only one ready deck.
         """
         seen = [d for d in self.decks if d.state is State.ENDED and d not in self._seen_ended]
         self._seen_ended.update(seen)
