@@ -6,7 +6,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, suppress
 from enum import StrEnum
 from typing import Protocol
 
@@ -217,7 +217,7 @@ class Deck:
             cause: object = error.message or getattr(error, "details", None)
             self.close_code = error.code
             self.failure = close_failure(error.code, cause)
-            self._end(EndReason.CLOSED, close_detail(error.code, cause))
+            self._end(EndReason.CLOSED, close_detail(error.code, cause), error)
         except live_music.ConnectionClosed as error:
             # Closed during setup, as on a refusal. A traceback would quote the close reason.
             if (close := error.rcvd) is not None:
@@ -229,7 +229,7 @@ class Deck:
                 detail = "no close frame received"
             detail = f"{type(error).__name__}: {detail}"
             log.warning("Deck %d failed: %s", self.number, detail)
-            self._end(EndReason.FAILED, detail)
+            self._end(EndReason.FAILED, detail, error)
         except OSError as error:
             # A certificate error is also a ValueError, and its text is OpenSSL's.
             self._fail(error)
@@ -242,7 +242,7 @@ class Deck:
             if isinstance(error, InvalidStatus):
                 detail += f": HTTP {error.response.status_code}"
             log.warning("Deck %d failed: %s", self.number, detail)
-            self._end(EndReason.FAILED, detail)
+            self._end(EndReason.FAILED, detail, error)
         except Exception as error:  # noqa: BLE001 - a deck failure must never stop the station
             self._fail(error)
 
@@ -251,11 +251,15 @@ class Deck:
         log.warning("Deck %d failed", self.number, exc_info=error)
         self.failure = call_failure(error)
         detail = type(error).__name__ + (f": {error}" if str(error) else "")
-        self._end(EndReason.FAILED, detail[:200])
+        self._end(EndReason.FAILED, detail[:200], error)
 
     def _cancelled(self, task: asyncio.Task[None]) -> None:
         """Record a deck cancelled by `retire()` while connecting, or at shutdown, as retired."""
         if task.cancelled():
+            # The task keeps its CancelledError, whose traceback holds this deck's frames, and the
+            # deck holds the task: a cycle that would keep the deck until a collection (#89).
+            with suppress(asyncio.CancelledError):
+                task.result()
             self._end(EndReason.RETIRED)
 
     async def _generate(self, session: MusicSession) -> EndReason:
@@ -307,7 +311,19 @@ class Deck:
         elif generating and self._generating_since is None:
             self._generating_since = now
 
-    def _end(self, reason: EndReason, detail: str | None = None) -> None:
+    def _end(
+        self, reason: EndReason, detail: str | None = None, error: BaseException | None = None
+    ) -> None:
+        """Record how the session ended, logging the deck's summary.
+
+        Drops `error`'s traceback, whose frames hold this deck, once it is recorded and logged
+        where SobaFM logs it. Something holds the error in turn: `_generate()`'s receive task
+        after a failure while streaming, websockets' `ClientProtocol.handshake_exc` after a
+        failed handshake. Either cycle would keep the deck and its audio until a garbage
+        collection (#89).
+        """
+        if error is not None:
+            error.__traceback__ = None
         self._set_generating(False)
         self._session = None
         self.state = State.ENDED

@@ -54,7 +54,13 @@ class FakeSession:
         while True:
             message = await self._messages.get()
             if isinstance(message, BaseException):
-                raise message
+                # The SDK's session keeps no reference to the error it raises; one here would
+                # make a cycle through the traceback that keeps a dropped deck (#89).
+                error, message = message, None
+                try:
+                    raise error
+                finally:
+                    del error
             yield message
 
     def send_audio(
