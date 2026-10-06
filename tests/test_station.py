@@ -655,6 +655,42 @@ async def test_a_replaced_plans_sessions_leave_the_backoff_alone(rig: Rig) -> No
     assert program.failures == 1
 
 
+async def test_a_session_retired_at_a_handover_resets_the_backoff(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    assert heard is not None
+    heard.failures = len(CONNECT_BACKOFF_S)  # as after a start that needed every retry
+    first = live_deck(rig)
+    await rig.feed(1, 30)
+    rig.listen(8 - HANDOVER_BELOW_S + 0.5)  # the live deck runs low while its session is open
+
+    await rig.tick()  # so it hands over, retiring it
+    rig.listen(4)
+    await rig.tick()
+
+    assert live_deck(rig) is not first
+    assert heard.failures == 0
+
+
+async def test_a_failure_seen_with_a_session_that_lasted_counts_from_the_first_step(
+    rig: Rig,
+) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    assert heard is not None
+    heard.failures = 2
+    await rig.feed(1, 10)
+    rig.session(0).close(1011)  # the live session ends early, earlier in the deck list
+    rig.station.decks[1].retire()  # and the next one is retired with its pre-roll, as at a handover
+    sessions = len(rig.lyria.sessions)
+
+    await rig.tick()  # which sees both ends at once
+
+    assert heard.failures == 1
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) > sessions
+
+
 async def test_a_session_that_lasts_until_retired_resets_the_backoff(rig: Rig) -> None:
     await start_playing(rig)
     heard = rig.station.program

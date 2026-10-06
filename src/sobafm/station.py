@@ -476,16 +476,21 @@ class Station:
         """Count how sessions ended, then drop ended decks the mixer no longer uses, except the
         one ready for the current plan with the most audio, while no open deck is ready.
 
-        An ended deck can't fill any further: one short of the pre-roll could never go live, and
-        a handover needs only one ready deck.
+        A session that lasted until SobaFM retired it, at the session limit or at a handover,
+        returns the program's backoff to its first step. That happens before the failures seen
+        with it count, so their order doesn't matter. An ended deck can't fill any further: one
+        short of the pre-roll could never go live, and a handover needs only one ready deck.
         """
-        for deck in self.decks:
-            if deck.state is State.ENDED and deck not in self._seen_ended:
-                self._seen_ended.add(deck)
-                if deck.end_reason is not EndReason.RETIRED or not deck.delivered_preroll:
-                    self._count_failure(deck)
-                elif self.program is not None and deck.plan is self.program.plan:
-                    self.program.failures = 0  # it lasted until SobaFM retired it
+        seen = [d for d in self.decks if d.state is State.ENDED and d not in self._seen_ended]
+        self._seen_ended.update(seen)
+        early = [
+            d for d in seen if d.end_reason is not EndReason.RETIRED or not d.delivered_preroll
+        ]
+        lasted = [deck for deck in seen if deck not in early]
+        if self.program is not None and any(deck.plan is self.program.plan for deck in lasted):
+            self.program.failures = 0
+        for deck in early:
+            self._count_failure(deck)
         plan = None if self.program is None else self.program.plan
         unused = [deck for deck in self.decks if not self.mixer.uses(deck)]
         ended = [deck for deck in unused if deck.state is State.ENDED]
@@ -502,8 +507,7 @@ class Station:
         it ends short of the pre-roll. Sessions that fail together count once, so both decks of a
         round share one retry. A cause that retrying can't help ends a start whichever deck
         reports it, unless another deck of its plan may still start it. A program that has
-        started keeps retrying, because its buffers may outlast an outage. A session that lasts
-        until SobaFM retires it resets the backoff.
+        started keeps retrying, because its buffers may outlast an outage.
         """
         program = self.program
         now = self._clock()
