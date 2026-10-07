@@ -34,7 +34,7 @@ An operator who pulls an image should be able to check that it was built from th
 
 Option 1.
 
-- **Trigger.** A `release.yml` workflow runs on a pushed tag matching `v*`. It first checks that the tag points at a commit on `main`, and that the tag equals the version in `pyproject.toml` with a leading `v`. A tag that fails either check publishes nothing. A tag ruleset on `v*` lets only the maintainer create and blocks updates and deletion, so a published tag cannot move.
+- **Trigger.** A `release.yml` workflow runs on a pushed tag matching `v*`. It first checks that the tag points at a commit on `main`, and that the tag, without its leading `v`, is the version in `pyproject.toml` once both are normalized as PEP 440 versions: `v1.0.0-rc.1` matches `1.0.0rc1`. A tag that fails either check publishes nothing. A tag ruleset on `v*` lets only the maintainer create and blocks updates and deletion, so a published tag cannot move.
 - **Build.** One job sets up QEMU and Buildx, logs in to GHCR with the workflow token, and builds `linux/amd64,linux/arm64` with `provenance: mode=max` and `sbom: true`. CI has already shown that the same build works under QEMU, so no native arm64 runner is added.
 - **Tags.** A release tag `v1.2.3` publishes `1.2.3`, `1.2`, and `latest`. A pre-release tag such as `v1.0.0-rc.1` publishes only its own version tag, so `latest` always means the newest release.
 - **Attestation.** `actions/attest` attests the pushed image digest and pushes the attestation to the registry. The self-hosting guide documents `gh attestation verify oci://ghcr.io/slackysoba/sobafm:<version> --repo slackysoba/sobafm`.
