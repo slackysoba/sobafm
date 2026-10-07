@@ -235,7 +235,7 @@ CREATE TABLE guild (
 
 ## Deployment
 
-SobaFM runs from source with `uv run sobafm`. From M4 it also ships as a multi-architecture container image on GitHub Container Registry, based on `python:3.14-slim` with `libopus0`, running as a non-root user with a `/data` volume. The compose file sets an init process and `restart: unless-stopped`.
+SobaFM runs from source with `uv run sobafm`. From M4 it also ships as a multi-architecture container image on GitHub Container Registry, based on `python:3.14-slim` with `libopus0`, running as a non-root user with a `/data` volume. The compose file sets an init process and `restart: unless-stopped`. The `Dockerfile` pins its base images by digest, which Dependabot updates, and installs only the locked runtime dependencies; CI builds both architectures on every pull request and checks that the image runs as a non-root user with Opus loadable.
 
 ## Open questions
 

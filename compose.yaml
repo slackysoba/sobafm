@@ -1,0 +1,17 @@
+# Run SobaFM from the published image. Put DISCORD_TOKEN and GEMINI_API_KEY in a .env file
+# next to this one (see .env.example), then: docker compose up -d
+services:
+  sobafm:
+    image: ghcr.io/slackysoba/sobafm:latest
+    build: .
+    env_file: .env
+    environment:
+      # The database lives on the volume below, wherever .env points.
+      SOBAFM_DATA_DIR: /data
+    volumes:
+      - sobafm-data:/data
+    init: true
+    restart: unless-stopped
+
+volumes:
+  sobafm-data:
