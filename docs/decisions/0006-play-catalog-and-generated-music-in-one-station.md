@@ -127,8 +127,9 @@ not code scaffolding or a promise that a shallow protocol extraction suffices.
 The added `handover_due` responsibility refines #117's initial seam: a low catalog
 buffer can mean a stalled fetch/decoder, not the end of a track. Reusing the Lyria
 trigger unconditionally could silently cut tracks short; it needs maintainer review.
-Catalog `reserve` needs no Lyria slots; source creation still requires audio-budget
-admission. `going_live` updates track history/feedback only after an audible switch
+Catalog `reserve` needs no Lyria slots; new catalog work still needs the proposed
+combined byte-budget admission. Lyria generation/retention keeps its existing rules.
+`going_live` updates track history/feedback only after an audible switch
 is accepted, not when a candidate is fetched.
 
 ### Reconcile order and Lyria regressions
@@ -147,9 +148,11 @@ Preserve this order across all retained sources, including the old mode:
 3. **Retire:** Lyria rotates at 540 s and retires unused replaced sources.
    Both engines stop unused producers for obsolete programs. Never clear a
    mixer's live/incoming frames; retire an outgoing producer at its handover.
-4. **Generate:** the desired engine opens next sources within its limits,
-   reservations, backoff and the station's remaining audio budget. Lyria may
-   still have outgoing sessions, so a new one waits until a slot actually closes.
+4. **Generate:** preserve Lyria's generation of up to two non-ended producers,
+   reservation and backoff rules, including replacement producers beside retained
+   ended audio. An outgoing producer still occupies a session slot until it ends.
+   New catalog work needs the proposed combined byte-budget admission below;
+   retained-buffer count is not an additional Lyria generation limit.
 5. **Start:** choose a ready source and fade in only with a running player and
    connected voice. Report playing only then; disconnected readiness is not success.
 6. **Hand over or stop:** no new switch while one is in progress. Lyria selects
@@ -199,8 +202,8 @@ Restore the program still heard, not the last request that failed. Rapid replace
 must retain that audible program until a target really plays, and invalidate work by
 program/request identity. An expired generated previous program is not restarted;
 a catalog previous program is invalid after stop/leave/voice loss or explicit end.
-Restoration may need new sources under its engine's retry/budget rules; it is not a
-claim that existing buffered audio can outlast every outage. After a replacement has
+Restoration may need new sources under preserved Lyria rules or the proposed catalog
+retry/budget policy; existing buffered audio may not outlast an outage. After a replacement has
 played, failure recovery belongs to that program, not a return to an older one.
 
 Preserve bot admission/supersession and cooldown-token semantics across both modes:
@@ -219,21 +222,76 @@ thread, into the same PCM format. Decoding and URL trust/redirect policy are gat
 by #118 and #116's actual stream observations. Do not pass a credential-bearing
 URL to a decoder command line or persist audio, including decoder temporary files.
 
-The station admits at most three retained source buffers in total: live/outgoing,
-incoming and one next/preparing source. Retire/drop unused obsolete sources before
-creating another; do not give each engine a separate allowance of three. A Lyria
-handover can already use three 60 s buffers: 34,560,000 PCM bytes at 192,000 bytes/s.
-That leaves only 5,440,000 bytes of a conservative decimal 40,000,000-byte budget
-before queue objects, overshoot, compressed input and decoder copies. Sixty seconds
-is today's Lyria pause target, not proof of a hard memory cap.
+#### Existing Lyria retention and observed states
 
-Recommend a hard 60 s catalog PCM queue ceiling with producer backpressure and a
-station-wide byte budget covering every encoded chunk, PCM chunk/copy and queued
-frame. Reserve room for decoder in-flight output and Lyria receive overshoot before
-starting work; do not decode a whole track then trim its PCM. The exact encoded-byte,
-track-duration, decode-time, chunk, history and search-page caps remain open evidence
-fields below. If the accepted decoder cannot stay inside the envelope, reduce
-catalog prefetch or reject a track, rather than weaken NFR-3 silently.
+The current station limits **non-ended Lyria producers**, not the number of
+retained source buffers. `_generate()` counts every non-ended deck and fills the
+two reserved session slots. `_discard()` preserves ended sources referenced by
+the mixer's live/incoming pair and, while no open unused source is ready, the most
+buffered ended ready spare for the current plan. These roles can overlap; ending a
+producer frees a producer slot without necessarily freeing its audio or releasing
+the station's process-wide reservation. Preserve that
+rule order, generation and spare retention through the Lyria refactor.
+
+The [rotation test](../../tests/test_station.py)
+`test_retires_sessions_before_lyrias_limit` retires both old producers and opens
+two replacements while keeping the ended live source and an ended ready spare.
+The [independent review reproduction](https://github.com/slackysoba/sobafm/pull/156#discussion_r4212507908)
+at `aeec82d9fb0a1a99e6e4682e2ae7279a268f2a11`, repeated during this correction,
+observed these synthetic states without changing runtime or test files:
+
+| State | Retained nonempty buffers | Open producers | PCM payload |
+| --- | --- | --- | --- |
+| Both replacements below pre-roll | Ended live 8 s; ended ready spare 60 s; two generating replacements 2 s each | 2 | 13,824,000 bytes |
+| One replacement reaches 6 s pre-roll | Ended live 8 s; generating replacements 6 s and 2 s; ended spare discarded by the normal rule | 2 | 3,072,000 bytes |
+
+Four retained buffers are therefore an allowed observed state. Neither three nor
+four is an existing unconditional buffer-count ceiling. Enforcing three here would
+suppress a replacement producer or discard the ready fallback, changing preserved
+Lyria behavior. The reproduction measures PCM payload only; it does not establish
+worst-case retention, receive overshoot, object/copy overhead or NFR-3 compliance.
+
+ADR-0004 describes a three-buffer handover estimate. Three 60 s PCM payloads are
+34,560,000 bytes at 192,000 bytes/s, leaving 5,440,000 bytes of a decimal
+40,000,000-byte budget **in that scenario only**. This arithmetic is neither a
+station-wide enforced maximum nor headroom guaranteed to a decoder in every state.
+Sixty seconds is Lyria's pause target; it is not a proven hard allocation ceiling.
+
+#### Proposed combined budget and evidence gate
+
+Recommend a combined byte budget across both engines, accounting for every retained
+Lyria source (including ended live/incoming/spare and replacement buffers), catalog
+PCM, encoded queues, HTTP/pipe buffers, decoder in-flight output, native audio
+buffers, assembler tails, copies and overshoot. Account once for a source occupying
+more than one role. Do not allocate independent per-engine budgets or derive a
+catalog allowance by subtracting three nominal Lyria buffers from 40 MB.
+
+This budget is a **proposed policy and qualification gate**, not present enforcement
+in the Lyria station. The proposed hard 60 s catalog PCM queue ceiling also needs
+approval and may need reduction to fit the combined envelope. Do not decode a whole
+track then trim its PCM. Numeric encoded/chunk/duration/time/history/search caps and
+native/transport bounds remain open evidence fields; a queue count alone proves none
+of them.
+
+Preserve Lyria's two-producer generation and ended-spare rules; do not suppress
+replacement generation or discard a playable fallback to meet an invented source
+count. Admit new catalog work only when its qualified reservations fit alongside
+all actual retained audio and in-flight allowances. Otherwise defer/refuse catalog
+admission or reduce proposed catalog prefetch under the accepted policy, retaining
+FB-3's heard program. Retirement/drop still follows source ownership and lifecycle,
+not a blanket count limit. If no feasible envelope preserves Lyria behavior and
+NFR-3, block adoption and raise the specific behavioral/design choice for maintainer
+approval and regression verification. This correction grants no NFR-3 waiver or
+Lyria behavior change.
+
+Sibling Proposed [ADR-0007 / PR #157](https://github.com/slackysoba/sobafm/pull/157)
+at `29aa2b4e504da8da4ebda241fa322724e3ff4e4f` describes 34,560,000 PCM bytes as an
+existing maximum and proposes parent/native reservations based on a shared budget.
+Its #118 owner/reviewer must reconcile that characterization and qualify allocations
+against the same retained Lyria states, transitions and overshoot. This record does
+not adopt its candidate caps or establish a native-memory pass. Before acceptance,
+Issues #116/#118 supply a feasible numeric envelope; later #119/#121/#125/#127/#131 verify
+combined bounds through rotation, mode changes, reconnect, error and cancellation.
 
 Validate metadata, license and duration before fetching, then validate actual bytes,
 format and decoded sample count. Recommend requiring at least the existing 6 s
@@ -382,7 +440,7 @@ issue #117. “Pending” is not a passing result.
 | Service, license and ND policy | Pending. Approve non-commercial use, exact license/version allowlist (including SA), fade/skip/overlap behavior, attribution obligations and any ND crossfade/exit-criterion exception. Recheck current official terms before acceptance. | Maintainer on #117 |
 | Track attribution surface | Pending. Approve on-demand/current-track attribution or a persistent/per-track surface with precise permission/privacy implications; verify every played track remains attributable. | Maintainer on #117; #128/#130 |
 | Product semantics | Pending. Accept indefinite catalog/lyrics, duration scope, `/skip` readiness/cooldown, missing-id registration and same-mode relative context, or record chosen alternatives. | Maintainer on #117; #119 |
-| Bounded audio envelope | No catalog measurement. Before decision acceptance, use #116/#118 to document a feasible numeric envelope for encoded input, chunks/in-flight output, duration and decode time, plus proposed retry/page/history caps. Runtime proof of combined <40 MB at transitions/error/cancellation is a later #125/#127/#131 gate, not a prerequisite that requires implementing before issue #117. | #116/#118 and maintainer; later #119/#125/#127/#131 |
+| Bounded audio envelope | No catalog measurement. Before decision acceptance, use #116/#118 to document a feasible numeric envelope for encoded input, chunks/in-flight output, duration and decode time, plus proposed retry/page/history caps. Account for actual retained Lyria states, including four-buffer rotation, without assuming three or four is an enforced count maximum. Align the sibling #118 reservations with that envelope. Runtime proof of combined <40 MB at rotation/transitions/reconnect/error/cancellation is a later #121/#125/#127/#131 gate, not a prerequisite that requires implementing before issue #117. | #116/#118 and maintainer; later #119/#121/#125/#127/#131 |
 | Decoder distribution/isolation | #118's [feasibility evidence](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6032402289) is provisional: PyAV's inspected bundle has GPL obligations; miniaudio lacks the required ARM64 wheel; subprocess feasibility needs binary/license/isolation approval. No decoder selected. | Maintainer on #118 |
 | Independent review and acceptance | Primary requests independent proposal review and records dispositions; required checks pass on final head. Maintainer settles open choices, changes Proposed to Accepted in the reviewed proposal and merges it explicitly. No agent merge or runtime adoption in this preparation slice. | Primary and maintainer |
 
@@ -406,6 +464,8 @@ These are future gated acceptance checks, not experiments performed by this draf
   A→B→C replacement, reservations during pending/failed switches and cleanup, old
   generated deadline expiry, stop/disconnect while interpreting/filling/fading,
   stale completions, weak-reference release and process-wide caps across stations.
+  Preserve the rotation state with two replacement producers and an ended ready
+  spare until an open unused source becomes ready; do not add a blanket count cap.
   Keep Lyria behavior tests with fixture-only adjustments.
 - **#122/#123/#126:** preserve generated interpretation/refusal/fallback behavior,
   validate catalog output, test relative-context limits and catalog failure with
