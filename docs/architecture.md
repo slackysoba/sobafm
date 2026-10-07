@@ -231,7 +231,7 @@ CREATE TABLE guild (
 | Unit | Framing, mixer gains, plan validation and config mapping, the store | pytest |
 | Component | Deck and station rules against a fake Lyria session and a fake clock; command handlers with mocked interactions | pytest, pytest-asyncio |
 | Evaluation | 38 interpreter cases with property checks: valid output for every case, every not-music request refused, including prompt injection, tempo and key as asked, refinements keeping what they do not change, no names of artists or works, and injected text in the current plan ignored; at least 90% of checks passing | `pytest -m eval` with `GEMINI_API_KEY`; not run in CI |
-| Live | The Lyria probe, smoke tests, and the 60-minute soak test | `scripts/lyria_probe.py`, a private Discord server |
+| Live | The Lyria probe, smoke tests, and the 60-minute soak test | `scripts/lyria_probe.py`, `scripts/soak.py`, a private Discord server |
 
 ## Deployment
 
