@@ -67,6 +67,12 @@ For the complete 240-second case:
 
 The event-loop heartbeat's largest observed gap across final cases was about 30 ms. There was no Discord player/mixer in this harness, so that observation does not prove playback-thread latency or NFR-2. No OS Job Object/cgroup limit, OOM event, hostile corpus, full cancellation matrix, real-time crossfade or platform concurrency qualification was run.
 
+## Station-wide interpretation
+
+These decoder-only measurements do not establish a station-wide PCM ceiling or available native-memory headroom. ADR-0004's historical estimate of three nominal 60-second buffers gives 34,560,000 PCM bytes and a nominal 5,440,000-byte difference from NFR-3; neither is a demonstrated current worst-case allowance. The [supplemental independent station review](https://github.com/slackysoba/sobafm/pull/157#pullrequestreview-5449091514) reports four retained nonempty Lyria buffers of 8/60/2/2 seconds with two open producers, totaling 13,824,000 PCM bytes. That fixture does not demonstrate an NFR-3 overrun. The proposed future byte envelope needs qualification across all retained/retired/spare/filling/incoming sources, receive overshoot and transitions between modes while preserving current Lyria behavior or obtaining approval for a material change.
+
+This corrects the proposal's interpretation of station admission and historical arithmetic. The decoder experiments were not rerun, and their measured results, committed JSON and retained raw evidence are unchanged.
+
 ## Retained evidence and next work
 
 The small [measurement record](decoder-feasibility-results.json) contains sanitized final metrics, fixture digests and exact arguments. Absolute local paths and raw native error addresses are excluded. Scratch evidence is retained under `%TEMP%/sobafm-decoder-118-20261007-9b8a54`; the production tree contains neither the binary, fixtures nor throwaway harness.
