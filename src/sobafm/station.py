@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import time
+import weakref
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -14,6 +15,7 @@ import discord
 from sobafm.deck import Connect, Deck, EndReason, State
 from sobafm.failures import Failure
 from sobafm.mixer import Mixer
+from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan
 
 log = logging.getLogger(__name__)
@@ -28,6 +30,7 @@ FADE_OUT_S = 3.0
 REFUSAL_RETRY_S = 30.0
 CONNECT_BACKOFF_S = (2.0, 5.0, 15.0)
 PLAYER_RETRY_S = 1.0  # starting discord.py's player, at most once per interval
+RECOVERED_S = 1.0  # audio after a run of underruns that ends it, so a stutter is one run
 EMPTY_GRACE_S = 60.0  # how long a program plays to an empty channel (PLAY-4)
 STATUS_TIMEOUT_S = 10.0  # how long closing or moving waits for voice channel status requests
 STATUS_RETRY_S = 10.0  # before checking a status again, doubling while requests for it fail
@@ -93,8 +96,11 @@ class Program:
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
     refusals: int = 0
+    refused_until: float = 0.0  # a refusal's round, in which another refusal doesn't count
     failures: int = 0
     retry_at: float = 0.0
+    deferred: Outcome | None = None  # the cause of a last-round failure that waits for a deck
+    underruns: int = 0  # frames of silence while it played
 
     @property
     def playing(self) -> bool:
@@ -105,11 +111,14 @@ class Program:
             self.started.set_result(outcome)
 
 
-# A start that fails for these reasons fails at once, since retrying within seconds can't help.
-FAILED_STARTS: dict[Failure | None, Outcome] = {
+# What a start that fails for each cause reports; any other cause reports FAILED
+START_OUTCOMES: dict[Failure | None, Outcome] = {
     Failure.REJECTED: Outcome.REJECTED,
     Failure.EXHAUSTED: Outcome.EXHAUSTED,
+    Failure.UNAVAILABLE: Outcome.UNAVAILABLE,
 }
+# A start that fails for these causes fails at once, since retrying within seconds can't help.
+FAILED_STARTS = {Failure.REJECTED, Failure.EXHAUSTED}
 
 
 class Station:
@@ -132,9 +141,17 @@ class Station:
         # What played when the program was requested, which resumes if the program can't start
         self._previous: Program | None = None
         self.decks: list[Deck] = []
+        # Decks seen to have ended, so each end counts once; weak, so a dropped deck is freed
+        self._seen_ended: weakref.WeakSet[Deck] = weakref.WeakSet()
         self._voice = voice
         self._listeners = listeners
         self._empty_since: float | None = None
+        # The mixer's counts of underruns and of reads with audio when last watched: at each
+        # tick, and before the program heard changes
+        self._underruns_seen = 0
+        self._played_seen = 0
+        self._dry_since: int | None = None  # the count when the current run of silence began
+        self._recovered = 0  # reads with audio since the run's last underrun
         self._connect = connect
         self._pool = pool
         self._clock = clock
@@ -145,7 +162,6 @@ class Station:
         self._channel = channel  # the ID of SobaFM's voice channel, if it is in one
         self._set_status = status  # shows a status on a channel, or says SobaFM may not
         self._shown: tuple[int, str] | None = None  # the status SobaFM set, and where
-        self._heard: str | None = None  # the title of the program heard, while one is
         self._status_task: asyncio.Task[None] | None = None  # the request in flight
         self._status_held = False  # while SobaFM moves
         self._unshown: tuple[int, str | None] | None = None  # the last status not shown, and where
@@ -249,6 +265,7 @@ class Station:
 
     async def reconcile(self) -> None:
         """Apply the reconcile rules once, in order."""
+        self._watch_underruns()
         player = self._voice()
         if self.program is not None and player is None:
             log.info("Voice connection lost; ending the program")
@@ -259,7 +276,7 @@ class Station:
         if self.program is not None and self._abandoned():
             log.info("No listeners for %d seconds; ending the program", EMPTY_GRACE_S)
             self._finish(Outcome.STOPPED)
-        self._discard()
+        self._discard(player)
         if self.program is not None:
             self._retire(self.program)
             self._generate(self.program)
@@ -280,16 +297,14 @@ class Station:
         the next tick, and the old channel keeps the status until it empties or SobaFM shows
         another title there: only someone connected there, or with Manage Channels, can change it.
         """
-        program = self.program
-        if program is None or program.playing:
-            self._heard = program.plan.title if program is not None else None
         busy = self._status_task is not None and not self._status_task.done()
         channel = self._channel()
         if busy or self._status_held or channel is None:
             return
         if self._shown is not None and self._shown[0] != channel:
             self._shown = None  # dragged without `moving()`
-        title = self._heard
+        heard = self._program_heard()
+        title = heard.plan.title if heard is not None else None
         shown = self._shown[1] if self._shown is not None else None
         unshown = self._unshown == (channel, title) and self._clock() < self._status_retry_at
         if title != shown and not unshown:
@@ -326,18 +341,79 @@ class Station:
         return now - self._empty_since >= EMPTY_GRACE_S
 
     def _finish(self, outcome: Outcome) -> None:
+        self._watch_underruns()  # silence since the last tick, so the next tick won't count it
+        if (heard := self._program_heard()) is not None:
+            self._end_run()
+            self._log_ended(heard, outcome)
         if self.program is not None:
             self.program.settle(outcome)
             self.program = None
         self._previous = None
 
     def _give_up(self, outcome: Outcome) -> None:
-        """End a program that could not start, returning to the program still heard (FB-3)."""
+        """End a program that could not start, returning to the program still heard (FB-3)
+        unless its end time has passed."""
         previous = self._previous
-        self._finish(outcome)
-        if previous is not None:
-            log.info("Returning to the program still playing")
-            self.program = previous
+        if previous is None or self.program is None:
+            self._finish(outcome)
+            return
+        self.program.settle(outcome)  # it never played
+        if self._clock() >= previous.ends_at:
+            log.info("Play duration elapsed; ending the program")
+            self._finish(Outcome.STOPPED)
+            return
+        self.program, self._previous = previous, None
+        log.info("Returning to the program still playing")
+
+    def _settle_playing(self, program: Program) -> None:
+        """Settle `program` as playing, so the program it replaced is no longer heard."""
+        self._watch_underruns()
+        program.settle(Outcome.PLAYING)
+        if (previous := self._previous) is not None:
+            self._log_ended(previous, Outcome.REPLACED)
+            self._previous = None
+
+    def _program_heard(self) -> Program | None:
+        """The program listeners hear: the program once it plays, or the one it is replacing."""
+        if self.program is not None and self.program.playing:
+            return self.program
+        return self._previous
+
+    def _watch_underruns(self) -> None:
+        """Count new underruns toward the program heard (NFR-2), and log each run of silence in
+        it as it starts, and its length once audio plays for a while.
+
+        It runs at each tick and before the program heard changes, so each underrun counts
+        once. Reads stop while discord.py reconnects to voice, which ends nothing, and
+        RECOVERED_S of audio must play before a run ends, so a stutter logs as one run.
+        """
+        # Written on discord.py's player thread. Each is read once, so a run and a total agree.
+        underruns, played = self.mixer.underruns, self.mixer.played
+        new_underruns, new_played = underruns - self._underruns_seen, played - self._played_seen
+        self._underruns_seen, self._played_seen = underruns, played
+        if (heard := self._program_heard()) is not None:
+            heard.underruns += new_underruns
+        if new_underruns:
+            if self._dry_since is None and heard is not None:
+                self._dry_since = underruns - new_underruns
+                log.warning("The live deck ran dry; playing silence")
+            self._recovered = 0
+        elif self._dry_since is not None:
+            self._recovered += new_played
+            if self._recovered * FRAME_SECONDS >= RECOVERED_S:
+                self._end_run()
+
+    def _end_run(self) -> None:
+        """Log the length of the current run of silence, if there is one."""
+        if self._dry_since is not None:
+            seconds = (self._underruns_seen - self._dry_since) * FRAME_SECONDS
+            log.info("Silence lasted %.2f s", seconds)
+            self._dry_since, self._recovered = None, 0
+
+    @staticmethod
+    def _log_ended(program: Program, outcome: Outcome) -> None:
+        seconds = program.underruns * FRAME_SECONDS
+        log.info("Program ended (%s) with %.2f s of underrun", outcome, seconds)
 
     def _wind_down(self, player: Player | None) -> None:
         """Without a program: drop idle decks, fade out, stop the player, and free sessions."""
@@ -385,7 +461,7 @@ class Station:
         if deck is None or not self._audible(player):
             return
         self.mixer.switch_to(deck, FADE_IN_S)
-        program.settle(Outcome.PLAYING)
+        self._settle_playing(program)
         log.info("Program started on deck %d", deck.number)
 
     def _hand_over(self, program: Program, player: Player | None) -> None:
@@ -404,66 +480,109 @@ class Station:
             return
         self.mixer.switch_to(deck, CROSSFADE_S)
         live.retire()
-        program.settle(Outcome.PLAYING)
+        self._settle_playing(program)
 
-    def _discard(self) -> None:
-        """Drop ended decks the mixer no longer uses, unless one is ready for the current plan.
+    def _discard(self, player: Player | None) -> None:
+        """Count how sessions ended, then drop ended decks the mixer no longer uses, except the
+        one ready for the current plan with the most audio, while no open deck is ready.
 
-        An ended deck can't fill any further, so one short of the pre-roll could never go live.
+        A session that lasted until SobaFM retired it, at the session limit or at a handover,
+        returns the program's backoff to its first step. That happens before the current plan's
+        failures seen with it count, and they count in a fixed order: causes that end a start at
+        once, then refusals, then other recognized causes, then the rest. So the order of the
+        decks doesn't decide a start's outcome, except between a rejected key and the quota. An
+        ended deck can't fill any further: one short of the pre-roll could never go live, and a
+        handover needs only one ready deck.
         """
-        keep: list[Deck] = []
-        for deck in self.decks:
-            if deck.state is State.ENDED and not self.mixer.uses(deck):
-                if not deck.delivered_preroll:
-                    self._count_failure(deck)
-                replaced = self.program is None or deck.plan is not self.program.plan
-                if replaced or not deck.ready:
-                    continue
-            keep.append(deck)
-        self.decks = keep
+        seen = [d for d in self.decks if d.state is State.ENDED and d not in self._seen_ended]
+        self._seen_ended.update(seen)
+        plan = None if self.program is None else self.program.plan
+        early = [
+            d for d in seen if d.end_reason is not EndReason.RETIRED or not d.delivered_preroll
+        ]
+        lasted = [deck for deck in seen if deck not in early]
+        if self.program is not None and any(deck.plan is plan for deck in lasted):
+            self.program.failures = 0
+        # Only the plan current now: a give-up can return to the program heard mid-loop.
+        early = [deck for deck in early if deck.plan is plan]
+        early.sort(
+            key=lambda d: (
+                d.failure not in FAILED_STARTS,
+                d.end_reason is not EndReason.FILTERED,
+                d.failure is None,
+            )
+        )
+        for deck in early:
+            self._count_failure(deck, player)
+        plan = None if self.program is None else self.program.plan
+        unused = [deck for deck in self.decks if not self.mixer.uses(deck)]
+        ended = [deck for deck in unused if deck.state is State.ENDED]
+        ready = [deck for deck in unused if deck.plan is plan and deck.ready]
+        spare = None
+        if all(deck.state is State.ENDED for deck in ready):
+            spare = max(ready, key=lambda deck: deck.buffered_seconds, default=None)
+        self.decks = [deck for deck in self.decks if deck not in ended or deck is spare]
 
-    def _count_failure(self, deck: Deck) -> None:
-        """Schedule a retry for a session that ended short of the pre-roll, or give up.
+    def _count_failure(self, deck: Deck, player: Player | None) -> None:
+        """Schedule a retry for a session that ended early, or give up.
 
-        Sessions that fail together count once, so both decks of a round share one retry. A
-        cause that retrying can't help ends a start whichever deck reports it, unless another deck
-        of its plan may still start it. A program that has started keeps retrying, because its
-        buffers may outlast an outage.
+        A session ends early when it fails, or Lyria ends it, before SobaFM retires it, or when
+        it ends short of the pre-roll. Sessions that fail together count once, so both decks of a
+        round share one retry, and a refusal counts once a round even when a failure in that round
+        counted first. A cause that retrying can't help ends a start whichever deck reports it, and
+        so do a second refusal and the last retry's failure, unless another deck of its plan may
+        still start it. Then the start waits, and the next deck of its plan to fail ends it, with
+        the cause that retrying can't help if one was seen. A program that has started keeps
+        retrying, because its buffers may outlast an outage.
         """
         program = self.program
         now = self._clock()
         if program is None or deck.plan is not program.plan:
             return
         starting = not program.started.done()
-        if (outcome := FAILED_STARTS.get(deck.failure)) and starting and not self._may_start(deck):
+        outcome = START_OUTCOMES.get(deck.failure, Outcome.FAILED)
+        if deck.failure in FAILED_STARTS and starting and not self._may_start(deck, player):
             log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
             self._give_up(outcome)
             return
-        if now < program.retry_at:
-            return
         if deck.end_reason is EndReason.FILTERED:
-            program.refusals += 1
-            program.retry_at = now + REFUSAL_RETRY_S
-            if program.refusals >= 2 and starting:
+            if now >= program.refused_until:  # else its round's other session was refused too
+                program.refusals += 1
+                program.refused_until = program.retry_at = now + REFUSAL_RETRY_S
+            # A later refusal re-checks, so a start that waited gives up once no deck can start it.
+            if program.refusals >= 2 and starting and not self._may_start(deck, player):
                 log.info("Lyria refused the request twice")
                 self._give_up(Outcome.REFUSED)
             return
-        program.failures += 1
-        program.retry_at = (
-            now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
-        )
-        if program.failures > len(CONNECT_BACKOFF_S) and starting:
-            unavailable = deck.failure is Failure.UNAVAILABLE
-            outcome = Outcome.UNAVAILABLE if unavailable else Outcome.FAILED
-            log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
-            self._give_up(outcome)
+        if now >= program.retry_at:
+            program.failures += 1
+            program.retry_at = (
+                now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
+            )
+        elif program.failures <= len(CONNECT_BACKOFF_S) or not starting:
+            return  # its round's other session failed first; a start that waits re-checks below
+        if program.failures <= len(CONNECT_BACKOFF_S) or not starting:
+            return
+        if self._may_start(deck, player):
+            # Keep the cause that retrying can't help over a plain outage.
+            if program.deferred is None or deck.failure in FAILED_STARTS:
+                program.deferred = outcome
+            return
+        outcome = program.deferred or outcome
+        log.warning("Could not open a Lyria RealTime session (%s): %s", outcome, deck.detail)
+        self._give_up(outcome)
 
-    def _may_start(self, failed: Deck) -> bool:
-        """Whether another deck of the failed deck's plan is still open, or ready to go live."""
+    def _may_start(self, failed: Deck, player: Player | None) -> bool:
+        """Whether another deck of the failed deck's plan is still open, or ready to go live.
+
+        An ended deck with audio can go live only while the voice is connected, so a start that
+        can't be heard gives up instead of waiting for it.
+        """
+        voice = player is not None and player.is_connected()
         return any(
             deck is not failed
             and deck.plan is failed.plan
-            and (deck.state is not State.ENDED or deck.ready)
+            and (deck.state is not State.ENDED or (voice and deck.ready))
             for deck in self.decks
         )
 

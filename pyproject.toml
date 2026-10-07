@@ -14,6 +14,7 @@ dependencies = [
     "google-genai>=2.26.0",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "websockets>=16.1.1",
 ]
 
 [project.scripts]
@@ -85,4 +86,6 @@ filterwarnings = [
     # and positional re.sub() arguments in discord.py's escape_markdown.
     "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
     "ignore:'count' is passed as positional argument:DeprecationWarning:discord.utils",
+    # google-genai's async client subclasses aiohttp's session, which aiohttp discourages.
+    "ignore:Inheritance class AiohttpClientSession:DeprecationWarning",
 ]

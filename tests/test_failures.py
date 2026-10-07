@@ -91,6 +91,7 @@ def test_names_why_a_call_failed(error: BaseException, failure: Failure | None) 
             Failure.EXHAUSTED,
         ),
         (1011, "Resource has been exhausted (e.g. check quota).", Failure.EXHAUSTED),
+        (1011, "Quota exceeded for this API key.", Failure.EXHAUSTED),  # the quota decides
         (1008, "RESOURCE_EXHAUSTED", Failure.EXHAUSTED),
         (1006, "abnormal closure", Failure.UNAVAILABLE),  # as the SDK reports a dropped connection
         (1013, None, Failure.UNAVAILABLE),
@@ -105,6 +106,7 @@ def test_names_why_a_call_failed(error: BaseException, failure: Failure | None) 
         "outage",
         "quota",
         "exhausted",
+        "quota and key",
         "token",
         "dropped",
         "try again later",

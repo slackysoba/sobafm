@@ -1,6 +1,8 @@
 import asyncio
+import gc
 import logging
 import threading
+import weakref
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
@@ -218,6 +220,7 @@ async def test_a_retired_live_deck_plays_out_its_buffer(rig: Rig) -> None:
 async def test_keeps_an_ended_deck_the_mixer_still_plays(rig: Rig) -> None:
     await start_playing(rig)
     first = live_deck(rig)
+    rig.listen(3)  # leaving less than the pre-roll, so it couldn't go live again
 
     rig.session(0).close(1011)
     await rig.tick()
@@ -260,7 +263,9 @@ async def test_keeps_playing_when_lyria_closes_the_live_session(rig: Rig) -> Non
 
     assert live_deck(rig) is not first
     assert rig.station.mixer.underruns == 0
-    assert len(rig.lyria.sessions) == 3  # a replacement for the closed session
+    assert len(rig.lyria.sessions) == 2
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 3  # a replacement for the closed session, after the backoff
 
 
 async def test_retries_a_refused_start_once(rig: Rig) -> None:
@@ -403,6 +408,166 @@ async def test_logs_why_a_start_failed_without_lyrias_text(
 
     assert "Could not open a Lyria RealTime session (exhausted)" in caplog.text
     assert "exceeded" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("close", "outcome"),
+    [(INVALID_KEY, Outcome.REJECTED), (QUOTA, Outcome.EXHAUSTED)],
+    ids=["rejected key", "quota"],
+)
+async def test_a_start_that_backs_off_reports_the_cause_that_ends_it(
+    rig: Rig, caplog: pytest.LogCaptureFixture, close: tuple[int, str], outcome: Outcome
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+
+    with caplog.at_level(logging.WARNING, logger="sobafm.station"):
+        for _ in range(len(CONNECT_BACKOFF_S) + 1):
+            # Each round, one session closes for the cause while the other is still open...
+            first, second = rig.lyria.sessions[-2:]
+            first.close(*close)
+            await rig.tick()
+            second.close(1011)  # ...and the other closes in an outage
+            await rig.tick()
+            await rig.tick(16)  # after the backoff
+
+    assert started.result() is outcome
+    assert f"Could not open a Lyria RealTime session ({outcome})" in caplog.text
+
+
+@pytest.mark.parametrize("first", ["outage", "quota"])
+async def test_the_last_rounds_cause_doesnt_depend_on_deck_order(rig: Rig, first: str) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for _ in range(len(CONNECT_BACKOFF_S)):  # rounds lost to an outage
+        for session in rig.lyria.sessions[-2:]:
+            session.close(1011)
+        await rig.tick()
+        await rig.tick(16)
+
+    earlier, later = rig.lyria.sessions[-2:]
+    outage, quota = (earlier, later) if first == "outage" else (later, earlier)
+    outage.close(1011)  # in the last round, both close in one tick
+    quota.close(*QUOTA)
+    await rig.tick()
+
+    assert started.result() is Outcome.EXHAUSTED
+
+
+@pytest.mark.parametrize("first", ["outage", "refusal"])
+async def test_the_last_rounds_second_refusal_doesnt_depend_on_deck_order(
+    rig: Rig, first: str
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for session in rig.lyria.sessions[-2:]:
+        session.refuse()  # a refused round first
+    await rig.tick()
+    await rig.tick(REFUSAL_RETRY_S)
+    for _ in range(len(CONNECT_BACKOFF_S)):  # then rounds lost to an outage
+        for session in rig.lyria.sessions[-2:]:
+            session.close(1011)
+        await rig.tick()
+        await rig.tick(16)
+
+    earlier, later = rig.lyria.sessions[-2:]
+    outage, refused = (earlier, later) if first == "outage" else (later, earlier)
+    outage.close(1011)  # in the last round, one closes as the other is refused, in one tick
+    refused.refuse()
+    await rig.tick()
+
+    assert started.result() is Outcome.REFUSED
+
+
+@pytest.mark.parametrize("first", ["outage", "unrecognized"])
+async def test_the_last_rounds_recognized_cause_comes_first(rig: Rig, first: str) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for _ in range(len(CONNECT_BACKOFF_S)):
+        for session in rig.lyria.sessions[-2:]:
+            session.close(1011)
+        await rig.tick()
+        await rig.tick(16)
+
+    earlier, later = rig.lyria.sessions[-2:]
+    outage, other = (earlier, later) if first == "outage" else (later, earlier)
+    outage.close(1011)
+    other.close(1008, "Request contains an invalid argument.")  # a cause SobaFM doesn't name
+    await rig.tick()
+
+    assert started.result() is Outcome.UNAVAILABLE
+
+
+async def test_a_failed_replacement_leaves_the_program_heard_its_own_count(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    assert heard is not None
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's session opens
+    rig.session(0).close(1011)  # the heard program's live session ends early
+    rig.session(-1).close(*INVALID_KEY)  # as the replacement's is rejected, in one tick
+    await rig.tick()
+
+    assert rig.station.program is heard
+    assert heard.failures == 0  # seen while the replacement was current, so it never counts
+
+
+async def test_a_rounds_refusals_count_once_however_far_apart(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    rig.session(0).refuse()
+    await rig.tick()
+    await rig.tick(10)  # each session's setup can take seconds
+    rig.session(1).refuse()
+    await rig.tick()
+
+    assert not started.done()  # one refusal, so the start is retried once
+    await rig.tick(REFUSAL_RETRY_S)
+    assert len(rig.lyria.sessions) == 4
+
+
+async def test_a_refusal_counts_after_a_failure_in_its_round(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    rig.session(0).send_audio(2)  # one session ends short, which counts first
+    rig.session(0).close(1011)
+    await rig.tick()
+    rig.session(1).refuse()  # and the other is refused within the failure's window
+    await rig.tick()
+
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 2  # the refusal's window holds the next round
+    await rig.tick(REFUSAL_RETRY_S)
+    assert len(rig.lyria.sessions) == 4
+
+    rig.session(2).refuse()
+    rig.session(3).refuse()
+    await rig.tick()
+    await rig.tick()
+
+    assert started.result() is Outcome.REFUSED
+
+
+async def test_a_replacement_failing_after_the_program_heard_ends_returns_to_nothing(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig, duration_seconds=300)
+    replaced = rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's session opens
+    rig.clock.now += 300  # and the program heard's end time passes while it starts
+    sessions = len(rig.lyria.sessions)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.session(-1).close(*INVALID_KEY)
+        await rig.tick()
+
+    assert replaced.result() is Outcome.REJECTED
+    assert rig.station.program is None
+    assert "Program ended (stopped)" in caplog.text
+    await rig.tick()
+    assert len(rig.lyria.sessions) == sessions  # no session for a program that has ended
 
 
 async def test_a_replacement_that_fails_in_an_outage_returns_to_the_program_heard(
@@ -568,7 +733,212 @@ async def test_keeps_an_ended_deck_that_holds_its_preroll(rig: Rig) -> None:
     await rig.tick()
 
     assert next_deck in rig.station.decks  # ready to go live, though its session ended
-    assert len(rig.lyria.sessions) == 3  # and not a failure: its replacement opens at once
+    assert len(rig.lyria.sessions) == 2  # its replacement opens after the backoff
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 3
+
+
+async def test_keeps_one_ended_deck_ready_for_the_current_plan(rig: Rig) -> None:
+    await start_playing(rig)
+    await rig.feed(1, 20)
+    rig.session(1).close(1011)
+    await rig.tick()
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    await rig.feed(2, 10)
+    rig.session(2).close(1011)  # a second ended deck, newer but with less audio
+
+    await rig.tick()
+    await rig.tick()
+
+    ended = [deck for deck in rig.station.decks if deck is not live_deck(rig)]
+    assert [deck.buffered_seconds for deck in ended if deck.state is State.ENDED] == [20]
+
+
+async def test_keeps_no_ended_deck_while_an_open_one_is_ready(rig: Rig) -> None:
+    await start_playing(rig)
+    await rig.feed(1, 20)
+    ended = rig.station.decks[1]
+    rig.session(1).close(1011)
+    await rig.tick()
+    await rig.tick(CONNECT_BACKOFF_S[0])  # its replacement opens
+    assert ended in rig.station.decks
+
+    await rig.feed(-1, PREROLL_S)  # and is ready to go live
+    await rig.tick()
+
+    assert ended not in rig.station.decks
+
+
+async def test_drops_an_ended_deck_of_a_replaced_plan(rig: Rig) -> None:
+    await start_playing(rig)
+    await rig.feed(1, 10)  # the next deck is ready
+    replaced = rig.station.decks[1]
+
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()  # which retires it
+    await rig.tick()
+
+    assert replaced.state is State.ENDED
+    assert replaced not in rig.station.decks
+
+
+@pytest.mark.parametrize("end", ["closed", "failed", "unreadable"])
+async def test_frees_a_dropped_deck_without_collecting_cycles(rig: Rig, end: str) -> None:
+    await start_playing(rig)
+    rig.session(1).send_audio(2)  # the next deck's session ends short of the pre-roll, on an error
+    if end == "closed":
+        rig.session(1).close(1011)
+    elif end == "failed":
+        rig.session(1).fail(RuntimeError("a frame the SDK couldn't read"))
+    else:
+        rig.session(1).fail(ValueError("a frame the SDK couldn't parse"))
+    dropped = weakref.ref(rig.station.decks[1])
+    gc.disable()  # so only reference counting can free it
+    # pytest keeps each log record, whose traceback would hold the deck; SobaFM's handler doesn't.
+    logging.disable(logging.CRITICAL)
+    try:
+        await rig.tick()
+        await rig.tick()
+
+        assert dropped() is None
+    finally:
+        logging.disable(logging.NOTSET)
+        gc.enable()
+
+
+async def test_frees_the_decks_it_drops(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.session(1).send_audio(2)  # the next deck's session ends short of the pre-roll
+    rig.session(1).close(1011)
+    dropped = weakref.ref(rig.station.decks[1])
+
+    await rig.tick()
+    await rig.tick()
+    gc.collect()
+
+    assert dropped() is None
+
+
+async def test_a_replaced_plans_sessions_leave_the_backoff_alone(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's deck opens
+    rig.session(-1).send_audio(2)  # and ends short of the pre-roll
+    rig.session(-1).close(1011)
+    await rig.tick()
+    await rig.tick(CONNECT_BACKOFF_S[0])  # its retry opens
+    await rig.feed(-1, 10)
+    await rig.tick()  # the replacement plays, retiring the replaced program's live deck
+    await rig.tick()
+
+    program = rig.station.program
+    assert program is not None
+    assert program.plan is SYNTHWAVE
+    assert program.playing
+    assert program.failures == 1
+
+
+async def test_a_session_retired_at_a_handover_resets_the_backoff(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    assert heard is not None
+    heard.failures = len(CONNECT_BACKOFF_S)  # as after a start that needed every retry
+    first = live_deck(rig)
+    await rig.feed(1, 30)
+    rig.listen(8 - HANDOVER_BELOW_S + 0.5)  # the live deck runs low while its session is open
+
+    await rig.tick()  # so it hands over, retiring it
+    rig.listen(4)
+    await rig.tick()
+
+    assert live_deck(rig) is not first
+    assert heard.failures == 0
+
+
+async def test_a_failure_seen_with_a_session_that_lasted_counts_from_the_first_step(
+    rig: Rig,
+) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    assert heard is not None
+    heard.failures = 2
+    await rig.feed(1, 10)
+    rig.session(0).close(1011)  # the live session ends early, earlier in the deck list
+    rig.station.decks[1].retire()  # and the next one is retired with its pre-roll, as at a handover
+    sessions = len(rig.lyria.sessions)
+
+    await rig.tick()  # which sees both ends at once
+
+    assert heard.failures == 1
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) > sessions
+
+
+async def test_a_session_that_lasts_until_retired_resets_the_backoff(rig: Rig) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    assert heard is not None
+    heard.failures = len(CONNECT_BACKOFF_S)  # as after a start that needed every retry
+    await rig.feed(1, 10)
+
+    await rig.tick(SESSION_LIMIT_S)  # its sessions last until SobaFM retires them
+    await rig.tick()
+
+    assert heard.failures == 0
+
+
+async def test_backs_off_from_sessions_retired_before_their_preroll(rig: Rig) -> None:
+    rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()  # its sessions open, and never send audio
+    await rig.tick(SESSION_LIMIT_S)  # so they are retired at the session limit
+
+    await rig.tick()
+    await rig.tick()
+    assert len(rig.lyria.sessions) == 2  # no new sessions at once
+
+    await rig.tick(CONNECT_BACKOFF_S[0])
+    assert len(rig.lyria.sessions) == 4
+
+
+def end_after_preroll(rig: Rig) -> None:
+    """Have each open session send its pre-roll and a little more, then close."""
+    cut_short(rig, PREROLL_S + 1)
+
+
+async def test_a_playing_program_backs_off_from_sessions_that_end_after_the_preroll(
+    rig: Rig,
+) -> None:
+    await start_playing(rig)
+
+    for _ in range(40):  # ten seconds of ticks
+        end_after_preroll(rig)
+        await rig.tick()
+        rig.listen(0.25)
+
+    assert len(rig.lyria.sessions) <= 6  # rounds after the backoff, not at every tick
+    assert len(rig.station.decks) <= 4  # the live deck, a spare, and two filling
+    assert rig.station.program is not None
+    assert rig.station.program.playing
+
+
+async def test_a_start_that_cannot_be_heard_backs_off_from_sessions_that_end_after_the_preroll(
+    rig: Rig,
+) -> None:
+    rig.player.connected = False
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+
+    for _ in range(40):  # ten seconds of ticks
+        await rig.tick()
+        end_after_preroll(rig)
+    assert len(rig.lyria.sessions) <= 6
+    assert len(rig.station.decks) <= 3  # a spare and two filling
+
+    for _ in range(8):
+        await rig.tick(16)
+        end_after_preroll(rig)
+    assert started.result() is Outcome.UNAVAILABLE
+    assert len(rig.station.decks) <= 3
 
 
 async def test_reserves_two_sessions_for_each_program(lyria: FakeLyria, clock: FakeClock) -> None:
@@ -996,6 +1366,375 @@ async def test_a_new_request_restarts_the_grace_period(rig: Rig) -> None:
     assert rig.station.program is None
 
 
+def silence_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The station's lines about silence and programs' totals, in order."""
+    prefixes = ("The live deck ran dry", "Silence lasted", "Program ended")
+    return [message for message in caplog.messages if message.startswith(prefixes)]
+
+
+DRY = "The live deck ran dry; playing silence"
+
+
+async def test_logs_a_run_of_silence_once_and_its_length(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # a second past the live deck's audio
+        await rig.tick()
+        rig.listen(1)  # still dry
+        await rig.tick()
+        await rig.feed(0, 10)  # audio resumes
+        rig.listen(1 - FRAME_SECONDS)
+        await rig.tick()
+        assert silence_lines(caplog) == [DRY]  # not over until audio has played a while
+        rig.listen(FRAME_SECONDS)
+        await rig.tick()
+        assert silence_lines(caplog) == [DRY, "Silence lasted 2.00 s"]  # after a second of it
+        rig.listen(1)
+        await rig.tick()
+
+    assert silence_lines(caplog) == [DRY, "Silence lasted 2.00 s"]
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert [record.getMessage() for record in warnings] == [DRY]
+
+
+async def test_logs_a_single_dry_read(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(8.02)  # one read past the live deck's audio
+        await rig.tick()
+
+    assert silence_lines(caplog) == [DRY]
+
+
+async def test_logs_a_stutter_as_one_run(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # a second of silence
+        await rig.tick()
+        await rig.feed(0, 0.5)
+        rig.listen(0.5)  # half a second of audio
+        await rig.tick()
+        rig.listen(0.5)  # then half a second more of silence
+        await rig.tick()
+        await rig.feed(0, 0.5)
+        rig.listen(0.5)  # and half a second of audio, which doesn't add to the earlier half
+        await rig.tick()
+        assert silence_lines(caplog) == [DRY]
+        await rig.feed(0, 10)
+        rig.listen(1)
+        await rig.tick()
+
+    assert silence_lines(caplog) == [DRY, "Silence lasted 1.50 s"]
+
+
+async def test_a_run_stays_open_while_reads_pause(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)
+        await rig.tick()
+        for _ in range(4):  # discord.py reads nothing while voice reconnects
+            await rig.tick()
+        assert silence_lines(caplog) == [DRY]
+        await rig.feed(0, 10)
+        rig.listen(1)
+        await rig.tick()
+
+    assert silence_lines(caplog) == [DRY, "Silence lasted 1.00 s"]
+
+
+@pytest.mark.parametrize("end", ["stop", "replace"])
+async def test_logs_a_programs_total_when_it_stops_being_heard(
+    rig: Rig, caplog: pytest.LogCaptureFixture, end: str
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # a second of silence
+        await rig.tick()
+        await rig.feed(0, 10)
+        rig.listen(1)
+        await rig.tick()
+        if end == "stop":
+            rig.station.stop()
+        else:
+            rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+            await rig.tick()
+            await rig.tick()  # the replacement's deck opens
+            assert not any(line.startswith("Program ended") for line in silence_lines(caplog))
+            await rig.feed(-1, 10)
+            await rig.tick()  # and plays
+
+    outcome = "stopped" if end == "stop" else "replaced"
+    assert silence_lines(caplog)[-1] == f"Program ended ({outcome}) with 1.00 s of underrun"
+
+
+async def test_silence_while_a_replacement_starts_counts_for_the_program_heard(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's deck opens
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # the program heard runs dry before the replacement plays
+        await rig.tick()
+        await rig.feed(-1, 10)
+        await rig.tick()  # the replacement plays
+        # The silence continues into the replacement, so its run is still open.
+        assert silence_lines(caplog) == [DRY, "Program ended (replaced) with 1.00 s of underrun"]
+        rig.listen(4)
+        await rig.tick()
+        await rig.feed(-1, 10)  # its next deck fills
+        rig.listen(3)  # and its live deck runs low, so it hands over to its own next deck
+        await rig.tick()
+        rig.listen(4)
+        await rig.tick()
+        rig.station.stop()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Program ended (replaced) with 1.00 s of underrun",
+        "Silence lasted 1.00 s",
+        "Program ended (stopped) with 0.00 s of underrun",
+    ]
+
+
+async def test_silence_just_before_a_replacement_plays_is_logged_before_its_total(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's deck opens
+    await rig.feed(-1, 10)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # the program heard runs dry, which no tick has seen
+        await rig.tick()  # and the replacement plays
+
+    assert silence_lines(caplog) == [DRY, "Program ended (replaced) with 1.00 s of underrun"]
+
+
+async def test_a_program_heard_again_after_a_failed_replacement_keeps_its_count(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's deck opens
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # the program heard runs dry while the replacement starts
+        await rig.tick()
+        rig.session(2).close(*INVALID_KEY)
+        await rig.tick()
+        await rig.tick()
+        assert rig.station.program is heard
+        assert silence_lines(caplog) == [DRY]  # it plays on, so nothing has ended
+        rig.station.stop()
+
+    assert silence_lines(caplog)[-2:] == [
+        "Silence lasted 1.00 s",
+        "Program ended (stopped) with 1.00 s of underrun",
+    ]
+
+
+async def test_a_program_heard_again_rotates_without_ending(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    heard = rig.station.program
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await rig.tick()  # the replacement's deck opens
+    rig.session(2).close(*INVALID_KEY)
+    await rig.tick()
+    await rig.tick()  # the program heard is current again, and opens its next deck
+    assert rig.station.program is heard
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        await rig.feed(-1, 10)
+        rig.listen(8 - HANDOVER_BELOW_S + 0.5)  # its live deck runs low
+        await rig.tick()  # so it hands over to its next deck
+        rig.listen(4)
+        await rig.tick()
+        rig.station.stop()
+
+    assert silence_lines(caplog) == ["Program ended (stopped) with 0.00 s of underrun"]
+
+
+@pytest.mark.parametrize("end", ["stop", "close"])
+async def test_a_program_ended_between_ticks_counts_its_latest_silence(
+    rig: Rig, caplog: pytest.LogCaptureFixture, end: str
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # a second of silence that a tick sees
+        await rig.tick()
+        rig.listen(0.5)  # and half a second more before the next
+        if end == "stop":
+            rig.station.stop()
+            await rig.tick()  # which counts nothing again
+        else:
+            await rig.station.close(Outcome.DISCONNECTED)
+
+    outcome = "stopped" if end == "stop" else "disconnected"
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 1.50 s",
+        f"Program ended ({outcome}) with 1.50 s of underrun",
+    ]
+
+
+async def test_a_program_at_its_end_time_logs_its_silence_once(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig, duration_seconds=300)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # a second of silence
+        await rig.tick(299.5)  # 300 s after the request
+        assert rig.station.program is None
+        await rig.tick()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 1.00 s",
+        "Program ended (stopped) with 1.00 s of underrun",
+    ]
+
+
+async def test_a_program_ended_before_a_tick_saw_its_silence_logs_it(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(8.5)  # half a second of silence, which no tick has seen
+        rig.station.stop()
+        await rig.tick()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 0.50 s",
+        "Program ended (stopped) with 0.50 s of underrun",
+    ]
+
+
+async def test_silence_with_nothing_heard_is_not_a_run(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)
+        await rig.tick()
+        rig.station.stop()
+        rig.listen(1)  # discord.py reads the dry deck until a tick winds it down
+        await rig.tick()
+        await rig.tick()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 1.00 s",
+        "Program ended (stopped) with 1.00 s of underrun",
+    ]
+
+
+async def test_silence_with_nothing_heard_counts_for_no_later_program(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    rig.listen(8)  # the whole buffer, without silence
+    rig.station.stop()
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(1)  # silence that no program is heard in, until a tick winds the deck down
+        await rig.tick()
+        await rig.tick()
+        rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+        await rig.tick()
+        await rig.feed(-2, 10)
+        await rig.tick()
+        rig.listen(2)
+        await rig.tick()
+        rig.station.stop()
+
+    assert silence_lines(caplog) == ["Program ended (stopped) with 0.00 s of underrun"]
+
+
+async def test_ending_while_a_replacement_starts_logs_the_program_heard(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    rig.station.play(SYNTHWAVE, "Another member", duration_seconds=HOUR_S)
+    await rig.tick()
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)  # the program heard runs dry while the replacement starts
+        await rig.tick()
+        rig.station.stop()
+
+    assert silence_lines(caplog) == [
+        DRY,
+        "Silence lasted 1.00 s",
+        "Program ended (stopped) with 1.00 s of underrun",
+    ]
+
+
+async def test_failed_reads_end_no_run(
+    rig: Rig, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await start_playing(rig)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        rig.listen(9)
+        await rig.tick()
+        await rig.feed(0, 10)
+        failing = [True]
+
+        def scaled(frame: bytes, gain: float) -> bytes:
+            if failing[0]:
+                raise RuntimeError("a bug")
+            return frame
+
+        monkeypatch.setattr("sobafm.mixer._scaled", scaled)
+        rig.listen(2)  # reads fail, playing silence
+        await rig.tick()
+        assert silence_lines(caplog) == [DRY]
+        failing[0] = False
+        rig.listen(1)
+        await rig.tick()
+
+    assert silence_lines(caplog) == [DRY, "Silence lasted 1.00 s"]
+
+
+async def test_counts_no_underrun_without_a_program_heard(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+
+    with caplog.at_level(logging.INFO, logger="sobafm.station"):
+        for _ in range(250):  # five seconds of reads before anything plays
+            rig.station.mixer.read()
+        await rig.tick()
+        rig.station.stop()
+
+    assert rig.station.mixer.underruns == 0
+    assert silence_lines(caplog) == []
+
+
 async def test_reports_the_time_left(rig: Rig) -> None:
     assert rig.station.time_left is None
 
@@ -1364,3 +2103,135 @@ async def test_counts_failures_afresh_once_a_status_shows(
 
     assert sent == [LOFI.title, LOFI.title, None, LOFI.title, LOFI.title]
     assert caplog.text.count("Could not update the voice channel status") == 2
+
+
+async def lose_rounds(rig: Rig, rounds: int) -> None:
+    """End `rounds` rounds of a start's two sessions in an outage, each after the backoff."""
+    for _ in range(rounds):
+        for session in rig.lyria.sessions[-2:]:
+            session.close(1011)
+        await rig.tick()
+        await rig.tick(16)
+
+
+@pytest.mark.parametrize("ended", [False, True], ids=["still open", "ended but ready"])
+async def test_the_last_rounds_outage_waits_while_another_deck_may_start(
+    rig: Rig, ended: bool
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await lose_rounds(rig, len(CONNECT_BACKOFF_S))
+    await rig.feed(-2, 7)  # one deck of the last round holds more than the pre-roll
+    if ended:
+        rig.session(-2).close(1011)  # its session ends in an outage, with its audio kept
+        await rig.tick()
+
+    rig.session(-1).close(1011)  # as the other's session ends in an outage
+    await rig.tick()
+    await rig.tick()
+
+    assert started.result() is Outcome.PLAYING
+
+
+async def test_the_last_rounds_outage_gives_up_when_the_other_deck_ends_too(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await lose_rounds(rig, len(CONNECT_BACKOFF_S))
+
+    rig.session(-1).close(1011)  # the last round's first session ends
+    await rig.tick()
+    assert not started.done()  # while the other is still open
+    rig.session(-2).close(1011)
+    await rig.tick()
+
+    assert started.result() is Outcome.UNAVAILABLE
+
+
+async def test_the_last_rounds_second_refusal_waits_while_another_deck_may_start(
+    rig: Rig,
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for session in rig.lyria.sessions[-2:]:
+        session.refuse()  # a refused round first
+    await rig.tick()
+    await rig.tick(REFUSAL_RETRY_S)
+    await rig.feed(-2, 7)  # one deck of the next round holds more than the pre-roll
+
+    rig.session(-1).refuse()  # as the other is refused a second time
+    await rig.tick()
+    await rig.tick()
+
+    assert started.result() is Outcome.PLAYING
+
+
+async def test_the_last_rounds_second_refusal_gives_up_when_the_other_deck_ends_too(
+    rig: Rig,
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    for session in rig.lyria.sessions[-2:]:
+        session.refuse()
+    await rig.tick()
+    await rig.tick(REFUSAL_RETRY_S)
+
+    rig.session(-1).refuse()  # the second refusal, while the other session is still open
+    await rig.tick()
+    assert not started.done()
+    rig.session(-2).refuse()
+    await rig.tick()
+
+    assert started.result() is Outcome.REFUSED
+
+
+async def test_the_last_rounds_outage_then_a_later_quota_close_reports_the_quota(
+    rig: Rig,
+) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await lose_rounds(rig, len(CONNECT_BACKOFF_S))
+
+    rig.session(-1).close(1011)
+    await rig.tick()
+    assert not started.done()
+    rig.session(-2).close(*QUOTA)  # a tick later, as in round 1
+    await rig.tick()
+
+    assert started.result() is Outcome.EXHAUSTED
+
+
+async def sessions_opened_during_an_outage(rig: Rig, *, seconds: int) -> int:
+    """Close every open session at each tick of 0.25 s, and count the sessions opened."""
+    for _ in range(seconds * 4):
+        for session in rig.lyria.sessions:
+            if not session.closed:
+                session.close(1011)
+        await rig.tick(0.25)
+    return len(rig.lyria.sessions)
+
+
+async def test_a_started_programs_retries_stay_backed_off_in_a_long_outage(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.listen(HOUR_S)  # its buffer outlasts the outage
+
+    opened = await sessions_opened_during_an_outage(rig, seconds=60)
+
+    assert opened <= 2 + 2 * 6  # a round of two every 15 seconds, after the first backoffs
+
+
+async def test_a_waiting_starts_retries_stay_backed_off(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await lose_rounds(rig, len(CONNECT_BACKOFF_S))
+    await rig.feed(-2, 3)  # one deck of the last round is open and filling
+    before = len(rig.lyria.sessions)
+
+    open_deck = rig.session(-2)
+    for _ in range(240):  # a minute, with a deck that is still open
+        for session in rig.lyria.sessions:
+            if session is not open_deck and not session.closed:
+                session.close(1011)
+        await rig.tick(0.25)
+
+    assert not started.done()
+    assert len(rig.lyria.sessions) - before <= 2 * 5  # a round every 15 seconds

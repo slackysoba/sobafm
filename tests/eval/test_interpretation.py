@@ -29,14 +29,10 @@ from google import genai
 from google.genai import errors, types
 
 from sobafm.config import Settings
-from sobafm.interpreter import Gemini, Interpreter, Outcome, Result, describe
+from sobafm.interpreter import GEMINI_HTTP, Gemini, Interpreter, Outcome, Result, describe
 from sobafm.plan import MusicPlan, Prompt
 
-pytestmark = [
-    pytest.mark.eval,
-    # The SDK's async client subclasses aiohttp's session, which aiohttp discourages.
-    pytest.mark.filterwarnings("ignore:Inheritance class AiohttpClientSession:DeprecationWarning"),
-]
+pytestmark = pytest.mark.eval
 
 type Check = tuple[str, Callable[[MusicPlan, MusicPlan | None], bool]]
 type Setting = Literal["bpm", "scale", "density", "brightness", "mute_drums", "vocalization"]
@@ -388,7 +384,7 @@ async def test_interpretation_meets_its_targets() -> None:
     )
     report = Report()
     try:
-        async with genai.Client(api_key=api_key).aio as client:
+        async with genai.Client(api_key=api_key, http_options=GEMINI_HTTP).aio as client:
             gemini = Recorder(client)
             interpreter = Interpreter(gemini, model)
             for case in CASES:

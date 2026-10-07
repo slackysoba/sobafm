@@ -1,4 +1,4 @@
-"""Test doubles for Lyria RealTime sessions, Gemini, the voice player, and the clock."""
+"""Test doubles for Lyria RealTime sessions, Gemini, the voice player, the clock, and servers."""
 
 import asyncio
 import json
@@ -54,7 +54,13 @@ class FakeSession:
         while True:
             message = await self._messages.get()
             if isinstance(message, BaseException):
-                raise message
+                # The SDK's session keeps no reference to the error it raises; one here would
+                # make a cycle through the traceback that keeps a dropped deck (#89).
+                error, message = message, None
+                try:
+                    raise error
+                finally:
+                    del error
             yield message
 
     def send_audio(
@@ -120,6 +126,22 @@ async def settle() -> None:
     """Let pending tasks run until they block."""
     for _ in range(20):
         await asyncio.sleep(0)
+
+
+async def serve(reply: bytes, seen: list[bytes]) -> tuple[asyncio.Server, int]:
+    """Start a local server on a free port, returning it and the port.
+
+    It records each request's head in `seen` and answers it with `reply`.
+    """
+
+    async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        seen.append(await reader.readuntil(b"\r\n\r\n"))
+        writer.write(reply)
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(respond, "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1]
 
 
 class FakePlayer:
@@ -210,15 +232,16 @@ class FakeGemini:
         self.models = self
         self.response = response
         self.error: Exception | None = None
-        self.delay = 0.0
+        self.held: asyncio.Event | None = None  # a call made while this holds an event waits for it
         self.calls: list[dict[str, Any]] = []
 
     async def generate_content(
         self, *, model: str, contents: str, config: types.GenerateContentConfig
     ) -> types.GenerateContentResponse:
         self.calls.append({"model": model, "contents": contents, "config": config})
-        response, error = self.response, self.error  # as set when the call is made
-        await asyncio.sleep(self.delay)
+        response, error, held = self.response, self.error, self.held  # as set when it's made
+        if held is not None:
+            await held.wait()
         if error is not None:
             raise error
         if response is not None:

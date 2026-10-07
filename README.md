@@ -10,6 +10,7 @@ SobaFM is in design and not yet ready to run. Planning and progress are tracked 
 
 ## Documentation
 
+- [Self-hosting guide](docs/self-hosting.md): set up and run your own SobaFM
 - [Requirements](docs/requirements.md): what v1 does
 - [Architecture](docs/architecture.md): how SobaFM works
 - [Roadmap](docs/roadmap.md): milestones and sequencing

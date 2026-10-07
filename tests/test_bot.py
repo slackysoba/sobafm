@@ -147,6 +147,22 @@ async def bot(
     return bot
 
 
+async def test_gives_gemini_the_options_that_refuse_redirects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", "key")
+    bot = SobaFM(load_settings(env_file=None), Store(tmp_path / "sobafm.db"))
+
+    gemini: Any = bot.interpreter._gemini  # pyright: ignore[reportPrivateUsage]
+    client = gemini._api_client  # the SDK's, as the interpreter's client built it
+
+    assert client._http_options.async_client_args["allow_redirects"] is False  # aiohttp's
+    assert client._async_httpx_client.follow_redirects is False
+    assert client._httpx_client.follow_redirects is False
+    await bot.close()
+
+
 def slow_station(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> asyncio.Future[Outcome]:
     """Make the next request outlast the reply, returning the outcome the station will settle."""
     monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
@@ -621,6 +637,8 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
     voice = make_voice(bot, guild, current=True)
     connection: Any = VoiceConnectionState(voice)  # discord.py's own, with its reader paused
     cast(Any, voice)._connection = connection
+    waiting = asyncio.Event()  # set once the reconnect waits for Discord's reply
+    timed_out = asyncio.Event()  # ends that wait as a timeout, when the test is ready
     if failure == "reset connection":
         # an unhandled close starts a reconnect, whose voice state update finds the gateway
         # connection reset
@@ -630,7 +648,13 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
         # the reconnect gets no reply, so it times out, and the runner then polls the websocket
         # it closed itself
         connection.ws = ClosingSocket(4006, 1000)
-        connection.timeout = 0.2
+
+        async def no_reply(*_: object, **__: object) -> None:  # the wait for Discord's reply
+            waiting.set()
+            await timed_out.wait()
+            raise TimeoutError
+
+        monkeypatch.setattr(connection, "_wait_for_state", no_reply)
     else:
         # a resume, which keeps the connected state, finds the gateway connection reset
         connection.state = ConnectionFlowState.connected
@@ -640,7 +664,9 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
         connection._runner = asyncio.create_task(connection._poll_voice_ws(reconnect=True))
         await settle()
         if failure == "lost voice state update":
-            assert not voice.stranded()  # while the reconnect waits for Discord's reply
+            assert waiting.is_set()  # the reconnect sent its rejoin request, and awaits the reply
+            assert not voice.stranded()
+            timed_out.set()
             await connection._runner
         else:
             with pytest.raises(aiohttp.ClientConnectionResetError):
@@ -1334,14 +1360,16 @@ async def test_a_newer_request_supersedes_one_being_interpreted(
     member = in_voice(channel, channel)
     station = fake_station()
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
-    gemini.delay = 0.05
+    held = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
-    await settle()  # Gemini is slow with the older request...
-    gemini.delay = 0
+    await settle()  # Gemini holds the older request...
+    assert len(gemini.calls) == 1
+    gemini.held = None
 
     await bot.play(member, "lo-fi", None)  # ...and answers the newer one first
 
     assert bot.stop(guild) == "Nothing is playing."  # the replaced request is no longer tracked
+    held.set()
     assert await older == PLAY_REPLIES[Outcome.REPLACED]
     assert [call.args[0].title for call in station.play.call_args_list] == ["lo-fi"]
 
@@ -1354,15 +1382,19 @@ async def test_an_older_request_answered_first_plays_until_a_newer_one(
     member = in_voice(channel, channel)
     station = fake_station()
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
-    gemini.delay = 0.01
+    first = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()  # the older request is with Gemini when the newer one arrives
-    gemini.delay = 0.05
+    assert len(gemini.calls) == 1
+    second = gemini.held = asyncio.Event()
+    newer = asyncio.create_task(bot.play(member, "lo-fi", None))
+    await settle()
+    assert len(gemini.calls) == 2
 
-    newer = await bot.play(member, "lo-fi", None)
-
+    first.set()  # Gemini answers the older request first
     assert (await older).startswith("Now playing **jazz**")
-    assert newer.startswith("Now playing **lo-fi**")
+    second.set()
+    assert (await newer).startswith("Now playing **lo-fi**")
     assert [call.args[0].title for call in station.play.call_args_list] == ["jazz", "lo-fi"]
 
 
@@ -1374,12 +1406,14 @@ async def test_a_refused_request_leaves_an_older_one_to_play(
     member = in_voice(channel, channel)
     station = fake_station()
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
-    gemini.delay = 0.05
+    held = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()
-    gemini.delay, gemini.response = 0, answer(json.dumps({"kind": "not_music"}))
+    assert len(gemini.calls) == 1
+    gemini.held, gemini.response = None, answer(json.dumps({"kind": "not_music"}))
 
     assert await bot.play(member, "what's the weather?", None) == REFUSALS[Interpreted.NOT_MUSIC]
+    held.set()
     assert (await older).startswith("Now playing **jazz**")
     assert [call.args[0].title for call in station.play.call_args_list] == ["jazz"]
 
@@ -1392,14 +1426,21 @@ async def test_a_request_that_ends_first_leaves_newer_ones_to_stop(
     member = in_voice(channel, channel)
     station = fake_station()
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
-    gemini.delay, gemini.response = 0.01, answer(json.dumps({"kind": "not_music"}))
+    first = gemini.held = asyncio.Event()
+    gemini.response = answer(json.dumps({"kind": "not_music"}))
     older = asyncio.create_task(bot.play(member, "what's the weather?", None))
     await settle()
-    gemini.delay, gemini.response = 0.05, None
+    assert len(gemini.calls) == 1
+    second = gemini.held = asyncio.Event()
+    gemini.response = None
     newer = asyncio.create_task(bot.play(member, "jazz", None))
+    await settle()
+    assert len(gemini.calls) == 2
+    first.set()
     assert await older == REFUSALS[Interpreted.NOT_MUSIC]  # while the newer one is with Gemini
 
     assert bot.stop(guild) == "Stopped the request before it played."
+    second.set()
     assert await newer == PLAY_REPLIES[Outcome.STOPPED]
     station.play.assert_not_called()
 
@@ -1411,11 +1452,13 @@ async def test_stop_supersedes_a_request_being_interpreted(
     channel = make_channel(guild)
     station = fake_station()
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
-    gemini.delay = 0.05
+    held = gemini.held = asyncio.Event()
     request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
 
     assert bot.stop(guild) == "Stopped the request before it played."
+    held.set()
     assert await request == PLAY_REPLIES[Outcome.STOPPED]
     station.play.assert_not_called()
 
@@ -1427,14 +1470,16 @@ async def test_a_stopped_request_stays_stopped_when_a_newer_one_plays(
     channel = make_channel(guild)
     member = in_voice(channel, channel)
     monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
-    gemini.delay = 0.05
+    held = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
     assert bot.stop(guild) == "Stopped the request before it played."
-    gemini.delay = 0
+    gemini.held = None
 
     assert (await bot.play(member, "lo-fi", None)).startswith("Now playing **lo-fi**")
     assert bot.stop(guild) == "Nothing is playing."  # the stopped request is no longer tracked
+    held.set()
     assert await older == PLAY_REPLIES[Outcome.STOPPED]
 
 
@@ -1447,14 +1492,16 @@ async def test_a_request_the_station_rejects_leaves_older_ones_to_play(
     station = fake_station()
     station.play.side_effect = [RuntimeError("a bug"), station.play.return_value]
     monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
-    gemini.delay = 0.05
+    held = gemini.held = asyncio.Event()
     older = asyncio.create_task(bot.play(member, "jazz", None))
     await settle()
-    gemini.delay = 0
+    assert len(gemini.calls) == 1
+    gemini.held = None
 
     with pytest.raises(RuntimeError):
         await bot.play(member, "lo-fi", None)
 
+    held.set()
     assert (await older).startswith("Now playing **jazz**")
 
 
@@ -1471,12 +1518,14 @@ async def test_a_request_from_before_leaving_creates_no_station(bot: SobaFM) -> 
 async def test_closing_ends_requests_being_interpreted(bot: SobaFM, gemini: FakeGemini) -> None:
     guild = make_guild()
     channel = make_channel(guild)
-    gemini.delay = 0.05
+    held = gemini.held = asyncio.Event()
     request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
 
     await bot.close()
 
+    held.set()
     assert await request == PLAY_REPLIES[Outcome.STOPPED]
     assert guild.id not in bot.stations
 
@@ -1510,12 +1559,14 @@ async def test_leaving_supersedes_a_request_being_interpreted(
 ) -> None:
     guild = make_guild()
     channel = make_channel(guild)
-    gemini.delay = 0.05
+    held = gemini.held = asyncio.Event()
     request = asyncio.create_task(bot.play(in_voice(channel, channel), "jazz", None))
     await settle()
+    assert len(gemini.calls) == 1
 
     await bot.close_station(guild, Outcome.DISCONNECTED)
 
+    held.set()
     assert await request == PLAY_REPLIES[Outcome.DISCONNECTED]
     assert guild.id not in bot.stations  # no station for a server SobaFM has left
 
