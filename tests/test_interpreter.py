@@ -165,10 +165,11 @@ async def test_falls_back_when_google_rejects_the_key() -> None:
     result = await interpreter(gemini).interpret("rainy lo-fi", None)
 
     # As AI-4 says; Lyria RealTime, which uses the same key, then reports the rejection.
-    assert (result.outcome, result.plan, result.failure) == (
+    assert (result.outcome, result.plan, result.failure, result.extends_current) == (
         Outcome.FALLBACK,
         MusicPlan.from_request("rainy lo-fi"),
         Failure.REJECTED,
+        False,
     )
 
 
@@ -227,7 +228,7 @@ async def test_says_why_it_fell_back(error: Exception, failure: Failure | None) 
         "timeout",
     ],
 )
-async def test_falls_back_to_the_request_text(
+async def test_falls_back_by_adding_the_request_to_the_current_plan(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: Exception | str
 ) -> None:
     gemini = FakeGemini(answer_json(kind="new", plan=NEW_PLAN))
@@ -243,9 +244,11 @@ async def test_falls_back_to_the_request_text(
         async with asyncio.timeout(1):  # far past TIMEOUT_S, so a late timeout fails
             result = await interpreter(gemini).interpret("rainy lo-fi", LOFI)
 
-    assert (result.outcome, result.plan) == (
+    # The request joins the music playing, as AI-4 says.
+    assert (result.outcome, result.plan, result.extends_current) == (
         Outcome.FALLBACK,
-        MusicPlan.from_request("rainy lo-fi"),
+        LOFI.with_request("rainy lo-fi"),
+        True,
     )
     [warning] = caplog.records
     assert bool(warning.exc_info) == isinstance(failure, RuntimeError)  # tracebacks for bugs only

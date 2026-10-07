@@ -1801,6 +1801,28 @@ async def test_play_says_why_the_request_was_used_as_typed(
     assert station.play.call_args.args[0] == MusicPlan.from_request("rainy lo-fi")
 
 
+async def test_play_says_when_a_failed_request_was_added_to_the_current_music(
+    bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    member.mention = "<@5>"
+    station = fake_station()
+    current = MusicPlan.from_request("rainy lo-fi piano")
+    station.program = MagicMock(plan=current)
+    monkeypatch.setattr(bot, "station", MagicMock(return_value=station))
+    monkeypatch.setattr(bot, "stations", {guild.id: station})
+    gemini.error = errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}})
+
+    reply = await bot.play(member, "darker", None)
+
+    assert reply.endswith(
+        "\nGemini is unavailable right now, so the request was added to the current music as typed."
+    )
+    assert station.play.call_args.args[0] == current.with_request("darker")
+
+
 async def test_play_escapes_the_title(
     bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch
 ) -> None:

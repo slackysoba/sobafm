@@ -692,7 +692,10 @@ def note(reply: str, interpreted: Result) -> str:
     """`reply`, saying why the request was used as typed, if it was (AI-4)."""
     if interpreted.outcome is not Interpreted.FALLBACK:
         return reply
-    return reply + FALLBACK_NOTES.get(interpreted.failure, FALLBACK_NOTES[None])
+    text = FALLBACK_NOTES.get(interpreted.failure, FALLBACK_NOTES[None])
+    if interpreted.extends_current:
+        text = text.replace("was used as typed", "was added to the current music as typed")
+    return reply + text
 
 
 def seconds(count: int) -> str:

@@ -41,7 +41,7 @@ SobaFM is a self-hosted Discord bot that plays continuous AI-generated music in 
 - **AI-1** A Gemini model turns each request, together with the current program for relative requests such as "faster", into a structured plan: a title, one to four weighted style prompts, and optional tempo, key, density, brightness, drum muting, and wordless vocals. _(M3)_
 - **AI-2** Model output is validated before it reaches Lyria. _(M3)_
 - **AI-3** Requests that are not about music, and requests that Gemini's safety filters block, are refused and never sent to Lyria. _(M3)_
-- **AI-4** If the model call fails, times out, or returns invalid output, the request text is used as a single prompt and the reply says so. _(M3)_
+- **AI-4** If the model call fails, times out, or returns invalid output, the request text is used as typed and the reply says so: added as a lighter prompt to the current program's plan when music is playing, and as the only prompt otherwise. _(M3)_
 - **AI-5** Names of artists, songs, and other works are translated into descriptive style terms. _(M3)_
 - **AI-6** Only the request text and the current plan are sent to Gemini; no Discord identifiers are sent. _(M3)_
 - **AI-7** An evaluation set of representative requests measures interpretation quality. It runs on demand with an API key, not in CI. _(M3)_
