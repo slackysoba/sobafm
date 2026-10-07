@@ -18,7 +18,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal, Self
-from urllib.parse import quote, unquote, urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 import aiohttp
 from google import genai
@@ -50,7 +50,9 @@ class ProbeError(Exception):
 
 
 def text_only(value: str) -> str:
-    cleaned = re.sub(r"(?:https?://|www\.)\S+", "[URL omitted]", one_line(value))
+    cleaned = re.sub(
+        r"(?:https?://|www\.)\S+", "[URL omitted]", one_line(value), flags=re.IGNORECASE
+    )
     if not cleaned:
         raise ValueError("blank text after normalization")
     return cleaned
@@ -201,10 +203,11 @@ class Reply(External):
 class Attempt(Model):
     stage: Stage
     latency_s: float = Field(ge=0, allow_inf_nan=False)
-    http_status: int = Field(ge=100, le=599)
-    status: Literal["success", "succeed", "failed"]
-    code: int = Field(ge=0)
-    count: int = Field(ge=0, le=5)
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    status: Literal["success", "succeed", "failed"] | None = None
+    code: int | None = Field(default=None, ge=0)
+    count: int | None = Field(default=None, ge=0, le=5)
+    error: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class StreamObservation(Model):
@@ -329,6 +332,7 @@ async def fetch_tracks(
     session: aiohttp.ClientSession,
     client_id: SecretStr,
     params: dict[str, str],
+    attempt: Attempt | None = None,
 ) -> tuple[Reply, int, float]:
     started = time.monotonic()
     params = {
@@ -339,38 +343,47 @@ async def fetch_tracks(
         "audioformat": "mp31",
         "type": "all",
     } | params
-    async with session.get(TRACKS_URL, params=params, allow_redirects=False) as response:
-        if 300 <= response.status < 400:
-            raise ProbeError("Jamendo API redirect refused")
-        body = bytearray()
-        async for chunk in response.content.iter_chunked(16384):
-            body.extend(chunk)
-            if len(body) > MAX_BODY:
-                raise ProbeError("Jamendo body too large")
-        reply = Reply.model_validate_json(body)
-        if response.status != 200 and not reply.headers.code:
-            raise ProbeError("HTTP failure with success body")
-        return reply, response.status, round(time.monotonic() - started, 3)
+    try:
+        async with session.get(TRACKS_URL, params=params, allow_redirects=False) as response:
+            if attempt is not None:
+                attempt.http_status = response.status
+            if 300 <= response.status < 400:
+                raise ProbeError("Jamendo API redirect refused")
+            body = bytearray()
+            async for chunk in response.content.iter_chunked(16384):
+                body.extend(chunk)
+                if len(body) > MAX_BODY:
+                    raise ProbeError("Jamendo body too large")
+            reply = Reply.model_validate_json(body)
+            if attempt is not None:
+                attempt.status = reply.headers.status
+                attempt.code = reply.headers.code
+                attempt.count = len(reply.results)
+            if response.status != 200 and not reply.headers.code:
+                raise ProbeError("HTTP failure with success body")
+            return reply, response.status, round(time.monotonic() - started, 3)
+    except Exception as error:
+        if attempt is not None:
+            attempt.error = error_description(error)
+        raise
+    finally:
+        if attempt is not None:
+            attempt.latency_s = round(time.monotonic() - started, 3)
 
 
 async def search(
     session: aiohttp.ClientSession,
     client_id: SecretStr,
     query: CatalogQuery,
+    attempts: list[Attempt] | None = None,
 ) -> tuple[list[Track], list[Attempt]]:
-    attempts: list[Attempt] = []
+    if attempts is None:
+        attempts = []
     for stage, params in search_steps(query):
-        reply, status, elapsed = await fetch_tracks(session, client_id, params)
-        attempts.append(
-            Attempt(
-                stage=stage,
-                latency_s=elapsed,
-                http_status=status,
-                status=reply.headers.status,
-                code=reply.headers.code,
-                count=len(reply.results),
-            )
-        )
+        # The case owns this list, so earlier evidence survives a later request failure.
+        attempt = Attempt(stage=stage, latency_s=0)
+        attempts.append(attempt)
+        reply, _, _ = await fetch_tracks(session, client_id, params, attempt)
         if reply.headers.code or reply.results:
             return reply.results, attempts
     return [], attempts
@@ -499,14 +512,14 @@ async def measure_case(
         result.outcome = "music"
         # A known negative case is a classification control, never a catalog search.
         if case.expected != "not_music":
-            tracks, result.attempts = await search(session, client_id, answer.query)
+            tracks, _ = await search(session, client_id, answer.query, result.attempts)
             if result.attempts[-1].code:
                 result.outcome = "error"
                 result.error = "Jamendo failed (see attempt status/code)"
             result.tracks = [await report_track(session, client_id, t, inspect) for t in tracks]
     except Exception as error:  # noqa: BLE001 - safe failure evidence, never fallback searches
         result.outcome = "error"
-        result.error = str(error) if isinstance(error, ProbeError) else describe(error)
+        result.error = error_description(error)
         if result.interpretation_s == 0:
             result.interpretation_s = round(time.monotonic() - started, 3)
     return result
@@ -581,14 +594,33 @@ def summarize(report: Report, ratings: Ratings) -> dict[str, object]:
     }
 
 
+def error_description(error: Exception) -> str:
+    if isinstance(error, ProbeError):
+        return str(error)
+    if isinstance(error, TimeoutError):
+        return "request timed out"
+    return describe(error)
+
+
 def serialized(model: BaseModel, secrets: tuple[SecretStr, ...] = ()) -> str:
     validated = type(model).model_validate_json(model.model_dump_json())
     text = validated.model_dump_json(indent=2)
-    for secret in secrets:
-        value = secret.get_secret_value()
+    echoes = [
+        echo
+        for secret in secrets
+        for echo in (secret.get_secret_value(), json.dumps(secret.get_secret_value())[1:-1])
+    ]
+    decoded = text
+    # Inspect percent-encoded echoes, including mixed hex casing and nested encoding.
+    # Decode only for detection; exported musical text and report hashes stay unchanged.
+    while True:
         # Refuse a report if any external free-text field unexpectedly echoes a credential.
-        if value in text or quote(value, safe="") in text or json.dumps(value)[1:-1] in text:
+        if any(echo in decoded for echo in echoes):
             raise ProbeError("credential echo detected; export refused")
+        unquoted = unquote(decoded)
+        if unquoted == decoded:
+            break
+        decoded = unquoted
     return text + "\n"
 
 
@@ -749,7 +781,7 @@ def main() -> None:
                             )
                         )
         except Exception as error:  # noqa: BLE001 - never expose external values or a traceback
-            reason = str(error) if isinstance(error, ProbeError) else describe(error)
+            reason = error_description(error)
             print(f"Probe stopped: {reason}", file=sys.stderr)
             raise SystemExit(1) from None
 

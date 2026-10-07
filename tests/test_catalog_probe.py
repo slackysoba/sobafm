@@ -1,11 +1,15 @@
 """Offline catalog probe tests: synthetic model replies and a loopback HTTP server only."""
 
 import argparse
+import asyncio
+import hashlib
 import json
 import socket
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
+from typing import Literal
+from urllib.parse import quote
 
 import aiohttp
 import pytest
@@ -47,7 +51,9 @@ def reply_data(tracks: list[dict[str, object]], *, code: int = 0) -> dict[str, o
 
 
 @asynccontextmanager
-async def server(handler: Callable[[web.Request], Awaitable[web.Response]]) -> AsyncGenerator[str]:
+async def server(
+    handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> AsyncGenerator[str]:
     app = web.Application()
     app.router.add_route("*", "/{tail:.*}", handler)
     runner = web.AppRunner(app)
@@ -126,6 +132,44 @@ def report() -> probe.Report:
         approval_reference="https://github.com/slackysoba/sobafm/issues/116#issuecomment-1",
         inspect_streams=False,
         results=results,
+    )
+
+
+@pytest.fixture
+def offline_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> argparse.Namespace:
+    manifest_path = tmp_path / "manifest.json"
+    probe.write_model(
+        manifest_path,
+        probe.Manifest(
+            cases=[probe.Case(id=f"case-{i}", request="jazz", expected="new") for i in range(2)],
+            pass_numerator=2,
+            pass_denominator=3,
+        ),
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", KEY.get_secret_value())
+    monkeypatch.setenv("JAMENDO_CLIENT_ID", KEY.get_secret_value())
+
+    class Client:
+        def __init__(self, *, api_key: str, http_options: types.HttpOptions) -> None:
+            assert api_key == KEY.get_secret_value()
+            assert http_options is probe.GEMINI_HTTP
+
+        @property
+        def aio(self) -> AbstractAsyncContextManager[Gemini]:
+            return self.context()
+
+        @asynccontextmanager
+        async def context(self) -> AsyncGenerator[Gemini]:
+            yield Gemini(json.dumps({"kind": "new", "query": QUERY.model_dump()}))
+
+    monkeypatch.setattr(probe.genai, "Client", Client)
+    return argparse.Namespace(
+        m4_ready=True,
+        approval_reference="https://github.com/slackysoba/sobafm/issues/116#issuecomment-1",
+        manifest=manifest_path,
+        output=tmp_path / "report.json",
+        model=probe.MODEL,
+        inspect_streams=False,
     )
 
 
@@ -234,6 +278,102 @@ async def test_nonempty_or_failed_search_never_relaxes(
     assert KEY.get_secret_value() not in attempts[0].model_dump_json()
 
 
+@pytest.mark.parametrize(
+    ("failure", "http_status", "error"),
+    [
+        ("malformed", 503, "invalid output"),
+        ("redirect", 302, "Jamendo API redirect refused"),
+        ("timeout", None, "request timed out"),
+        ("body_timeout", 503, "request timed out"),
+        ("oversized", 503, "Jamendo body too large"),
+        ("connection", None, "ClientConnectorError"),
+        ("success_body", 503, "HTTP failure with success body"),
+    ],
+)
+async def test_run_preserves_attempts_when_relaxation_fails(
+    failure: str,
+    http_status: int | None,
+    error: str,
+    offline_run: argparse.Namespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, str]] = []
+    original_session = aiohttp.ClientSession
+    if failure in ("timeout", "body_timeout"):
+
+        def short_session(*, timeout: aiohttp.ClientTimeout) -> aiohttp.ClientSession:
+            assert timeout.total == 30
+            return original_session(timeout=aiohttp.ClientTimeout(total=0.2))
+
+        monkeypatch.setattr(probe.aiohttp, "ClientSession", short_session)
+
+    with socket.socket() as unreachable:
+        unreachable.bind(("127.0.0.1", 0))
+
+        async def handler(request: web.Request) -> web.StreamResponse:
+            calls.append(dict(request.query))
+            if len(calls) == 1:
+                await asyncio.sleep(0.01)
+                if failure == "connection":
+                    # A bound, non-listening socket gives a local connection failure.
+                    monkeypatch.setattr(
+                        probe, "TRACKS_URL", f"http://127.0.0.1:{unreachable.getsockname()[1]}"
+                    )
+                return web.json_response(reply_data([]))
+            assert "fuzzytags" in request.query
+            if failure == "redirect":
+                return web.Response(
+                    status=302,
+                    headers={
+                        "Location": f"https://untrusted.example/?client_id={KEY.get_secret_value()}"
+                    },
+                )
+            if failure == "oversized":
+                return web.Response(status=503, body=b" " * (probe.MAX_BODY + 1))
+            if failure == "success_body":
+                return web.json_response(reply_data([]), status=503)
+            if failure in ("timeout", "body_timeout"):
+                response = web.StreamResponse(status=503)
+                if failure == "body_timeout":
+                    await response.prepare(request)
+                await asyncio.sleep(0.3)
+                return response
+            return web.Response(status=503, text=KEY.get_secret_value())
+
+        async with server(handler) as url:
+            monkeypatch.setattr(probe, "TRACKS_URL", url)
+            await probe.run(offline_run)
+
+    text = offline_run.output.read_text(encoding="utf-8")
+    saved = probe.Report.model_validate_json(text)
+    assert len(saved.results) == 1  # Stop the run as well as the search relaxation.
+    result = saved.results[0]
+    assert result.outcome == "error"
+    assert result.query == QUERY
+    assert result.error == error
+    assert result.tracks == []
+    assert [a.stage for a in result.attempts] == ["all_tags", "any_tag"]
+    first, failed = result.attempts
+    assert (first.http_status, first.status, first.code, first.count) == (200, "success", 0, 0)
+    assert first.error is None
+    assert first.latency_s >= 0.005
+    assert failed.http_status == http_status
+    if failure == "success_body":
+        assert (failed.status, failed.code, failed.count) == ("success", 0, 0)
+    else:
+        assert failed.status is None
+        assert failed.code is None
+        assert failed.count is None
+    assert failed.error == error
+    assert all(a.latency_s >= 0 for a in result.attempts)
+    if failure in ("timeout", "body_timeout"):
+        assert failed.latency_s >= 0.19
+    assert len(calls) == (1 if failure == "connection" else 2)
+    assert KEY.get_secret_value() not in text
+    assert "untrusted.example" not in text
+    assert probe.summarize(saved, probe.rating_template(saved))["recommendation"] == "pending"
+
+
 async def test_http_redirect_and_oversized_body_are_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -275,6 +415,59 @@ async def test_reports_only_canonical_links_and_metadata() -> None:
     assert result.tags == ["jazz", "piano", "calm"]
     assert "client_id" not in result.model_dump_json()
     assert "untrusted.example" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize("prefix", ["HTTPS://", "hTtP://", "WwW."])
+@pytest.mark.parametrize("hex_case", ["upper", "lower"])
+async def test_mixed_case_urls_are_omitted_from_models_reports_and_view(
+    prefix: str,
+    hex_case: Literal["upper", "lower"],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    credential = SecretStr("synthetic-client-id")
+    encoded = "".join(f"%{ord(c):02X}" for c in credential.get_secret_value())
+    if hex_case == "lower":
+        encoded = encoded.lower()
+    free_text = f"Jazz {prefix}example.invalid/?client_id={encoded}"
+    query = probe.CatalogQuery(title=free_text, tags=["jazz"], search=free_text)
+    track = probe.Track.model_validate(
+        track_data()
+        | {
+            "name": free_text,
+            "artist_name": free_text,
+            "musicinfo": {"tags": {"genres": [free_text]}},
+        }
+    )
+    assert query.title == query.search == track.name == track.artist_name == "Jazz [URL omitted]"
+    assert track.musicinfo.tags.genres == ["Jazz [URL omitted]"]
+    assert encoded not in query.model_dump_json() + track.model_dump_json()
+    async with aiohttp.ClientSession() as session:
+        result_track = await probe.report_track(session, credential, track, False)
+    result = report()
+    result.results[0].query = query
+    result.results[0].tracks = [result_track]
+    # Serialization revalidates models even if callers have assigned external text later.
+    result.results[0].query.title = free_text
+    result.results[0].tracks[0].name = free_text
+    path = tmp_path / "report.json"
+    probe.write_model(path, result, (credential, KEY))
+    exported = path.read_text(encoding="utf-8")
+    monkeypatch.setattr(probe.sys, "argv", ["catalog_probe", "view", "--report", str(path)])
+    previous_logging = probe.logging.root.manager.disable
+    try:
+        probe.main()
+    finally:
+        probe.logging.disable(previous_logging)
+    view = capsys.readouterr().out
+    for output in (exported, view):
+        assert credential.get_secret_value() not in output
+        assert encoded not in output
+        assert "example.invalid" not in output
+        assert "client_id" not in output
+        assert "Jazz [URL omitted]" in output
+    assert "https://www.jamendo.com/track/123" in view
 
 
 @pytest.mark.parametrize(
@@ -398,6 +591,25 @@ def test_ratings_reject_duplicates_missing_rows_and_altered_report() -> None:
         probe.summarize(result, ratings)
 
 
+def test_existing_successful_attempt_reports_keep_their_rating_binding() -> None:
+    old_report = report().model_dump(mode="json")
+    old_report["results"][0]["attempts"] = [
+        {
+            "stage": "all_tags",
+            "latency_s": 0.1,
+            "http_status": 200,
+            "status": "success",
+            "code": 0,
+            "count": 5,
+        }
+    ]
+    old_json = json.dumps(old_report, ensure_ascii=False, separators=(",", ":"))
+    restored = probe.Report.model_validate_json(old_json)
+    ratings = probe.rating_template(restored)
+    ratings.report_sha256 = hashlib.sha256(old_json.encode()).hexdigest()
+    assert probe.summarize(restored, ratings)["recommendation"] == "pending"
+
+
 def test_exports_refuse_credential_echo_and_overwrite(tmp_path: Path) -> None:
     result = report()
     result.results[0].tracks[0].name = KEY.get_secret_value()
@@ -410,11 +622,29 @@ def test_exports_refuse_credential_echo_and_overwrite(tmp_path: Path) -> None:
         probe.write_model(path, probe.rating_template(report()))
 
 
+@pytest.mark.parametrize("encoding", ["literal", "upper", "lower", "mixed", "nested"])
+def test_exports_refuse_encoded_credential_echo_outside_urls(encoding: str, tmp_path: Path) -> None:
+    value = KEY.get_secret_value()
+    encoded = "".join(f"%{ord(c):02X}" for c in value)
+    echo = {
+        "literal": value,
+        "upper": encoded,
+        "lower": encoded.lower(),
+        "mixed": "".join(f"%{ord(c):02x}" if i % 2 else c for i, c in enumerate(value)),
+        "nested": quote(encoded, safe=""),
+    }[encoding]
+    result = report()
+    result.results[0].tracks[0].name = f"Piano {echo}"
+    path = tmp_path / "report.json"
+    with pytest.raises(probe.ProbeError, match="credential echo detected; export refused"):
+        probe.write_model(path, result, (KEY,))
+    assert not path.exists()
+
+
 async def test_run_reserves_output_and_keeps_completed_cases_on_client_close_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from contextlib import AbstractAsyncContextManager
 
     output = tmp_path / "report.json"
     manifest_path = tmp_path / "manifest.json"

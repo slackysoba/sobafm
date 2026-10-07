@@ -86,13 +86,20 @@ returns at most five tracks. It applies no NC/ND exclusion pending #117's decisi
 A nonempty result, even one with fewer than three tracks, is rated as returned.
 
 The report includes validated metadata, license labels, interpretation time, each
-search stage's latency, HTTP status, and Jamendo `headers.status`/`code`. It omits raw
+search stage's latency, HTTP status, and Jamendo `headers.status`/`code`.
+Successful empty stages remain in the report if a later stage fails. The failed
+attempt includes its latency and a safe error description; unavailable HTTP status,
+Jamendo status/code and result count are `null`, not inferred as success or zero.
+Successful attempts retain their original serialized form and report/rating binding.
+Search relaxation stops at that failure. The report omits raw
 error messages/warnings, download URLs, stream URLs, and unrelated response fields.
 `view` derives each listening link from the numeric track id and credits the artist
 and Jamendo. Unknown licenses remain `unknown`, never inferred as permissive.
 Library logging and warnings are suppressed during CLI execution because they may
 quote response text or credentials; failures use fixed descriptions or safe error
-codes. Export refuses an unexpected echo of either supplied credential.
+codes. Free-text URLs are omitted regardless of HTTP(S) or `www` casing. Export
+refuses an unexpected echo of either supplied credential, including percent-encoded
+values with mixed hex casing or nested encoding.
 
 `--inspect-streams` additionally looks up `mp32` for each result and sends HEAD requests
 for both `mp31` and `mp32`. It records status chains, whether a URL contains `client_id`
