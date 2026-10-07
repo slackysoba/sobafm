@@ -63,7 +63,24 @@ SobaFM makes two kinds of calls: a short Gemini call to interpret each request, 
 
 ## 4. Configure SobaFM
 
-SobaFM reads its settings from environment variables, or from a file named `.env` in its working directory. Create the file from [`.env.example`](../.env.example) and fill in the two required values:
+SobaFM reads its settings from environment variables, or from a file named `.env` in its working directory.
+
+For Docker Compose, install [Docker Engine with Compose](https://docs.docker.com/engine/install/) on Linux, or [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) with Linux containers on Windows. Choose a published version from [Releases](https://github.com/slackysoba/sobafm/releases). Download `compose.yaml` and `.env.example` directly from that version's repository tag into a new deployment directory; they are not release assets.
+
+These download commands use Bash on Linux or [Git Bash](https://git-scm.com/downloads/win) on Windows. Replace `vX.Y.Z` with the exact chosen tag, including its leading `v` and any prerelease suffix:
+
+```sh
+mkdir sobafm
+cd sobafm
+TAG=vX.Y.Z
+curl -fL "https://raw.githubusercontent.com/slackysoba/sobafm/$TAG/compose.yaml" -o compose.yaml
+curl -fL "https://raw.githubusercontent.com/slackysoba/sobafm/$TAG/.env.example" -o .env.example
+cp .env.example .env
+```
+
+For a source install, clone the repository as in step 5 and copy its `.env.example` to `.env` instead.
+
+Open `.env` in a text editor and fill in the two required values:
 
 ```sh
 DISCORD_TOKEN=your-discord-token
@@ -86,9 +103,18 @@ Choose one way to run it.
 
 ### With Docker Compose
 
-From the release, download [`compose.yaml`](../compose.yaml) next to your `.env`, then:
+In the deployment directory from step 4, open `compose.yaml` in a text editor. Set the `sobafm` service's `image` to the chosen tag **without its leading `v`**, keeping the rest of the file intact. For example, source tag `v1.0.0` uses:
+
+```yaml
+    image: ghcr.io/slackysoba/sobafm:1.0.0
+```
+
+For the pre-stable guide test (#105), use the candidate tag selected after a successful Release run for both downloads and the image. A source tag spelled `v1.0.0-rc.1` maps to `image: ghcr.io/slackysoba/sobafm:1.0.0-rc.1`; keep the suffix exactly as spelled, rather than normalizing it to `1.0.0rc1`. Prereleases do not publish `latest` or `1.0`, so this full version pin is required even though the downloaded Compose file defaults to `latest`. The rc.1 run failed before GitHub release creation; it is a spelling example, not a completed release to use for #105 acceptance. Choose the successfully published replacement candidate recorded on [#104](https://github.com/slackysoba/sobafm/issues/104).
+
+Confirm that Compose selects the image you set, then pull and start it:
 
 ```sh
+docker compose config --images
 docker compose pull
 docker compose up -d --no-build
 docker compose logs -f
@@ -96,7 +122,7 @@ docker compose logs -f
 
 The image is `ghcr.io/slackysoba/sobafm`. Its data lives in the `sobafm-data` volume, which survives restarts and upgrades; the container runs as a non-root user (uid 10001), and restarts itself unless you stop it. If you bind-mount a host directory at `/data` instead of using the volume, it must be writable by uid 10001.
 
-Until the first release is published, build the image yourself from a clone of the repository:
+If no release has completed publication yet, you can build the image yourself from a clone of the repository. This does not validate the published-image path for #105:
 
 ```sh
 git clone https://github.com/slackysoba/sobafm.git
@@ -105,7 +131,9 @@ cd sobafm
 docker compose up -d --build
 ```
 
-To upgrade, run `docker compose pull` and `docker compose up -d --no-build` again.
+To upgrade a pinned deployment, choose the new release tag, download its `compose.yaml` and `.env.example` from the same versioned URLs, and set `image` to its matching full version again. Keep your existing `.env`; compare the new example for any settings to add. Then run `docker compose pull` and `docker compose up -d --no-build` again.
+
+After a stable release exists, you can use the Compose file's default `ghcr.io/slackysoba/sobafm:latest` to follow stable releases instead. Read the release notes and refresh the versioned configuration files when upgrading; `latest` never selects a prerelease.
 
 ### From source with uv
 
