@@ -95,7 +95,7 @@ Do not put quotes or spaces around the values, and do not commit the file; the r
 | `SOBAFM_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, or `ERROR`. At `DEBUG`, requests are logged too |
 | `SOBAFM_DATA_DIR` | `data` | Where SobaFM keeps its database. The container image sets it to `/data` |
 | `SOBAFM_MAX_SESSIONS` | `4` | Most Lyria sessions at once; an even number, two per playing server |
-| `SOBAFM_DEV_GUILD_ID` | none | For development: registers commands to one server, where they appear at once |
+| `SOBAFM_DEV_GUILD_ID` | none | For a separate development application with no global commands: registers commands to one server, where they appear at once |
 
 ## 5. Run SobaFM
 
@@ -140,6 +140,65 @@ The process runs until you stop it with Ctrl+C. Run it under a service manager s
 ### Check that it started
 
 The log should show SobaFM logging in and a line starting `Connected as`. Slash commands registered globally can take a while to appear in Discord the first time. When they do, type `/` in your server and look for SobaFM's commands.
+
+### Duplicate slash commands
+
+Discord allows an application to register the same command globally and in one server.
+Switching `SOBAFM_DEV_GUILD_ID` on or off does not remove earlier registrations, so a
+server can show two copies of `/join`, `/play`, `/now`, or another SobaFM command.
+Use a separate Discord application for development. Development startup refuses to
+register guild commands if that application already has any global commands; it
+leaves both scopes untouched and exits with an explanation. This deliberately
+rejects the ambiguous shared-application setup rather than changing production
+registrations. Normal global startup continues to sync globals only.
+
+To move an existing development application to global registration, unset
+`SOBAFM_DEV_GUILD_ID` and start SobaFM during an agreed maintenance window. Once
+global sync succeeds, reconcile each former development server explicitly. The
+following source-checkout tool uses only `DISCORD_TOKEN`; it authenticates through
+REST without starting another bot or opening a gateway connection. These are
+operator commands; never print or commit `.env` or its values. Replace
+`YOUR_SERVER_ID` with the former development server's ID (not the application ID).
+
+First audit without changing anything:
+
+```sh
+uv run --env-file .env python -m scripts.reconcile_commands --guild-id YOUR_SERVER_ID
+```
+
+The audit fetches this token's application commands in both scopes. It reports
+only SobaFM slash-command names present in both, after checking that the
+application and scopes match. If no duplicates are reported, reload Discord and
+check for a second installed application with the same display name; the picker
+may also have cached older registrations. Matching labels/icons alone do not
+prove that two entries belong to the same application.
+
+Before removal, a server manager must review **Server Settings → Integrations →
+SobaFM**. Guild copies and globals have different command IDs: any custom role,
+member, or channel overrides on a guild copy must be copied to the surviving
+global command, and checked for the intended access. The tool does not migrate
+these overrides. If the intended permissions cannot be established, stop here.
+After this review, explicitly remove the duplicate guild copies:
+
+```sh
+uv run --env-file .env python -m scripts.reconcile_commands --guild-id YOUR_SERVER_ID --apply --permissions-reviewed
+```
+
+Removal is limited to `/join`, `/leave`, `/play`, `/now`, `/stop`, and `/settings`
+that also have a global slash command. The tool checks all survivors' default
+permissions, server-only contexts/installations, and age restriction before the
+first deletion. It refuses differing or unknown access settings. It never syncs
+or deletes globals, visits another server, or deletes nonduplicate commands or
+context-menu commands. A failed deletion can leave a partial cleanup; re-audit
+before retrying. Deleting/recreating a guild copy later gives it a new ID, so its
+custom permissions would need to be reviewed again.
+
+Re-run the audit, reload Discord, and verify one SobaFM entry each for `/join`,
+`/play`, and `/now`. With SobaFM connected, execute the remaining commands and
+check their responses and intended access. Confirm another server still has its
+global commands and can use them. Keep tokens, Discord identifiers, and request
+text out of issue/PR evidence; report scope counts and command names instead.
+Do not reconcile registrations during an active playback soak.
 
 ## 6. Use it
 
@@ -198,6 +257,7 @@ Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's
 | `.env could not be read as UTF-8` | Save the file as UTF-8 without a byte order mark |
 | `Discord rejected DISCORD_TOKEN` | The token is wrong or was reset. Reset it on the Bot page and update `.env` |
 | `the Opus library could not be loaded` | Install the Opus library as in step 5; the container image already includes it |
+| Slash commands appear twice | Follow [Duplicate slash commands](#duplicate-slash-commands) to audit and reconcile old development registrations |
 | Slash commands do not appear | Wait a while after the first start, then reload Discord. Check that the invite included `applications.commands`. Re-invite SobaFM with the link above if needed |
 | SobaFM logs `Could not rejoin` after startup or a Gateway outage | Published `v1.0.0-rc.2` keeps the remembered channel after a cleaned startup failure but needs another availability event or `/join` to try again. Automatic startup retries are an unreleased current-source change in [#159](https://github.com/slackysoba/sobafm/issues/159): 30 seconds after each failed attempt finishes, including cleanup, with no music resumption. A failed handshake and cleanup can take about a minute, so retries can start about 90 seconds apart and `/join` or `/leave` waits for the current attempt. Deletion, missing View Channel/Connect/Speak, `/leave`, or removal from the server forgets the channel |
 | `/join` says a permission is missing | Give SobaFM View Channel, Connect, and Speak in that voice channel, or on its category |

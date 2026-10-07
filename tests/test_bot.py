@@ -242,7 +242,9 @@ async def test_syncs_commands_globally_or_to_the_development_server(
 ) -> None:
     bot.settings.dev_guild_id = dev_guild_id
     sync = AsyncMock()
+    fetch = AsyncMock(return_value=[])
     monkeypatch.setattr(bot.tree, "sync", sync)
+    monkeypatch.setattr(bot.tree, "fetch_commands", fetch)
 
     await bot.setup_hook()
 
@@ -250,12 +252,49 @@ async def test_syncs_commands_globally_or_to_the_development_server(
     bot.check_voice.cancel()
     if dev_guild_id is None:
         sync.assert_awaited_once_with()
+        fetch.assert_not_awaited()
     else:
+        fetch.assert_awaited_once_with()
+        sync.assert_awaited_once()
         assert sync.await_args is not None
         guild = sync.await_args.kwargs["guild"]
         assert guild.id == dev_guild_id
         copied = {command.name for command in bot.tree.get_commands(guild=guild)}
         assert copied == {command.name for command in bot.tree.get_commands()}
+
+
+async def test_development_sync_refuses_an_application_with_global_commands(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot.settings.dev_guild_id = 42
+    fetch = AsyncMock(return_value=[fake(discord.app_commands.AppCommand, name="join")])
+    sync = AsyncMock()
+    monkeypatch.setattr(bot.tree, "fetch_commands", fetch)
+    monkeypatch.setattr(bot.tree, "sync", sync)
+
+    with pytest.raises(RuntimeError, match="development application without global commands"):
+        await bot.setup_hook()
+
+    fetch.assert_awaited_once_with()
+    sync.assert_not_awaited()
+    assert bot.tree.get_commands(guild=discord.Object(id=42)) == []
+    assert not bot.check_voice.is_running()
+
+
+async def test_development_sync_does_not_mutate_commands_when_inventory_fails(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot.settings.dev_guild_id = 42
+    sync = AsyncMock()
+    monkeypatch.setattr(bot.tree, "fetch_commands", AsyncMock(side_effect=RuntimeError("offline")))
+    monkeypatch.setattr(bot.tree, "sync", sync)
+
+    with pytest.raises(RuntimeError, match="offline"):
+        await bot.setup_hook()
+
+    sync.assert_not_awaited()
+    assert bot.tree.get_commands(guild=discord.Object(id=42)) == []
+    assert not bot.check_voice.is_running()
 
 
 async def test_join_command_defers_then_replies_privately(

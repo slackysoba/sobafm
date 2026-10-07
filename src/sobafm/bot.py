@@ -551,6 +551,13 @@ class SobaFM(discord.Client):
         if self.settings.dev_guild_id is None:
             await self.tree.sync()
         else:
+            if await self.tree.fetch_commands():
+                raise RuntimeError(
+                    "SOBAFM_DEV_GUILD_ID requires a development application "
+                    "without global commands. "
+                    "Use a separate application, or unset it and reconcile stale guild commands "
+                    "as described in docs/self-hosting.md#duplicate-slash-commands."
+                )
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
