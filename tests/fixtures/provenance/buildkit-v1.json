@@ -1,0 +1,36 @@
+{
+  "linux/amd64": {
+    "SLSA": {
+      "buildDefinition": {
+        "buildType": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+        "externalParameters": {
+          "configSource": {
+            "path": "Dockerfile"
+          }
+        }
+      },
+      "runDetails": {
+        "builder": {
+          "id": "https://github.com/slackysoba/sobafm/actions/runs/37582773159/attempts/1"
+        }
+      }
+    }
+  },
+  "linux/arm64": {
+    "SLSA": {
+      "buildDefinition": {
+        "buildType": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+        "externalParameters": {
+          "configSource": {
+            "path": "Dockerfile"
+          }
+        }
+      },
+      "runDetails": {
+        "builder": {
+          "id": "https://github.com/slackysoba/sobafm/actions/runs/37582773159/attempts/1"
+        }
+      }
+    }
+  }
+}
