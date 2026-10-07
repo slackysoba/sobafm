@@ -178,16 +178,33 @@ SobaFM**. Guild copies and globals have different command IDs: any custom role,
 member, or channel overrides on a guild copy must be copied to the surviving
 global command, and checked for the intended access. The tool does not migrate
 these overrides. If the intended permissions cannot be established, stop here.
-After this review, explicitly remove the duplicate guild copies:
+
+Arrange a quiet maintenance window before applying cleanup: prevent bot startup
+or command sync, deployment jobs, other cleanup tools, and administrator command
+or permission edits for this application until cleanup and the follow-up audit
+finish. Finish the permission migration before this window. The tool re-fetches
+globals and the selected guild, then checks every planned removal against its
+audited identity, name, type, and access before deleting anything. Any candidate
+or survivor change aborts the whole plan. Discord does not offer an atomic
+inventory-check-and-delete operation: a concurrent edit after the final fetch
+could still change a command before deletion. If writers cannot be kept quiet,
+stop here. After the review and with this window in place, explicitly remove the
+duplicate guild copies:
 
 ```sh
 uv run --env-file .env python -m scripts.reconcile_commands --guild-id YOUR_SERVER_ID --apply --permissions-reviewed
 ```
 
 Removal is limited to `/join`, `/leave`, `/play`, `/now`, `/stop`, and `/settings`
-that also have a global slash command. The tool checks all survivors' default
-permissions, server-only contexts/installations, and age restriction before the
-first deletion. It refuses differing or unknown access settings. It never syncs
+that also have a global slash command. The tool strictly validates raw identity
+and access in both scopes and checks that the parsed deletion objects match the
+audit. It checks all survivors' default permissions, server-only
+contexts/installations, and age restriction before the first deletion. It refuses
+differing, malformed, or unknown access settings, including disabled or null
+legacy `default_permission` on either member of a duplicate pair. Omitted legacy
+access defaults to enabled, as described in Discord's
+[command object documentation](https://docs.discord.com/developers/interactions/application-commands#application-command-object).
+The deprecated field is still checked because the library drops it. It never syncs
 or deletes globals, visits another server, or deletes nonduplicate commands or
 context-menu commands. A failed deletion can leave a partial cleanup; re-audit
 before retrying. Deleting/recreating a guild copy later gives it a new ID, so its

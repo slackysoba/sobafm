@@ -1,4 +1,5 @@
 import argparse
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -25,6 +26,7 @@ def command(name: str, command_id: int, guild_id: int | None = None) -> Any:
         allowed_contexts=app_commands.AppCommandContext(guild=True),
         allowed_installs=app_commands.AppInstallationType(guild=True),
         nsfw=False,
+        dm_permission=True,
         delete=AsyncMock(),
     )
     return item
@@ -41,27 +43,33 @@ def inventory(globals_: list[Any], guild_commands: list[Any]) -> Any:
         return guild_commands
 
     tree.fetch_commands = AsyncMock(side_effect=fetch)
-    tree.client.http.get_global_commands = AsyncMock(
-        return_value=[
-            {
-                "id": str(item.id),
-                "application_id": str(item.application_id),
-                "name": item.name,
-                "type": item.type.value,
-                "contexts": item.allowed_contexts.to_array()
-                if item.allowed_contexts is not None
-                else None,
-                "integration_types": item.allowed_installs.to_array()
-                if item.allowed_installs is not None
-                else None,
-                "default_member_permissions": str(item.default_member_permissions.value)
-                if item.default_member_permissions is not None
-                else None,
-                "nsfw": item.nsfw,
-            }
-            for item in globals_
-        ]
-    )
+
+    def raw(item: Any) -> dict[str, Any]:
+        return {
+            "id": str(item.id),
+            "application_id": str(item.application_id),
+            "guild_id": str(item.guild_id) if item.guild_id is not None else None,
+            "name": item.name,
+            "type": item.type.value,
+            "contexts": item.allowed_contexts.to_array()
+            if item.allowed_contexts is not None
+            else None,
+            "integration_types": item.allowed_installs.to_array()
+            if item.allowed_installs is not None
+            else None,
+            "default_member_permissions": str(item.default_member_permissions.value)
+            if item.default_member_permissions is not None
+            else None,
+            "nsfw": item.nsfw,
+            "dm_permission": item.dm_permission,
+        }
+
+    tree.client.http.get_global_commands = AsyncMock(return_value=[raw(item) for item in globals_])
+
+    def raw_guild_fetch(*_: int) -> list[dict[str, Any]]:
+        return [raw(item) for item in guild_commands]
+
+    tree.client.http.get_guild_commands = AsyncMock(side_effect=raw_guild_fetch)
     return tree
 
 
@@ -216,10 +224,15 @@ async def test_real_discord_commands_delete_only_the_guild_endpoint() -> None:
 
     tree = inventory([global_command], [guild_command])
     tree.client.http.get_global_commands.return_value = [common | {"id": "1"}]
+    tree.client.http.get_guild_commands.side_effect = None
+    tree.client.http.get_guild_commands.return_value = [
+        common | {"id": "2", "guild_id": str(GUILD_ID)}
+    ]
 
     await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True)
 
-    tree.client.http.get_global_commands.assert_awaited_once_with(APP_ID)
+    assert tree.client.http.get_global_commands.await_count == 2
+    tree.client.http.get_guild_commands.assert_awaited_with(APP_ID, GUILD_ID)
     http.delete_guild_command.assert_awaited_once_with(APP_ID, GUILD_ID, 2)
     http.delete_global_command.assert_not_awaited()
 
@@ -329,3 +342,280 @@ async def test_raw_access_fetch_failure_never_deletes() -> None:
         await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True)
 
     guild_command.delete.assert_not_awaited()
+
+
+def raw_command(name: str, command_id: int, guild_id: int | None = None) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "id": str(command_id),
+        "application_id": str(APP_ID),
+        "name": name,
+        "description": "Test command",
+        "type": 1,
+        "default_member_permissions": "32",
+        "nsfw": False,
+    }
+    if guild_id is None:
+        record.update(contexts=[0], integration_types=[0])
+    else:
+        record["guild_id"] = str(guild_id)
+    return record
+
+
+def real_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+    globals_: list[dict[str, Any]],
+    guild_commands: list[dict[str, Any]],
+) -> tuple[app_commands.CommandTree[discord.Client], SimpleNamespace]:
+    """Use the locked CommandTree fetch/parser/delete paths with no network transport."""
+    client = discord.Client(intents=discord.Intents.none(), application_id=APP_ID)
+
+    def global_fetch(*_: int) -> list[dict[str, Any]]:
+        return deepcopy(globals_)
+
+    def guild_fetch(*_: int) -> list[dict[str, Any]]:
+        return deepcopy(guild_commands)
+
+    http = SimpleNamespace(
+        get_global_commands=AsyncMock(side_effect=global_fetch),
+        get_guild_commands=AsyncMock(side_effect=guild_fetch),
+        delete_guild_command=AsyncMock(),
+        delete_global_command=AsyncMock(),
+    )
+    for method, mock in vars(http).items():
+        monkeypatch.setattr(client.http, method, mock)
+    return app_commands.CommandTree(client), http
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("name", "unrelated"),
+        ("type", 2),
+        ("id", "123"),
+        ("application_id", "123"),
+        ("guild_id", "123"),
+        ("default_member_permissions", "0"),
+        ("default_member_permissions", None),
+        ("nsfw", True),
+        ("default_permission", False),
+        ("default_permission", None),
+        ("contexts", [0]),
+        ("integration_types", [0]),
+        ("dm_permission", False),
+    ],
+)
+async def test_real_tree_rechecks_every_guild_candidate_after_final_global_get(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: Any
+) -> None:
+    globals_ = [raw_command("join", 1), raw_command("play", 2)]
+    guild_commands = [raw_command("join", 11, GUILD_ID), raw_command("play", 12, GUILD_ID)]
+    tree, http = real_inventory(monkeypatch, globals_, guild_commands)
+
+    def global_fetch(application_id: int) -> list[dict[str, Any]]:
+        assert application_id == APP_ID
+        # A valid PATCH arrives during the final global GET. The first candidate is
+        # unchanged; the later candidate must invalidate the whole deletion plan.
+        if http.get_global_commands.await_count == 3:
+            guild_commands[1][field] = value
+        return deepcopy(globals_)
+
+    http.get_global_commands.side_effect = global_fetch
+
+    with pytest.raises(tool.ReconciliationError):
+        await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True)
+
+    assert http.get_guild_commands.await_count == 3
+    http.delete_guild_command.assert_not_awaited()
+    http.delete_global_command.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scope", ["global", "guild"])
+@pytest.mark.parametrize("stage", ["audit", "final"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", True),
+        ("id", 12.5),
+        ("id", None),
+        ("id", str(2**64)),
+        ("application_id", False),
+        ("guild_id", False),
+        ("name", None),
+        ("type", True),
+        ("type", 1.5),
+        ("type", None),
+        ("type", 99),
+        ("default_member_permissions", 32.5),
+        ("default_member_permissions", False),
+        ("default_member_permissions", 0),
+        ("nsfw", 0),
+        ("nsfw", None),
+        ("default_permission", 0),
+        ("default_permission", "true"),
+        ("dm_permission", 0),
+        ("dm_permission", None),
+        ("contexts", [False]),
+        ("contexts", [0.5]),
+        ("contexts", [99]),
+        ("integration_types", [False]),
+        ("integration_types", [0.5]),
+        ("integration_types", [99]),
+    ],
+)
+async def test_real_tree_rejects_malformed_raw_records_before_any_delete(
+    monkeypatch: pytest.MonkeyPatch, scope: str, stage: str, field: str, value: Any
+) -> None:
+    globals_ = [raw_command("join", 1), raw_command("play", 2)]
+    guild_commands = [raw_command("join", 11, GUILD_ID), raw_command("play", 12, GUILD_ID)]
+    tree, http = real_inventory(monkeypatch, globals_, guild_commands)
+    method = http.get_global_commands if scope == "global" else http.get_guild_commands
+    records = globals_ if scope == "global" else guild_commands
+
+    def fetch(*_: int) -> list[dict[str, Any]]:
+        payload = deepcopy(records)
+        # Real parsed objects are retained from GET 1, then strict raw validation
+        # must reject malformed GET 2 (audit) or GET 3 (pre-deletion).
+        if method.await_count == (2 if stage == "audit" else 3):
+            payload[1][field] = value
+        return payload
+
+    method.side_effect = fetch
+
+    with pytest.raises(tool.ReconciliationError, match="Invalid command identity or access"):
+        await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True)
+
+    http.delete_guild_command.assert_not_awaited()
+    http.delete_global_command.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "permissions"),
+    [
+        ("type", True, "32"),
+        ("default_member_permissions", 32.5, "32"),
+        ("default_member_permissions", False, "0"),
+        ("nsfw", 0, "32"),
+    ],
+)
+async def test_real_tree_does_not_trust_coerced_guild_access(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: Any, permissions: str
+) -> None:
+    global_record, guild_record = raw_command("join", 1), raw_command("join", 11, GUILD_ID)
+    global_record["default_member_permissions"] = permissions
+    guild_record["default_member_permissions"] = permissions
+    guild_record[field] = value
+    tree, http = real_inventory(monkeypatch, [global_record], [guild_record])
+
+    with pytest.raises(tool.ReconciliationError, match="Invalid command identity or access"):
+        await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True)
+
+    http.delete_guild_command.assert_not_awaited()
+    http.delete_global_command.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scope", ["global", "guild"])
+@pytest.mark.parametrize("legacy", [False, None])
+async def test_real_tree_refuses_disabled_or_unknown_legacy_access(
+    monkeypatch: pytest.MonkeyPatch, scope: str, legacy: bool | None
+) -> None:
+    globals_ = [raw_command("join", 1), raw_command("play", 2)]
+    guild_commands = [raw_command("join", 11, GUILD_ID), raw_command("play", 12, GUILD_ID)]
+    records = globals_ if scope == "global" else guild_commands
+    records[1]["default_permission"] = legacy
+    tree, http = real_inventory(monkeypatch, globals_, guild_commands)
+
+    with pytest.raises(tool.ReconciliationError, match="access differs or is unknown"):
+        await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True)
+
+    http.delete_guild_command.assert_not_awaited()
+    http.delete_global_command.assert_not_awaited()
+
+
+async def test_real_tree_preserves_supported_nondeletion_records_and_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    globals_ = [raw_command("join", 1)]
+    guild_commands = [
+        raw_command("join", 11, GUILD_ID),
+        raw_command("leave", 12, GUILD_ID),
+        raw_command("unrelated", 13, GUILD_ID),
+        raw_command("join", 14, GUILD_ID) | {"type": 2},
+        raw_command("join", 15, GUILD_ID) | {"type": 3},
+    ]
+    # Legacy restriction on a nonduplicate is preserved, rather than silently ignored
+    # or made a cleanup candidate. Entry-point type 4 is global-only and untouched.
+    guild_commands[1]["default_permission"] = False
+    globals_.append(raw_command("activity", 2) | {"type": 4})
+    tree, http = real_inventory(monkeypatch, globals_, guild_commands)
+
+    assert await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True) == ["join"]
+
+    http.delete_guild_command.assert_awaited_once_with(APP_ID, GUILD_ID, 11)
+    http.delete_global_command.assert_not_awaited()
+    assert http.get_global_commands.await_count == 3
+    assert http.get_guild_commands.await_count == 3
+    for call in http.get_guild_commands.await_args_list:
+        assert call.args == (APP_ID, GUILD_ID)
+
+
+@pytest.mark.parametrize("scope", ["global", "guild"])
+async def test_real_tree_final_inventory_failure_aborts_the_entire_plan(
+    monkeypatch: pytest.MonkeyPatch, scope: str
+) -> None:
+    globals_ = [raw_command("join", 1), raw_command("play", 2)]
+    guild_commands = [raw_command("join", 11, GUILD_ID), raw_command("play", 12, GUILD_ID)]
+    tree, http = real_inventory(monkeypatch, globals_, guild_commands)
+    method = http.get_global_commands if scope == "global" else http.get_guild_commands
+    records = globals_ if scope == "global" else guild_commands
+    method.side_effect = [deepcopy(records), deepcopy(records), OSError("offline")]
+
+    with pytest.raises(OSError, match="offline"):
+        await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True)
+
+    http.delete_guild_command.assert_not_awaited()
+    http.delete_global_command.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scope", ["global", "guild"])
+@pytest.mark.parametrize("stage", ["audit", "final"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("name", "unrelated"), ("type", 2), ("default_member_permissions", "0"), ("nsfw", True)],
+)
+async def test_real_tree_requires_raw_parsed_and_final_snapshot_consistency(
+    monkeypatch: pytest.MonkeyPatch, scope: str, stage: str, field: str, value: Any
+) -> None:
+    globals_ = [raw_command("join", 1), raw_command("play", 2)]
+    guild_commands = [raw_command("join", 11, GUILD_ID), raw_command("play", 12, GUILD_ID)]
+    tree, http = real_inventory(monkeypatch, globals_, guild_commands)
+    method = http.get_global_commands if scope == "global" else http.get_guild_commands
+    records = globals_ if scope == "global" else guild_commands
+
+    def fetch(*_: int) -> list[dict[str, Any]]:
+        payload = deepcopy(records)
+        if method.await_count == (2 if stage == "audit" else 3):
+            payload[1][field] = value
+        return payload
+
+    method.side_effect = fetch
+
+    with pytest.raises(tool.ReconciliationError, match="Command inventory changed"):
+        await tool.reconcile(tree, discord.Object(id=GUILD_ID), apply=True)
+
+    http.delete_guild_command.assert_not_awaited()
+    http.delete_global_command.assert_not_awaited()
+
+
+async def test_real_tree_audit_is_read_only_with_strict_raw_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tree, http = real_inventory(
+        monkeypatch, [raw_command("join", 1)], [raw_command("join", 11, GUILD_ID)]
+    )
+
+    assert await tool.reconcile(tree, discord.Object(id=GUILD_ID)) == ["join"]
+
+    assert http.get_global_commands.await_count == 2
+    assert http.get_guild_commands.await_count == 2
+    http.delete_guild_command.assert_not_awaited()
+    http.delete_global_command.assert_not_awaited()
