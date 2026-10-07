@@ -253,10 +253,160 @@ async def test_relaxes_only_empty_results_and_keeps_relevance_order(
     assert [a.stage for a in attempts] == ["all_tags", "any_tag", "text"]
     assert all(c["client_id"] == KEY.get_secret_value() for c in calls)
     assert all(
-        c["include"] == "musicinfo" and c["type"] == "all" and "order" not in c for c in calls
+        c["include"] == "musicinfo" and c["type"] == "single albumtrack" and "order" not in c
+        for c in calls
     )
     assert "tags" not in calls[-1]
     assert "fuzzytags" not in calls[-1]
+
+
+@pytest.mark.parametrize("track_type", ["single", "albumtrack"])
+@pytest.mark.parametrize("found_at", ["all_tags", "any_tag", "text"])
+async def test_documented_track_types_cover_search_relaxation_and_mp32_lookup(
+    track_type: str,
+    found_at: probe.Stage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Enforce the documented contract locally; this is not live Jamendo evidence."""
+    calls: list[dict[str, str]] = []
+    methods: list[tuple[str, str]] = []
+    query = probe.CatalogQuery(
+        title="Soft jazz",
+        tags=["jazz", "piano"],
+        speed="low",
+        vocalinstrumental="instrumental",
+        acousticelectric="acoustic",
+    )
+
+    async def handler(request: web.Request) -> web.Response:
+        methods.append((request.method, request.path))
+        if request.path == "/audio":
+            assert request.method == "HEAD"
+            return web.Response(headers={"Content-Length": "12345"})
+        assert request.method == "GET"
+        assert request.path == "/tracks"
+        params = dict(request.query)
+        calls.append(params)
+        # Jamendo documents these two enum values and this explicit combination.
+        if params.get("type") != "single albumtrack":
+            return web.json_response(reply_data([], code=3))
+        stage = "all_tags" if "tags" in params else "any_tag" if "fuzzytags" in params else "text"
+        if "id" not in params and stage != found_at:
+            return web.json_response(reply_data([]))
+        audio = str(
+            request.url.with_path("/audio").with_query(
+                {"client_id": KEY.get_secret_value(), "format": params["audioformat"]}
+            )
+        )
+        return web.json_response(
+            reply_data(
+                [
+                    track_data()
+                    | {
+                        "audio": audio,
+                        "album_id": "" if track_type == "single" else "456",
+                        "album_name": "" if track_type == "single" else "Example album",
+                        "album_image": ""
+                        if track_type == "single"
+                        else "https://untrusted.example/album",
+                    }
+                ]
+            )
+        )
+
+    async with server(handler) as url, aiohttp.ClientSession() as session:
+        monkeypatch.setattr(probe, "TRACKS_URL", url + "/tracks")
+
+        # Allow only the fixture's audio endpoint; production host checks stay unchanged.
+        def allowed(target: str) -> bool:
+            return target.startswith(url + "/audio?")
+
+        monkeypatch.setattr(probe, "stream_url_allowed", allowed)
+        result = await probe.measure_case(
+            Gemini(json.dumps({"kind": "new", "query": query.model_dump()})),
+            probe.MODEL,
+            session,
+            KEY,
+            probe.Case(id="case-0", request="soft acoustic instrumental jazz", expected="new"),
+            True,
+        )
+    assert result.outcome == "music"
+    assert result.error is None
+    expected_steps = probe.search_steps(query)
+    stages = [stage for stage, _ in expected_steps]
+    expected_steps = expected_steps[: stages.index(found_at) + 1]
+    assert [attempt.stage for attempt in result.attempts] == [stage for stage, _ in expected_steps]
+    assert [attempt.count for attempt in result.attempts] == [0] * (len(expected_steps) - 1) + [1]
+    assert all(
+        a.http_status == 200 and a.status == "success" and a.code == 0 for a in result.attempts
+    )
+    assert len(calls) == len(expected_steps) + 1
+    for call, (_, params) in zip(calls[:-1], expected_steps, strict=True):
+        assert (
+            call
+            == {
+                "client_id": KEY.get_secret_value(),
+                "format": "json",
+                "limit": "5",
+                "include": "musicinfo",
+                "audioformat": "mp31",
+                "type": "single albumtrack",
+            }
+            | params
+        )
+    assert calls[-1] == {
+        "client_id": KEY.get_secret_value(),
+        "format": "json",
+        "limit": "5",
+        "include": "musicinfo",
+        "audioformat": "mp32",
+        "type": "single albumtrack",
+        "id": "123",
+    }
+    assert len(result.tracks) == 1
+    track = result.tracks[0]
+    assert (track.name, track.artist, track.tags, track.license) == (
+        "Quiet piano",
+        "Example artist",
+        ["jazz", "piano", "calm"],
+        "CC BY-NC-ND 3.0",
+    )
+    assert [(s.format, s.outcome, s.bytes, s.carries_client_id) for s in track.streams] == [
+        ("mp31", "ok", 12345, True),
+        ("mp32", "ok", 12345, True),
+    ]
+    assert methods == [("GET", "/tracks")] * len(expected_steps) + [
+        ("HEAD", "/audio"),
+        ("GET", "/tracks"),
+        ("HEAD", "/audio"),
+    ]
+    evidence = report()
+    evidence.results = [result]
+    evidence.inspect_streams = True
+    path = tmp_path / "report.json"
+    probe.write_model(path, evidence, (KEY,))
+    exported = path.read_text(encoding="utf-8")
+    reloaded = probe.Report.model_validate_json(exported)
+    assert probe.digest(reloaded) == probe.digest(evidence)
+    assert probe.rating_template(reloaded) == probe.rating_template(evidence)
+    monkeypatch.setattr(probe.sys, "argv", ["catalog_probe", "view", "--report", str(path)])
+    previous_logging = probe.logging.root.manager.disable
+    try:
+        probe.main()
+    finally:
+        probe.logging.disable(previous_logging)
+    view = capsys.readouterr().out
+    for output in (exported, view):
+        assert KEY.get_secret_value() not in output
+        assert "untrusted.example" not in output
+        assert url not in output
+        assert "album_" not in output
+        assert "Quiet piano" in output
+        assert "Example artist" in output
+    assert "https://www.jamendo.com/track/123" in view
+    assert "Music provided by Jamendo" in view
 
 
 @pytest.mark.parametrize("code", [0, 5, 6])

@@ -80,9 +80,10 @@ must be disclosed on the issue, rather than replacing earlier evidence.
 For each music query, search uses `tags` (all), then `fuzzytags` (any), then descriptive
 `search` text, advancing only for a successful empty response. Speed, vocal/instrumental
 and acoustic/electric filters stay in all three stages. Artist and work names become
-English descriptions (AI-5). Search includes singles and album tracks (`type=all`),
+English descriptions (AI-5). Search includes singles and album tracks (`type=single albumtrack`),
 requests music metadata, keeps Jamendo's default relevance/popularity behavior, and
-returns at most five tracks. It applies no NC/ND exclusion pending #117's decision.
+returns at most five tracks. Singles may have empty album fields; the probe consumes
+track and artist metadata and omits album fields. It applies no NC/ND exclusion pending #117's decision.
 A nonempty result, even one with fewer than three tracks, is rated as returned.
 
 The report includes validated metadata, license labels, interpretation time, each
@@ -101,7 +102,8 @@ codes. Free-text URLs are omitted regardless of HTTP(S) or `www` casing. Export
 refuses an unexpected echo of either supplied credential, including percent-encoded
 values with mixed hex casing or nested encoding.
 
-`--inspect-streams` additionally looks up `mp32` for each result and sends HEAD requests
+`--inspect-streams` additionally looks up `mp32` for each result using the same explicit
+single/album-track selection and sends HEAD requests
 for both `mp31` and `mp32`. It records status chains, whether a URL contains `client_id`
 or its supplied value, and Content-Length when available. It follows at most five
 redirects, only between HTTPS `storage.jamendo.com` hosts on port 443, with no userinfo;
@@ -140,10 +142,12 @@ Independent review of the script and passing offline checks are preparatory evid
 
 ## Primary sources verified for preparation
 
-Checked on 2026-10-06:
+Checked on 2026-10-06; track-type selection and empty single album fields rechecked
+on 2026-10-07:
 
 - [Jamendo tracks API](https://developer.jamendo.com/v3.0/tracks): tags/fuzzytags,
-  relevance behavior, filters, `type=all`, metadata and `mp31`/`mp32` formats.
+  relevance behavior, filters, `type=single albumtrack`, empty album fields for singles,
+  metadata and `mp31`/`mp32` formats.
 - [Jamendo response codes](https://developer.jamendo.com/v3.0/response-codes): status,
   code and error envelope. The overview calls success `succeed`, while the tracks
   example uses `success`; validation accepts both with code 0, and `failed` with nonzero code.

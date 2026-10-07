@@ -341,7 +341,7 @@ async def fetch_tracks(
         "limit": "5",
         "include": "musicinfo",
         "audioformat": "mp31",
-        "type": "all",
+        "type": "single albumtrack",
     } | params
     try:
         async with session.get(TRACKS_URL, params=params, allow_redirects=False) as response:
