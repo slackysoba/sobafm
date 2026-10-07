@@ -141,7 +141,7 @@ Release images carry signed provenance for their multi-platform index and BuildK
 gh attestation verify oci://ghcr.io/slackysoba/sobafm:VERSION --repo slackysoba/sobafm
 ```
 
-For a release check, pin the index digest and verify the expected workflow, tag, and source commit as well. The following shell example uses a release candidate; set `TAG` to the release you intend to deploy. The workflow summary also records its verified digest and source commit.
+For a release check, pin the index digest and verify the expected workflow, tag, and source commit as well. The following example uses Bash (Git Bash on Windows), including its variables and multiline continuations. It uses a release candidate; set `TAG` to the release you intend to deploy. The workflow summary also records its verified digest and source commit.
 
 ```sh
 TAG=v1.0.0-rc.1

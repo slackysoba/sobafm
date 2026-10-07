@@ -2,6 +2,8 @@
 
 The settings of `slackysoba/sobafm`, each with its reason and the `gh` command that applies it. Changes to these settings need the maintainer's approval and are made by updating this document in the same pull request.
 
+Shell command examples use Bash, or Git Bash on Windows; their multiline continuations are not PowerShell syntax.
+
 ## Repository
 
 | Setting | Value | Why |
