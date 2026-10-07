@@ -34,14 +34,14 @@ An operator who pulls an image should be able to check that it was built from th
 
 Option 1.
 
-- **Trigger.** A `release.yml` workflow runs on a pushed tag matching `v*`. It first checks that the tag points at a commit on `main`, and that the tag, without its leading `v`, is the version in `pyproject.toml` once both are normalized as PEP 440 versions: `v1.0.0-rc.1` matches `1.0.0rc1`. A tag that fails either check publishes nothing. A tag ruleset on `v*` lets only the maintainer create and blocks updates and deletion, so a published tag cannot move.
+- **Trigger.** A `release.yml` workflow runs on a pushed tag matching `v*`. It first checks that the tag points at a commit on `main`, and that the tag, without its leading `v`, is the version in `pyproject.toml` once both are normalized as PEP 440 versions: `v1.0.0-rc.1` matches `1.0.0rc1`. A tag that fails either check publishes nothing. Two active [layered tag rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets#about-rule-layering) target `v*`: a creation restriction with the maintainer's bypass, and a separate update/deletion restriction with no bypass actors. The creation bypass does not exempt the maintainer from the second ruleset, so published tags cannot be moved or deleted while the rules are active. The maintainer applies both before the first release tag.
 - **Build.** One job sets up QEMU and Buildx, logs in to GHCR with the workflow token, and builds `linux/amd64,linux/arm64` with `provenance: mode=max` and `sbom: true`. CI has already shown that the same build works under QEMU, so no native arm64 runner is added.
 - **Tags.** A release tag `v1.2.3` publishes `1.2.3`, `1.2`, and `latest`. A pre-release tag such as `v1.0.0-rc.1` publishes only its own version tag, so `latest` always means the newest release.
 - **Attestation.** `actions/attest` attests the pushed image digest and pushes the attestation to the registry. The self-hosting guide documents `gh attestation verify oci://ghcr.io/slackysoba/sobafm:<version> --repo slackysoba/sobafm`.
 - **Release notes.** The workflow creates the GitHub release with generated notes. `.github/release.yml` groups pull requests by label: security, the `area:` labels, and dependencies, with the remainder under other changes. A pre-release is marked as one.
 - **Visibility.** The package is public.
 
-The SobaFM-specific surface is the `release.yml` workflow, the label configuration, and the tag ruleset, which `docs/repository-settings.md` documents with the command that applies it.
+The SobaFM-specific surface is the `release.yml` workflow, the label configuration, and the tag rulesets, which `docs/repository-settings.md` documents with the command that applies it.
 
 ## Consequences
 
