@@ -47,6 +47,52 @@ def test_from_request_truncates_long_requests() -> None:
     assert len(plan.title) == 60
 
 
+def test_with_request_adds_a_lighter_prompt_and_keeps_the_settings() -> None:
+    prompts = [Prompt(text="rainy lo-fi")]
+    current = MusicPlan(title="Rainy", prompts=prompts, bpm=80, mute_drums=True)
+
+    plan = current.with_request("  darker\n")
+
+    assert [(p.text, p.weight) for p in plan.prompts] == [("rainy lo-fi", 1.0), ("darker", 0.5)]
+    assert (plan.title, plan.bpm, plan.mute_drums) == ("Rainy", 80, True)
+
+
+@pytest.mark.parametrize(
+    ("request_text", "expected"),
+    [
+        (BIDI_CONTROLS * 11 + "x" * 68, "x" * 68),
+        (BIDI_CONTROLS * 6 + "x" * 128, "x" * 120),
+    ],
+    ids=["controls fill the limit", "truncate visible text"],
+)
+def test_with_request_drops_controls_before_truncating(request_text: str, expected: str) -> None:
+    current = MusicPlan.from_request("rainy lo-fi")
+
+    plan = current.with_request(request_text)
+
+    assert [(p.text, p.weight) for p in plan.prompts] == [("rainy lo-fi", 1.0), (expected, 0.5)]
+    assert current.prompts == [Prompt(text="rainy lo-fi")]
+    assert plan.title == current.title
+
+
+@pytest.mark.parametrize(
+    ("weights", "expected"),
+    [
+        ([("a", 1.0), ("b", 0.4), ("c", 0.4), ("d", 1.0)], ["a", "b", "d", "e"]),
+        ([("a", 0.4), ("b", 1.0), ("a", 0.4), ("c", 1.0)], ["a", "b", "c", "e"]),
+    ],
+    ids=["equal weights", "equal prompts"],
+)
+def test_with_request_on_a_full_plan_drops_the_last_lowest_weight_prompt(
+    weights: list[tuple[str, float]], expected: list[str]
+) -> None:
+    current = MusicPlan(title="Busy", prompts=[Prompt(text=t, weight=w) for t, w in weights])
+
+    plan = current.with_request("e")
+
+    assert [p.text for p in plan.prompts] == expected
+
+
 def test_config_is_complete_with_fixed_sampling_values() -> None:
     config = MusicPlan.from_request("ambient").to_config()
 
