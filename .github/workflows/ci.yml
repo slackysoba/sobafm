@@ -77,8 +77,7 @@ jobs:
         env:
           PLATFORM: linux/${{ matrix.arch }}
         run: |
-          # Negative control for #135: force arm64 to run as root until CI rejects it.
-          uid="$(docker run --rm --platform "$PLATFORM" --user "${{ matrix.arch == 'arm64' && '0' || '10001' }}" sobafm:ci id -u)"
+          uid="$(docker run --rm --platform "$PLATFORM" sobafm:ci id -u)"
           echo "Image user: $uid"
           test "$uid" -ne 0
           docker run --rm --platform "$PLATFORM" sobafm:ci python -c "import discord.opus as o; o.Encoder()"
