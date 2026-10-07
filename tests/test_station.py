@@ -2198,3 +2198,40 @@ async def test_the_last_rounds_outage_then_a_later_quota_close_reports_the_quota
     await rig.tick()
 
     assert started.result() is Outcome.EXHAUSTED
+
+
+async def sessions_opened_during_an_outage(rig: Rig, *, seconds: int) -> int:
+    """Close every open session at each tick of 0.25 s, and count the sessions opened."""
+    for _ in range(seconds * 4):
+        for session in rig.lyria.sessions:
+            if not session.closed:
+                session.close(1011)
+        await rig.tick(0.25)
+    return len(rig.lyria.sessions)
+
+
+async def test_a_started_programs_retries_stay_backed_off_in_a_long_outage(rig: Rig) -> None:
+    await start_playing(rig)
+    rig.listen(HOUR_S)  # its buffer outlasts the outage
+
+    opened = await sessions_opened_during_an_outage(rig, seconds=60)
+
+    assert opened <= 2 + 2 * 6  # a round of two every 15 seconds, after the first backoffs
+
+
+async def test_a_waiting_starts_retries_stay_backed_off(rig: Rig) -> None:
+    started = rig.station.play(LOFI, "Member", duration_seconds=HOUR_S)
+    await rig.tick()
+    await lose_rounds(rig, len(CONNECT_BACKOFF_S))
+    await rig.feed(-2, 3)  # one deck of the last round is open and filling
+    before = len(rig.lyria.sessions)
+
+    open_deck = rig.session(-2)
+    for _ in range(240):  # a minute, with a deck that is still open
+        for session in rig.lyria.sessions:
+            if session is not open_deck and not session.closed:
+                session.close(1011)
+        await rig.tick(0.25)
+
+    assert not started.done()
+    assert len(rig.lyria.sessions) - before <= 2 * 5  # a round every 15 seconds

@@ -554,14 +554,13 @@ class Station:
                 log.info("Lyria refused the request twice")
                 self._give_up(Outcome.REFUSED)
             return
-        spent = program.failures > len(CONNECT_BACKOFF_S)  # the last round has failed already
-        if now < program.retry_at and not spent:
-            return
-        if not spent:
+        if now >= program.retry_at:
             program.failures += 1
             program.retry_at = (
                 now + CONNECT_BACKOFF_S[min(program.failures, len(CONNECT_BACKOFF_S)) - 1]
             )
+        elif program.failures <= len(CONNECT_BACKOFF_S) or not starting:
+            return  # its round's other session failed first; a start that waits re-checks below
         if program.failures <= len(CONNECT_BACKOFF_S) or not starting:
             return
         if self._may_start(deck, player):
