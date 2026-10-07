@@ -60,7 +60,8 @@ flowchart LR
 | `config` | Typed settings from the environment and `.env`; secrets held as `SecretStr` |
 | `bot` | The discord.py client: intents, command sync, the station registry, interpreting and playing requests, voice-state events, and recovering voice clients discord.py strands |
 | `commands` | Slash command handlers: checks, deferral, and replies with mentions disabled |
-| `station` | One per server: the desired program, the reconcile loop, listener tracking, and the voice channel status |
+| `station` | One per server: the desired program, the reconcile loop, listener tracking, and the title it shows as the voice channel status |
+| `status` | One per server, outliving its stations: the voice channel statuses SobaFM set, and their requests |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |
 | `mixer` | The `discord.AudioSource`: the live deck, crossfades, fades, and volume |
 | `pcm` | PCM format constants, the silence frame, and the chunk-to-frame splitter |
@@ -98,9 +99,9 @@ A station stores only what should be happening: the program (plan, requester, an
 5. **Start.** If nothing is playing and a deck for the current plan has its pre-roll, start the player, and fade in once it runs with voice connected. Restart the player if discord.py stopped it.
 6. **Hand over, or stop.** With a program, if the player runs with voice connected, no crossfade is in progress, and the live deck holds less than 4 seconds or belongs to a replaced plan, crossfade to the ready deck of the current plan with the most buffered audio. Without one, retire idle decks; once any fade or crossfade completes, fade out the live deck and then stop the player. With no player running, nothing reads the mixer, so the station stops at once.
 7. **Regulate.** Pause or resume each deck's generation at the flow-control thresholds.
-8. **Status.** Show the title being heard as the voice channel status (FB-2): a program's title once it plays, kept while a replacement starts, and cleared when the program ends or the station closes. Discord lets SobaFM change a channel's status only while connected there, so the station syncs only then. Each tick compares what SobaFM has set, and where, with what it should show, so a drag or a new gateway session catches up. One request runs at a time and is never cancelled. Closing, and `/join` before it moves SobaFM, clear the status, waiting at most 10 seconds for the request in flight and the clear after it. Without the Set Voice Channel Status permission, SobaFM sets nothing and checks again every 10 seconds. A refused request is logged once and retried after 10 seconds, doubling up to 5 minutes, and never affects playback.
+8. **Status.** Show the title being heard as the voice channel status (FB-2): a program's title once it plays, kept while a replacement starts, and cleared when the program ends or the station closes. Discord lets SobaFM change a channel's status only while connected there, so the station syncs only then. Each tick compares what SobaFM has set in its channel with what it should show, so a drag or a new gateway session catches up. One request runs at a time and is never cancelled. Closing, and `/join` before it moves SobaFM, clear the status, waiting at most 10 seconds for the request in flight and the clear after it. Without the Set Voice Channel Status permission, SobaFM sets nothing and checks again every 10 seconds. A refused request is logged once and retried after 10 seconds, doubling up to 5 minutes, and never affects playback.
 
-   A channel SobaFM was dragged out of keeps the title until it empties or SobaFM shows another title there, since only someone connected there, or with Manage Channels, can change it. So does a channel whose connection SobaFM lost, since that closes the station. A new gateway session keeps the station, which clears the title once SobaFM is back.
+   The titles SobaFM set, and its requests, belong to the server rather than to a station, in memory. So they outlive a station that closes before it can clear its title, and requests stay in order across stations. A channel SobaFM was dragged out of, or whose connection it lost, keeps the title, since only someone connected there, or with Manage Channels, can change it. SobaFM clears it once it is connected there again with nothing to show: a station clears it on its next tick, and without one, connecting does. So does the voice check every 10 seconds, which also covers a move back and retries a refused clear. Discord clears an empty channel's status itself, so SobaFM forgets a channel's title once the channel empties, checking at each departure and when the server becomes available again. A status a member sets over SobaFM's title while the channel stays occupied is cleared too, since discord.py doesn't report status changes.
 
 The station never closes a deck the mixer still references. Commands only replace the desired program and wake the loop, so they need no lock: the latest request wins. The change cooldown (M3) is checked and started when a request arrives, before the model call. It is freed again if that request ends without playing, even after the reply, unless a later request has started it since. It is kept in memory, so a restart, which ends every program, clears it.
 
@@ -135,12 +136,12 @@ The interpreter is SobaFM's only Gemini stage. It makes one call for each accept
 
 ```python
 class Prompt(BaseModel):
-    text: str  # 1 to 120 characters, with whitespace collapsed
+    text: str  # 1 to 120 characters, with whitespace collapsed and bidirectional controls dropped
     weight: float  # 0.1 to 1.0
 
 
 class MusicPlan(BaseModel):
-    title: str  # 1 to 60 characters, with whitespace collapsed
+    title: str  # 1 to 60 characters, with whitespace collapsed and bidirectional controls dropped
     prompts: list[Prompt]  # 1 to 4 prompts
     bpm: int | None  # 60 to 200
     scale: Scale | None  # the SDK's scale enum
@@ -219,7 +220,7 @@ CREATE TABLE guild (
 
 - **Secrets** come only from the environment, are held as `SecretStr`, and are never logged. `.env` files are git-ignored. Connections to Gemini and Lyria RealTime follow no redirects, since the SDK sends the API key in a header that a redirect would take to another server.
 - **Data sent to Google:** the request text and current plan go to Gemini; prompts and generation settings go to Lyria RealTime. Discord identifiers are never sent. Google may review prompts sent on the free tier, which the README states (USE-1, USE-2).
-- **Model output is untrusted.** It is validated against the schema before use; text shown in Discord is escaped, length-capped, and sent with mentions disabled; nothing is executed.
+- **Model output is untrusted.** It is validated against the schema before use, which drops bidirectional controls, so text can't override the direction of what follows it. Text in SobaFM's answers is escaped, including the `:` and `.` that links need, so it can't form markup or links; the voice channel status shows the title as set. It is length-capped and sent with mentions disabled, and nothing is executed.
 - **Prompt injection:** the instruction treats the request as data, and the schema limits what any request can produce.
 - **Least privilege:** two non-privileged gateway intents and four channel permissions.
 - **Logs:** request text appears only at debug level. Gemini's error statuses and reasons, and Lyria's close reasons, are logged only when they are tokens such as `RESOURCE_EXHAUSTED`, since free text could quote the API key. A frame from Lyria that the SDK can't parse or validate, or an unexpected audio format, is logged by a fixed description, without its content. A failed WebSocket handshake, or a redirect, is logged by the error's type and any status code, without the server's text. Lyria's close reasons are matched for a rejected API key or an exhausted quota, and a deck's summary names the cause of a session that ended short of the pre-roll. `SOBAFM_LOG_LEVEL` applies to SobaFM's own loggers: libraries stay at INFO, since at DEBUG the websockets library logs request headers, which carry the API key. The Google Gen AI SDK logs only warnings and errors, since at INFO it logs Lyria RealTime's setup reply verbatim. Python warnings are logged too, except two of the SDK's: its warning about an unknown enum value in any response, which quotes the value Lyria or Gemini sent, and its expected warning that Lyria RealTime is experimental.

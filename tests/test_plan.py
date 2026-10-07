@@ -14,6 +14,32 @@ def test_from_request_uses_the_text_as_the_only_prompt() -> None:
     ]
 
 
+BIDI_CONTROLS = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+
+
+def test_drops_bidirectional_controls() -> None:
+    plan = MusicPlan(
+        title=f"Rai{BIDI_CONTROLS}ny lo-fi\u202e by <@5>",  # invisible, so dropped within a word
+        prompts=[Prompt(text=f"\u2067lo-fi{BIDI_CONTROLS}")],
+    )
+
+    assert plan.title == "Rainy lo-fi by <@5>"
+    assert plan.prompts[0].text == "lo-fi"
+    long = MusicPlan.from_request(BIDI_CONTROLS * 6 + "x" * 200)  # more controls than a title holds
+    assert (long.title, long.prompts[0].text) == ("x" * 60, "x" * 120)
+
+
+def test_keeps_joiners() -> None:
+    # Emoji sequences and some scripts need them, and they don't reorder text.
+    title = "lo-fi \U0001f469\u200d\U0001f4bb \u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"
+    assert MusicPlan(title=title, prompts=[Prompt(text="lo-fi")]).title == title
+
+
+def test_rejects_a_title_of_only_bidirectional_controls() -> None:
+    with pytest.raises(ValidationError):
+        MusicPlan(title=BIDI_CONTROLS, prompts=[Prompt(text="lo-fi")])
+
+
 def test_from_request_truncates_long_requests() -> None:
     plan = MusicPlan.from_request("x" * 500)
 
@@ -29,6 +55,24 @@ def test_with_request_adds_a_lighter_prompt_and_keeps_the_settings() -> None:
 
     assert [(p.text, p.weight) for p in plan.prompts] == [("rainy lo-fi", 1.0), ("darker", 0.5)]
     assert (plan.title, plan.bpm, plan.mute_drums) == ("Rainy", 80, True)
+
+
+@pytest.mark.parametrize(
+    ("request_text", "expected"),
+    [
+        (BIDI_CONTROLS * 11 + "x" * 68, "x" * 68),
+        (BIDI_CONTROLS * 6 + "x" * 128, "x" * 120),
+    ],
+    ids=["controls fill the limit", "truncate visible text"],
+)
+def test_with_request_drops_controls_before_truncating(request_text: str, expected: str) -> None:
+    current = MusicPlan.from_request("rainy lo-fi")
+
+    plan = current.with_request(request_text)
+
+    assert [(p.text, p.weight) for p in plan.prompts] == [("rainy lo-fi", 1.0), (expected, 0.5)]
+    assert current.prompts == [Prompt(text="rainy lo-fi")]
+    assert plan.title == current.title
 
 
 @pytest.mark.parametrize(
