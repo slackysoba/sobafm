@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+# Serialize publication and reruns; retain queued tags rather than cancelling them.
+concurrency:
+  group: release-images
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  release:
+    name: Publish release image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/slackysoba/sobafm
+      TAG: ${{ github.ref_name }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Validate the release tag and main ancestry
+        id: version
+        run: uv run --frozen python scripts/release.py validate "$TAG" --output "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push both architectures once
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/slackysoba/sobafm:${{ steps.version.outputs.image_tag }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest the published index digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/slackysoba/sobafm
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Verify the signed source and both platform attestations
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ steps.version.outputs.source_sha }}
+        run: |
+          gh attestation verify "oci://$IMAGE@$DIGEST" --repo "$GH_REPO" \
+            --bundle-from-oci --signer-workflow "$GH_REPO/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$TAG" --source-digest "$SOURCE_SHA" \
+            --signer-digest "$SOURCE_SHA" --deny-self-hosted-runners
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .SBOM}}' > "$RUNNER_TEMP/sbom.json"
+          jq -e '[."linux/amd64", ."linux/arm64"] | all(.SPDX.spdxVersion | startswith("SPDX-"))' "$RUNNER_TEMP/sbom.json"
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Provenance}}' > "$RUNNER_TEMP/provenance.json"
+          uv run --frozen python scripts/verify_provenance.py "$RUNNER_TEMP/provenance.json"
+      - name: Record the verified release digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ steps.version.outputs.source_sha }}
+        run: |
+          echo "Image: $IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: $SOURCE_SHA (refs/tags/$TAG)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Refresh protected tags and guard moving aliases
+        id: promotion
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git fetch origin 'refs/tags/v*:refs/tags/v*'
+          uv run --frozen python scripts/release.py promote "$TAG" --output "$GITHUB_OUTPUT"
+      - name: Promote the verified digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          MINOR: ${{ steps.promotion.outputs.minor_tag }}
+          PROMOTE_MINOR: ${{ steps.promotion.outputs.promote_minor }}
+          PROMOTE_LATEST: ${{ steps.promotion.outputs.promote_latest }}
+        run: |
+          tags=()
+          if [[ "$PROMOTE_MINOR" == true ]]; then tags+=(--tag "$IMAGE:$MINOR"); fi
+          if [[ "$PROMOTE_LATEST" == true ]]; then tags+=(--tag "$IMAGE:latest"); fi
+          if (( ${#tags[@]} )); then
+            docker buildx imagetools create "${tags[@]}" "$IMAGE@$DIGEST"
+          fi
+      - name: Create the release with label-grouped notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          LATEST: ${{ steps.promotion.outputs.promote_latest }}
+        run: |
+          if gh release view "$TAG" --repo "$GH_REPO" > /dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GH_REPO" --prerelease="$PRERELEASE" --latest="$LATEST"
+          else
+            gh release create "$TAG" --repo "$GH_REPO" --verify-tag --generate-notes \
+              --prerelease="$PRERELEASE" --latest="$LATEST"
+          fi

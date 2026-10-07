@@ -12,7 +12,7 @@ from google.genai import errors, types
 from pydantic import BaseModel, ValidationError, model_validator
 
 from sobafm.failures import Failure, as_token, call_failure, error_reason
-from sobafm.plan import MusicPlan
+from sobafm.plan import MusicPlan, one_line
 
 log = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ CONFIG = types.GenerateContentConfig(
 
 class Outcome(StrEnum):
     INTERPRETED = "interpreted"
-    FALLBACK = "fallback"  # the model call failed, so the plan is the request text
+    FALLBACK = "fallback"  # the model call failed, so the request text joins or becomes the plan
     NOT_MUSIC = "not_music"
     BLOCKED = "blocked"  # Gemini's safety filters blocked the request
 
@@ -126,6 +126,7 @@ class Result:
     outcome: Outcome
     plan: MusicPlan | None  # None when the request is refused
     failure: Failure | None = None  # why the model call failed, when known
+    extends_current: bool = False  # a fallback that added the request to the current plan
 
 
 class Models(Protocol):
@@ -156,10 +157,11 @@ class Interpreter:
         """Interpret `request`, refining `current` when the request is relative to it.
 
         Only the request and the current plan are sent (AI-6). Any failure of the model call
-        falls back to the request text as the plan (AI-4), with the cause when SobaFM can tell
-        it. A blank request is refused.
+        falls back to the request text (AI-4), added to `current` as a lighter prompt when there
+        is one and as the whole plan otherwise, with the cause when SobaFM can tell it. A request
+        that is blank on one line is refused.
         """
-        if not request.strip():
+        if not one_line(request):
             return Result(Outcome.NOT_MUSIC, None)
         log.debug("Interpreting %r", request)
         current_plan = current.model_dump(mode="json") if current else None
@@ -180,8 +182,8 @@ class Interpreter:
                 describe(error),
                 exc_info=not expected,
             )
-            plan = MusicPlan.from_request(request)
-            result = Result(Outcome.FALLBACK, plan, call_failure(error))
+            plan = current.with_request(request) if current else MusicPlan.from_request(request)
+            result = Result(Outcome.FALLBACK, plan, call_failure(error), current is not None)
         log.info("Interpretation took %.1f s: %s", time.monotonic() - started, result.outcome)
         return result
 

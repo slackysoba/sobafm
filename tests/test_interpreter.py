@@ -124,10 +124,14 @@ async def test_gemini_follows_no_redirect(caplog: pytest.LogCaptureFixture, libr
     assert f"127.0.0.1:{target_port}" not in caplog.text
 
 
-async def test_refuses_a_blank_request_without_a_call() -> None:
+@pytest.mark.parametrize("current", [None, LOFI], ids=["no current plan", "current plan"])
+@pytest.mark.parametrize("request_text", [" 　", "\u202e \u2066"], ids=["blank", "bidi controls"])
+async def test_refuses_a_blank_request_without_a_call(
+    request_text: str, current: MusicPlan | None
+) -> None:
     gemini = FakeGemini()
 
-    result = await interpreter(gemini).interpret(" 　", None)
+    result = await interpreter(gemini).interpret(request_text, current)
 
     assert (result.outcome, gemini.calls) == (Outcome.NOT_MUSIC, [])
 
@@ -165,10 +169,11 @@ async def test_falls_back_when_google_rejects_the_key() -> None:
     result = await interpreter(gemini).interpret("rainy lo-fi", None)
 
     # As AI-4 says; Lyria RealTime, which uses the same key, then reports the rejection.
-    assert (result.outcome, result.plan, result.failure) == (
+    assert (result.outcome, result.plan, result.failure, result.extends_current) == (
         Outcome.FALLBACK,
         MusicPlan.from_request("rainy lo-fi"),
         Failure.REJECTED,
+        False,
     )
 
 
@@ -227,7 +232,7 @@ async def test_says_why_it_fell_back(error: Exception, failure: Failure | None) 
         "timeout",
     ],
 )
-async def test_falls_back_to_the_request_text(
+async def test_falls_back_by_adding_the_request_to_the_current_plan(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: Exception | str
 ) -> None:
     gemini = FakeGemini(answer_json(kind="new", plan=NEW_PLAN))
@@ -243,9 +248,11 @@ async def test_falls_back_to_the_request_text(
         async with asyncio.timeout(1):  # far past TIMEOUT_S, so a late timeout fails
             result = await interpreter(gemini).interpret("rainy lo-fi", LOFI)
 
-    assert (result.outcome, result.plan) == (
+    # The request joins the music playing, as AI-4 says.
+    assert (result.outcome, result.plan, result.extends_current) == (
         Outcome.FALLBACK,
-        MusicPlan.from_request("rainy lo-fi"),
+        LOFI.with_request("rainy lo-fi"),
+        True,
     )
     [warning] = caplog.records
     assert bool(warning.exc_info) == isinstance(failure, RuntimeError)  # tracebacks for bugs only
@@ -253,6 +260,25 @@ async def test_falls_back_to_the_request_text(
         isinstance(failure, str) and failure != "timeout"
     )
     assert ("(invalid output)" in warning.getMessage()) is invalid_output
+
+
+async def test_fallback_keeps_visible_request_text_after_dropping_controls() -> None:
+    gemini = FakeGemini()
+    gemini.error = errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE"}})
+
+    result = await interpreter(gemini).interpret("\u202e" * 121 + "darker", LOFI)
+
+    assert (result.outcome, result.failure, result.extends_current) == (
+        Outcome.FALLBACK,
+        Failure.UNAVAILABLE,
+        True,
+    )
+    assert result.plan is not None
+    assert [(p.text, p.weight) for p in result.plan.prompts] == [
+        *((p.text, p.weight) for p in LOFI.prompts),
+        ("darker", 0.5),
+    ]
+    assert result.plan.title == LOFI.title
 
 
 async def test_sends_only_the_request_and_the_current_plan() -> None:
