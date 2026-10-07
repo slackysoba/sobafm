@@ -3,6 +3,7 @@ import contextlib
 import itertools
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -1514,11 +1515,12 @@ async def test_play_needs_sobafm_in_a_voice_channel(bot: SobaFM) -> None:
     )
 
 
-async def test_play_needs_a_description(bot: SobaFM) -> None:
+@pytest.mark.parametrize("request_text", ["   ", "\u202e \u2066"], ids=["blank", "bidi controls"])
+async def test_play_needs_a_description(bot: SobaFM, request_text: str) -> None:
     guild = make_guild()
     channel = make_channel(guild)
 
-    assert await bot.admit(in_voice(channel, channel), "   ") == (
+    assert await bot.admit(in_voice(channel, channel), request_text) == (
         "Describe the music you want, for example: rainy lo-fi with soft piano."
     )
 
@@ -1872,7 +1874,8 @@ async def test_a_slow_start_announces_the_program_once_it_plays(
     async def announce(answer: str) -> None:
         announced.append(answer)
 
-    reply = await bot.play(member, "rainy lo-fi", None, announce)
+    # Played as typed, so the request reaches the answer, which must be escaped.
+    reply = await bot.play(member, "rainy lo-fi\u202e discord.gg/x", None, announce)
     assert reply.startswith("The music is taking longer than usual to start.")
     await settle()
     assert announced == []
@@ -1881,8 +1884,8 @@ async def test_a_slow_start_announces_the_program_once_it_plays(
     await settle()
 
     assert announced == [
-        "Now playing **rainy lo-fi**, requested by <@5>.\n"
-        "Style: rainy lo-fi\n"
+        "Now playing **rainy lo-fi discord\\.gg/x**, requested by <@5>.\n"
+        "Style: rainy lo-fi discord\\.gg/x\n"
         f"Ends {ends(3600)}.\n"
         "Gemini is unavailable right now, so the request was used as typed."
     ]
@@ -2120,15 +2123,15 @@ async def test_play_escapes_the_title(
     member = in_voice(channel, channel)
     member.mention = "<@5>"
     monkeypatch.setattr(bot, "station", MagicMock(return_value=fake_station()))
-    prompt = "*lo-fi*\nEnds <t:0:R>."  # a line of its own, and a timestamp
-    plan = {"title": "**Loud**\n_lo-fi_", "prompts": [{"text": prompt}]}
+    prompt = "*lo-fi*\nEnds <t:0:R>. https://evil.example"  # a line, a timestamp, and a link
+    plan = {"title": "**Loud**\n_lo-fi_\u202e", "prompts": [{"text": prompt}]}
     gemini.response = answer(json.dumps({"kind": "new", "plan": plan}))
 
     reply = await bot.play(member, "lo-fi", None)
 
     title, style, _ = reply.splitlines()
     assert title == "Now playing **\\*\\*Loud\\*\\* \\_lo-fi\\_**, requested by <@5>."
-    assert style == "Style: \\*lo-fi\\* Ends \\<t:0:R>."
+    assert style == "Style: \\*lo-fi\\* Ends \\<t\\:0\\:R>\\. https\\://evil\\.example"
 
 
 @pytest.mark.parametrize(
@@ -2178,6 +2181,19 @@ async def test_now_describes_the_program(
     assert bot.now(make_guild()) == (
         f"{phase} **Rainy lo-fi**, requested by <@5>.\n"
         "Style: lo-fi hip hop, 80 BPM\n"
+        f"Ends {ends(600)}."
+    )
+
+
+async def test_now_escapes_the_program(bot: SobaFM, now: datetime) -> None:
+    plan = MusicPlan(
+        title="Lo-fi\u202e https://evil.example", prompts=[Prompt(text="discord.gg/x")]
+    )
+    bot.stations[GUILD_ID] = playing_station(plan, time_left=600, started=True)
+
+    assert bot.now(make_guild()) == (
+        "Now playing **Lo-fi https\\://evil\\.example**, requested by <@5>.\n"
+        "Style: discord\\.gg/x\n"
         f"Ends {ends(600)}."
     )
 
@@ -2242,16 +2258,35 @@ async def test_shows_the_status_only_once_connected(bot: SobaFM) -> None:
     [
         (
             "[a](b) **lofi** [Free Nitro](https://evil.example)",
-            "\\[a\\](b) \\*\\*lofi\\*\\* \\[Free Nitro\\](https://evil.example)",
+            "\\[a\\](b) \\*\\*lofi\\*\\* \\[Free Nitro\\](https\\://evil\\.example)",
         ),
-        ("<t:0:R> <@5> <#10> <:x:1>", "\\<t:0:R> \\<@5> \\<#10> \\<:x:1>"),
+        ("<t:0:R> <@5> <#10> <:x:1>", "\\<t\\:0\\:R> \\<@5> \\<#10> \\<\\:x\\:1>"),
         ("a\\b ~~s~~ ||p|| `c` __u__", "a\\\\b \\~\\~s\\~\\~ \\|\\|p\\|\\| \\`c\\` \\_\\_u\\_\\_"),
-        ("Rainy lo-fi #2: 50% off > 3", "Rainy lo-fi #2: 50% off > 3"),
+        (
+            "lo-fi https://evil.example steam://run/1 discord.gg/x",
+            "lo-fi https\\://evil\\.example steam\\://run/1 discord\\.gg/x",
+        ),
+        (
+            "discord\u3002gg/x discord\uff0egg/x discord\uff61gg/x",
+            "discord\\\u3002gg/x discord\\\uff0egg/x discord\\\uff61gg/x",
+        ),
+        ("Rainy lo-fi #2: 50% off > 3", "Rainy lo-fi #2\\: 50% off > 3"),
+        ("Rainy lo-fi", "Rainy lo-fi"),
     ],
-    ids=["masked links", "mentions and timestamps", "inline markup", "plain"],
+    ids=[
+        "masked links",
+        "mentions and timestamps",
+        "inline markup",
+        "links",
+        "lookalike dots",
+        "punctuation",
+        "plain",
+    ],
 )
 def test_escapes_each_markup_character(text: str, escaped: str) -> None:
     assert escape(text) == escaped
+    # Discord shows a backslash before punctuation as the punctuation alone.
+    assert re.sub(r"\\([^0-9A-Za-z\s])", r"\1", escaped) == text
 
 
 async def test_a_station_shows_its_status_in_sobafms_channel(

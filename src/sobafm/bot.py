@@ -23,7 +23,7 @@ from sobafm.deck import Connect, lyria
 from sobafm.failures import Failure
 from sobafm.interpreter import GEMINI_HTTP, Interpreter, Result
 from sobafm.interpreter import Outcome as Interpreted
-from sobafm.plan import MusicPlan
+from sobafm.plan import MusicPlan, one_line
 from sobafm.station import Outcome, SessionPool, Station
 from sobafm.status import Statuses
 from sobafm.store import GuildSettings, Store
@@ -66,8 +66,10 @@ FALLBACK_NOTES: dict[Failure | None, str] = {  # why a request was played as typ
     Failure.UNAVAILABLE: "\nGemini is unavailable right now, so the request was used as typed.",
     None: "\nGemini couldn't interpret the request, so it was used as typed.",
 }
-# Discord's inline markup: emphasis, spoilers, code, masked links, mentions, and timestamps
-MARKUP = re.compile(r"[\\*_~|`<\[\]]")
+# Discord's inline markup: emphasis, spoilers, code, masked links, mentions, and timestamps,
+# and the `:` or `.` that every link needs, with or without a scheme, with the full stops that
+# domain names treat as `.` (U+3002, U+FF0E, U+FF61)
+MARKUP = re.compile(r"[\\*_~|`<\[\]:.\u3002\uff0e\uff61]")
 
 
 class Voice(discord.VoiceClient):
@@ -259,7 +261,7 @@ class SobaFM(discord.Client):
         concurrent requests cannot both get past it. The start time in `cooldowns` identifies
         the request: one that ends without playing frees it with `free_cooldown()`.
         """
-        if not request.strip():
+        if not one_line(request):
             return "Describe the music you want, for example: rainy lo-fi with soft piano."
         voice = cast(discord.VoiceClient | None, member.guild.voice_client)
         if voice is None:
@@ -695,8 +697,10 @@ def escape(text: str) -> str:
     """Model-written text with each character of Discord's inline markup escaped (FB-4).
 
     Escaping each character keeps masked links, mentions, and timestamps from forming, which
-    `discord.utils.escape_markdown` misses inside a masked link. Markup that needs a line start
-    can't form, since the text never starts a line.
+    `discord.utils.escape_markdown` misses inside a masked link. Escaping `:` and `.` keeps bare
+    URLs and invite links from forming. Discord shows each escaped character alone, so the text
+    reads as written. Markup that needs a line start can't form, since the text never starts a
+    line.
     """
     return MARKUP.sub(r"\\\g<0>", text)
 

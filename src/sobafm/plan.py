@@ -1,5 +1,6 @@
 """What a program plays, and its mapping to Lyria RealTime prompts and configuration."""
 
+import re
 from typing import Annotated
 
 from google.genai import types
@@ -15,6 +16,9 @@ MAX_PROMPTS = 4
 ADDED_WEIGHT = 0.5  # a request added to the current music, so it nudges rather than replaces
 MAX_TITLE_LENGTH = 60
 
+# Unicode's Bidi_Control characters, which reorder the text around them, so they could disguise it
+BIDI_CONTROLS = re.compile(r"[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
 
 def _known_scale(value: object) -> object:
     """Accept only Lyria's scales, and read SCALE_UNSPECIFIED as no scale.
@@ -29,9 +33,14 @@ def _known_scale(value: object) -> object:
     return value
 
 
+def one_line(text: str) -> str:
+    """`text` on one line and in its own order, with whitespace collapsed and bidirectional
+    controls dropped, so blank text is empty."""
+    return " ".join(BIDI_CONTROLS.sub("", text).split())
+
+
 def _one_line(value: object) -> object:
-    """Collapse whitespace, so text reads on one line and blank text is empty."""
-    return " ".join(value.split()) if isinstance(value, str) else value
+    return one_line(value) if isinstance(value, str) else value
 
 
 class Prompt(BaseModel):
@@ -58,7 +67,7 @@ class MusicPlan(BaseModel):
     @classmethod
     def from_request(cls, request: str) -> MusicPlan:
         """A plan that plays the request text itself as the only prompt; it must not be blank."""
-        text = " ".join(request.split())[:MAX_PROMPT_LENGTH]
+        text = one_line(request)[:MAX_PROMPT_LENGTH]
         return cls(title=text[:MAX_TITLE_LENGTH], prompts=[Prompt(text=text)])
 
     def with_request(self, request: str) -> MusicPlan:
@@ -66,7 +75,7 @@ class MusicPlan(BaseModel):
 
         A full plan drops its lowest-weight prompt, the latest of equals, to make room.
         """
-        added = Prompt(text=" ".join(request.split())[:MAX_PROMPT_LENGTH], weight=ADDED_WEIGHT)
+        added = Prompt(text=one_line(request)[:MAX_PROMPT_LENGTH], weight=ADDED_WEIGHT)
         kept = list(self.prompts)
         if len(kept) >= MAX_PROMPTS:
             last_lowest = min(range(len(kept) - 1, -1, -1), key=lambda index: kept[index].weight)
