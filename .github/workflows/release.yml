@@ -78,7 +78,7 @@ jobs:
           docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .SBOM}}' > "$RUNNER_TEMP/sbom.json"
           jq -e '[."linux/amd64", ."linux/arm64"] | all(.SPDX.spdxVersion | startswith("SPDX-"))' "$RUNNER_TEMP/sbom.json"
           docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Provenance}}' > "$RUNNER_TEMP/provenance.json"
-          jq -e '."linux/amd64".SLSA.buildType and ."linux/arm64".SLSA.buildType' "$RUNNER_TEMP/provenance.json"
+          uv run --frozen python scripts/verify_provenance.py "$RUNNER_TEMP/provenance.json"
       - name: Record the verified release digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

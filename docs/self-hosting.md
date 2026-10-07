@@ -164,7 +164,11 @@ docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .SBOM}}'
 docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Provenance}}'
 ```
 
-In the [inspection output](https://docs.docker.com/reference/cli/docker/buildx/imagetools/inspect/), require entries for both `linux/amd64` and `linux/arm64`: each SBOM entry must contain an `SPDX` document with `spdxVersion`; each provenance entry must contain `SLSA` with `buildType`. Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's attestation manifests reference the platform image digests and are part of the signed index; a successful GitHub attestation check alone does not prove both SBOMs exist. The release workflow also checks this coverage before promoting stable aliases.
+In the [inspection output](https://docs.docker.com/reference/cli/docker/buildx/imagetools/inspect/), require entries for both `linux/amd64` and `linux/arm64`: each SBOM entry must contain an `SPDX` document with `spdxVersion`; each provenance entry must contain an `SLSA` object with a nonempty string build type.
+
+[BuildKit supports SLSA v0.2 and v1](https://docs.docker.com/build/metadata/attestations/slsa-provenance/): v0.2 uses `SLSA.buildType`, while v1 uses `SLSA.buildDefinition.buildType`. If `buildDefinition` is present, require it to be an object with a valid `buildType`; an invalid v1 field must not fall back to a legacy field. Reject missing platforms, missing fields, wrong value types, and empty or whitespace-only build types.
+
+Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's attestation manifests reference the platform image digests and are part of the signed index; a successful GitHub attestation check alone does not prove both SBOMs exist. The release workflow also checks this coverage before promoting stable aliases.
 
 ## Troubleshooting
 
