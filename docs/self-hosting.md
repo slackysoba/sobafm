@@ -215,4 +215,95 @@ Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's
 
 ## Updating and backing up
 
-Back up the `sobafm.db` file in the data directory; it holds each server's remembered channel and settings. Pull a new image (or `git pull` and `uv sync --locked`) to upgrade, and read the release notes first. Watch the [security policy](../SECURITY.md) for advisories.
+Read the release notes before upgrading. For Compose, follow the pinned-image upgrade steps above; for source installs, use `git pull` and `uv sync --locked`. Watch the [security policy](../SECURITY.md) for advisories.
+
+### Take a consistent backup
+
+`sobafm.db` holds each server's remembered channel and settings. Stop SobaFM before making a filesystem copy and keep every process that uses this database stopped until the copy finishes. This interrupts music and commands; restarting rejoins remembered channels but does not resume a program. [SQLite warns against copying during a transaction](https://www.sqlite.org/howtocorrupt.html#_backup_or_restore_while_a_transaction_is_active). Its [online backup API](https://www.sqlite.org/backup.html) is an alternative when a running database must be backed up.
+
+The commands below use Bash on Linux or Git Bash on Windows, in the deployment directory. Run each block in order in the same shell, and stop on any error. Use the same OS account that runs a source installation. Backups contain server and channel identifiers: keep them private, outside Git, and restrict access with your host's file permissions (Windows uses access control lists).
+
+Create a fresh destination beside the deployment directory (outside the source clone) for each backup and define its verification command. This reads the copied file into an in-memory SQLite database, so a wrong or missing path cannot create an empty database on disk:
+
+```sh
+set -e
+umask 077
+BACKUP_DIR=$(mktemp -d "$PWD/../sobafm-backup.XXXXXXXX")
+VERIFY_DB='import sqlite3, sys
+with sqlite3.connect(":memory:") as db:
+    db.deserialize(sys.stdin.buffer.read())
+    if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+        sys.exit("Database integrity check failed")
+    db.execute("SELECT guild_id, channel_id, settings, updated_at FROM guild LIMIT 0")
+    print("ok; saved servers:", db.execute("SELECT COUNT(*) FROM guild").fetchone()[0])'
+```
+
+**Source install:** stop the foreground process with Ctrl+C and wait for it to exit, or stop its service through your service manager and keep automatic restarts stopped. Set `DATA_DIR` to the actual `SOBAFM_DATA_DIR`, resolving a relative value against the working directory used to launch the bot. The default in the source clone is:
+
+```sh
+DATA_DIR="$PWD/data"
+test -s "$DATA_DIR/sobafm.db"
+for suffix in -journal -wal -shm; do
+    test ! -e "$DATA_DIR/sobafm.db$suffix"
+done
+cp -p "$DATA_DIR/sobafm.db" "$BACKUP_DIR/sobafm.db"
+uv run python -c "$VERIFY_DB" < "$BACKUP_DIR/sobafm.db"
+```
+
+**Compose:** use the same deployment directory, Compose files and project name as the running service. The supplied configuration uses `/data/sobafm.db` in its `sobafm-data` named volume, even if `.env` gives a different data directory. On Git Bash, first run `export MSYS_NO_PATHCONV=1` and `BACKUP_DIR=$(cygpath -m "$BACKUP_DIR")` so container paths stay unchanged and Docker receives an absolute Windows backup path.
+
+```sh
+docker compose stop --timeout 120 sobafm
+test "$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose ps -a -q sobafm)")" = 0
+docker compose run -T --rm --no-deps --entrypoint sh sobafm -c '
+    set -e
+    test -s /data/sobafm.db
+    for suffix in -journal -wal -shm; do
+        test ! -e "/data/sobafm.db$suffix"
+    done'
+docker compose cp sobafm:/data/sobafm.db "$BACKUP_DIR/sobafm.db"
+docker compose run -T --rm --no-deps --entrypoint python sobafm -c "$VERIFY_DB" \
+    < "$BACKUP_DIR/sobafm.db"
+```
+
+The helper containers override the bot entrypoint and use the existing image and volume. If shutdown was forced, the database is missing, or a `sobafm.db-journal`, `sobafm.db-wal` or `sobafm.db-shm` file remains, stop here. Preserve the database and its companion files together; investigate shutdown/recovery before retrying a single-file copy. Do not delete recovery files to make the check pass.
+
+Verification must print `ok` and the expected number of saved servers. An integrity check alone cannot prove you selected the right deployment or backup. Record the deployment, version and backup location privately. After successful verification, restart the source process/service as in step 5, or run `docker compose start sobafm`. Keep the backup separately from the deployment's data.
+
+### Restore a verified backup
+
+Restore with the same SobaFM version that made the backup before upgrading. Stop all writers again as above. Set `BACKUP_DIR` to the existing backup's absolute directory and verify it again with `VERIFY_DB` before replacing anything. Use the source verification command above or the Compose Python helper, as appropriate; do not continue if verification fails or the server count is unexpected.
+
+**Source install:** with the correct `DATA_DIR` and the bot stopped, preserve the current database and any companion files in a fresh directory, then copy the verified backup back with its file metadata:
+
+```sh
+PREVIOUS_DIR=$(mktemp -d "$DATA_DIR/before-restore.XXXXXXXX")
+for file in sobafm.db sobafm.db-journal sobafm.db-wal sobafm.db-shm; do
+    if [ -e "$DATA_DIR/$file" ]; then
+        mv "$DATA_DIR/$file" "$PREVIOUS_DIR/"
+    fi
+done
+cp -p "$BACKUP_DIR/sobafm.db" "$DATA_DIR/sobafm.db"
+uv run python -c "$VERIFY_DB" < "$DATA_DIR/sobafm.db"
+printf 'Previous state: %s\n' "$PREVIOUS_DIR"
+```
+
+**Compose:** leave the `sobafm` service stopped. Feed the verified file into a helper running as the image's non-root user (uid 10001), so the restored file remains writable by SobaFM. The previous database and companion files stay in the named volume:
+
+```sh
+docker compose run -T --rm --no-deps --entrypoint sh sobafm -c '
+    set -eu
+    cd /data
+    previous=$(mktemp -d ./before-restore.XXXXXXXX)
+    for file in sobafm.db sobafm.db-journal sobafm.db-wal sobafm.db-shm; do
+        if [ -e "$file" ]; then mv "$file" "$previous/"; fi
+    done
+    umask 077
+    cat > sobafm.db
+    printf "Previous state: %s\n" "$previous"' < "$BACKUP_DIR/sobafm.db"
+docker compose cp sobafm:/data/sobafm.db "$BACKUP_DIR/restored-check.db"
+docker compose run -T --rm --no-deps --entrypoint python sobafm -c "$VERIFY_DB" \
+    < "$BACKUP_DIR/restored-check.db"
+```
+
+Only restart after the restored file verifies with the expected server count. After startup, confirm the remembered voice channels and `/settings`; music needs a new `/play`. If copying or verification fails, keep SobaFM stopped and retain both the backup and `before-restore` directory for recovery. Do not remove the named volume or use `docker compose down --volumes`. The database backup does not include `.env` or other deployment configuration; retain those separately and privately.
