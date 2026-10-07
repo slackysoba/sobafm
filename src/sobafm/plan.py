@@ -69,7 +69,8 @@ class MusicPlan(BaseModel):
         added = Prompt(text=" ".join(request.split())[:MAX_PROMPT_LENGTH], weight=ADDED_WEIGHT)
         kept = list(self.prompts)
         if len(kept) >= MAX_PROMPTS:
-            kept.remove(min(reversed(kept), key=lambda prompt: prompt.weight))
+            last_lowest = min(range(len(kept) - 1, -1, -1), key=lambda index: kept[index].weight)
+            del kept[last_lowest]
         return self.model_copy(update={"prompts": [*kept, added]})
 
     def weighted_prompts(self) -> list[types.WeightedPrompt]:

@@ -31,13 +31,22 @@ def test_with_request_adds_a_lighter_prompt_and_keeps_the_settings() -> None:
     assert (plan.title, plan.bpm, plan.mute_drums) == ("Rainy", 80, True)
 
 
-def test_with_request_on_a_full_plan_drops_the_last_lowest_weight_prompt() -> None:
-    weights = [("a", 1.0), ("b", 0.4), ("c", 0.4), ("d", 1.0)]
+@pytest.mark.parametrize(
+    ("weights", "expected"),
+    [
+        ([("a", 1.0), ("b", 0.4), ("c", 0.4), ("d", 1.0)], ["a", "b", "d", "e"]),
+        ([("a", 0.4), ("b", 1.0), ("a", 0.4), ("c", 1.0)], ["a", "b", "c", "e"]),
+    ],
+    ids=["equal weights", "equal prompts"],
+)
+def test_with_request_on_a_full_plan_drops_the_last_lowest_weight_prompt(
+    weights: list[tuple[str, float]], expected: list[str]
+) -> None:
     current = MusicPlan(title="Busy", prompts=[Prompt(text=t, weight=w) for t, w in weights])
 
     plan = current.with_request("e")
 
-    assert [p.text for p in plan.prompts] == ["a", "b", "d", "e"]
+    assert [p.text for p in plan.prompts] == expected
 
 
 def test_config_is_complete_with_fixed_sampling_values() -> None:
