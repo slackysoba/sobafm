@@ -44,6 +44,8 @@ The evaluation set measures how well the interpreter turns requests into music p
 uv run --env-file .env pytest -m eval -s   # about 4 minutes, plus 1 to 2 for each retry
 ```
 
+The standalone [catalog relevance probe](docs/catalog-probe.md) prepares #116 with offline commands and tests. Its live measurement remains gated by M4 readiness, operator credentials, a maintainer-approved pass mark and listening ratings; it is not part of CI.
+
 ## Making a change
 
 1. **Start from an issue.** Every change is linked to one. For anything beyond a small fix, agree on the approach in the issue before writing code.
