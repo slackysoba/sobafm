@@ -146,6 +146,22 @@ async def bot(
     return bot
 
 
+async def test_gives_gemini_the_options_that_refuse_redirects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("GEMINI_API_KEY", "key")
+    bot = SobaFM(load_settings(env_file=None), Store(tmp_path / "sobafm.db"))
+
+    gemini: Any = bot.interpreter._gemini  # pyright: ignore[reportPrivateUsage]
+    client = gemini._api_client  # the SDK's, as the interpreter's client built it
+
+    assert client._http_options.async_client_args["allow_redirects"] is False  # aiohttp's
+    assert client._async_httpx_client.follow_redirects is False
+    assert client._httpx_client.follow_redirects is False
+    await bot.close()
+
+
 def slow_station(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> asyncio.Future[Outcome]:
     """Make the next request outlast the reply, returning the outcome the station will settle."""
     monkeypatch.setattr(sobafm.bot, "START_TIMEOUT_S", 0.01)
@@ -620,6 +636,8 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
     voice = make_voice(bot, guild, current=True)
     connection: Any = VoiceConnectionState(voice)  # discord.py's own, with its reader paused
     cast(Any, voice)._connection = connection
+    waiting = asyncio.Event()  # set once the reconnect waits for Discord's reply
+    timed_out = asyncio.Event()  # ends that wait as a timeout, when the test is ready
     if failure == "reset connection":
         # an unhandled close starts a reconnect, whose voice state update finds the gateway
         # connection reset
@@ -629,7 +647,13 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
         # the reconnect gets no reply, so it times out, and the runner then polls the websocket
         # it closed itself
         connection.ws = ClosingSocket(4006, 1000)
-        connection.timeout = 0.2
+
+        async def no_reply(*_: object, **__: object) -> None:  # the wait for Discord's reply
+            waiting.set()
+            await timed_out.wait()
+            raise TimeoutError
+
+        monkeypatch.setattr(connection, "_wait_for_state", no_reply)
     else:
         # a resume, which keeps the connected state, finds the gateway connection reset
         connection.state = ConnectionFlowState.connected
@@ -639,7 +663,9 @@ async def test_finds_a_client_discord_pys_runner_left_without_cleaning_up(
         connection._runner = asyncio.create_task(connection._poll_voice_ws(reconnect=True))
         await settle()
         if failure == "lost voice state update":
-            assert not voice.stranded()  # while the reconnect waits for Discord's reply
+            assert waiting.is_set()  # the reconnect sent its rejoin request, and awaits the reply
+            assert not voice.stranded()
+            timed_out.set()
             await connection._runner
         else:
             with pytest.raises(aiohttp.ClientConnectionResetError):

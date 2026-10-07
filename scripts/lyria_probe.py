@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["google-genai>=2.26"]
+# dependencies = ["google-genai>=2.26", "websockets>=16.1.1"]
 # ///
 """Measure Lyria RealTime session behavior for the playback engine decision (#11).
 
@@ -32,6 +32,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+import websockets.asyncio.client
 from google import genai
 from google.genai import errors, live_music, types
 
@@ -368,6 +369,8 @@ async def main() -> None:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         sys.exit("GEMINI_API_KEY is not set; run with uv run --env-file .env")
+    # As in SobaFM's decks, follow no redirect, which would take the key's header along (#85).
+    websockets.asyncio.client.MAX_REDIRECTS = 1
     client = genai.Client(api_key=api_key, http_options={"api_version": args.api_version})
     measure = {
         "rate": measure_rate,

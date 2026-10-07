@@ -21,7 +21,7 @@ from sobafm.commands import add_commands
 from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
 from sobafm.failures import Failure
-from sobafm.interpreter import Interpreter, Result
+from sobafm.interpreter import GEMINI_HTTP, Interpreter, Result
 from sobafm.interpreter import Outcome as Interpreted
 from sobafm.plan import MusicPlan
 from sobafm.station import Outcome, SessionPool, Station
@@ -161,7 +161,9 @@ class SobaFM(discord.Client):
         self.store = store
         self.open_session = connect or lyria(settings.gemini_api_key.get_secret_value())
         self.interpreter = interpreter or Interpreter(
-            genai.Client(api_key=settings.gemini_api_key.get_secret_value()).aio,
+            genai.Client(
+                api_key=settings.gemini_api_key.get_secret_value(), http_options=GEMINI_HTTP
+            ).aio,
             settings.gemini_model,
         )
         self.pool = SessionPool(settings.max_sessions)

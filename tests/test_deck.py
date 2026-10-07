@@ -1,12 +1,15 @@
 import asyncio
 import contextlib
+import gc
 import logging
 import ssl
+import weakref
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from google import genai
 from google.genai import live_music, types
 from websockets.datastructures import Headers
 from websockets.exceptions import (
@@ -37,7 +40,7 @@ from sobafm.deck import (
 from sobafm.failures import Failure
 from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS
 from sobafm.plan import MusicPlan
-from tests.doubles import FakeClock, FakeLyria, FakeSession, settle
+from tests.doubles import FakeClock, FakeLyria, FakeSession, serve, settle
 
 
 async def start_deck(lyria: FakeLyria, clock: FakeClock) -> tuple[Deck, FakeSession]:
@@ -179,6 +182,25 @@ async def test_retired_while_connecting_never_starts_playback(
     assert lyria.sessions == []
 
 
+async def test_frees_a_deck_retired_while_connecting_without_collecting_cycles(
+    lyria: FakeLyria, clock: FakeClock
+) -> None:
+    lyria.stall = True
+    gc.disable()  # so only reference counting can free it
+    try:
+        deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+        deck.start()
+        await settle()  # connecting
+        deck.retire()
+        await ended(deck)
+        dropped = weakref.ref(deck)
+        del deck
+
+        assert dropped() is None
+    finally:
+        gc.enable()
+
+
 async def test_fails_when_connecting_stalls(
     lyria: FakeLyria, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -232,8 +254,8 @@ async def test_keeps_its_audio_when_receiving_fails(
     )
     assert deck.buffered_seconds == pytest.approx(4)
     assert "rainy" not in caplog.text  # the title can repeat the request
-    # An unexpected error keeps its traceback.
-    assert any(record.exc_info for record in caplog.records if record.levelno == logging.WARNING)
+    # An unexpected error keeps its traceback in the log, though the deck then drops it.
+    assert "Traceback (most recent call last)" in caplog.text
 
 
 async def test_accepts_its_format_in_any_case_and_order(lyria: FakeLyria, clock: FakeClock) -> None:
@@ -660,6 +682,38 @@ async def test_logs_a_failed_handshake_without_the_servers_text(
     assert "AIzaFakeKey" not in caplog.text
 
 
+@pytest.mark.filterwarnings("ignore:Realtime music generation is experimental")
+async def test_follows_no_redirect_while_connecting(caplog: pytest.LogCaptureFixture) -> None:
+    asked: list[bytes] = []
+    reached: list[bytes] = []
+    target, target_port = await serve(b"HTTP/1.1 503 Service Unavailable\r\n\r\n", reached)
+    origin, origin_port = await serve(
+        f"HTTP/1.1 302 Found\r\nLocation: ws://127.0.0.1:{target_port}/\r\n"
+        "Content-Length: 0\r\n\r\n".encode(),
+        asked,
+    )
+    connect = sobafm.deck.lyria("AIzaFakeKey")
+    client = next(
+        cell.cell_contents
+        for cell in connect.__closure__ or ()
+        if isinstance(cell.cell_contents, genai.Client)
+    )
+    client._api_client._websocket_base_url = lambda: f"ws://127.0.0.1:{origin_port}"  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+
+    async with origin, target:
+        deck = Deck(connect, MusicPlan.from_request("ambient"))
+        with caplog.at_level(logging.INFO):  # production's level
+            deck.start()
+            async with asyncio.timeout(10):
+                await deck.wait_ended()
+
+    assert (deck.end_reason, deck.detail) == (EndReason.FAILED, "SecurityError")
+    [request] = asked
+    assert b"AIzaFakeKey" in request
+    assert reached == []  # the key's header never reached the target
+    assert f"127.0.0.1:{target_port}" not in caplog.text
+
+
 async def test_logs_an_ssl_error_with_its_text(
     lyria: FakeLyria, clock: FakeClock, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -740,6 +794,31 @@ async def test_records_a_close_during_setup_without_free_text(
     assert deck.failure is failure
     assert f"Deck {deck.number} failed: {detail}" in caplog.messages  # a warning, no traceback
     assert "suspended" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        received(Close(1008, "Request contains an invalid argument.")),
+        InvalidStatus(Response(403, "Forbidden", Headers())),
+    ],
+    ids=["closed during setup", "rejected handshake"],
+)
+async def test_frees_a_deck_whose_setup_failed_without_collecting_cycles(
+    lyria: FakeLyria, clock: FakeClock, failure: Exception
+) -> None:
+    lyria.failure = failure  # which the double keeps, as websockets' protocol does
+    gc.disable()  # so only reference counting can free it
+    try:
+        deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+        deck.start()
+        await ended(deck)
+        dropped = weakref.ref(deck)
+        del deck
+
+        assert dropped() is None
+    finally:
+        gc.enable()
 
 
 async def test_retiring_while_lyria_closes_keeps_the_close_code(
