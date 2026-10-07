@@ -30,7 +30,7 @@ SobaFM is provided as is, under the [MIT license](../LICENSE). Music generated b
 1. Open the [Discord Developer Portal](https://discord.com/developers/applications) and choose **New Application**. Name it, which is also the bot's default name.
 2. Open the **Bot** page and choose **Reset Token**, then copy the token. This is `DISCORD_TOKEN`. It is a password: anyone who has it controls your bot. Never commit it or paste it into a chat.
 3. Leave all three **Privileged Gateway Intents** off. SobaFM uses only the Guilds and Voice States intents, which are not privileged.
-4. Keep **Public Bot** off unless you want other people to be able to add your bot to their servers; each server that does uses your Gemini quota.
+4. Keep **Public Bot** off unless you want other people to be able to add your bot to their servers; each server that does uses your Gemini quota. With it off, only you, the application's owner, can use the invite link in the next step.
 
 The portal's layout changes from time to time. If a page differs from these steps, look for the same names.
 
@@ -70,7 +70,7 @@ DISCORD_TOKEN=your-discord-token
 GEMINI_API_KEY=your-gemini-api-key
 ```
 
-Do not put quotes or spaces around the values, and do not commit the file; the repository ignores it. The optional settings are:
+Do not put quotes or spaces around the values, and do not commit the file; the repository ignores it. Restrict who can read it on the host (on Linux, `chmod 600 .env`), and remember that `docker compose config` prints its values in full. If a token or key leaks, reset the token on the Bot page or delete and recreate the key at once. The optional settings are:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -120,7 +120,7 @@ The process runs until you stop it with Ctrl+C. Run it under a service manager s
 
 ### Check that it started
 
-The log should show SobaFM logging in and the slash commands being registered. Slash commands registered globally can take a while to appear in Discord the first time. When they do, type `/` in your server and look for SobaFM's commands.
+The log should show SobaFM logging in and a line starting `Connected as`. Slash commands registered globally can take a while to appear in Discord the first time. When they do, type `/` in your server and look for SobaFM's commands.
 
 ## 6. Use it
 
