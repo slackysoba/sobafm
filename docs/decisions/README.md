@@ -24,3 +24,4 @@ Each record captures one material decision: its context, the options considered,
 | [0003](0003-keep-server-state-in-sqlite-and-use-discord-command-permissions.md) | Keep server state in SQLite and use Discord command permissions | Accepted |
 | [0004](0004-stream-lyria-realtime-through-buffered-decks.md) | Stream Lyria RealTime through buffered decks and a crossfading mixer | Accepted |
 | [0005](0005-release-images-with-github-actions-and-artifact-attestations.md) | Release images with GitHub Actions and artifact attestations | Accepted |
+| [0006](0006-play-catalog-and-generated-music-in-one-station.md) | Play catalog and generated music in one station | Proposed; gated on #116 and maintainer approval |
