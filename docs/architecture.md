@@ -237,6 +237,8 @@ CREATE TABLE guild (
 
 SobaFM runs from source with `uv run sobafm`. From M4 it also ships as a multi-architecture container image on GitHub Container Registry, based on `python:3.14-slim` with `libopus0`, running as a non-root user with a `/data` volume. The compose file sets an init process and `restart: unless-stopped`. The `Dockerfile` pins its base images by digest, which Dependabot updates, and installs only the locked runtime dependencies; CI builds and loads each architecture once on every pull request, then checks that both images run as a non-root user with Opus loadable; ARM64 runs under QEMU.
 
+The tag-only release workflow follows [ADR-0005](decisions/0005-release-images-with-github-actions-and-artifact-attestations.md): it validates main ancestry and the project version, builds and publishes both architectures with per-platform provenance and SBOMs, signs and verifies the image index, then promotes guarded stable aliases and creates label-grouped release notes. [Release steps](../CONTRIBUTING.md#releasing) and [package and tag settings](repository-settings.md#release-tag-rulesets) describe the maintainer's first-publication setup.
+
 ## Open questions
 
 | Question | Tracking |

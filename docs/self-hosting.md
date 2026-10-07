@@ -135,11 +135,36 @@ SobaFM does not support Stage channels or direct messages.
 
 ## Verify the image you pulled
 
-Release images are built from the tagged source by GitHub Actions, with a provenance attestation and an SBOM. To check that the image you have came from this repository, with the [GitHub CLI](https://cli.github.com/):
+Release images carry signed provenance for their multi-platform index and BuildKit provenance and SPDX SBOMs for each platform. With the [GitHub CLI](https://cli.github.com/), Docker Buildx, and a published version, the basic repository check is:
 
 ```sh
 gh attestation verify oci://ghcr.io/slackysoba/sobafm:VERSION --repo slackysoba/sobafm
 ```
+
+For a release check, pin the index digest and verify the expected workflow, tag, and source commit as well. The following shell example uses a release candidate; set `TAG` to the release you intend to deploy. The workflow summary also records its verified digest and source commit.
+
+```sh
+TAG=v1.0.0-rc.1
+IMAGE=ghcr.io/slackysoba/sobafm
+VERSION=${TAG#v}
+DIGEST=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')
+SOURCE_SHA=$(gh api "repos/slackysoba/sobafm/commits/$TAG" --jq .sha)
+gh attestation verify "oci://$IMAGE@$DIGEST" --repo slackysoba/sobafm \
+  --bundle-from-oci --signer-workflow slackysoba/sobafm/.github/workflows/release.yml \
+  --source-ref "refs/tags/$TAG" --source-digest "$SOURCE_SHA" \
+  --signer-digest "$SOURCE_SHA" --deny-self-hosted-runners
+```
+
+These [verification flags](https://cli.github.com/manual/gh_attestation_verify) bind the signature to this release workflow and its tagged source, using a GitHub-hosted runner. Check that the source is the release commit you expected; `--repo` alone does not establish those expectations. Pull the verified digest (`docker pull "$IMAGE@$DIGEST"`) to deploy exactly the index you checked.
+
+Inspect the platform attestations from **that same digest**, rather than a tag that could change during the check:
+
+```sh
+docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .SBOM}}'
+docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Provenance}}'
+```
+
+In the [inspection output](https://docs.docker.com/reference/cli/docker/buildx/imagetools/inspect/), require entries for both `linux/amd64` and `linux/arm64`: each SBOM entry must contain an `SPDX` document with `spdxVersion`; each provenance entry must contain `SLSA` with `buildType`. Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's attestation manifests reference the platform image digests and are part of the signed index; a successful GitHub attestation check alone does not prove both SBOMs exist. The release workflow also checks this coverage before promoting stable aliases.
 
 ## Troubleshooting
 

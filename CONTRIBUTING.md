@@ -71,6 +71,30 @@ A pull request can build on another that is still in review:
 
 If a dependent is closed anyway, restore the base branch, reopen the dependent, change its base to `main`, delete the restored branch, and then rebase the dependent. GitHub reopens a pull request only while its branch is at the commit it had when it closed, so if the branch has been pushed since, first force-push it back to that commit (`gh pr view <number> --json headRefOid --jq .headRefOid`).
 
+## Releasing
+
+Only the maintainer creates release tags. [ADR-0005](docs/decisions/0005-release-images-with-github-actions-and-artifact-attestations.md) defines publication; [the release checklist](https://github.com/slackysoba/sobafm/issues/108) tracks the M4 exit evidence. Before the first release tag, the maintainer applies and reads back both [release tag rulesets](docs/repository-settings.md#release-tag-rulesets). The creation restriction permits only that maintainer; the independent update/deletion restriction has no bypass actors.
+
+1. Open and merge a version-bump pull request. Change `project.version` and update `uv.lock` with `uv lock`; run the full checks. The workflow compares the tag without `v` and the tagged project version using `packaging.version.Version`, so `v1.0.0-rc.1` matches `1.0.0rc1`.
+2. Use exactly three numeric release components (`X.Y.Z`) before an optional PEP 440 prerelease, development, or postrelease suffix. The text after `v` must also be a valid Docker tag, at most 128 characters: epochs (`!`), local versions (`+`), whitespace, and slashes are rejected. Three components keep the full version tag distinct from a moving `X.Y` alias.
+3. Confirm the source commit is on `main`, its required checks pass, and the merged pull requests carry the labels used by [the release-note configuration](.github/release.yml). Choose a prerelease first for #104's publication check and #107's soak test. For example, **after** the approved version-bump PR sets `1.0.0rc1`:
+
+   ```sh
+   git fetch origin main
+   git switch main
+   git pull --ff-only
+   git tag -a v1.0.0-rc.1 -m "SobaFM 1.0.0 release candidate 1"
+   git push origin refs/tags/v1.0.0-rc.1
+   ```
+
+4. Follow the `Release` workflow, then inspect its GitHub release and image digest. The workflow builds AMD64 and ARM64 once, publishes only the full version tag first, signs the index digest, and verifies its source and both platform attestations before promoting aliases. It generates label-grouped notes; prereleases are explicitly marked and never receive `X.Y` or `latest`.
+5. On first publication, complete the maintainer's [public GHCR bootstrap and anonymous pulls](docs/repository-settings.md#container-package-and-release-permissions). Verify [the image's source identity and both platform SBOMs](docs/self-hosting.md#verify-the-image-you-pulled), and record the tag, source commit, run, digest, and results on #104. A successful offline check or an ordinary PR CI run is not the required prerelease dry run.
+6. After the clean-machine guide test, release-image soak, and other [M4 exit criteria](https://github.com/slackysoba/sobafm/issues/4) pass, merge the stable version-bump PR and create its stable tag using the same process. Inspect the generated notes and record the final release evidence on #108.
+
+Publication is serialized across tags and reruns with `queue: max`, retaining up to 100 pending runs. Since queue ordering is not version ordering, the workflow refreshes protected tags and compares valid stable PEP 440 versions: `X.Y` advances only to the highest version in that minor line, and `latest` only to the highest stable version globally. GitHub release latest status uses the same global guard. Invalid tags, tags off `main`, and tags that do not match their own source version never participate in the comparison. An older rerun cannot move a newer alias backward; a prerelease receives only its own version tag. Full tags preserve their spelling after the leading `v`, including prerelease separators.
+
+Rerun a failed tag workflow after fixing an operational problem such as registry visibility. Existing release notes are preserved on reruns. If source or version is wrong, fix it through a new pull request and create a new tag: protected tags cannot be moved or deleted. #104 stays open until the real prerelease publication and attestation verification succeed.
+
 ## Templates and coding agents
 
 Maintainers create milestone, task, decision, and research issues from the templates in [`docs/templates/`](docs/templates/), for example with `gh issue create --title "Add the deck frame buffer" --label task --body-file docs/templates/task.md`. Coding agents also follow [AGENTS.md](AGENTS.md).

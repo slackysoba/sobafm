@@ -109,6 +109,74 @@ gh api repos/slackysoba/sobafm/rules/branches/main --jq '.[].type'
 
 A direct push to `main` fails with `GH013: Repository rule violations`.
 
+## Release tag rulesets
+
+[ADR-0005](decisions/0005-release-images-with-github-actions-and-artifact-attestations.md) requires two active tag rulesets before the first release tag. The maintainer applies them; the workflow does not change repository settings. Their [rules layer](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets#about-rule-layering), so the creation bypass does not bypass the separate update/deletion restriction.
+
+Save this as `release-tag-creation.json`. `302669505` is the public GitHub account ID of `slackysoba`; confirm it with `gh api users/slackysoba --jq .id` before applying. The [User bypass](https://docs.github.com/en/rest/repos/rules#create-a-repository-ruleset) names that maintainer alone, rather than granting creation to every repository administrator.
+
+```json
+{
+  "name": "release-tag-creation",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "bypass_actors": [
+    { "actor_id": 302669505, "actor_type": "User", "bypass_mode": "always" }
+  ],
+  "rules": [ { "type": "creation" } ]
+}
+```
+
+Save this separately as `release-tag-immutability.json`. Its empty bypass list prevents everyone, including the maintainer and the release workflow, from moving or deleting a published tag while the ruleset is active.
+
+```json
+{
+  "name": "release-tag-immutability",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [ { "type": "update" }, { "type": "deletion" } ]
+}
+```
+
+Apply both once before pushing any `v*` tag, then read each full definition back. The explicit API version supports the individual User bypass. Replace the readback IDs with those returned by creation; for an existing ruleset, review its current definition and use `PUT` with its ID instead of creating a duplicate.
+
+```sh
+gh api -X POST repos/slackysoba/sobafm/rulesets \
+  -H 'X-GitHub-Api-Version: 2026-03-10' --input release-tag-creation.json
+gh api -X POST repos/slackysoba/sobafm/rulesets \
+  -H 'X-GitHub-Api-Version: 2026-03-10' --input release-tag-immutability.json
+gh api repos/slackysoba/sobafm/rulesets --jq '.[] | {id, name, target, enforcement}'
+gh api repos/slackysoba/sobafm/rulesets/CREATION_ID \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  --jq '{name, target, enforcement, conditions, bypass_actors, rules}'
+gh api repos/slackysoba/sobafm/rulesets/IMMUTABILITY_ID \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  --jq '{name, target, enforcement, conditions, bypass_actors, rules}'
+```
+
+Confirm both are active and target `refs/tags/v*`: creation has only the maintainer User bypass; immutability has update and deletion restrictions and no bypass actors. Tags cannot be corrected by moving them: fix the source/version through a pull request and create a new release tag.
+
+## Container package and release permissions
+
+The release job alone receives `contents: write` for GitHub releases, `packages: write` for GHCR publication, `id-token: write` for OIDC signing, and `attestations: write` for storing attestations. Other jobs retain read access. `actions/attest` disables optional artifact metadata storage records, so `artifact-metadata: write` is not needed. Actions are pinned and updated by Dependabot.
+
+GHCR initially makes a [new package private](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry), even for a public repository. After the first successful prerelease publication, the maintainer opens the `sobafm` package's **Package settings**, checks its link to `slackysoba/sobafm`, and changes **Change visibility** to **Public**. [Public visibility cannot be reverted to private](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#configuring-visibility-of-packages-for-your-personal-account). This one-time settings action is separate from publishing the image, and needs the maintainer.
+
+Verify public access with a newly created, empty Docker configuration directory. Copy the verified index digest from the release workflow summary; these pulls request both architectures without running either image or using saved registry credentials:
+
+```sh
+mkdir anonymous-docker-config
+docker --config anonymous-docker-config pull --platform linux/amd64 \
+  ghcr.io/slackysoba/sobafm@sha256:VERIFIED_INDEX_DIGEST
+docker --config anonymous-docker-config pull --platform linux/arm64 \
+  ghcr.io/slackysoba/sobafm@sha256:VERIFIED_INDEX_DIGEST
+```
+
+Record the package visibility, anonymous pulls, and [image attestation verification](self-hosting.md#verify-the-image-you-pulled) on #104. Publishing alone does not complete that issue's prerelease acceptance check.
+
 ## Project automation
 
 The [SobaFM project](https://github.com/users/slackysoba/projects/2)'s built-in workflows have no API, so they are set in the Project's **Workflows** menu:

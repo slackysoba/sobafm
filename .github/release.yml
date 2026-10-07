@@ -1,0 +1,18 @@
+changelog:
+  categories:
+    - title: Security
+      labels: [security]
+    - title: Audio and playback
+      labels: ["area:audio"]
+    - title: Discord commands and voice
+      labels: ["area:discord"]
+    - title: Request interpretation
+      labels: ["area:ai"]
+    - title: Infrastructure
+      labels: ["area:infra"]
+    - title: Documentation
+      labels: ["area:docs"]
+    - title: Dependencies
+      labels: [dependencies]
+    - title: Other changes
+      labels: ["*"]
