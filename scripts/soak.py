@@ -12,13 +12,15 @@ From the repository root, so SobaFM finds `.env`:
     uv run python scripts/soak.py run soak/run1
     uv run python scripts/soak.py report soak/run1 --label "Run 1" --commit <commit>
 
-In the container image, with this directory mounted and no other SobaFM using the same token:
+In the container image, with this directory mounted and no other SobaFM using the same token.
+`SOBAFM_DATA_DIR` is pinned, as `compose.yaml` does, so a value in `.env` can't move the data off
+the volume. The `soak-data` volume is new, so use `/join` before the run's `/play`:
 
-    docker run --rm --name sobafm-soak --env-file .env -v ./scripts:/scripts:ro \
-        -v sobafm-data:/data ghcr.io/slackysoba/sobafm:<tag> \
+    docker run --rm --name sobafm-soak --env-file .env -e SOBAFM_DATA_DIR=/data \
+        -v ./scripts:/scripts:ro -v soak-data:/data ghcr.io/slackysoba/sobafm:<tag> \
         python /scripts/soak.py run /data/soak/run1
     docker exec sobafm-soak touch /data/soak/run1/stop
-    docker run --rm -v ./scripts:/scripts:ro -v sobafm-data:/data \
+    docker run --rm -v ./scripts:/scripts:ro -v soak-data:/data \
         ghcr.io/slackysoba/sobafm:<tag> python /scripts/soak.py report /data/soak/run1 ...
 
 A run is one raw-text `/play` in a private server, with a listener in the voice channel until the
