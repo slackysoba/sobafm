@@ -231,11 +231,11 @@ CREATE TABLE guild (
 | Unit | Framing, mixer gains, plan validation and config mapping, the store | pytest |
 | Component | Deck and station rules against a fake Lyria session and a fake clock; command handlers with mocked interactions | pytest, pytest-asyncio |
 | Evaluation | 38 interpreter cases with property checks: valid output for every case, every not-music request refused, including prompt injection, tempo and key as asked, refinements keeping what they do not change, no names of artists or works, and injected text in the current plan ignored; at least 90% of checks passing | `pytest -m eval` with `GEMINI_API_KEY`; not run in CI |
-| Live | The Lyria probe, smoke tests, and the 60-minute soak test | `scripts/lyria_probe.py`, a private Discord server |
+| Live | The Lyria probe, smoke tests, and the 60-minute soak test | `scripts/lyria_probe.py`, `scripts/soak.py`, a private Discord server |
 
 ## Deployment
 
-SobaFM runs from source with `uv run sobafm`. From M4 it also ships as a multi-architecture container image on GitHub Container Registry, based on `python:3.14-slim` with `libopus0`, running as a non-root user with a `/data` volume. The compose file sets an init process and `restart: unless-stopped`.
+SobaFM runs from source with `uv run sobafm`. From M4 it also ships as a multi-architecture container image on GitHub Container Registry, based on `python:3.14-slim` with `libopus0`, running as a non-root user with a `/data` volume. The compose file sets an init process and `restart: unless-stopped`. The `Dockerfile` pins its base images by digest, which Dependabot updates, and installs only the locked runtime dependencies; CI builds and loads each architecture once on every pull request, then checks that both images run as a non-root user with Opus loadable; ARM64 runs under QEMU.
 
 ## Open questions
 

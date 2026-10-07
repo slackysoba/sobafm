@@ -1,0 +1,8 @@
+# Only what the build copies is sent; everything else stays out of the context.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src/
+**/__pycache__
