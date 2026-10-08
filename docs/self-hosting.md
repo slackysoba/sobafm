@@ -143,6 +143,11 @@ The log should show SobaFM logging in and a line starting `Connected as`. Slash 
 
 ### Duplicate slash commands
 
+The startup guard and reconciliation tool described here are unreleased source
+changes for [#141](https://github.com/slackysoba/sobafm/issues/141); published
+`v1.0.0-rc.2` includes neither change. Run the helper commands below from a reviewed
+source checkout containing `scripts/reconcile_commands.py`.
+
 Discord allows an application to register the same command globally and in one server.
 Switching `SOBAFM_DEV_GUILD_ID` on or off does not remove earlier registrations, so a
 server can show two copies of `/join`, `/play`, `/now`, or another SobaFM command.
