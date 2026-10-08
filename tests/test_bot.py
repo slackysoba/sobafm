@@ -105,6 +105,8 @@ def make_voice(bot: SobaFM, guild: Any, *, current: bool, joined: bool = True) -
     voice.client, voice.channel, voice.sobafm, voice.joined = bot, channel, bot, joined
     cast(Any, voice)._connection = SimpleNamespace(_connector=None, _runner=None)
     voice.stranded_since = None
+    voice._ending = False  # pyright: ignore[reportPrivateUsage]
+    voice._disposed = False  # pyright: ignore[reportPrivateUsage]
     bot.voices.add(voice)
     if current:
         guild.voice_client = voice
@@ -407,6 +409,9 @@ async def test_join_waits_for_discord_py_to_restart_the_connection(bot: SobaFM) 
     # An administrator moves SobaFM during the handshake, which restarts discord.py's connector.
     async def restart(*, self_deaf: bool, cls: type) -> Any:
         voice = await connect(self_deaf=self_deaf, cls=cls)
+        owner = asyncio.current_task()
+        assert owner is not None
+        bot.connecting[owner] = voice
         voice.is_connected.return_value = False
 
         async def finish() -> None:  # the restarted connector completes in the new channel
@@ -434,6 +439,9 @@ async def test_join_reports_a_restarted_connection_that_gives_up(bot: SobaFM) ->
         voice = await connect(self_deaf=self_deaf, cls=cls)
         voice.is_connected.return_value = False
         clients.append(voice)
+        owner = asyncio.current_task()
+        assert owner is not None
+        bot.connecting[owner] = voice
 
         async def give_up() -> None:  # discord.py leaves and unregisters the client
             channel.guild.voice_client = None
@@ -446,7 +454,7 @@ async def test_join_reports_a_restarted_connection_that_gives_up(bot: SobaFM) ->
     reply = await bot.join(make_member(channel))
 
     assert reply == "SobaFM couldn't connect to <#10>. Try again shortly."
-    clients[0].disconnect.assert_not_awaited()  # discord.py has left already
+    clients[0].disconnect.assert_awaited_once_with(force=True)  # finish the owned attempt's cleanup
 
 
 async def test_finish_connecting_waits_for_a_restarted_connector(bot: SobaFM) -> None:
@@ -1752,6 +1760,9 @@ async def test_a_handshake_that_outlasts_its_guild_is_closed_before_recovery_con
         voice.disconnect.side_effect = disconnect
         if stage == "restarted connector":
             voice.finish_connecting.side_effect = wait_for_handshake
+            owner = asyncio.current_task()
+            assert owner is not None
+            bot.connecting[owner] = voice
             raise asyncio.CancelledError  # discord.py restarts its connector
         return voice
 

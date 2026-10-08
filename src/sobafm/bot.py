@@ -14,7 +14,7 @@ from typing import cast
 import discord
 from discord import app_commands
 from discord.ext import tasks
-from discord.types.voice import GuildVoiceState
+from discord.types.voice import GuildVoiceState, VoiceServerUpdate
 from google import genai
 
 from sobafm.commands import add_commands
@@ -84,9 +84,15 @@ class Voice(discord.VoiceClient):
         self.sobafm = cast("SobaFM", client)
         self.joined = False  # set once the connection completes
         self.stranded_since: float | None = None  # when SobaFM found it stranded
+        self._ending = False
+        self._disposed = False
         self.sobafm.voices.add(self)
+        owner = asyncio.current_task()
+        if owner is not None and owner in self.sobafm.connecting:
+            self.sobafm.connecting[owner] = self
 
     def cleanup(self) -> None:
+        self._ending = True
         self.failure()  # marks an error that ended discord.py's runner as handled
         current = self.guild.voice_client is self
         if current:  # an old client must not unregister its replacement
@@ -94,6 +100,8 @@ class Voice(discord.VoiceClient):
         self.sobafm.voice_ended(self, left=current and self.joined)
 
     async def on_voice_state_update(self, data: GuildVoiceState) -> None:
+        if self._ending and cast(object, data["channel_id"]) is not None:
+            return  # departure confirmations still reach the library while closing
         await super().on_voice_state_update(data)
         if cast(object, data["channel_id"]) is not None:  # None, despite its type, on leaving
             # discord.py's general voice reconnect leaves the channel and rejoins it. Leaving sets
@@ -101,6 +109,45 @@ class Voice(discord.VoiceClient):
             # later move, which closes the voice websocket with 4014, for a disconnection
             # (voice_state.py, #46).
             self._connection._disconnected.clear()  # pyright: ignore[reportPrivateUsage]
+
+    async def on_voice_server_update(self, data: VoiceServerUpdate) -> None:
+        if not self._ending:
+            await super().on_voice_server_update(data)
+
+    async def disconnect(self, *, force: bool = False) -> None:
+        """Drain this client's workers and finish its library cleanup before honoring a cancel.
+
+        discord.py's public disconnect does not stop a restarted initial connector. An old
+        Gateway client's departure must also not remove a newer client's live connection.
+        """
+        if self._disposed:
+            raise_swallowed_cancel()
+            return
+        self._ending = True
+        workers = {task for task in self._connection_tasks() if task is not None}
+        for worker in workers:
+            if not worker.done():
+                worker.cancel()
+        draining = asyncio.gather(*workers, return_exceptions=True)
+        while not draining.done():
+            # Cancellation of the caller must not interrupt a connector's own cleanup.
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.shield(draining)
+        draining.result()
+        try:
+            guild = self.sobafm.get_guild(self.guild.id)
+            if guild is not None and guild is self.guild and guild.voice_client in (None, self):
+                # Keep the library's departure confirmation after a cleaned initial timeout too.
+                await super().disconnect(force=force)
+            else:
+                # A guild-wide leave on a new Gateway could disconnect its replacement.
+                await self._connection.soft_disconnect()
+        finally:
+            self._connection._socket_reader.stop()  # pyright: ignore[reportPrivateUsage]
+            self.stop()
+            self.cleanup()
+            self._disposed = True
+        raise_swallowed_cancel()
 
     def stranded(self) -> bool:
         """Whether discord.py has stopped connecting this client without cleaning it up.
@@ -177,6 +224,7 @@ class SobaFM(discord.Client):
         )
         add_commands(self.tree, self)
         self.voices: set[Voice] = set()
+        self.connecting: dict[asyncio.Task[object], Voice | None] = {}
         self.voice_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.cooldowns: dict[int, float] = {}  # when each server's change cooldown started
         # Each server's requests being interpreted, oldest first
@@ -551,39 +599,46 @@ class SobaFM(discord.Client):
             or missing_permissions(current)
         ):
             raise discord.ClientException(f"Voice channel {channel.id} isn't available")
+        owner = asyncio.current_task()
+        if owner is None:
+            raise RuntimeError("A voice connection requires an asyncio task")
+        self.connecting[owner] = None  # Voice.__init__ captures the exact client before any await
         opened: Voice | None = None
         try:
-            opened = await current.connect(self_deaf=True, cls=Voice)
-        except asyncio.CancelledError:
-            if (task := asyncio.current_task()) is not None and task.cancelling():
-                raise  # the command itself is cancelled
-        raise_swallowed_cancel()
-        voice = current.guild.voice_client
-        if current.guild is self.get_guild(current.guild.id) and isinstance(voice, Voice):
-            await voice.finish_connecting()  # after a restart, the new connector is still running
+            try:
+                opened = await current.connect(self_deaf=True, cls=Voice)
+            except asyncio.CancelledError:
+                raise_swallowed_cancel()  # otherwise discord.py restarted its connector
             raise_swallowed_cancel()
-            voice = current.guild.voice_client  # a restarted connector that gave up unregistered it
-        if current.guild is not self.get_guild(current.guild.id):
-            # A new Gateway session or guild removal can finish before this handshake. Close
-            # only this attempt's client; a replacement registered meanwhile belongs to its owner.
-            opened = opened or next(
-                (v for v in self.voices if v.guild is current.guild and not v.joined), None
-            )
+            opened = self.connecting[owner] or opened
+            if (
+                opened is None
+                or current.guild is not self.get_guild(current.guild.id)
+                or current.guild.voice_client is not opened
+            ):
+                raise discord.ClientException(
+                    "The voice attempt no longer owns this Gateway client"
+                )
+            await opened.finish_connecting()
+            raise_swallowed_cancel()
+            if (
+                current.guild is not self.get_guild(current.guild.id)
+                or current.guild.voice_client is not opened
+                or not opened.is_connected()
+            ):
+                raise TimeoutError
+            opened.joined = True
+            statuses = self.statuses.get(current.guild.id)
+            if statuses is not None and current.guild.id not in self.stations:
+                statuses.clear_soon()
+            return opened
+        except BaseException:
+            opened = self.connecting[owner] or opened
             if opened is not None:
                 await opened.disconnect(force=True)
-                raise_swallowed_cancel()
-            raise discord.ClientException("The voice connection's Gateway session ended")
-        if not isinstance(voice, Voice) or not voice.is_connected():
-            if voice is not None:
-                # After five rejected handshakes, discord.py has left already, so this waits out
-                # its timeout.
-                await voice.disconnect(force=True)
-            raise TimeoutError
-        voice.joined = True
-        statuses = self.statuses.get(current.guild.id)
-        if statuses is not None and current.guild.id not in self.stations:
-            statuses.clear_soon()
-        return voice
+            raise
+        finally:
+            self.connecting.pop(owner)
 
     @tasks.loop(seconds=VOICE_CHECK_S)
     async def check_voice(self) -> None:
