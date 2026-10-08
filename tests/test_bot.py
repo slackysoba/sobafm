@@ -33,6 +33,7 @@ from tests.doubles import FakeClock, FakeGemini, FakeLyria, answer, settle
 NOW = datetime(2026, 10, 2, 12, tzinfo=UTC)
 GUILD_ID = 1
 CHANNEL_ID = 10
+GUILDS: dict[int, Any] = {}  # the current Gateway session
 CHANNELS: dict[int, Any] = {}  # the latest channel made with each ID, which bot.get_channel finds
 
 
@@ -44,13 +45,16 @@ def fake(spec: type, **attributes: Any) -> Any:
 
 
 def make_guild(voice_client: Any = None) -> Any:
-    return fake(
+    guild = fake(
         discord.Guild,
         id=GUILD_ID,
         voice_client=voice_client,
+        unavailable=False,
         me=fake(discord.Member, id=99),
         change_voice_state=AsyncMock(),
     )
+    GUILDS[GUILD_ID] = guild
+    return guild
 
 
 def make_channel(
@@ -69,6 +73,7 @@ def make_channel(
     async def connect(*, self_deaf: bool, cls: type) -> Any:
         guild.voice_client = make_voice_client(channel, cls)
         guild.voice_client.finish_connecting = AsyncMock()
+        guild.voice_client.joined = False
         return guild.voice_client
 
     channel.connect = AsyncMock(side_effect=connect)
@@ -83,7 +88,7 @@ def make_member(channel: Any) -> Any:
 
 
 def make_voice_client(channel: Any, kind: type = discord.VoiceClient) -> Any:
-    voice = fake(kind, channel=channel, disconnect=AsyncMock())
+    voice = fake(kind, channel=channel, guild=channel.guild, disconnect=AsyncMock())
 
     async def move_to(destination: Any) -> None:
         voice.channel = destination
@@ -142,7 +147,9 @@ async def bot(
         interpreter=Interpreter(gemini, "gemini-test"),
         clock=clock,
     )
+    GUILDS.clear()
     CHANNELS.clear()
+    monkeypatch.setattr(bot, "get_guild", GUILDS.get)
     monkeypatch.setattr(bot, "get_channel", CHANNELS.get)
     return bot
 
@@ -742,6 +749,12 @@ async def finish_recovery(recovery: asyncio.Task[None]) -> None:
         await recovery
 
 
+async def available(bot: SobaFM, guild: Any) -> None:
+    """Dispatch availability and await the owned recovery when it should finish."""
+    await bot.on_guild_available(guild)
+    await finish_recovery(bot.recoveries[guild.id])
+
+
 async def test_replaces_a_stranded_voice_client(
     bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1113,7 +1126,7 @@ async def test_rejoins_when_the_server_becomes_available(bot: SobaFM) -> None:
     guild.get_channel.return_value = channel
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
 
-    await bot.on_guild_available(guild)
+    await available(bot, guild)
 
     channel.connect.assert_awaited_once_with(self_deaf=True, cls=Voice)
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
@@ -1164,7 +1177,7 @@ async def test_clears_a_title_left_behind_once_it_rejoins(bot: SobaFM) -> None:
     guild.get_channel.return_value = channel  # still occupied, so the title remains
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
 
-    await bot.on_guild_available(guild)  # SobaFM rejoins its channel
+    await available(bot, guild)  # SobaFM rejoins its channel
     await settle()
 
     assert shown.await_args_list[-1].args == (CHANNEL_ID, None)
@@ -1219,7 +1232,7 @@ async def test_forgets_titles_in_channels_that_emptied_while_away(bot: SobaFM) -
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
     calls = len(shown.await_args_list)
 
-    await bot.on_guild_available(guild)
+    await available(bot, guild)
     await settle()
 
     assert bot.statuses[GUILD_ID].shown == {}
@@ -1242,7 +1255,7 @@ async def test_rejoining_leaves_a_station_to_show_its_own_title(bot: SobaFM) -> 
     await settle()
     guild.voice_client = None  # a new gateway session keeps the station, which plays on
 
-    await bot.on_guild_available(guild)
+    await available(bot, guild)
     await settle()
     titles = [call.args for call in shown.await_args_list]
     await station.close()
@@ -1353,7 +1366,7 @@ async def test_connecting_clears_a_title_once_a_closed_stations_request_lands(
     guild.voice_client = None
     guild.get_channel.return_value = channel
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
-    await bot.on_guild_available(guild)  # SobaFM rejoins while the title is still in flight
+    await available(bot, guild)  # SobaFM rejoins while the title is still in flight
 
     answered.set()
     await settle()
@@ -1393,7 +1406,7 @@ async def test_forgets_a_title_in_a_deleted_channel(bot: SobaFM) -> None:
     guild.voice_client = None
     guild.get_channel.return_value = None  # the channel is gone
 
-    await bot.on_guild_available(guild)
+    await available(bot, guild)
 
     assert bot.statuses[GUILD_ID].shown == {}
 
@@ -1425,7 +1438,7 @@ async def test_rejoin_first_closes_a_client_from_an_earlier_session(bot: SobaFM)
 
     old.disconnect.side_effect = disconnect
 
-    await bot.on_guild_available(guild)
+    await available(bot, guild)
 
     old.disconnect.assert_awaited_once_with(force=True)
     channel.connect.assert_awaited_once()
@@ -1446,7 +1459,7 @@ async def test_rejoin_skips_a_connected_server(bot: SobaFM) -> None:
     guild.get_channel.return_value = channel
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
 
-    await bot.on_guild_available(guild)
+    await available(bot, guild)
 
     channel.connect.assert_not_awaited()
 
@@ -1458,8 +1471,626 @@ async def test_rejoin_keeps_the_channel_when_connecting_fails(bot: SobaFM) -> No
     guild.get_channel.return_value = channel
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
 
-    await bot.on_guild_available(guild)
+    assert not await bot.rejoin(guild.id)
 
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+
+
+class RetryDelay:
+    """Gate only the production retry delay, leaving asyncio's other waits intact."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, clock: FakeClock) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.times: list[tuple[float, float]] = []
+        sleep = asyncio.sleep
+
+        async def wait(seconds: float) -> None:
+            if seconds != sobafm.bot.REJOIN_RETRY_S:
+                await sleep(seconds)
+                return
+            self.times.append((clock.now, seconds))
+            self.started.set()
+            await self.release.wait()
+            self.release.clear()
+            self.started.clear()
+            clock.now += seconds
+
+        monkeypatch.setattr(sobafm.bot.asyncio, "sleep", wait)
+
+
+def library_channel(bot: SobaFM, guild: Any, *, timeout: float) -> Any:
+    """Use the locked library's registration, initial connector, and timeout cleanup, with
+    a fake Gateway that sends no replies. No websocket or UDP socket is opened.
+    """
+    channel = make_channel(guild)
+    channel._state = cast(Any, bot)._connection
+    channel._state.loop = asyncio.get_running_loop()
+    channel._get_voice_client_key.return_value = (guild.id, "guild_id")
+
+    async def connect(**kwargs: Any) -> Any:
+        return await discord.abc.Connectable.connect(channel, timeout=timeout, **kwargs)
+
+    channel.connect.side_effect = connect
+    return channel
+
+
+async def test_retries_a_cleaned_initial_library_timeout_without_another_event(
+    bot: SobaFM,
+    monkeypatch: pytest.MonkeyPatch,
+    clock: FakeClock,
+    gemini: FakeGemini,
+    lyria: FakeLyria,
+) -> None:
+    delay = RetryDelay(monkeypatch, clock)
+    guild = registry_guild(bot)
+    channel = library_channel(bot, guild, timeout=0.01)
+    guild.get_channel.return_value = channel
+    dispatch = MagicMock()
+    monkeypatch.setattr(bot, "dispatch", dispatch)
+    reserve = MagicMock(wraps=bot.pool.reserve)
+    monkeypatch.setattr(bot.pool, "reserve", reserve)
+    settings = GuildSettings(duration_minutes=90, volume_percent=80, cooldown_seconds=45)
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.store.save_settings(GUILD_ID, settings)
+
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await delay.started.wait()
+    assert guild.voice_client is None  # discord.py cleaned and unregistered the initial client
+    assert bot.voices == set()
+    assert channel.connect.await_count == 1
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+
+    async def connected(**_: Any) -> Any:
+        voice = make_voice_client(channel, Voice)
+        voice.finish_connecting = AsyncMock()
+        cast(Any, bot)._connection._add_voice_client(GUILD_ID, voice)
+        return voice
+
+    channel.connect.side_effect = connected
+    delay.release.set()  # only the existing recovery wakes; no event or command
+    await finish_recovery(recovery)
+
+    assert isinstance(guild.voice_client, Voice)
+    assert guild.voice_client.joined is True
+    assert channel.connect.await_args_list == [
+        ((), {"self_deaf": True, "cls": Voice}),
+        ((), {"self_deaf": True, "cls": Voice}),
+    ]
+    assert delay.times == [(0.0, 30.0)]
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+    assert await bot.store.settings(GUILD_ID) == settings
+    assert bot.stations == {}
+    assert bot.interpreting == {}
+    assert gemini.calls == []
+    assert lyria.sessions == []
+    reserve.assert_not_called()
+    dispatch.assert_not_called()
+    assert bot.recoveries == {}
+
+
+async def test_startup_delay_begins_after_each_attempt_finishes_without_overlap(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    delay = RetryDelay(monkeypatch, clock)
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    connect = channel.connect.side_effect
+    entered, complete = asyncio.Event(), asyncio.Event()
+    starts: list[float] = []
+    active = 0
+
+    async def attempt(**kwargs: Any) -> Any:
+        nonlocal active
+        active += 1
+        assert active == 1
+        starts.append(clock.now)
+        try:
+            if len(starts) <= 2:
+                entered.set()
+                await complete.wait()
+                entered.clear()
+                complete.clear()
+                clock.now += 60.0  # failed handshake and departure cleanup finish together
+                raise TimeoutError
+            return await connect(**kwargs)
+        finally:
+            active -= 1
+
+    channel.connect.side_effect = attempt
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await entered.wait()
+        for _ in range(3):
+            await bot.on_guild_available(guild)
+            await bot.check_voice()
+        assert bot.recoveries == {GUILD_ID: recovery}
+        assert not delay.started.is_set()
+        complete.set()
+        await delay.started.wait()
+        assert delay.times == [(60.0, 30.0)]
+        await bot.on_guild_available(guild)  # does not shorten the delay
+        assert starts == [0.0]
+        delay.release.set()
+        await entered.wait()
+        assert starts == [0.0, 90.0]
+        assert active == 1
+        complete.set()
+        await settle()
+        await delay.started.wait()
+        assert delay.times == [(60.0, 30.0), (150.0, 30.0)]
+        delay.release.set()
+        await recovery
+    assert starts == [0.0, 90.0, 180.0]
+    assert active == 0
+
+
+async def test_startup_failure_waits_the_real_retry_delay(
+    bot: SobaFM,
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    channel.connect.side_effect = TimeoutError
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    await asyncio.sleep(0.1)
+    channel.connect.assert_awaited_once()
+    await bot.close()
+    assert bot.recoveries == {}
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+
+
+@pytest.mark.parametrize("command", ["join", "move", "leave"])
+async def test_manual_command_serializes_with_the_owned_initial_attempt(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock, command: str
+) -> None:
+    delay = RetryDelay(monkeypatch, clock)
+    guild = make_guild()
+    channel = make_channel(guild)
+    destination = make_channel(guild, 11)
+    guild.get_channel.side_effect = CHANNELS.get
+    entered, complete = asyncio.Event(), asyncio.Event()
+
+    async def fail(**_: Any) -> Any:
+        entered.set()
+        await complete.wait()
+        raise TimeoutError
+
+    channel.connect.side_effect = fail
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await entered.wait()
+        manual = asyncio.create_task(
+            bot.leave(guild) if command == "leave" else bot.join(make_member(destination))
+        )
+        await settle()
+        assert not manual.done()  # same voice lock, no second connecting client
+        await bot.on_guild_available(guild)
+        assert bot.recoveries == {GUILD_ID: recovery}
+        complete.set()
+        await manual
+        await delay.started.wait()
+        if command == "move":
+            moved = make_channel(guild, 12)
+            assert await bot.join(make_member(moved)) == "Moved to <#12>."
+        delay.release.set()
+        await recovery
+    expected = None if command == "leave" else 12 if command == "move" else 11
+    assert await bot.store.remembered_channel(GUILD_ID) == expected
+    channel.connect.assert_awaited_once()
+    assert destination.connect.await_count == (0 if command == "leave" else 1)
+    if command != "leave":
+        assert guild.voice_client.channel.id == expected
+
+
+async def test_a_completed_owner_cannot_block_availability_or_remove_its_replacement(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    remembered = bot.store.remembered_channel
+    first = True
+
+    async def lookup(guild_id: int) -> int | None:
+        nonlocal first
+        if first:
+            first = False
+            # Availability runs before the first owner's done callback clears its registry entry.
+            asyncio.get_running_loop().call_soon(bot.start_recovery, guild_id)
+            return None
+        return await remembered(guild_id)
+
+    monkeypatch.setattr(bot.store, "remembered_channel", lookup)
+    await bot.on_guild_available(guild)
+    earlier = bot.recoveries[GUILD_ID]
+    await finish_recovery(earlier)
+    current = bot.recoveries[GUILD_ID]
+    assert current is not earlier
+    await finish_recovery(current)
+    assert bot.recoveries == {}
+    channel.connect.assert_awaited_once()
+
+
+@pytest.mark.parametrize("change", ["new session", "removed"])
+@pytest.mark.parametrize("stage", ["connect", "restarted connector"])
+async def test_a_handshake_that_outlasts_its_guild_is_closed_before_recovery_continues(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock, change: str, stage: str
+) -> None:
+    delay = RetryDelay(monkeypatch, clock)
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    connect = channel.connect.side_effect
+    entered, complete = asyncio.Event(), asyncio.Event()
+    opened: list[Any] = []
+
+    async def wait_for_handshake() -> None:
+        entered.set()
+        await complete.wait()
+
+    async def attempt(**kwargs: Any) -> Any:
+        if stage == "connect":
+            await wait_for_handshake()
+        voice = await connect(**kwargs)
+        opened.append(voice)
+        bot.voices.add(voice)
+
+        async def disconnect(*, force: bool) -> None:
+            guild.voice_client = None
+            bot.voices.discard(voice)
+
+        voice.disconnect.side_effect = disconnect
+        if stage == "restarted connector":
+            voice.finish_connecting.side_effect = wait_for_handshake
+            raise asyncio.CancelledError  # discord.py restarts its connector
+        return voice
+
+    channel.connect.side_effect = attempt
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await entered.wait()
+        if change == "removed":
+            del GUILDS[GUILD_ID]
+            await bot.on_guild_remove(guild)
+            complete.set()
+            await recovery
+            assert await bot.store.remembered_channel(GUILD_ID) is None
+        else:
+            current = make_guild()
+            destination = make_channel(current)
+            current.get_channel.return_value = destination
+            await bot.on_guild_available(current)
+            complete.set()
+            await delay.started.wait()
+            destination.connect.assert_not_awaited()
+            opened[0].disconnect.assert_awaited_once_with(force=True)
+            delay.release.set()
+            await recovery
+            destination.connect.assert_awaited_once_with(self_deaf=True, cls=Voice)
+            assert current.voice_client.channel is destination
+    opened[0].disconnect.assert_awaited_once_with(force=True)
+    assert guild.voice_client is None
+    assert bot.recoveries == {}
+
+
+async def test_retry_uses_the_latest_guild_and_remembered_destination(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    delay = RetryDelay(monkeypatch, clock)
+    earlier = make_guild()
+    old = make_channel(earlier)
+    earlier.get_channel.return_value = old
+    old.connect.side_effect = TimeoutError
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(earlier)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await delay.started.wait()
+    current = make_guild()  # new Gateway session replaces the entire guild object
+    current.get_channel.side_effect = CHANNELS.get
+    destination = make_channel(current, 11)
+    await bot.store.remember_channel(GUILD_ID, 11)
+    await bot.on_guild_available(current)
+    await bot.on_guild_available(earlier)  # a queued stale event cannot start another owner
+    assert bot.recoveries == {GUILD_ID: recovery}
+    delay.release.set()
+    await finish_recovery(recovery)
+    old.connect.assert_awaited_once()
+    destination.connect.assert_awaited_once_with(self_deaf=True, cls=Voice)
+    assert current.voice_client.channel is destination
+    assert earlier.voice_client is None
+    assert await bot.store.remembered_channel(GUILD_ID) == 11
+
+
+async def test_availability_and_stranded_recovery_share_one_owner_across_gateway_sessions(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    voice = stranded_voice(bot, monkeypatch, True)
+    old = cast(Any, voice.channel)
+    entered, complete = asyncio.Event(), asyncio.Event()
+    station = fake_station()
+
+    async def close(_: Outcome) -> None:
+        entered.set()
+        await complete.wait()
+
+    station.close.side_effect = close
+    bot.stations[GUILD_ID] = station
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    recovery = await recovery_after_checks(bot, clock)
+    async with asyncio.timeout(1):
+        await entered.wait()
+        current = make_guild()
+        destination = make_channel(current)
+        current.get_channel.return_value = destination
+        await bot.on_guild_available(current)
+        await bot.check_voice()
+        assert bot.recoveries == {GUILD_ID: recovery}
+        complete.set()
+        await recovery
+    old.connect.assert_not_awaited()
+    destination.connect.assert_awaited_once()
+    assert current.voice_client.channel is destination
+    station.close.assert_awaited_once_with(Outcome.DISCONNECTED)
+
+
+@pytest.mark.parametrize("reason", ["leave", "deleted", "view", "connect", "speak", "removed"])
+async def test_startup_retry_stops_when_the_channel_is_forgotten_or_ineligible(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock, reason: str
+) -> None:
+    delay = RetryDelay(monkeypatch, clock)
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.side_effect = CHANNELS.get
+    channel.connect.side_effect = TimeoutError
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await delay.started.wait()
+    if reason == "leave":
+        await bot.leave(guild)
+    elif reason == "deleted":
+        del CHANNELS[CHANNEL_ID]
+    elif reason == "removed":
+        del GUILDS[GUILD_ID]
+        await bot.on_guild_remove(guild)
+        await bot.on_guild_available(guild)  # queued availability cannot revive the removed guild
+    else:
+        permissions = discord.Permissions(view_channel=True, connect=True, speak=True)
+        setattr(permissions, {"view": "view_channel"}.get(reason, reason), False)
+        channel.permissions_for.return_value = permissions
+    delay.release.set()
+    await finish_recovery(recovery)
+    channel.connect.assert_awaited_once()
+    assert await bot.store.remembered_channel(GUILD_ID) is None
+    assert bot.recoveries == {}
+
+
+async def test_retry_waits_for_an_unavailable_guild_without_forgetting_its_channel(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    delay = RetryDelay(monkeypatch, clock)
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    guild.unavailable = True
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await delay.started.wait()
+    channel.connect.assert_not_awaited()
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+    guild.unavailable = False
+    await bot.on_guild_available(guild)
+    delay.release.set()
+    await finish_recovery(recovery)
+    channel.connect.assert_awaited_once()
+
+
+async def test_rejoin_resolves_latest_state_after_stale_cleanup(
+    bot: SobaFM,
+) -> None:
+    earlier = make_guild()
+    channel = make_channel(earlier)
+    old = tracked_client(bot, earlier)
+    entered, complete = asyncio.Event(), asyncio.Event()
+
+    async def disconnect(*, force: bool) -> None:
+        entered.set()
+        await complete.wait()
+
+    old.disconnect.side_effect = disconnect
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(earlier)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await entered.wait()
+        current = make_guild()
+        destination = make_channel(current, 11)
+        current.get_channel.return_value = destination
+        await bot.store.remember_channel(GUILD_ID, 11)
+        await bot.on_guild_available(current)
+        complete.set()
+        await recovery
+    old.disconnect.assert_awaited_once_with(force=True)
+    channel.connect.assert_not_awaited()
+    destination.connect.assert_awaited_once_with(self_deaf=True, cls=Voice)
+
+
+@pytest.mark.parametrize("phase", ["delay", "connect", "swallowed connect", "stale cleanup"])
+async def test_shutdown_cancels_and_awaits_the_initial_recovery(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch, clock: FakeClock, phase: str
+) -> None:
+    delay = RetryDelay(monkeypatch, clock)
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    entered = asyncio.Event()
+    finished = False
+
+    async def stall(**_: Any) -> Any:
+        nonlocal finished
+        entered.set()
+        try:
+            if phase in {"swallowed connect", "stale cleanup"}:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.Event().wait()
+            else:
+                await asyncio.Event().wait()
+        finally:
+            finished = True
+        raise TimeoutError
+
+    if phase == "stale cleanup":
+        old = tracked_client(bot, guild)
+        old.disconnect.side_effect = stall
+    else:
+        channel.connect.side_effect = TimeoutError if phase == "delay" else stall
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await (delay.started if phase == "delay" else entered).wait()
+        await bot.close()
+    assert recovery.cancelled()
+    assert bot.recoveries == {}
+    assert finished == (phase != "delay")
+    assert channel.connect.await_count == (0 if phase == "stale cleanup" else 1)
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+    await bot.on_guild_available(guild)
+    await bot.check_voice()
+    assert bot.recoveries == {}
+
+
+@pytest.mark.parametrize("phase", ["connect", "departure"])
+async def test_shutdown_awaits_the_library_initial_connection_and_departure(
+    bot: SobaFM, phase: str
+) -> None:
+    guild = registry_guild(bot)
+    channel = library_channel(bot, guild, timeout=5.0)
+    guild.get_channel.return_value = channel
+    entered = asyncio.Event()
+    departures = 0
+
+    async def gateway(**kwargs: Any) -> None:
+        nonlocal departures
+        if kwargs["channel"] is not None:
+            if phase == "departure":
+                raise TimeoutError  # real connector timeout cleanup, then the outer departure wait
+            entered.set()
+        else:
+            departures += 1
+            if phase == "connect":
+                connection = guild.voice_client._connection
+                asyncio.get_running_loop().call_soon(connection._disconnected.set)
+            elif departures == 2:
+                entered.set()  # Connectable.connect's wait=True departure, after cleanup
+
+    guild.change_voice_state.side_effect = gateway
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await entered.wait()
+        await bot.close()
+    assert recovery.cancelled()
+    assert bot.recoveries == {}
+    assert guild.voice_client is None
+    assert bot.voices == set()
+    assert channel.connect.await_count == 1
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+
+
+async def test_shutdown_blocks_recovery_even_before_its_first_attempt(bot: SobaFM) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    await bot.close()  # no yield between scheduling the owner and cancellation
+    assert recovery.cancelled()
+    assert bot.recoveries == {}
+    channel.connect.assert_not_awaited()
+    await bot.on_guild_available(guild)
+    assert bot.recoveries == {}
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+
+
+async def test_shutdown_prevents_availability_and_forgetting_while_stations_close(
+    bot: SobaFM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guild = make_guild()
+    voice = make_voice(bot, guild, current=True)
+    channel = cast(Any, voice.channel)
+    guild.get_channel.return_value = channel
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    entered, complete = asyncio.Event(), asyncio.Event()
+    dispatch = MagicMock()
+    monkeypatch.setattr(bot, "dispatch", dispatch)
+    station = fake_station()
+
+    async def close() -> None:
+        voice.cleanup()  # a departure before discord.Client.close has set its own closed flag
+        entered.set()
+        await complete.wait()
+
+    station.close.side_effect = close
+    bot.stations[GUILD_ID] = station
+    closing = asyncio.create_task(bot.close())
+    async with asyncio.timeout(1):
+        await entered.wait()
+        assert not bot.is_closed()
+        guild.voice_client = None
+        await bot.on_guild_available(guild)
+        await bot.check_voice()
+        assert bot.recoveries == {}
+        complete.set()
+        await closing
+    dispatch.assert_not_called()
+    channel.connect.assert_not_awaited()
+    assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
+
+
+async def test_shutdown_rechecks_a_connect_that_swallows_cancellation_and_returns_a_client(
+    bot: SobaFM,
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    guild.get_channel.return_value = channel
+    connect = channel.connect.side_effect
+    entered = asyncio.Event()
+
+    async def swallow(**kwargs: Any) -> Any:
+        entered.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.Event().wait()
+        return await connect(**kwargs)
+
+    channel.connect.side_effect = swallow
+    await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
+    await bot.on_guild_available(guild)
+    recovery = bot.recoveries[GUILD_ID]
+    async with asyncio.timeout(1):
+        await entered.wait()
+        await bot.close()
+    assert recovery.cancelled()
+    assert bot.recoveries == {}
+    assert guild.voice_client.joined is not True
     assert await bot.store.remembered_channel(GUILD_ID) == CHANNEL_ID
 
 
@@ -1470,7 +2101,7 @@ async def test_forgets_channels_it_cannot_rejoin(bot: SobaFM, problem: str) -> N
     guild.get_channel.return_value = None if problem == "deleted" else channel
     await bot.store.remember_channel(GUILD_ID, CHANNEL_ID)
 
-    await bot.on_guild_available(guild)
+    await available(bot, guild)
 
     channel.connect.assert_not_awaited()
     assert await bot.store.remembered_channel(GUILD_ID) is None

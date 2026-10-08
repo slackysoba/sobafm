@@ -207,6 +207,7 @@ Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's
 | `Discord rejected DISCORD_TOKEN` | The token is wrong or was reset. Reset it on the Bot page and update `.env` |
 | `the Opus library could not be loaded` | Install the Opus library as in step 5; the container image already includes it |
 | Slash commands do not appear | Wait a while after the first start, then reload Discord. Check that the invite included `applications.commands`. Re-invite SobaFM with the link above if needed |
+| SobaFM logs `Could not rejoin` after startup or a Gateway outage | The remembered-channel join failed. SobaFM retries silently 30 seconds after each failed attempt finishes, including cleanup, and resumes no music. A handshake and cleanup can take about a minute, so attempts can start about 90 seconds apart and `/join` or `/leave` waits for the current attempt. Deleting the channel, losing View Channel/Connect/Speak, `/leave`, or removal from the server forgets it and stops retries |
 | `/join` says a permission is missing | Give SobaFM View Channel, Connect, and Speak in that voice channel, or on its category |
 | `/play` says Google rejected the API key | The Gemini key is invalid, revoked, or in a region or project that is not allowed. Create a new key and update `.env` |
 | `/play` says the quota is used up | Wait, or use a key with more quota. A reply noting that Gemini was unavailable means the interpretation call failed, so the request was used as typed, and the music still started |
