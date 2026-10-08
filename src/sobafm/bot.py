@@ -7,7 +7,7 @@ import math
 import re
 import time
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timedelta
 from typing import cast
 
@@ -29,6 +29,8 @@ from sobafm.status import Statuses
 from sobafm.store import GuildSettings, Store
 
 log = logging.getLogger(__name__)
+
+type VoiceOwner = tuple[discord.Guild, discord.VoiceClient | None]
 
 REQUIRED_PERMISSIONS = {"view_channel": "View Channel", "connect": "Connect", "speak": "Speak"}
 START_TIMEOUT_S = 75.0  # covers one refused start and its retry
@@ -86,6 +88,7 @@ class Voice(discord.VoiceClient):
         self.stranded_since: float | None = None  # when SobaFM found it stranded
         self._ending = False
         self._disposed = False
+        self._callbacks: set[asyncio.Task[object]] = set()
         self.sobafm.voices.add(self)
         owner = asyncio.current_task()
         if owner is not None and owner in self.sobafm.connecting:
@@ -100,19 +103,33 @@ class Voice(discord.VoiceClient):
         self.sobafm.voice_ended(self, left=current and self.joined)
 
     async def on_voice_state_update(self, data: GuildVoiceState) -> None:
-        if self._ending and cast(object, data["channel_id"]) is not None:
-            return  # departure confirmations still reach the library while closing
-        await super().on_voice_state_update(data)
-        if cast(object, data["channel_id"]) is not None:  # None, despite its type, on leaving
-            # discord.py's general voice reconnect leaves the channel and rejoins it. Leaving sets
-            # this flag and nothing clears it after the rejoin, so discord.py 2.7.1 would take a
-            # later move, which closes the voice websocket with 4014, for a disconnection
-            # (voice_state.py, #46).
-            self._connection._disconnected.clear()  # pyright: ignore[reportPrivateUsage]
+        joining = cast(object, data["channel_id"]) is not None
+        if self._ending and joining:
+            return
+        owner = asyncio.current_task()
+        if joining and owner is not None:
+            self._callbacks.add(owner)
+        try:
+            await super().on_voice_state_update(data)
+            if joining and not self._ending:
+                # A library reconnect leaves this flag set, which would turn a later move's
+                # websocket close into a disconnection (#46). Departure confirmations keep it.
+                self._connection._disconnected.clear()  # pyright: ignore[reportPrivateUsage]
+        finally:
+            if owner is not None:
+                self._callbacks.discard(owner)
 
     async def on_voice_server_update(self, data: VoiceServerUpdate) -> None:
-        if not self._ending:
+        if self._ending:
+            return
+        owner = asyncio.current_task()
+        if owner is not None:
+            self._callbacks.add(owner)
+        try:
             await super().on_voice_server_update(data)
+        finally:
+            if owner is not None:
+                self._callbacks.discard(owner)
 
     async def disconnect(self, *, force: bool = False) -> None:
         """Drain this client's workers and finish its library cleanup before honoring a cancel.
@@ -124,16 +141,10 @@ class Voice(discord.VoiceClient):
             raise_swallowed_cancel()
             return
         self._ending = True
-        workers = {task for task in self._connection_tasks() if task is not None}
-        for worker in workers:
-            if not worker.done():
-                worker.cancel()
-        draining = asyncio.gather(*workers, return_exceptions=True)
-        while not draining.done():
-            # Cancellation of the caller must not interrupt a connector's own cleanup.
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.shield(draining)
-        draining.result()
+        # Callbacks already inside the library can restart a connector after an await. Stop
+        # those creators first, then snapshot and drain the workers they may have created.
+        await cancel_voice_tasks(self._callbacks - {asyncio.current_task()})
+        await cancel_voice_tasks(task for task in self._connection_tasks() if task is not None)
         try:
             guild = self.sobafm.get_guild(self.guild.id)
             if guild is not None and guild is self.guild and guild.voice_client in (None, self):
@@ -218,6 +229,8 @@ class SobaFM(discord.Client):
         )
         self.pool = SessionPool(settings.max_sessions)
         self.stations: dict[int, Station] = {}
+        self.station_owners: dict[Station, VoiceOwner] = {}
+        self.request_owners: dict[asyncio.Future[Outcome], VoiceOwner] = {}
         self.statuses: dict[int, Statuses] = {}  # each server's, which outlive its stations
         self.tree = app_commands.CommandTree(
             self, allowed_installs=app_commands.AppInstallationType(guild=True, user=False)
@@ -250,14 +263,20 @@ class SobaFM(discord.Client):
         await asyncio.gather(*self.recoveries.values(), return_exceptions=True)
         await asyncio.gather(*(station.close() for station in self.stations.values()))
         self.stations.clear()
+        self.station_owners.clear()
         await super().close()
 
     def station(self, guild: discord.Guild, volume: float) -> Station:
         """The guild's station, created at `volume` and started on first use."""
         station = self.stations.get(guild.id)
         if station is None:
+            voice = cast(discord.VoiceClient | None, guild.voice_client)
             station = Station(
-                lambda: cast(discord.VoiceClient | None, guild.voice_client),
+                lambda: (
+                    voice
+                    if self.get_guild(guild.id) is guild and guild.voice_client is voice
+                    else None
+                ),
                 lambda: listeners(guild),
                 self.open_session,
                 self.pool,
@@ -266,6 +285,7 @@ class SobaFM(discord.Client):
             )
             station.start()
             self.stations[guild.id] = station
+            self.station_owners[station] = (guild, voice)
         return station
 
     def statuses_for(self, guild: discord.Guild) -> Statuses:
@@ -280,7 +300,33 @@ class SobaFM(discord.Client):
     async def close_station(self, guild: discord.Guild, outcome: Outcome = Outcome.STOPPED) -> None:
         self.supersede(guild.id, outcome)
         if (station := self.stations.pop(guild.id, None)) is not None:
+            self.station_owners.pop(station, None)
             await station.close(outcome)
+
+    async def retire_stale_state(self, guild: discord.Guild) -> None:
+        """End lost guild/client state under the voice lock before admitting replacement work."""
+        current = self.get_guild(guild.id)
+        voice = cast(discord.VoiceClient | None, current.voice_client) if current else None
+        lost = voice is None and any(v.guild.id == guild.id for v in self.voices)
+
+        def stale(owner: VoiceOwner | None) -> bool:
+            # An unbound retained actor is stale only with an empty registry and tracked client.
+            return lost if owner is None else owner[0] is not current or owner[1] is not voice
+
+        requests = self.interpreting.get(guild.id, [])
+        for request in list(requests):
+            if stale(self.request_owners.get(request)):
+                requests.remove(request)
+                self.request_owners.pop(request, None)
+                if not request.done():
+                    request.set_result(Outcome.DISCONNECTED)
+        if not requests:
+            self.interpreting.pop(guild.id, None)
+        station = self.stations.get(guild.id)
+        if station is not None and stale(self.station_owners.get(station)):
+            self.stations.pop(guild.id)
+            self.station_owners.pop(station, None)
+            await station.close(Outcome.DISCONNECTED)
 
     def forget_emptied(self, guild: discord.Guild) -> None:
         """Forget the titles SobaFM left in channels that have emptied, which Discord clears."""
@@ -294,6 +340,7 @@ class SobaFM(discord.Client):
         """End the server's requests being interpreted with `outcome`, and say if there were any."""
         requests = self.interpreting.pop(guild_id, [])
         for request in requests:
+            self.request_owners.pop(request, None)
             request.set_result(outcome)
         return bool(requests)
 
@@ -303,6 +350,8 @@ class SobaFM(discord.Client):
         arrival = requests.index(request)
         for older in requests[:arrival]:
             older.set_result(Outcome.REPLACED)
+        for settled in requests[: arrival + 1]:
+            self.request_owners.pop(settled, None)
         del requests[: arrival + 1]
 
     async def admit(self, member: discord.Member, request: str) -> str | None:
@@ -349,9 +398,19 @@ class SobaFM(discord.Client):
         receives the answer once it plays or doesn't (FB-1).
         """
         playing = False  # or may still play
+        voice = cast(discord.VoiceClient | None, member.guild.voice_client)
         interpreting: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
         self.interpreting[member.guild.id].append(interpreting)
+        self.request_owners[interpreting] = (member.guild, voice)
         try:
+            async with self.voice_locks[member.guild.id]:
+                await self.retire_stale_state(member.guild)
+                if interpreting.done():
+                    return PLAY_REPLIES[interpreting.result()]
+                if self._closing or self.is_closed():
+                    return PLAY_REPLIES[Outcome.STOPPED]
+                if self.get_guild(member.guild.id) is not member.guild:
+                    return PLAY_REPLIES[Outcome.DISCONNECTED]
             station = self.stations.get(member.guild.id)
             current = station.program.plan if station and station.program else None
             result = await self.interpreter.interpret(request, current)
@@ -361,7 +420,11 @@ class SobaFM(discord.Client):
                 return PLAY_REPLIES[interpreting.result()]
             if (plan := result.plan) is None:
                 return REFUSALS[result.outcome]
-            if member.guild.voice_client is None:  # left before this request was tracked
+            if (
+                self.get_guild(member.guild.id) is not member.guild
+                or member.guild.voice_client is not voice
+                or voice is None
+            ):  # the interpreting request no longer owns this guild/client
                 return PLAY_REPLIES[Outcome.DISCONNECTED]
             ends = discord.utils.utcnow() + timedelta(seconds=settings.duration_seconds)
             started = self.station(member.guild, settings.volume).play(
@@ -384,6 +447,7 @@ class SobaFM(discord.Client):
                 return note("The music is taking longer than usual to start.", result)
             playing = outcome is Outcome.PLAYING
         finally:
+            self.request_owners.pop(interpreting, None)
             with contextlib.suppress(ValueError):  # ended or handed over already
                 self.interpreting[member.guild.id].remove(interpreting)
             if not playing:
@@ -510,8 +574,6 @@ class SobaFM(discord.Client):
         async with self.voice_locks[guild_id]:
             guild = self.get_guild(guild_id)
             if self._closing or self.is_closed() or guild is None:
-                return True
-            if guild.voice_client is not None:
                 return True
             await self.close_stale_voice(guild)
             channel_id = await self.store.remembered_channel(guild_id)
@@ -647,6 +709,8 @@ class SobaFM(discord.Client):
 
         Clearing here also covers a move back into such a channel, and retries a refused clear.
         """
+        if self._closing or self.is_closed():
+            return
         now = self._clock()
         for voice in list(self.voices):
             guild_id = voice.guild.id
@@ -724,12 +788,13 @@ class SobaFM(discord.Client):
 
     async def close_stale_voice(self, guild: discord.Guild) -> None:
         """Disconnect clients from earlier gateway sessions, which discord.py no longer tracks."""
+        await self.retire_stale_state(guild)
         for voice in [v for v in self.voices if v.guild.id == guild.id]:
             if voice is not guild.voice_client:
-                self.voices.discard(voice)
-                # discord.py no longer routes events to this client, so this waits out its timeout.
+                # The obsolete client closes locally without a departure on the new Gateway.
                 log.info("Closing the voice connection from an earlier session in %s", guild)
                 await voice.disconnect(force=True)
+                self.voices.discard(voice)
                 raise_swallowed_cancel()
 
     def voice_ended(self, voice: Voice, *, left: bool) -> None:
@@ -764,6 +829,19 @@ class SobaFM(discord.Client):
             return  # joins and departures are handled where SobaFM connects and disconnects
         if before.channel != after.channel:
             await self.store.remember_channel(member.guild.id, after.channel.id)
+
+
+async def cancel_voice_tasks(workers: Iterable[asyncio.Task[object]]) -> None:
+    """Cancel owned library work and wait through repeated cancellation of its caller."""
+    tasks = set(workers)
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    draining = asyncio.gather(*tasks, return_exceptions=True)
+    while not draining.done():
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.shield(draining)
+    draining.result()
 
 
 def raise_swallowed_cancel() -> None:

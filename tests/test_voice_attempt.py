@@ -2,6 +2,7 @@
 
 import asyncio
 import socket
+import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,8 @@ from pydantic import SecretStr
 from sobafm.bot import SobaFM, Voice
 from sobafm.config import Settings
 from sobafm.interpreter import Interpreter
+from sobafm.plan import MusicPlan, Prompt
+from sobafm.station import Outcome, Program, Station
 from sobafm.store import Store
 from tests.doubles import FakeGemini, FakeLyria, settle
 
@@ -276,3 +279,200 @@ async def test_repeated_cancellation_waits_for_real_connector_cleanup(world: Wor
         assert voice not in world.bot.voices
         assert world.bot.connecting == {}
         assert await world.bot.store.remembered_channel(1) == 10
+
+
+@pytest.mark.parametrize("event_kind", ["move", "server"])
+async def test_callback_already_closing_a_transport_is_quiesced_before_worker_drain(
+    world: World, monkeypatch: pytest.MonkeyPatch, event_kind: str
+) -> None:
+    def synthetic_socket(_: object) -> None:
+        return
+
+    monkeypatch.setattr(VoiceConnectionState, "_create_socket", synthetic_socket)
+    async with asyncio.timeout(4):
+        owner, voice = await initial_attempt(world, restarted=True)
+        connection = cast(Any, voice)._connection
+        transport = world.sockets[-1]
+        world.hold_close = asyncio.Event()
+        if event_kind == "move":
+            callback = asyncio.create_task(
+                voice.on_voice_state_update(cast(Any, {"channel_id": "10", "session_id": "fake"}))
+            )
+        else:
+            callback = asyncio.create_task(
+                voice.on_voice_server_update(
+                    {"guild_id": "1", "token": "synthetic", "endpoint": "synthetic.invalid"}
+                )
+            )
+        await transport.close_entered.wait()
+        assert callback in voice._callbacks  # pyright: ignore[reportPrivateUsage]
+        closing = asyncio.create_task(world.bot.close())
+        await settle()
+        assert voice._ending  # pyright: ignore[reportPrivateUsage]
+        world.hold_close.set()
+        await asyncio.gather(callback, return_exceptions=True)
+        await closing
+        assert owner.cancelled()
+        assert callback.done()
+        assert voice._callbacks == set()  # pyright: ignore[reportPrivateUsage]
+        assert all(task is None or task.done() for task in voice._connection_tasks())  # pyright: ignore[reportPrivateUsage]
+        assert connection._socket_reader._end.is_set()
+        assert voice not in world.bot.voices
+        before = list(world.changes)
+        await asyncio.sleep(1.1)
+        assert world.changes == before
+        assert await world.bot.store.remembered_channel(1) == 10
+
+
+def reserve_backoff_program(station: Station, bot: SobaFM) -> Program:
+    program = Program(
+        MusicPlan(title="synthetic", prompts=[Prompt(text="synthetic")]),
+        "synthetic",
+        time.monotonic() + 60,
+        retry_at=time.monotonic() + 60,
+    )
+    station.program = program
+    assert bot.pool.reserve(station)
+    return program
+
+
+async def test_fast_new_gateway_rejoin_retires_program_previous_plan_and_old_requests(
+    world: World, lyria: FakeLyria, gemini: FakeGemini
+) -> None:
+    bot = world.bot
+    world.complete_next = True
+    channel = world.guild.get_channel(10)
+    assert isinstance(channel, discord.VoiceChannel)
+    old = await channel.connect(self_deaf=True, cls=Voice)
+    old.joined = True
+    await bot.store.remember_channel(1, 10)
+    station = bot.station(world.guild, 0.5)
+    program = reserve_backoff_program(station, bot)
+    previous = Program(program.plan, "synthetic", time.monotonic() + 60)
+    previous.started.set_result(Outcome.PLAYING)
+    cast(Any, station)._previous = previous
+    request: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+    bot.interpreting[1].append(request)
+    bot.request_owners[request] = (world.guild, old)
+    await settle()  # ordinary station loop is asleep until its next .25-second tick
+    cast(Any, bot)._connection.clear(views=False)
+    current = add_guild(bot)
+    world.complete_next = True
+    await bot.on_guild_available(current)
+    async with asyncio.timeout(2):
+        await bot.recoveries[1]
+    assert station.program is None
+    assert cast(Any, station)._previous is None
+    assert program.started.result() is Outcome.DISCONNECTED
+    assert request.result() is Outcome.DISCONNECTED
+    assert station not in cast(Any, bot.pool)._holders
+    assert station not in bot.station_owners
+    assert request not in bot.request_owners
+    assert bot.stations == {}
+    assert isinstance(current.voice_client, Voice)
+    assert current.voice_client.is_connected()
+    assert old not in bot.voices
+    assert lyria.sessions == []
+    assert gemini.calls == []
+    assert await bot.store.remembered_channel(1) == 10
+
+
+async def test_stale_client_cleanup_preserves_current_replacement_station_and_request(
+    world: World,
+) -> None:
+    bot = world.bot
+    world.complete_next = True
+    channel = world.guild.get_channel(10)
+    assert isinstance(channel, discord.VoiceChannel)
+    old = await channel.connect(self_deaf=True, cls=Voice)
+    old.joined = True
+    cast(Any, bot)._connection.clear(views=False)
+    current = add_guild(bot)
+    replacement_channel = current.get_channel(11)
+    assert isinstance(replacement_channel, discord.VoiceChannel)
+    world.complete_next = True
+    replacement = await replacement_channel.connect(self_deaf=True, cls=Voice)
+    replacement.joined = True
+    station = bot.station(current, 0.5)
+    program = reserve_backoff_program(station, bot)
+    request: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+    bot.interpreting[1].append(request)
+    bot.request_owners[request] = (current, replacement)
+    before = list(world.changes)
+    await bot.on_guild_available(current)
+    async with asyncio.timeout(2):
+        await bot.recoveries[1]
+    assert old not in bot.voices
+    assert current.voice_client is replacement
+    assert replacement.is_connected()
+    assert bot.stations[1] is station
+    assert station.program is program
+    assert not request.done()
+    assert station in cast(Any, bot.pool)._holders
+    assert world.changes == before
+    bot.interpreting.pop(1)
+    bot.request_owners.pop(request)
+    await bot.close_station(current)
+
+
+async def test_current_library_reconnect_preserves_station_and_pending_request(
+    world: World,
+) -> None:
+    bot = world.bot
+    world.complete_next = True
+    channel = world.guild.get_channel(10)
+    assert isinstance(channel, discord.VoiceChannel)
+    voice = await channel.connect(self_deaf=True, cls=Voice)
+    station = bot.station(world.guild, 0.5)
+    program = reserve_backoff_program(station, bot)
+    request: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+    bot.interpreting[1].append(request)
+    bot.request_owners[request] = (world.guild, voice)
+    connection = cast(Any, voice)._connection
+    connection.state = ConnectionFlowState.got_both_voice_updates
+    await bot.retire_stale_state(world.guild)
+    assert station.program is program
+    assert bot.stations[1] is station
+    assert not request.done()
+    assert station in cast(Any, bot.pool)._holders
+    bot.interpreting.pop(1)
+    bot.request_owners.pop(request)
+    await bot.close_station(world.guild)
+
+
+async def test_old_station_close_cannot_stop_a_replacement_client_registered_mid_close(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot = world.bot
+    world.complete_next = True
+    channel = world.guild.get_channel(10)
+    assert isinstance(channel, discord.VoiceChannel)
+    old = await channel.connect(self_deaf=True, cls=Voice)
+    station = bot.station(world.guild, 0.5)
+    reserve_backoff_program(station, bot)
+    cast(Any, bot)._connection.clear(views=False)
+    current = add_guild(bot)
+    stopped = MagicMock()
+    entered, release = asyncio.Event(), asyncio.Event()
+    close = station.close
+
+    async def held_close(outcome: Outcome) -> None:
+        entered.set()
+        await release.wait()
+        await close(outcome)
+
+    monkeypatch.setattr(station, "close", held_close)
+    retiring = asyncio.create_task(bot.retire_stale_state(current))
+    async with asyncio.timeout(2):
+        await entered.wait()
+        world.complete_next = True
+        destination = current.get_channel(11)
+        assert isinstance(destination, discord.VoiceChannel)
+        replacement = await destination.connect(self_deaf=True, cls=Voice)
+        monkeypatch.setattr(replacement, "stop", stopped)
+        release.set()
+        await retiring
+    stopped.assert_not_called()
+    assert replacement.is_connected()
+    assert station.program is None
+    assert old in bot.voices  # this check retires state; client cleanup remains its owner's job

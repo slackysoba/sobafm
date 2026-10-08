@@ -107,6 +107,7 @@ def make_voice(bot: SobaFM, guild: Any, *, current: bool, joined: bool = True) -
     voice.stranded_since = None
     voice._ending = False  # pyright: ignore[reportPrivateUsage]
     voice._disposed = False  # pyright: ignore[reportPrivateUsage]
+    voice._callbacks = set()  # pyright: ignore[reportPrivateUsage]
     bot.voices.add(voice)
     if current:
         guild.voice_client = voice
@@ -1247,7 +1248,7 @@ async def test_forgets_titles_in_channels_that_emptied_while_away(bot: SobaFM) -
     assert len(shown.await_args_list) == calls
 
 
-async def test_rejoining_leaves_a_station_to_show_its_own_title(bot: SobaFM) -> None:
+async def test_availability_leaves_the_current_station_to_show_its_own_title(bot: SobaFM) -> None:
     shown = AsyncMock(return_value=True)
     bot.show_voice_status = shown  # pyright: ignore[reportAttributeAccessIssue]
     guild = make_guild()
@@ -1261,7 +1262,7 @@ async def test_rejoining_leaves_a_station_to_show_its_own_title(bot: SobaFM) -> 
     station.program.settle(Outcome.PLAYING)
     await station.reconcile()
     await settle()
-    guild.voice_client = None  # a new gateway session keeps the station, which plays on
+    # Availability with the same current client preserves the playing station.
 
     await available(bot, guild)
     await settle()
@@ -3578,3 +3579,21 @@ async def test_settings_name_a_single_second(bot: SobaFM) -> None:
     reply = await bot.configure(make_guild(), cooldown_seconds=1)
 
     assert reply.endswith("- Change cooldown: 1 second")
+
+
+async def test_cancelled_request_waiting_for_voice_ownership_frees_its_cooldown(
+    bot: SobaFM, gemini: FakeGemini
+) -> None:
+    guild = make_guild()
+    channel = make_channel(guild)
+    member = in_voice(channel, channel)
+    cooldown = await admitted(bot, member, "synthetic")
+    async with bot.voice_locks[guild.id]:
+        playing = asyncio.create_task(bot.play(member, "synthetic", cooldown))
+        await settle()
+        playing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await playing
+    assert guild.id not in bot.cooldowns
+    assert bot.request_owners == {}
+    assert gemini.calls == []
