@@ -1,6 +1,6 @@
 # Self-hosting guide
 
-- **Status:** Draft until the first release, when it is tested end to end on a clean machine (#105)
+- **Status:** Draft pending a clean-machine walkthrough through audible playback ([#105](https://github.com/slackysoba/sobafm/issues/105)); [release candidate rc.2](https://github.com/slackysoba/sobafm/releases/tag/v1.0.0-rc.2) is published
 - **Related:** [Requirements](requirements.md) · [Architecture](architecture.md) · [README](../README.md)
 
 This guide takes you from nothing to SobaFM playing music in a voice channel of your own Discord server. You run your own copy: the project does not operate a public instance, and you are responsible for your deployment, your API key, and your server's members.
@@ -109,7 +109,7 @@ In the deployment directory from step 4, open `compose.yaml` in a text editor. S
     image: ghcr.io/slackysoba/sobafm:1.0.0
 ```
 
-For the pre-stable guide test (#105), use the candidate tag selected after a successful Release run for both downloads and the image. A source tag spelled `v1.0.0-rc.1` maps to `image: ghcr.io/slackysoba/sobafm:1.0.0-rc.1`; keep the suffix exactly as spelled, rather than normalizing it to `1.0.0rc1`. Prereleases do not publish `latest` or `1.0`, so this full version pin is required even though the downloaded Compose file defaults to `latest`. The rc.1 run failed before GitHub release creation; it is a spelling example, not a completed release to use for #105 acceptance. Choose the successfully published replacement candidate recorded on [#104](https://github.com/slackysoba/sobafm/issues/104).
+For the pre-stable guide test (#105), use the published `v1.0.0-rc.2` candidate verified on [#104](https://github.com/slackysoba/sobafm/issues/104#issuecomment-6034220253) for both downloads and the image. Its source tag maps to `image: ghcr.io/slackysoba/sobafm:1.0.0-rc.2`; keep the suffix exactly as spelled, rather than normalizing it to `1.0.0rc2`. Prereleases do not publish `latest` or `1.0`, so this full version pin is required even though the downloaded Compose file defaults to `latest`.
 
 Confirm that Compose selects the image you set, then pull and start it:
 
@@ -121,15 +121,6 @@ docker compose logs -f
 ```
 
 The image is `ghcr.io/slackysoba/sobafm`. Its data lives in the `sobafm-data` volume, which survives restarts and upgrades; the container runs as a non-root user (uid 10001), and restarts itself unless you stop it. If you bind-mount a host directory at `/data` instead of using the volume, it must be writable by uid 10001.
-
-If no release has completed publication yet, you can build the image yourself from a clone of the repository. This does not validate the published-image path for #105:
-
-```sh
-git clone https://github.com/slackysoba/sobafm.git
-cd sobafm
-# create .env as in step 4
-docker compose up -d --build
-```
 
 To upgrade a pinned deployment, choose the new release tag, download its `compose.yaml` and `.env.example` from the same versioned URLs, and set `image` to its matching full version again. Keep your existing `.env`; compare the new example for any settings to add. Then run `docker compose pull` and `docker compose up -d --no-build` again.
 
@@ -163,16 +154,16 @@ SobaFM does not support Stage channels or direct messages.
 
 ## Verify the image you pulled
 
-Release images carry signed provenance for their multi-platform index and BuildKit provenance and SPDX SBOMs for each platform. With the [GitHub CLI](https://cli.github.com/), Docker Buildx, and a published version, the basic repository check is:
+Release images carry signed provenance for their multi-platform index and BuildKit provenance and SPDX SBOMs for each platform. With the [GitHub CLI](https://cli.github.com/) and Docker Buildx, the basic repository check for the published rc.2 candidate is:
 
 ```sh
-gh attestation verify oci://ghcr.io/slackysoba/sobafm:VERSION --repo slackysoba/sobafm
+gh attestation verify oci://ghcr.io/slackysoba/sobafm:1.0.0-rc.2 --repo slackysoba/sobafm
 ```
 
-For a release check, pin the index digest and verify the expected workflow, tag, and source commit as well. The following example uses Bash (Git Bash on Windows), including its variables and multiline continuations. It uses a release candidate; set `TAG` to the release you intend to deploy. The workflow summary also records its verified digest and source commit.
+For a release check, pin the index digest and verify the expected workflow, tag, and source commit as well. The following example uses Bash (Git Bash on Windows), including its variables and multiline continuations. It uses the published `v1.0.0-rc.2` candidate, built from `4bd81f7d04fa8f1445f5ab0d0ef36249a81dff34` ([verification on #104](https://github.com/slackysoba/sobafm/issues/104#issuecomment-6034220253)). Set `TAG` to the published release you intend to deploy; its workflow summary records the verified digest and source commit.
 
 ```sh
-TAG=v1.0.0-rc.1
+TAG=v1.0.0-rc.2
 IMAGE=ghcr.io/slackysoba/sobafm
 VERSION=${TAG#v}
 DIGEST=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')
@@ -203,6 +194,7 @@ Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's
 | What you see | Cause and fix |
 | --- | --- |
 | `DISCORD_TOKEN is not set` or `GEMINI_API_KEY is not set` at startup | The setting is missing. Check that `.env` is in the directory SobaFM runs from, or that the environment variable is passed into the container |
+| `sobafm: GEMINI_API_KEY is invalid` at startup | SobaFM trims outer whitespace, then requires visible ASCII so the key is safe to send in an HTTP header. Curly quotes, embedded spaces or line breaks, and control characters fail this check. Recopy the key privately into your local `.env` or environment variable, without pasted quotes or internal whitespace; do not share the key or configuration output. This check does not establish whether Google accepts the key |
 | `.env could not be read as UTF-8` | Save the file as UTF-8 without a byte order mark |
 | `Discord rejected DISCORD_TOKEN` | The token is wrong or was reset. Reset it on the Bot page and update `.env` |
 | `the Opus library could not be loaded` | Install the Opus library as in step 5; the container image already includes it |
