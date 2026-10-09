@@ -4,11 +4,9 @@ A self-hosted Discord bot that streams AI-generated music into voice channels.
 
 A server manager places SobaFM in a voice channel, where it waits for requests. A member describes the music they want, such as "rainy lo-fi with soft piano" or "upbeat synthwave for a night drive." SobaFM turns the request into musical direction with [Gemini](https://ai.google.dev/gemini-api/docs) and plays it continuously with [Lyria RealTime](https://ai.google.dev/gemini-api/docs/realtime-music-generation) until the program runs its course or someone asks for something else.
 
-## Status and demo
+## Status
 
 SobaFM's core playback and request features are implemented. Version 1.0 has not been released; release validation and remaining work are tracked in the [SobaFM project](https://github.com/users/slackysoba/projects/2).
-
-**Demo pending ([#106](https://github.com/slackysoba/sobafm/issues/106)):** record a short clip or GIF in the maintainer's Discord server showing `/play` starting music and a second request changing it with a crossfade, then embed it here. A recording is needed before this task is complete.
 
 ## Before you deploy
 

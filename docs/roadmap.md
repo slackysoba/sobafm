@@ -21,7 +21,7 @@ SobaFM is planned in rolling waves. Every milestone has an outcome and exit crit
 
 **M3 Requests to music.** The interpreter and its evaluation set; interpreted `/play`, including relative requests; the duration timer; `/now`, the now-playing message, and the voice channel status; error messages; `/settings` and the change cooldown.
 
-**M4 Release 1.0.** The container image and compose file; the release workflow; the self-hosting guide; the README demo and responsible-use notes; `v1.0.0`.
+**M4 Release 1.0.** The container image and compose file; the release workflow; the self-hosting guide; the README responsible-use notices; `v1.0.0`.
 
 **M5 Catalog playback.** A probe of how well Jamendo search matches requests (#116); decisions on playing catalog and generated music in one bot (#117) and on decoding catalog audio (#118); a station with one engine per music source; a Jamendo client, track decks, and catalog interpretation with an evaluation set; `/play` with attribution for each track, `/freestyle`, and `/skip`; the README and self-hosting guide; a soak test; and a release.
 
