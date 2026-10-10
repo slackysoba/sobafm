@@ -6,7 +6,7 @@ A server manager places SobaFM in a voice channel, where it waits for requests. 
 
 ## Status
 
-SobaFM's core playback and request features are implemented. Version 1.0 has not been released; release validation and remaining work are tracked in the [SobaFM project](https://github.com/users/slackysoba/projects/2).
+[SobaFM 1.0.0](https://github.com/slackysoba/sobafm/releases/tag/v1.0.0) is available as a published container image for Linux AMD64 and ARM64, or as a source install. Release evidence and the maintainer's acceptance dispositions are recorded on [#108](https://github.com/slackysoba/sobafm/issues/108); ongoing work is tracked in the [SobaFM project](https://github.com/users/slackysoba/projects/2).
 
 ## Before you deploy
 
@@ -20,7 +20,7 @@ The project does not operate a public instance. Each operator runs their own cop
 
 ## Get started
 
-Follow the [self-hosting guide](docs/self-hosting.md) to create a Discord application, get a Gemini API key, configure SobaFM, and run it with Docker Compose or from source with uv. Until the first image release, the guide explains how to build the container locally.
+Follow the [self-hosting guide](docs/self-hosting.md) to create a Discord application, get a Gemini API key, configure SobaFM, and run version 1.0.0 with Docker Compose or from source with uv. The guide includes versioned configuration downloads, image pinning, and source and attestation verification.
 
 Once it is running, join a voice channel and use `/join`, then `/play request:rainy lo-fi with soft piano`.
 
