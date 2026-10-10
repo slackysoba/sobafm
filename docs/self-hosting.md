@@ -1,9 +1,11 @@
 # Self-hosting guide
 
-- **Status:** Draft pending a clean-machine walkthrough through audible playback ([#105](https://github.com/slackysoba/sobafm/issues/105)); [release candidate rc.2](https://github.com/slackysoba/sobafm/releases/tag/v1.0.0-rc.2) is published
+- **Status:** [Version 1.0.0 published](https://github.com/slackysoba/sobafm/releases/tag/v1.0.0); guide accepted with [recorded verification limits](https://github.com/slackysoba/sobafm/issues/105#issuecomment-6097254639)
 - **Related:** [Requirements](requirements.md) · [Architecture](architecture.md) · [README](../README.md)
 
 This guide takes you from nothing to SobaFM playing music in a voice channel of your own Discord server. You run your own copy: the project does not operate a public instance, and you are responsible for your deployment, your API key, and your server's members.
+
+The maintainer accepted the delivered guide and bounded clean-machine walkthrough with incomplete individual checks and 14.76 seconds of source underrun. The [#105 disposition](https://github.com/slackysoba/sobafm/issues/105#issuecomment-6097254639) retains those results and unobserved checks; [#108](https://github.com/slackysoba/sobafm/issues/108) records the release evidence and acceptance dispositions.
 
 ## Before you deploy
 
@@ -65,14 +67,14 @@ SobaFM makes two kinds of calls: a short Gemini call to interpret each request, 
 
 SobaFM reads its settings from environment variables, or from a file named `.env` in its working directory.
 
-For Docker Compose, install [Docker Engine with Compose](https://docs.docker.com/engine/install/) on Linux, or [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) with Linux containers on Windows. Choose a published version from [Releases](https://github.com/slackysoba/sobafm/releases). Download `compose.yaml` and `.env.example` directly from that version's repository tag into a new deployment directory; they are not release assets.
+For Docker Compose, install [Docker Engine with Compose](https://docs.docker.com/engine/install/) on Linux, or [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) with Linux containers on Windows. The examples use the published [v1.0.0 release](https://github.com/slackysoba/sobafm/releases/tag/v1.0.0). Download `compose.yaml` and `.env.example` directly from its protected repository tag into a new deployment directory; they are not release assets.
 
-These download commands use Bash on Linux or [Git Bash](https://git-scm.com/downloads/win) on Windows. Replace `vX.Y.Z` with the exact chosen tag, including its leading `v` and any prerelease suffix:
+These download commands use Bash on Linux or [Git Bash](https://git-scm.com/downloads/win) on Windows. For another published release, replace `v1.0.0` with its exact tag, including the leading `v` and any prerelease suffix:
 
 ```sh
 mkdir sobafm
 cd sobafm
-TAG=vX.Y.Z
+TAG=v1.0.0
 curl -fL "https://raw.githubusercontent.com/slackysoba/sobafm/$TAG/compose.yaml" -o compose.yaml
 curl -fL "https://raw.githubusercontent.com/slackysoba/sobafm/$TAG/.env.example" -o .env.example
 cp .env.example .env
@@ -109,7 +111,9 @@ In the deployment directory from step 4, open `compose.yaml` in a text editor. S
     image: ghcr.io/slackysoba/sobafm:1.0.0
 ```
 
-For the pre-stable guide test (#105), use the published `v1.0.0-rc.2` candidate verified on [#104](https://github.com/slackysoba/sobafm/issues/104#issuecomment-6034220253) for both downloads and the image. Its source tag maps to `image: ghcr.io/slackysoba/sobafm:1.0.0-rc.2`; keep the suffix exactly as spelled, rather than normalizing it to `1.0.0rc2`. Prereleases do not publish `latest` or `1.0`, so this full version pin is required even though the downloaded Compose file defaults to `latest`.
+For a content-addressed pin, [verify the published image](#verify-the-image-you-pulled) and set `image` to `ghcr.io/slackysoba/sobafm@sha256:dd30473ae0ff7839e777e0d6bfe6daa3b9400d87e368a78a175efd279229d51a`. This selects the exact verified v1.0.0 index.
+
+An existing rc.2 deployment uses `image: ghcr.io/slackysoba/sobafm:1.0.0-rc.2`, matching its historical source tag `v1.0.0-rc.2` ([candidate verification](https://github.com/slackysoba/sobafm/issues/104#issuecomment-6034220253)). To migrate, follow the pinned-deployment upgrade steps below. Keep prerelease suffixes exactly as spelled, rather than normalizing them to `1.0.0rc2`; prereleases do not publish `latest` or `1.0`.
 
 Confirm that Compose selects the image you set, then pull and start it:
 
@@ -122,13 +126,20 @@ docker compose logs -f
 
 The image is `ghcr.io/slackysoba/sobafm`. Its data lives in the `sobafm-data` volume, which survives restarts and upgrades; the container runs as a non-root user (uid 10001), and restarts itself unless you stop it. If you bind-mount a host directory at `/data` instead of using the volume, it must be writable by uid 10001.
 
-To upgrade a pinned deployment, choose the new release tag, download its `compose.yaml` and `.env.example` from the same versioned URLs, and set `image` to its matching full version again. Keep your existing `.env`; compare the new example for any settings to add. Then run `docker compose pull` and `docker compose up -d --no-build` again.
+To upgrade a pinned deployment, choose the new release tag, download its `compose.yaml` and `.env.example` from the same versioned URLs, and set `image` to its matching full version or verified index digest again. Keep your existing `.env`; compare the new example for any settings to add. Then run `docker compose pull` and `docker compose up -d --no-build` again.
 
-After a stable release exists, you can use the Compose file's default `ghcr.io/slackysoba/sobafm:latest` to follow stable releases instead. Read the release notes and refresh the versioned configuration files when upgrading; `latest` never selects a prerelease.
+You can use the Compose file's default `ghcr.io/slackysoba/sobafm:latest` to follow stable releases instead of pinning a version or digest. Read the release notes and refresh the versioned configuration files when upgrading; `latest` never selects a prerelease.
 
 ### From source with uv
 
-Install [uv](https://docs.astral.sh/uv/) and clone the repository. SobaFM needs the Opus library to play audio: Windows uses the copy that comes with discord.py, Debian and Ubuntu need `libopus0` (`sudo apt install libopus0`), and macOS needs `brew install opus`. Then, in the clone, with `.env` in place:
+Install [uv](https://docs.astral.sh/uv/) and clone the published v1.0.0 source:
+
+```sh
+git clone --branch v1.0.0 --depth 1 https://github.com/slackysoba/sobafm.git
+cd sobafm
+```
+
+SobaFM needs the Opus library to play audio: Windows uses the copy that comes with discord.py, Debian and Ubuntu need `libopus0` (`sudo apt install libopus0`), and macOS needs `brew install opus`. Then, in the clone, with `.env` in place:
 
 ```sh
 uv sync --locked
@@ -143,10 +154,10 @@ The log should show SobaFM logging in and a line starting `Connected as`. Slash 
 
 ### Duplicate slash commands
 
-The startup guard and reconciliation tool described here are unreleased source
-changes for [#141](https://github.com/slackysoba/sobafm/issues/141); published
-`v1.0.0-rc.2` includes neither change. Run the helper commands below from a reviewed
-source checkout containing `scripts/reconcile_commands.py`.
+Version 1.0.0 includes the startup guard and reconciliation tool delivered for
+[#141](https://github.com/slackysoba/sobafm/issues/141). Historical `v1.0.0-rc.2`
+includes neither change. Run the helper commands below from the v1.0.0 source
+checkout described above, which contains `scripts/reconcile_commands.py`.
 
 Discord allows an application to register the same command globally and in one server.
 Switching `SOBAFM_DEV_GUILD_ID` on or off does not remove earlier registrations, so a
@@ -235,20 +246,19 @@ SobaFM does not support Stage channels or direct messages.
 
 ## Verify the image you pulled
 
-Release images carry signed provenance for their multi-platform index and BuildKit provenance and SPDX SBOMs for each platform. With the [GitHub CLI](https://cli.github.com/) and Docker Buildx, the basic repository check for the published rc.2 candidate is:
+Release images carry signed provenance for their multi-platform index and BuildKit provenance and SPDX SBOMs for each platform. With the [GitHub CLI](https://cli.github.com/) and Docker Buildx, the basic repository check for the published v1.0.0 release is:
 
 ```sh
-gh attestation verify oci://ghcr.io/slackysoba/sobafm:1.0.0-rc.2 --repo slackysoba/sobafm
+gh attestation verify oci://ghcr.io/slackysoba/sobafm:1.0.0 --repo slackysoba/sobafm
 ```
 
-For a release check, pin the index digest and verify the expected workflow, tag, and source commit as well. The following example uses Bash (Git Bash on Windows), including its variables and multiline continuations. It uses the published `v1.0.0-rc.2` candidate, built from `4bd81f7d04fa8f1445f5ab0d0ef36249a81dff34` ([verification on #104](https://github.com/slackysoba/sobafm/issues/104#issuecomment-6034220253)). Set `TAG` to the published release you intend to deploy; its workflow summary records the verified digest and source commit.
+For a release check, pin the index digest and verify the expected workflow, tag, and source commit as well. The following example uses Bash (Git Bash on Windows), including its variables and multiline continuations. It uses published `v1.0.0`, built from `8089150e8e7c0429d57d17aba78a8968a499c2dc`, with the index digest verified on [#108](https://github.com/slackysoba/sobafm/issues/108#issuecomment-6097862416). For another release, set `TAG`, `DIGEST`, and `SOURCE_SHA` to its expected published identities; its workflow summary records the verified digest and source commit.
 
 ```sh
-TAG=v1.0.0-rc.2
+TAG=v1.0.0
 IMAGE=ghcr.io/slackysoba/sobafm
-VERSION=${TAG#v}
-DIGEST=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')
-SOURCE_SHA=$(gh api "repos/slackysoba/sobafm/commits/$TAG" --jq .sha)
+DIGEST=sha256:dd30473ae0ff7839e777e0d6bfe6daa3b9400d87e368a78a175efd279229d51a
+SOURCE_SHA=8089150e8e7c0429d57d17aba78a8968a499c2dc
 gh attestation verify "oci://$IMAGE@$DIGEST" --repo slackysoba/sobafm \
   --bundle-from-oci --signer-workflow slackysoba/sobafm/.github/workflows/release.yml \
   --source-ref "refs/tags/$TAG" --source-digest "$SOURCE_SHA" \
@@ -281,7 +291,7 @@ Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's
 | `the Opus library could not be loaded` | Install the Opus library as in step 5; the container image already includes it |
 | Slash commands appear twice | Follow [Duplicate slash commands](#duplicate-slash-commands) to audit and reconcile old development registrations |
 | Slash commands do not appear | Wait a while after the first start, then reload Discord. Check that the invite included `applications.commands`. Re-invite SobaFM with the link above if needed |
-| SobaFM logs `Could not rejoin` after startup or a Gateway outage | Published `v1.0.0-rc.2` keeps the remembered channel after a cleaned startup failure but needs another availability event or `/join` to try again. Automatic startup retries are an unreleased current-source change in [#159](https://github.com/slackysoba/sobafm/issues/159): 30 seconds after each failed attempt finishes, including cleanup, with no music resumption. A failed handshake and cleanup can take about a minute, so retries can start about 90 seconds apart and `/join` or `/leave` waits for the current attempt. Deletion, missing View Channel/Connect/Speak, `/leave`, or removal from the server forgets the channel |
+| SobaFM logs `Could not rejoin` after startup or a Gateway outage | Version 1.0.0 keeps the remembered channel after a cleaned startup failure and retries automatically 30 seconds after each failed attempt finishes, including cleanup, with no music resumption ([#159](https://github.com/slackysoba/sobafm/issues/159)). Historical `v1.0.0-rc.2` needs another availability event or `/join` to retry after that startup failure. A failed handshake and cleanup can take about a minute, so retries can start about 90 seconds apart and `/join` or `/leave` waits for the current attempt. Deletion, missing View Channel/Connect/Speak, `/leave`, or removal from the server forgets the channel |
 | `/join` says a permission is missing | Give SobaFM View Channel, Connect, and Speak in that voice channel, or on its category |
 | `/play` says Google rejected the API key | The Gemini key is invalid, revoked, or in a region or project that is not allowed. Create a new key and update `.env` |
 | `/play` says the quota is used up | Wait, or use a key with more quota. A reply noting that Gemini was unavailable means the interpretation call failed, so the request was used as typed, and the music still started |
@@ -290,7 +300,7 @@ Inspect the SBOM's listed packages and the provenance's build inputs. BuildKit's
 
 ## Updating and backing up
 
-Read the release notes before upgrading. For Compose, follow the pinned-image upgrade steps above; for source installs, use `git pull` and `uv sync --locked`. Watch the [security policy](../SECURITY.md) for advisories.
+Read the release notes before upgrading. For Compose, follow the pinned-image upgrade steps above. For source installs, fetch the chosen published tag with `git fetch origin tag NEW_TAG`, check it out with `git switch --detach NEW_TAG`, then run `uv sync --locked`; replace `NEW_TAG` with the exact release tag, including its leading `v`. Watch the [security policy](../SECURITY.md) for advisories.
 
 ### Take a consistent backup
 
