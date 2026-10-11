@@ -16,6 +16,7 @@ import pytest
 from aiohttp import web
 from google.genai import types
 from pydantic import SecretStr, ValidationError
+from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from scripts import catalog_probe as probe
 from tests.eval.test_interpretation import AMBIENT, CASES
@@ -466,10 +467,38 @@ async def test_nonempty_or_failed_search_never_relaxes(
     assert KEY.get_secret_value() not in attempts[0].model_dump_json()
 
 
+async def test_invalid_discovery_reply_still_raises_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def handler(request: web.Request) -> web.Response:
+        nonlocal calls
+        calls += 1
+        return web.json_response(reply_data([track_data() | {"duration": KEY.get_secret_value()}]))
+
+    attempts: list[probe.Attempt] = []
+    async with server(handler) as url, aiohttp.ClientSession() as session:
+        monkeypatch.setattr(probe, "TRACKS_URL", url)
+        with pytest.raises(ValidationError):
+            await probe.search(session, KEY, QUERY, attempts)
+    assert calls == 1
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt.http_status == 200
+    assert attempt.error == "invalid output"
+    assert (attempt.status, attempt.code, attempt.count) == (None, None, None)
+    assert attempt.validation_errors == [
+        probe.ValidationDetail(type="int_type", location=["results", 0, "duration"])
+    ]
+    assert KEY.get_secret_value() not in probe.serialized(attempt, (KEY,))
+
+
 @pytest.mark.parametrize(
     ("failure", "http_status", "error"),
     [
         ("malformed", 503, "invalid output"),
+        ("invalid_field", 200, "invalid output"),
         ("redirect", 302, "Jamendo API redirect refused"),
         ("timeout", None, "request timed out"),
         ("body_timeout", 503, "request timed out"),
@@ -520,6 +549,10 @@ async def test_run_preserves_attempts_when_relaxation_fails(
                 return web.Response(status=503, body=b" " * (probe.MAX_BODY + 1))
             if failure == "success_body":
                 return web.json_response(reply_data([]), status=503)
+            if failure == "invalid_field":
+                return web.json_response(
+                    reply_data([track_data() | {"duration": KEY.get_secret_value()}])
+                )
             if failure in ("timeout", "body_timeout"):
                 response = web.StreamResponse(status=503)
                 if failure == "body_timeout":
@@ -544,6 +577,7 @@ async def test_run_preserves_attempts_when_relaxation_fails(
     first, failed = result.attempts
     assert (first.http_status, first.status, first.code, first.count) == (200, "success", 0, 0)
     assert first.error is None
+    assert first.validation_errors is None
     assert first.latency_s >= 0.005
     assert failed.http_status == http_status
     if failure == "success_body":
@@ -553,6 +587,16 @@ async def test_run_preserves_attempts_when_relaxation_fails(
         assert failed.code is None
         assert failed.count is None
     assert failed.error == error
+    if failure == "malformed":
+        assert failed.validation_errors == [
+            probe.ValidationDetail(type="json_invalid", location=[])
+        ]
+    elif failure == "invalid_field":
+        assert failed.validation_errors == [
+            probe.ValidationDetail(type="int_type", location=["results", 0, "duration"])
+        ]
+    else:
+        assert failed.validation_errors is None
     assert all(a.latency_s >= 0 for a in result.attempts)
     if failure in ("timeout", "body_timeout"):
         assert failed.latency_s >= 0.19
@@ -591,6 +635,96 @@ async def test_http_redirect_and_oversized_body_are_refused(
 def test_track_validation_is_strict(bad: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         probe.Reply.model_validate(reply_data([track_data() | bad]))
+
+
+def test_validation_details_mask_unknown_types_locations_messages_and_context() -> None:
+    sentinel = "PRIVATE_SENTINEL_NEVER_EXPORT"
+    error = ValidationError.from_exception_data(
+        "Reply",
+        [
+            {
+                "type": PydanticCustomError(sentinel, sentinel + " {value}", {"value": sentinel}),
+                "loc": (sentinel, "results", -1, 100, 99, "headers", "code", "name", "artist_name"),
+                "input": sentinel,
+            },
+            {
+                "type": "value_error",
+                "loc": ("headers", "code"),
+                "input": sentinel,
+                "ctx": {"error": ValueError(sentinel)},
+            },
+        ],
+    )
+    assert sentinel in str(error.errors())
+    details = probe.reply_validation_errors(error)
+    assert details == [
+        probe.ValidationDetail(
+            type="validation_error",
+            location=["unknown", "results", "unknown", "unknown", 99, "headers", "code", "name"],
+        ),
+        probe.ValidationDetail(type="value_error", location=["headers", "code"]),
+    ]
+    attempt = probe.Attempt(stage="all_tags", latency_s=0, validation_errors=details)
+    exported = probe.serialized(attempt, (SecretStr(sentinel),))
+    assert sentinel not in exported
+    assert all(
+        set(item) == {"type", "location"} for item in json.loads(exported)["validation_errors"]
+    )
+
+
+def test_validation_details_bound_error_count_and_nested_locations() -> None:
+    errors: list[InitErrorDetails] = [
+        {
+            "type": "string_type",
+            "loc": ("results", 0, "musicinfo", "tags", "genres", index, "name", "id", "audio"),
+            "input": None,
+        }
+        for index in range(20)
+    ]
+    details = probe.reply_validation_errors(ValidationError.from_exception_data("Reply", errors))
+    assert len(details) == 16
+    assert [detail.location for detail in details] == [
+        ["results", 0, "musicinfo", "tags", "genres", index, "name", "id"] for index in range(16)
+    ]
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        {"type": "PRIVATE_SENTINEL", "location": []},
+        {"type": "missing", "location": ["PRIVATE_SENTINEL"]},
+        {"type": "missing", "location": [True]},
+        {"type": "missing", "location": [-1]},
+        {"type": "missing", "location": [100]},
+        {"type": "missing", "location": [1.0]},
+        {"type": "missing", "location": ["results"] * 9},
+        {"type": "missing", "location": [], "msg": "PRIVATE_SENTINEL"},
+        {"type": "missing", "location": [], "ctx": {"value": "PRIVATE_SENTINEL"}},
+        {"type": "missing", "location": [], "input": "PRIVATE_SENTINEL"},
+        {"type": "missing", "location": [], "url": "https://example.invalid/PRIVATE_SENTINEL"},
+    ],
+)
+def test_imported_validation_details_reject_arbitrary_or_unbounded_fields(
+    detail: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        probe.Attempt.model_validate_json(
+            json.dumps({"stage": "all_tags", "latency_s": 0, "validation_errors": [detail]})
+        )
+
+
+@pytest.mark.parametrize("count", [0, 17])
+def test_imported_validation_details_reject_unbounded_error_count(count: int) -> None:
+    with pytest.raises(ValidationError):
+        probe.Attempt.model_validate_json(
+            json.dumps(
+                {
+                    "stage": "all_tags",
+                    "latency_s": 0,
+                    "validation_errors": [{"type": "missing", "location": []}] * count,
+                }
+            )
+        )
 
 
 async def test_reports_only_canonical_links_and_metadata() -> None:
@@ -820,20 +954,26 @@ def test_ratings_reject_duplicates_missing_rows_and_altered_report() -> None:
         probe.summarize(result, ratings)
 
 
-def test_existing_successful_attempt_reports_keep_their_rating_binding() -> None:
+@pytest.mark.parametrize("failed", [False, True])
+def test_existing_attempt_reports_keep_their_serialization_and_rating_binding(failed: bool) -> None:
     old_report = report().model_dump(mode="json")
     old_report["results"][0]["attempts"] = [
         {
             "stage": "all_tags",
             "latency_s": 0.1,
             "http_status": 200,
-            "status": "success",
-            "code": 0,
-            "count": 5,
+            "status": None if failed else "success",
+            "code": None if failed else 0,
+            "count": None if failed else 5,
         }
     ]
+    if failed:
+        old_report["results"][0]["attempts"][0]["error"] = "invalid output"
+        old_report["results"][0].update(outcome="error", tracks=[], error="invalid output")
     old_json = json.dumps(old_report, ensure_ascii=False, separators=(",", ":"))
     restored = probe.Report.model_validate_json(old_json)
+    assert restored.model_dump_json() == old_json
+    assert "validation_errors" not in restored.model_dump_json()
     ratings = probe.rating_template(restored)
     ratings.report_sha256 = hashlib.sha256(old_json.encode()).hexdigest()
     assert probe.summarize(restored, ratings)["recommendation"] == "pending"
