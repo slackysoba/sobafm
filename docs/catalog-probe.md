@@ -52,6 +52,13 @@ numerical assertions. `speed` is coarse, and catalog `vocal` can include lyrics.
 Prior plans supply musical context for relative requests; they are not catalog plans.
 This probe measures relevance, not the future catalog refinement implementation.
 
+Requests and prior plans are untrusted data. The instruction ignores injected directives
+and interprets any legitimate music request that remains; injection-only and other non-music
+requests are refused. Standalone descriptions use `new` even while prior music plays;
+`refine` is reserved for relative changes to that music. A music case must match its expected
+`new` or `refine` classification to pass, as well as have three fitting tracks. Offline tests
+check case preservation and scoring; model compliance needs approved live evidence.
+
 ## Run after the gates are satisfied
 
 The operator supplies `GEMINI_API_KEY` and `JAMENDO_CLIENT_ID` in the process environment.
