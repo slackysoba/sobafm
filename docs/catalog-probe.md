@@ -84,6 +84,17 @@ completed case. An error stops the run, retaining a partial report, which cannot
 produce a go recommendation. Reruns need a new output file and
 must be disclosed on the issue, rather than replacing earlier evidence.
 
+An interpreter failure also retains optional `interpretation_failure` metadata in its
+case result and `view`: a fixed category and `sdk_generate` (the SDK call or response parsing)
+or `local_validate` (strict Interpretation validation or missing refinement context).
+Pydantic failures retain the same bounded type/location details described below, using only
+known Interpretation/CatalogQuery field names; SDK envelope field names outside that allowlist
+become `unknown`. No generated text, query value, response body, message, context, URL, header,
+credential, or arbitrary exception class name is added. The metadata is absent when unused,
+so historical reports, canonical digests and bound ratings remain compatible. It records
+rejected output without accepting it, retrying, or sending a catalog query. An earlier failure
+cannot recover details that were never retained, and a fresh diagnostic cannot prove its cause.
+
 For each music query, search uses `tags` (all), then `fuzzytags` (any), then descriptive
 `search` text, advancing only for a successful empty response. Speed, vocal/instrumental
 and acoustic/electric filters stay in all three stages. Artist and work names become

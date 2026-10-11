@@ -22,7 +22,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 import aiohttp
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -234,6 +234,7 @@ type ValidationType = Literal[
     "model_type",
     "model_attributes_type",
     "json_invalid",
+    "extra_forbidden",
     "validation_error",
 ]
 type ValidationField = Literal[
@@ -263,9 +264,9 @@ class ValidationDetail(Model):
     location: list[ValidationLocation] = Field(max_length=MAX_VALIDATION_DEPTH)
 
 
-def reply_validation_errors(error: ValidationError) -> list[ValidationDetail]:
+def _validation_errors(error: ValidationError, fields: tuple[str, ...]) -> list[dict[str, object]]:
     """Keep bounded schema locations, never external messages, values or custom names."""
-    details: list[ValidationDetail] = []
+    details: list[dict[str, object]] = []
     for item in error.errors(include_input=False, include_context=False, include_url=False)[
         :MAX_VALIDATION_ERRORS
     ]:
@@ -274,16 +275,92 @@ def reply_validation_errors(error: ValidationError) -> list[ValidationDetail]:
             if item["type"] in get_args(ValidationType.__value__)
             else "validation_error"
         )
-        location: list[ValidationLocation] = []
+        location: list[str | int] = []
         for part in item["loc"][:MAX_VALIDATION_DEPTH]:
-            if type(part) is int and 0 <= part <= MAX_VALIDATION_INDEX:
+            if (type(part) is int and 0 <= part <= MAX_VALIDATION_INDEX) or (
+                type(part) is str and part in fields
+            ):
                 location.append(part)
-            elif type(part) is str and part in get_args(ValidationField.__value__):
-                location.append(cast(ValidationField, part))
             else:
                 location.append("unknown")
-        details.append(ValidationDetail(type=kind, location=location))
+        details.append({"type": kind, "location": location})
     return details
+
+
+def reply_validation_errors(error: ValidationError) -> list[ValidationDetail]:
+    fields = cast(tuple[str, ...], get_args(ValidationField.__value__))
+    return [ValidationDetail.model_validate(item) for item in _validation_errors(error, fields)]
+
+
+type InterpretationField = Literal[
+    "kind",
+    "query",
+    "title",
+    "tags",
+    "speed",
+    "vocalinstrumental",
+    "acousticelectric",
+    "search",
+    "unknown",
+]
+type InterpretationLocation = (
+    InterpretationField | Annotated[int, Field(ge=0, le=MAX_VALIDATION_INDEX)]
+)
+type InterpretationStage = Literal["sdk_generate", "local_validate"]
+type InterpretationCategory = Literal[
+    "pydantic_validation",
+    "json_decode",
+    "unknown_api_response",
+    "timeout",
+    "sdk_api_error",
+    "transport_error",
+    "probe_rejected",
+    "other",
+]
+
+
+class InterpretationValidationDetail(Model):
+    type: ValidationType
+    location: list[InterpretationLocation] = Field(max_length=MAX_VALIDATION_DEPTH)
+
+
+class InterpretationFailure(Model):
+    stage: InterpretationStage
+    category: InterpretationCategory
+    validation_errors: list[InterpretationValidationDetail] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_VALIDATION_ERRORS,
+        exclude_if=lambda value: value is None,
+    )
+
+
+def interpretation_failure(error: Exception, stage: InterpretationStage) -> InterpretationFailure:
+    if isinstance(error, ValidationError):
+        fields = cast(tuple[str, ...], get_args(InterpretationField.__value__))
+        details = [
+            InterpretationValidationDetail.model_validate(item)
+            for item in _validation_errors(error, fields)
+        ]
+        return InterpretationFailure(
+            stage=stage, category="pydantic_validation", validation_errors=details or None
+        )
+    category: InterpretationCategory
+    if isinstance(error, json.JSONDecodeError):
+        category = "json_decode"
+    elif isinstance(error, errors.UnknownApiResponseError):
+        category = "unknown_api_response"
+    elif isinstance(error, TimeoutError):
+        category = "timeout"
+    elif isinstance(error, errors.APIError):
+        category = "sdk_api_error"
+    elif isinstance(error, (aiohttp.ClientError, OSError)):
+        category = "transport_error"
+    elif isinstance(error, ProbeError):
+        category = "probe_rejected"
+    else:
+        category = "other"
+    return InterpretationFailure(stage=stage, category=category)
 
 
 class Attempt(Model):
@@ -335,6 +412,9 @@ class CaseResult(Model):
     attempts: list[Attempt] = Field(default_factory=list[Attempt])
     tracks: list[ResultTrack] = Field(default_factory=list[ResultTrack], max_length=5)
     error: str | None = None
+    interpretation_failure: InterpretationFailure | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def valid_music(self) -> Self:
@@ -402,7 +482,9 @@ def read_interpretation(response: types.GenerateContentResponse) -> Interpretati
     return Interpretation.model_validate_json(response.text or "")
 
 
-async def interpret(gemini: Gemini, model: str, case: Case) -> Interpretation | None:
+async def interpret(
+    gemini: Gemini, model: str, case: Case, *, result: CaseResult | None = None
+) -> Interpretation | None:
     contents = json.dumps(
         {
             "request": case.request,
@@ -410,14 +492,21 @@ async def interpret(gemini: Gemini, model: str, case: Case) -> Interpretation | 
         },
         ensure_ascii=False,
     )
-    async with asyncio.timeout(30):
-        response = await gemini.models.generate_content(
-            model=model, contents=contents, config=CONFIG
-        )
-    answer = read_interpretation(response)
-    if answer is not None and answer.kind == "refine" and case.current is None:
-        raise ProbeError("refinement without context")
-    return answer
+    stage: InterpretationStage = "sdk_generate"
+    try:
+        async with asyncio.timeout(30):
+            response = await gemini.models.generate_content(
+                model=model, contents=contents, config=CONFIG
+            )
+        stage = "local_validate"
+        answer = read_interpretation(response)
+        if answer is not None and answer.kind == "refine" and case.current is None:
+            raise ProbeError("refinement without context")
+        return answer
+    except Exception as error:
+        if result is not None:
+            result.interpretation_failure = interpretation_failure(error, stage)
+        raise
 
 
 async def fetch_tracks(
@@ -597,7 +686,7 @@ async def measure_case(
     started = time.monotonic()
     result = CaseResult(id=case.id, outcome="error", interpretation_s=0)
     try:
-        answer = await interpret(gemini, model, case)
+        answer = await interpret(gemini, model, case, result=result)
         result.interpretation_s = round(time.monotonic() - started, 3)
         if answer is None:
             result.outcome = "blocked"
@@ -616,7 +705,16 @@ async def measure_case(
             result.tracks = [await report_track(session, client_id, t, inspect) for t in tracks]
     except Exception as error:  # noqa: BLE001 - safe failure evidence, never fallback searches
         result.outcome = "error"
-        result.error = error_description(error)
+        failure = result.interpretation_failure
+        if failure is not None and failure.category in ("other", "transport_error"):
+            # Unexpected interpreter exceptions must not export arbitrary class names.
+            result.error = (
+                "interpreter transport failed"
+                if failure.category == "transport_error"
+                else "interpreter failed"
+            )
+        else:
+            result.error = error_description(error)
         if result.interpretation_s == 0:
             result.interpretation_s = round(time.monotonic() - started, 3)
     return result
@@ -858,6 +956,7 @@ def main() -> None:
                 else:
                     print("Music provided by Jamendo; listen on the track pages to rate relevance.")
                     for result in report.results:
+                        failure = result.interpretation_failure
                         print(
                             json.dumps(
                                 {
@@ -873,7 +972,12 @@ def main() -> None:
                                     "tracks": [
                                         t.model_dump() | {"jamendo": t.link} for t in result.tracks
                                     ],
-                                },
+                                }
+                                | (
+                                    {"interpretation_failure": failure.model_dump()}
+                                    if failure is not None
+                                    else {}
+                                ),
                                 ensure_ascii=False,
                             )
                         )
