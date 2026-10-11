@@ -14,7 +14,7 @@ from urllib.parse import quote
 import aiohttp
 import pytest
 from aiohttp import web
-from google.genai import types
+from google.genai import errors, types
 from pydantic import SecretStr, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
@@ -70,8 +70,10 @@ async def server(
 
 
 class Gemini:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, error: Exception | None = None) -> None:
         self.text = text
+        self.error = error
+        self.calls = 0
         self.contents = ""
         self.config: types.GenerateContentConfig | None = None
 
@@ -87,6 +89,9 @@ class Gemini:
         config: types.GenerateContentConfig,
     ) -> types.GenerateContentResponse:
         self.contents, self.config = contents, config
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
         return types.GenerateContentResponse(
             candidates=[
                 types.Candidate(
@@ -1073,3 +1078,331 @@ async def test_run_reserves_output_and_keeps_completed_cases_on_client_close_fai
     assert probe.summarize(preserved, probe.rating_template(preserved))["recommendation"] == "no-go"
     with pytest.raises(probe.ProbeError, match="already exists"):
         await probe.run(args)
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("", [("json_invalid", list[str | int]())]),
+        ("not JSON", [("json_invalid", list[str | int]())]),
+        ('{"kind":"new","query":{"title":"Music"}}', [("missing", ["query", "tags"])]),
+        (
+            '{"kind":"new","query":{"title":"Music","tags":["80s"]}}',
+            [("string_pattern_mismatch", ["query", "tags", 0])],
+        ),
+        (
+            '{"kind":"new","query":{"title":"Music","tags":["jazz","jazz"]}}',
+            [("value_error", ["query"])],
+        ),
+        ('{"kind":"new"}', [("value_error", list[str | int]())]),
+    ],
+)
+async def test_local_interpretation_failures_retain_details_without_catalog_calls(
+    reply: str, expected: list[tuple[str, list[str | int]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def no_search(*args: object, **kwargs: object) -> None:
+        pytest.fail("an interpreter failure must not search the catalog")
+
+    monkeypatch.setattr(probe, "search", no_search)
+    gemini = Gemini(reply)
+    async with aiohttp.ClientSession() as session:
+        result = await probe.measure_case(
+            gemini,
+            probe.MODEL,
+            session,
+            KEY,
+            probe.Case(id="case", request="jazz", expected="new"),
+            False,
+        )
+    assert gemini.calls == 1
+    assert result.outcome == "error"
+    assert result.error == "invalid output"
+    assert (result.kind, result.query, result.attempts, result.tracks) == (None, None, [], [])
+    failure = result.interpretation_failure
+    assert failure is not None
+    assert (failure.stage, failure.category) == ("local_validate", "pydantic_validation")
+    assert failure.validation_errors is not None
+    assert [(detail.type, detail.location) for detail in failure.validation_errors] == expected
+
+
+@pytest.mark.parametrize(
+    ("error", "category"),
+    [
+        (json.JSONDecodeError("PRIVATE_SENTINEL", "PRIVATE_SENTINEL", 0), "json_decode"),
+        (errors.UnknownApiResponseError("PRIVATE_SENTINEL"), "unknown_api_response"),
+        (TimeoutError("PRIVATE_SENTINEL"), "timeout"),
+        (OSError("PRIVATE_SENTINEL"), "transport_error"),
+        (
+            errors.ClientError(
+                429, {"error": {"status": "RESOURCE_EXHAUSTED", "message": "PRIVATE_SENTINEL"}}
+            ),
+            "sdk_api_error",
+        ),
+    ],
+)
+async def test_sdk_interpretation_failures_have_fixed_categories(
+    error: Exception, category: probe.InterpretationCategory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def no_search(*args: object, **kwargs: object) -> None:
+        pytest.fail("SDK failure must not search the catalog")
+
+    monkeypatch.setattr(probe, "search", no_search)
+    gemini = Gemini("", error)
+    async with aiohttp.ClientSession() as session:
+        result = await probe.measure_case(
+            gemini,
+            probe.MODEL,
+            session,
+            KEY,
+            probe.Case(id="case", request="jazz", expected="new"),
+            False,
+        )
+    assert gemini.calls == 1
+    assert (result.outcome, result.kind, result.query, result.attempts, result.tracks) == (
+        "error",
+        None,
+        None,
+        [],
+        [],
+    )
+    failure = result.interpretation_failure
+    assert failure == probe.InterpretationFailure(stage="sdk_generate", category=category)
+    assert "PRIVATE_SENTINEL" not in probe.serialized(result)
+
+
+async def test_interpreter_diagnostics_mask_pydantic_values_names_messages_and_context(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sentinel = "PRIVATE_SENTINEL_NEVER_EXPORT"
+    error = ValidationError.from_exception_data(
+        "SDK fixture",
+        [
+            {
+                "type": PydanticCustomError(sentinel, sentinel),
+                "loc": (sentinel, "query", 101, -1, "tags", 99, sentinel, "title", "kind"),
+                "input": sentinel,
+            },
+            {
+                "type": "value_error",
+                "loc": ("query",),
+                "input": sentinel,
+                "ctx": {"error": ValueError(sentinel)},
+            },
+        ],
+    )
+    gemini = Gemini("", error)
+    async with aiohttp.ClientSession() as session:
+        result = await probe.measure_case(
+            gemini,
+            probe.MODEL,
+            session,
+            KEY,
+            probe.Case(id="case", request="jazz", expected="new"),
+            False,
+        )
+    assert result.interpretation_failure == probe.InterpretationFailure(
+        stage="sdk_generate",
+        category="pydantic_validation",
+        validation_errors=[
+            probe.InterpretationValidationDetail(
+                type="validation_error",
+                location=["unknown", "query", "unknown", "unknown", "tags", 99, "unknown", "title"],
+            ),
+            probe.InterpretationValidationDetail(type="value_error", location=["query"]),
+        ],
+    )
+    evidence = report()
+    evidence.results[0] = result.model_copy(update={"id": "case-0"})
+    path = Path("report.json")
+    probe.write_model(path, evidence, (SecretStr(sentinel), KEY))
+    exported = await asyncio.to_thread(path.read_text, encoding="utf-8")
+    assert sentinel not in exported
+    monkeypatch.setattr(probe.sys, "argv", ["catalog_probe", "view", "--report", str(path)])
+    previous_logging = probe.logging.root.manager.disable
+    try:
+        probe.main()
+    finally:
+        probe.logging.disable(previous_logging)
+    view = capsys.readouterr().out
+    assert sentinel not in view
+    assert '"interpretation_failure"' in view
+    failure = result.interpretation_failure
+    assert failure is not None
+    assert all(
+        set(detail.model_dump()) == {"type", "location"}
+        for detail in failure.validation_errors or []
+    )
+
+
+def test_interpreter_diagnostics_bound_all_validation_locations() -> None:
+    failures: list[InitErrorDetails] = [
+        {
+            "type": "string_type",
+            "loc": ("query", "tags", index, "title", "speed", "search", "kind", "query", "tags"),
+            "input": None,
+        }
+        for index in range(20)
+    ]
+    failure = probe.interpretation_failure(
+        ValidationError.from_exception_data("fixture", failures), "local_validate"
+    )
+    assert failure.validation_errors is not None
+    assert len(failure.validation_errors) == 16
+    assert all(len(detail.location) == 8 for detail in failure.validation_errors)
+    assert [detail.location[2] for detail in failure.validation_errors] == list(range(16))
+    # Discovery and interpretation keep separate field allowlists with the shared sanitizer.
+    extra = ValidationError.from_exception_data(
+        "fixture", [{"type": "missing", "loc": ("headers", "query"), "input": None}]
+    )
+    assert probe.reply_validation_errors(extra)[0].location == ["headers", "unknown"]
+    assert probe.interpretation_failure(extra, "sdk_generate").validation_errors == [
+        probe.InterpretationValidationDetail(type="missing", location=["unknown", "query"])
+    ]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"stage": "PRIVATE_SENTINEL"},
+        {"category": "PRIVATE_SENTINEL"},
+        {"response": "PRIVATE_SENTINEL"},
+        {"validation_errors": list[dict[str, object]]()},
+        {"validation_errors": [{"type": "missing", "location": list[str | int]()}] * 17},
+        {"validation_errors": [{"type": "PRIVATE_SENTINEL", "location": list[str | int]()}]},
+        {"validation_errors": [{"type": "missing", "location": ["PRIVATE_SENTINEL"]}]},
+        {"validation_errors": [{"type": "missing", "location": [100]}]},
+        {"validation_errors": [{"type": "missing", "location": [True]}]},
+        {"validation_errors": [{"type": "missing", "location": ["query"] * 9}]},
+        {
+            "validation_errors": [
+                {"type": "missing", "location": list[str | int](), "msg": "PRIVATE_SENTINEL"}
+            ]
+        },
+        {
+            "validation_errors": [
+                {"type": "missing", "location": list[str | int](), "input": "PRIVATE_SENTINEL"}
+            ]
+        },
+        {
+            "validation_errors": [
+                {
+                    "type": "missing",
+                    "location": list[str | int](),
+                    "ctx": {"error": "PRIVATE_SENTINEL"},
+                }
+            ]
+        },
+        {
+            "validation_errors": [
+                {"type": "missing", "location": list[str | int](), "url": "PRIVATE_SENTINEL"}
+            ]
+        },
+    ],
+)
+def test_imported_interpreter_diagnostics_reject_unsafe_metadata(change: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        probe.InterpretationFailure.model_validate_json(
+            json.dumps({"stage": "local_validate", "category": "pydantic_validation"} | change)
+        )
+
+
+async def test_unknown_interpreter_exception_class_names_are_not_exported() -> None:
+    sentinel = "PRIVATE_SENTINEL_NEVER_EXPORT"
+
+    class UnexpectedError(Exception):
+        pass
+
+    UnexpectedError.__name__ = sentinel
+    gemini = Gemini("", UnexpectedError(sentinel))
+    async with aiohttp.ClientSession() as session:
+        result = await probe.measure_case(
+            gemini,
+            probe.MODEL,
+            session,
+            KEY,
+            probe.Case(id="case", request="jazz", expected="new"),
+            False,
+        )
+    assert result.error == "interpreter failed"
+    assert result.interpretation_failure == probe.InterpretationFailure(
+        stage="sdk_generate", category="other"
+    )
+    assert sentinel not in probe.serialized(result, (SecretStr(sentinel),))
+
+
+@pytest.mark.parametrize("stage", ["sdk_generate", "local_validate"])
+async def test_run_retains_interpreter_failure_and_stops_without_retry(
+    stage: probe.InterpretationStage,
+    offline_run: argparse.Namespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    original_generate = Gemini.generate_content
+
+    async def failed_generate(
+        self: Gemini, *, model: str, contents: str, config: types.GenerateContentConfig
+    ) -> types.GenerateContentResponse:
+        nonlocal calls
+        calls += 1
+        assert offline_run.output.exists()
+        if stage == "sdk_generate":
+            raise json.JSONDecodeError("PRIVATE_SENTINEL", "PRIVATE_SENTINEL", 0)
+        self.text = "not JSON"
+        return await original_generate(self, model=model, contents=contents, config=config)
+
+    async def no_search(*args: object, **kwargs: object) -> None:
+        pytest.fail("a failed interpreter must never start catalog discovery")
+
+    monkeypatch.setattr(Gemini, "generate_content", failed_generate)
+    monkeypatch.setattr(probe, "search", no_search)
+    await probe.run(offline_run)
+    assert calls == 1
+    retained = probe.Report.model_validate_json(offline_run.output.read_text(encoding="utf-8"))
+    assert len(retained.results) == 1 < len(retained.manifest.cases)
+    failure = retained.results[0].interpretation_failure
+    assert failure is not None
+    assert failure.stage == stage
+    assert retained.results[0].attempts == []
+    summary = probe.summarize(retained, probe.rating_template(retained))
+    assert summary["recommendation"] == "pending"
+    assert summary["classifications_ok"] is False
+    assert "PRIVATE_SENTINEL" not in probe.serialized(retained)
+    with pytest.raises(probe.ProbeError, match="already exists"):
+        await probe.run(offline_run)
+    assert calls == 1
+
+
+@pytest.mark.parametrize("refused", [False, True])
+async def test_successful_interpretations_omit_failure_metadata(refused: bool) -> None:
+    answer = (
+        {"kind": "not_music", "query": None}
+        if refused
+        else {"kind": "new", "query": QUERY.model_dump()}
+    )
+    async with aiohttp.ClientSession() as session:
+        # A known negative control avoids any catalog call even when classified as music.
+        result = await probe.measure_case(
+            Gemini(json.dumps(answer)),
+            probe.MODEL,
+            session,
+            KEY,
+            probe.Case(id="negative", request="hello", expected="not_music"),
+            False,
+        )
+    assert result.interpretation_failure is None
+    assert "interpretation_failure" not in result.model_dump_json()
+
+
+def test_old_interpreter_failures_keep_exact_serialization_and_rating_binding() -> None:
+    old = report().model_dump(mode="json")
+    old["results"][0].update(
+        outcome="error", kind=None, query=None, tracks=[], error="invalid output"
+    )
+    encoded = json.dumps(old, ensure_ascii=False, separators=(",", ":"))
+    restored = probe.Report.model_validate_json(encoded)
+    assert restored.model_dump_json() == encoded
+    assert "interpretation_failure" not in encoded
+    ratings = probe.rating_template(restored)
+    assert ratings.report_sha256 == hashlib.sha256(encoded.encode()).hexdigest()
+    assert probe.summarize(restored, ratings)["recommendation"] == "pending"
