@@ -99,7 +99,15 @@ Successful empty stages remain in the report if a later stage fails. The failed
 attempt includes its latency and a safe error description; unavailable HTTP status,
 Jamendo status/code and result count are `null`, not inferred as success or zero.
 Successful attempts retain their original serialized form and report/rating binding.
-Search relaxation stops at that failure. The report omits raw
+When strict discovery-reply validation fails, the attempt's optional `validation_errors`
+retains only allowlisted Pydantic error types and known reply field names, with array
+indexes from 0 to 99. Unknown types become `validation_error`; unknown location parts
+become `unknown`. At most the first 16 errors and the first 8 location parts per error
+are retained. Root-level errors have an empty location. No message, input value,
+context or error-documentation URL is exported. The field is absent when unused,
+so existing v1 reports and their ratings keep the same canonical digest. Earlier
+reports cannot recover details that were never retained; no failure cause is inferred.
+Search relaxation and the run still stop at that failure. The report omits raw
 error messages/warnings, download URLs, stream URLs, and unrelated response fields.
 `view` derives each listening link from the numeric track id and credits the artist
 and Jamendo. Unknown licenses remain `unknown`, never inferred as permissive.

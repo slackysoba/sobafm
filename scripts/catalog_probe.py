@@ -17,13 +17,21 @@ import warnings
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, cast, get_args
 from urllib.parse import unquote, urljoin, urlsplit
 
 import aiohttp
 from google import genai
 from google.genai import types
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    model_validator,
+)
 
 from sobafm.config import ApiKey
 from sobafm.interpreter import (
@@ -38,6 +46,9 @@ from sobafm.plan import MusicPlan, one_line
 TRACKS_URL = "https://api.jamendo.com/v3.0/tracks/"
 MODEL = "gemini-3.5-flash-lite"
 MAX_BODY = 1_000_000
+MAX_VALIDATION_ERRORS = 16
+MAX_VALIDATION_DEPTH = 8
+MAX_VALIDATION_INDEX = 99  # Reply tag arrays contain at most 100 entries.
 
 type Kind = Literal["new", "refine", "not_music"]
 type Stage = Literal["all_tags", "any_tag", "text"]
@@ -204,6 +215,77 @@ class Reply(External):
         return self
 
 
+type ValidationType = Literal[
+    "missing",
+    "int_type",
+    "int_parsing",
+    "string_type",
+    "string_pattern_mismatch",
+    "string_too_long",
+    "string_too_short",
+    "list_type",
+    "too_long",
+    "too_short",
+    "greater_than",
+    "greater_than_equal",
+    "less_than_equal",
+    "literal_error",
+    "value_error",
+    "model_type",
+    "model_attributes_type",
+    "json_invalid",
+    "validation_error",
+]
+type ValidationField = Literal[
+    "headers",
+    "status",
+    "code",
+    "results_count",
+    "results",
+    "id",
+    "name",
+    "artist_name",
+    "duration",
+    "license_ccurl",
+    "musicinfo",
+    "tags",
+    "genres",
+    "instruments",
+    "vartags",
+    "audio",
+    "unknown",
+]
+type ValidationLocation = ValidationField | Annotated[int, Field(ge=0, le=MAX_VALIDATION_INDEX)]
+
+
+class ValidationDetail(Model):
+    type: ValidationType
+    location: list[ValidationLocation] = Field(max_length=MAX_VALIDATION_DEPTH)
+
+
+def reply_validation_errors(error: ValidationError) -> list[ValidationDetail]:
+    """Keep bounded schema locations, never external messages, values or custom names."""
+    details: list[ValidationDetail] = []
+    for item in error.errors(include_input=False, include_context=False, include_url=False)[
+        :MAX_VALIDATION_ERRORS
+    ]:
+        kind = (
+            cast(ValidationType, item["type"])
+            if item["type"] in get_args(ValidationType.__value__)
+            else "validation_error"
+        )
+        location: list[ValidationLocation] = []
+        for part in item["loc"][:MAX_VALIDATION_DEPTH]:
+            if type(part) is int and 0 <= part <= MAX_VALIDATION_INDEX:
+                location.append(part)
+            elif type(part) is str and part in get_args(ValidationField.__value__):
+                location.append(cast(ValidationField, part))
+            else:
+                location.append("unknown")
+        details.append(ValidationDetail(type=kind, location=location))
+    return details
+
+
 class Attempt(Model):
     stage: Stage
     latency_s: float = Field(ge=0, allow_inf_nan=False)
@@ -212,6 +294,12 @@ class Attempt(Model):
     code: int | None = Field(default=None, ge=0)
     count: int | None = Field(default=None, ge=0, le=5)
     error: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    validation_errors: list[ValidationDetail] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_VALIDATION_ERRORS,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class StreamObservation(Model):
@@ -358,7 +446,12 @@ async def fetch_tracks(
                 body.extend(chunk)
                 if len(body) > MAX_BODY:
                     raise ProbeError("Jamendo body too large")
-            reply = Reply.model_validate_json(body)
+            try:
+                reply = Reply.model_validate_json(body)
+            except ValidationError as error:
+                if attempt is not None:
+                    attempt.validation_errors = reply_validation_errors(error)
+                raise
             if attempt is not None:
                 attempt.status = reply.headers.status
                 attempt.code = reply.headers.code
