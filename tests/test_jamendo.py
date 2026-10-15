@@ -511,3 +511,34 @@ async def test_actual_http_decompression_cannot_bypass_body_cap(
             with pytest.raises(CatalogError, match="oversized"):
                 await JamendoCatalog(SecretStr(CLIENT), session, gate).search(QUERY)
         await closed.wait()
+
+
+async def test_transport_disconnect_cannot_replay_outside_application_retry_budget(
+    monkeypatch: pytest.MonkeyPatch, gate: MetadataGate
+) -> None:
+    requests = 0
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    async def disconnect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        nonlocal requests
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            requests += 1
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    monkeypatch.setattr(jamendo.asyncio, "sleep", sleep)
+    server = await asyncio.start_server(disconnect, "127.0.0.1", 0)
+    async with server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(jamendo, "TRACKS_URL", f"http://127.0.0.1:{port}/")
+        async with aiohttp.ClientSession() as session:
+            with pytest.raises(CatalogError) as caught:
+                await JamendoCatalog(SecretStr(CLIENT), session, gate).search(QUERY)
+    assert caught.value.failure is Failure.UNAVAILABLE
+    assert requests == 3
+    assert delays == [1, 2]

@@ -156,6 +156,20 @@ def _steps(query: CatalogQuery) -> tuple[dict[str, str], ...]:
     )
 
 
+async def _no_transport_replay(
+    request: aiohttp.ClientRequest, handler: aiohttp.ClientHandlerType
+) -> aiohttp.ClientResponse:
+    """Keep transport retries inside the application's attempt, rate and deadline budget.
+
+    aiohttp may replay an idempotent request once after a send/response-start disconnect. Map
+    that failure at its public middleware boundary so it cannot bypass our gate and backoff.
+    """
+    try:
+        return await handler(request)
+    except (aiohttp.ClientError, OSError) as error:
+        raise CatalogError("connection", call_failure(error)) from None
+
+
 class JamendoCatalog:
     """One station's client, sharing the process metadata gate and an owned aiohttp session.
 
@@ -258,6 +272,7 @@ class JamendoCatalog:
                     params=params,
                     allow_redirects=False,
                     auto_decompress=True,
+                    middlewares=(_no_transport_replay,),
                     timeout=aiohttp.ClientTimeout(total=ATTEMPT_SECONDS),
                 ) as response:
                     delay = _retry_after(response.headers.get("Retry-After"))
