@@ -25,4 +25,4 @@ Each record captures one material decision: its context, the options considered,
 | [0004](0004-stream-lyria-realtime-through-buffered-decks.md) | Stream Lyria RealTime through buffered decks and a crossfading mixer | Accepted |
 | [0005](0005-release-images-with-github-actions-and-artifact-attestations.md) | Release images with GitHub Actions and artifact attestations | Accepted |
 | [0006](0006-play-catalog-and-generated-music-in-one-station.md) | Play catalog and generated music in one station | Accepted on merge of PR #156; proposed until then |
-| [0007](0007-bound-catalog-audio-decoding.md) | Bound catalog audio decoding before choosing a runtime tool | Proposed |
+| [0007](0007-bound-catalog-audio-decoding.md) | Decode catalog audio through a supervised FFmpeg child | Accepted |
