@@ -112,6 +112,7 @@ def test_rejects_a_session_cap_that_is_not_whole_programs(
     [
         ("discord_token", "DISCORD_TOKEN"),
         ("gemini_api_key", "GEMINI_API_KEY"),
+        ("jamendo_client_id", "SOBAFM_JAMENDO_CLIENT_ID"),
         ("gemini_model", "SOBAFM_GEMINI_MODEL"),
         ("log_level", "SOBAFM_LOG_LEVEL"),
         ("data_dir", "SOBAFM_DATA_DIR"),
@@ -149,3 +150,22 @@ def test_accepts_a_visible_ascii_key_without_surrounding_whitespace(
     monkeypatch.setenv("GEMINI_API_KEY", key)
 
     assert load_settings(env_file=None).gemini_api_key.get_secret_value() == key.strip()
+
+
+def test_runtime_jamendo_id_is_optional_namespaced_validated_and_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+    monkeypatch.setenv("JAMENDO_CLIENT_ID", "probe-only")
+    assert load_settings(env_file=None).jamendo_client_id is None
+    monkeypatch.setenv("SOBAFM_JAMENDO_CLIENT_ID", " private-runtime-id ")
+    settings = load_settings(env_file=None)
+    assert settings.jamendo_client_id is not None
+    assert settings.jamendo_client_id.get_secret_value() == "private-runtime-id"
+    for output in (repr(settings), str(settings), settings.model_dump_json()):
+        assert "private-runtime-id" not in output
+    monkeypatch.setenv("SOBAFM_JAMENDO_CLIENT_ID", "bad\nprivate-runtime-id")
+    with pytest.raises(ValidationError) as caught:
+        load_settings(env_file=None)
+    assert "private-runtime-id" not in str(caught.value)
