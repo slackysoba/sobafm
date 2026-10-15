@@ -4,15 +4,16 @@
 - **Date:** 2026-10-07
 - **Issue:** [#117](https://github.com/slackysoba/sobafm/issues/117)
 - **Parent:** [M5, #114](https://github.com/slackysoba/sobafm/issues/114)
-- **Evidence:** [#116](https://github.com/slackysoba/sobafm/issues/116), incomplete
+- **Evidence:** [#116](https://github.com/slackysoba/sobafm/issues/116), completed under
+  qualitative maintainer acceptance; numerical relevance unmeasured
 
 ## Context
 
 M5 proposes `/play` for matching Jamendo tracks and `/freestyle` for today's
 Lyria RealTime music in one bot. The maintainer chose the one-bot direction over
 [#40](https://github.com/slackysoba/sobafm/issues/40); #117 still needs an accepted
-service, product and engine decision. This record makes the proposal reviewable
-while live research waits. Every design rule below is conditional on acceptance.
+service, product and engine decision. This proposal now incorporates the completed
+research disposition; every design rule below remains conditional on acceptance.
 
 The [requirements](../requirements.md) and [architecture](../architecture.md)
 still describe approved v1 behavior. This proposal neither changes them nor
@@ -23,7 +24,7 @@ transition exception differ from current requirements and need explicit approval
 
 ### Current source and accepted decisions
 
-The source assessment uses main commit
+The original source assessment uses main commit
 [`2dec12be698845a89bf88070eae07f2fdae3d69e`](https://github.com/slackysoba/sobafm/tree/2dec12be698845a89bf88070eae07f2fdae3d69e).
 Relative source links below identify the modules to compare during review.
 
@@ -35,12 +36,72 @@ Relative source links below identify the modules to compare during review.
 | [ADR-0004](0004-stream-lyria-realtime-through-buffered-decks.md), [station.py](../../src/sobafm/station.py), [deck.py](../../src/sobafm/deck.py) | Preserve Lyria session rotation and failure semantics. `_retire`, `_generate`, `_discard`, `_count_failure`, `_may_start`, `_ready_deck` and `Program` retry fields contain the mode-specific rules. |
 | [bot.py](../../src/sobafm/bot.py), [commands.py](../../src/sobafm/commands.py), [status.py](../../src/sobafm/status.py), [config.py](../../src/sobafm/config.py) | Reuse voice recovery, command admission/cooldown, request supersession, slow-start replies and ordered status updates. Playback/feedback/configuration wiring still needs adaptation; these entire modules are not source-independent. |
 
-The offline [probe and operator guide](../catalog-probe.md) merged in
-[PR #144](https://github.com/slackysoba/sobafm/pull/144). There is no measured
-relevance result, listening rating or go recommendation. #116 still requires M4
-readiness, operator credentials, about ten non-personal maintainer requests and
-approval of the final manifest/model/pass mark before its two-day measurement.
-No live Gemini, Lyria or Jamendo calls are part of this proposal preparation.
+### Research evidence and acceptance limits
+
+The standalone [probe and operator guide](../catalog-probe.md) merged in
+[PR #144](https://github.com/slackysoba/sobafm/pull/144). M4's ready-to-ship
+prerequisite was satisfied by the stable v1.0.0 publication and
+[recorded maintainer dispositions](https://github.com/slackysoba/sobafm/issues/4#issuecomment-6097955604),
+with their original incomplete checks and exceptions retained. The approved
+research window started at 2026-10-10T23:40:29.544021Z and its original deadline,
+**2026-10-12T23:40:29.544021Z**, was missed; it was not reset or extended.
+
+The [frozen D1 protocol](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6104782646)
+used 48 cases, including the ten maintainer-selected requests, and explicit
+`gemini-3.5-flash-lite`. Its manifest digest was
+`70ddf145823fb96e651e785dbeb2f480b175fa03d79ceec75870cee19294bdeb`.
+The [completed D1 result and independent review](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6104976415)
+at source `a1e463903fa289f215ad2fd8d0d106471f39db3e` recorded all 48
+classifications passing, with all six controls making no Jamendo searches.
+There were 189 track appearances: 38 of 42 music cases returned at least three
+candidates, while four empty cases remain in the 42-case denominator. The earlier
+fatal prefixes remain separate; D1 does not establish their original causes.
+
+On 13 October the maintainer
+[accepted the research direction qualitatively and waived the remaining structured listening/export and calculated go/no-go](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6145275917).
+Issue #116 is closed under that narrow disposition. No report-bound ratings export
+was received: the rating pairs remain null, and the frozen summary remains
+`complete=false` / `recommendation=pending`. The approved numerical mark, **28 of
+all 42 music cases with three fitting tracks in the returned top five**, remains
+unmeasured rather than passed or failed. The maintainer's general feedback is not
+a per-track or per-case score, and no agent hearing is claimed.
+
+The maintainer also reported that the first ten songs were the weakest fits and
+did not fit, whereas the rest generally did. If this refers to the first ten
+displayed tracks in the retained D1 worksheet, those entries belong to eval-01 and
+eval-02; this ordering observation assigns no rating pairs. Carry the weak-fit
+note into #126's interpretation/search acceptance work. It does not establish fit
+for a future license-filtered catalog.
+
+D1 recorded 95 successful discovery calls and 378 stream HEAD observations:
+`mp31` had 189 known successes; `mp32` had 126 known successes and 63 opaque
+errors. Missing statuses/lengths remain unavailable. HEAD observations do not
+prove audio GET, decoded format, playback, or production resource bounds. No
+provider calls or audio retrieval/decoding are part of this documentation refresh.
+
+#### License subset caveat
+
+The recorded appearance labels were 128 BY-NC-ND 3.0, 13 BY-ND 3.0, seven
+BY 3.0, 16 BY-SA 3.0, 21 BY-NC-SA 3.0 and four BY-NC 3.0. These describe
+this sample, not the whole catalog or permission to use it. A read-only post-filter
+of the unchanged D1 report (file SHA-256
+`0f29ddc0d1dcb143011917b661364cf400b8c54e66835590c5bde1d0b39a41c4`)
+gives the following candidate counts, retaining all 42 music cases:
+
+| Subset of already returned top-five candidates | Appearances | Cases with at least one candidate | Cases with at least three candidates |
+| --- | ---: | ---: | ---: |
+| All returned licenses | 189 | 38/42 | 38/42 |
+| Exclude ND; retain SA for comparison only | 48 | 20/42 | 8/42 |
+| BY 3.0 and BY-NC 3.0 only | 11 | 9/42 | 0/42 |
+
+This post-filter did not refill the top five or run a license-filtered search.
+The counts are metadata availability, not audible-fit scores or a failure of the
+waived research gate. They neither predict further results from a filtered query
+nor establish relevance for a narrower allowlist. A 4.0-only allowlist would admit
+none of this sample. No subset is adopted here: exact ND/SA/version eligibility,
+transitions and the resulting product-coverage disposition remain maintainer choices.
+The research waiver grants no legal, service, decoder, resource, platform or
+other M5 exit waiver and does not accept this record or #118.
 
 ## Requirements
 
@@ -64,7 +125,8 @@ An acceptable decision must:
 6. Meet the selected catalog license, attribution, service and privacy obligations
    before playing a track. Keep credentials and credential-bearing URLs out of
    logs/replies; validate external metadata/model output before it changes state.
-7. Retain M4 and #116's evidence gates and #118's independent decoder decision.
+7. Retain M4 and #116's recorded acceptance limits and #118's independent decoder
+   decision.
    No account, commercial service, dependency or distribution exception is
    approved by preparing this record.
 
@@ -79,8 +141,9 @@ An acceptable decision must:
 A new managed playback service/library is not a substitute for this seam: the
 [existing-solution review](../architecture.md#existing-solution-review) found no
 library that mixes Lyria's live PCM into discord.py's source. Reuse the existing
-mixer rather than add another service. If #116 fails, the alternative is to retain
-v1 and end M5 as its milestone specifies, not adopt a second catalog implicitly.
+mixer rather than add another service. Retaining v1 remains the alternative if
+remaining catalog-adoption conditions cannot be met; the qualitative research
+acceptance does not adopt a second catalog or remove the other M5 gates.
 
 ## Decision
 
@@ -285,13 +348,15 @@ approval and regression verification. This correction grants no NFR-3 waiver or
 Lyria behavior change.
 
 Sibling Proposed [ADR-0007 / PR #157](https://github.com/slackysoba/sobafm/pull/157)
-at `29aa2b4e504da8da4ebda241fa322724e3ff4e4f` describes 34,560,000 PCM bytes as an
-existing maximum and proposes parent/native reservations based on a shared budget.
-Its #118 owner/reviewer must reconcile that characterization and qualify allocations
-against the same retained Lyria states, transitions and overshoot. This record does
-not adopt its candidate caps or establish a native-memory pass. Before acceptance,
-Issues #116/#118 supply a feasible numeric envelope; later #119/#121/#125/#127/#131 verify
-combined bounds through rotation, mode changes, reconnect, error and cancellation.
+corrected the earlier three-buffer maximum characterization at
+`d858ce922dae4ba95c219bf8b91a3e72e5038ffa`, as
+[independently verified](https://github.com/slackysoba/sobafm/issues/117#issuecomment-6048274985).
+Its shared allocations remain unqualified against all retained Lyria states,
+transitions and overshoot. This record adopts no candidate cap and establishes no
+native-memory pass. Before acceptance, use #116's retained metadata/HEAD observations
+and #118's decoder evidence to supply a feasible numeric envelope. Later
+issues #119/#121/#125/#127/#131 verify combined bounds through rotation, mode changes,
+reconnect, error and cancellation.
 
 Validate metadata, license and duration before fetching, then validate actual bytes,
 format and decoded sample count. Recommend requiring at least the existing 6 s
@@ -340,6 +405,13 @@ Recommend these changes for explicit product acceptance and subsequent #119 work
   passing a same-mode current plan only; a cross-mode request starts fresh rather
   than silently translating MusicPlan into CatalogQuery. Explain this limitation.
   #116 does not demonstrate cross-mode refinement quality.
+
+The [#124 setting note](https://github.com/slackysoba/sobafm/issues/124#issuecomment-6193410811)
+and [#126 fallback note](https://github.com/slackysoba/sobafm/issues/126#issuecomment-6193412671)
+record unresolved differences between those task scopes and this proposal:
+runtime client-id spelling and raw-text catalog fallback. This evidence refresh
+leaves both contracts for explicit decision and #119 reconciliation; neither the
+task wording nor this record's recommendations are accepted by the refresh.
 
 The program title is distinct from a catalog track's title. For catalog playback,
 `/play`'s successful reply and private `/now` show the audible track's title, artist,
@@ -403,12 +475,13 @@ mixing risk; it is **not** a legal conclusion that fades/truncation are permitte
 | ND alternative | Tradeoff and approval needed |
 | --- | --- |
 | Allow ND with sequential transitions, as #117 recommends | More candidate tracks; a deliberate overlap exception and possibly an audible gap. Requires approval of the exact fade/skip/volume behavior and changes to M5's crossfade criteria. |
-| Exclude ND until use is resolved | Preserves crossfade behavior for eligible licenses, but may harm relevance. Requires #116 results scored with the proposed eligible-license set. |
+| Exclude ND until use is resolved | Preserves crossfade behavior for eligible licenses, but may harm relevance. Requires a separate eligible-catalog coverage/relevance disposition; #116's qualitative acceptance does not establish fit for that subset. |
 | Obtain appropriate rights/clarification for overlap | May support crossfades and more tracks; needs specific reliable permission and any separate cost/vendor decision. No contact or purchase is authorized here. |
 
 Recommend the first alternative only if the maintainer establishes its use is
 acceptable and accepts the product exception; otherwise exclude ND and reassess
-relevance before a go. Unknown licenses fail closed. The exact version allowlist and
+eligible-catalog coverage/relevance before accepting the runtime catalog policy.
+Unknown licenses fail closed. The exact version allowlist and
 ShareAlike compatibility/attribution for overlap also need approval; API license
 flags alone are insufficient. No blanket claim that “CC licensed” authorizes mixing,
 DAVE transport, the operator's use or all supplied notice requirements is made.
@@ -429,24 +502,26 @@ accepted behavior before code uses it. No accepted ADR is edited by this proposa
 
 ### Evidence and decisions required before acceptance
 
-Keep these fields open until actual evidence and explicit decisions are linked on
-issue #117. “Pending” is not a passing result.
+The recorded M4/research dispositions resolve those specific gates. Keep the
+remaining fields open until actual evidence and explicit decisions are linked on
+issue #117. A waived research deliverable is not a measured pass or adoption.
 
 | Field | Current evidence / acceptance condition | Owner |
 | --- | --- | --- |
-| M4 readiness and research start | Pending. Confirm ready-to-ship on #4/#116 and record the actual two-day start. | Maintainer/operator, coordinated by primary |
-| Relevance and refusal controls | Offline preparation only. Link the approved final manifest digest/model/pass mark, about ten additional non-personal requests, completed real ratings/results and a go recommendation. Proposed pass: 2/3 of music cases have ≥3 fitting top-five tracks, separate refusal controls; not yet approved. Recheck eligibility after license policy is settled. | #116 maintainer/operator |
-| Streams and service failures | Pending. Record real mp31/mp32 sizes/formats, latency, sanitized error-envelope behavior, redirects and credential propagation; establish approved URL/redirect bounds without posting URLs/credentials. | #116, informs #118/#124 |
+| M4 readiness and research start | Established by [M4's recorded dispositions](https://github.com/slackysoba/sobafm/issues/4#issuecomment-6097955604) and the [frozen research protocol](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6104782646). Original 10 October start and missed 12 October deadline remain recorded above. | Maintainer/operator, coordinated by primary |
+| Relevance and refusal controls | [D1](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6104976415): all 48 classifications pass; 38/42 music cases have at least three candidates. [Maintainer acceptance](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6145275917) closes #116 qualitatively and waives remaining structured ratings/export and calculated go/no-go. Frozen 28/42 audible-fit rule remains unmeasured; ratings/summary stay unchanged. Settle eligible-catalog coverage separately using the subset caveat above. | Maintainer on #117; #126 quality follow-through |
+| Streams and service failures | [D1](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6104976415) supplies real metadata/HEAD outcomes and sanitized discovery results, with missing observations retained as unavailable. No audio GET/decoded-format/playback proof or explanation of earlier validation failures follows. Approved runtime URL/redirect bounds and stream/decode qualification remain open. | Retained #116 evidence informs #118/#124/#125 |
 | Service, license and ND policy | Pending. Approve non-commercial use, exact license/version allowlist (including SA), fade/skip/overlap behavior, attribution obligations and any ND crossfade/exit-criterion exception. Recheck current official terms before acceptance. | Maintainer on #117 |
 | Track attribution surface | Pending. Approve on-demand/current-track attribution or a persistent/per-track surface with precise permission/privacy implications; verify every played track remains attributable. | Maintainer on #117; #128/#130 |
 | Product semantics | Pending. Accept indefinite catalog/lyrics, duration scope, `/skip` readiness/cooldown, missing-id registration and same-mode relative context, or record chosen alternatives. | Maintainer on #117; #119 |
-| Bounded audio envelope | No catalog measurement. Before decision acceptance, use #116/#118 to document a feasible numeric envelope for encoded input, chunks/in-flight output, duration and decode time, plus proposed retry/page/history caps. Account for actual retained Lyria states, including four-buffer rotation, without assuming three or four is an enforced count maximum. Align the sibling #118 reservations with that envelope. Runtime proof of combined <40 MB at rotation/transitions/reconnect/error/cancellation is a later #121/#125/#127/#131 gate, not a prerequisite that requires implementing before issue #117. | #116/#118 and maintainer; later #119/#121/#125/#127/#131 |
-| Decoder distribution/isolation | #118's [feasibility evidence](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6032402289) is provisional: PyAV's inspected bundle has GPL obligations; miniaudio lacks the required ARM64 wheel; subprocess feasibility needs binary/license/isolation approval. No decoder selected. | Maintainer on #118 |
-| Independent review and acceptance | Primary requests independent proposal review and records dispositions; required checks pass on final head. Maintainer settles open choices, changes Proposed to Accepted in the reviewed proposal and merges it explicitly. No agent merge or runtime adoption in this preparation slice. | Primary and maintainer |
+| Bounded audio envelope | No combined playback qualification. Before decision acceptance, use retained #116 metadata/HEAD and #118 decoder evidence to document a feasible numeric envelope for encoded input, chunks/in-flight output, duration and decode time, plus proposed retry/page/history caps. Account for actual retained Lyria states, including four-buffer rotation, without assuming three or four is an enforced count maximum. Align the sibling #118 reservations with that envelope. Runtime proof of combined <40 MB at rotation/transitions/reconnect/error/cancellation is a later #121/#125/#127/#131 gate, not a prerequisite that requires implementing before issue #117. | #116/#118 and maintainer; later #119/#121/#125/#127/#131 |
+| Decoder distribution/isolation | #118's [selected minimal LGPL FFmpeg assessment](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6068002879) and [focused evaluator correction](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6068937334) are factual preparation only. Ordinary source-mode containment, total accounting, compiler-free supported-platform installation, source-to-binary/rebuild/replacement and distribution qualification remain open. No runtime decoder adoption is recorded. | Maintainer on #118 |
+| Independent review and acceptance | [Prior preparation review and corrected-head recheck](https://github.com/slackysoba/sobafm/pull/156#pullrequestreview-5449250778) are complete. Primary requests independent review of this refreshed proposal and records dispositions; required checks pass on its final head. Maintainer settles open choices, changes Proposed to Accepted in the reviewed proposal and merges it explicitly. No agent merge or runtime adoption in this preparation slice. | Primary and maintainer |
 
-Issue #117 remains Blocked with `maintainer-approval` for the final decision. #116's live
-measurement/go-no-go and #118 remain incomplete; #119–#132 remain Backlog. A draft
-PR or successful offline tests do not bypass these gates.
+Issue #117 remains Blocked with `maintainer-approval` for the final decision. #116
+is closed under its narrow qualitative acceptance and structured-rating waiver;
+the #118 decision remains unaccepted, and #119–#132 stay gated on their actual dependencies.
+A draft PR, research waiver or successful offline tests do not bypass adoption gates.
 
 ### Follow-on verification and ownership
 
@@ -484,7 +559,8 @@ These are future gated acceptance checks, not experiments performed by this draf
 
 ## Revisit triggers
 
-- #116 fails the approved mark or the eligible-license set changes its outcome.
+- New quality evidence undermines the accepted research direction, or an eligible-license
+  policy materially changes coverage/relevance; #116's numerical mark remains unmeasured.
 - Jamendo changes terms, availability, formats, license metadata, quota or price.
 - Legal/rights guidance changes the allowed transitions or attribution surface.
 - The selected decoder cannot satisfy the combined footprint, isolation,
