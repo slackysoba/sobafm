@@ -1,8 +1,8 @@
-# Catalog decoder offline feasibility evidence
+# Catalog decoder feasibility evidence
 
-This is the 2026-10-07 preparation evidence for [#118](https://github.com/slackysoba/sobafm/issues/118) and [Proposed ADR-0007](decisions/0007-bound-catalog-audio-decoding.md). It extends [the existing candidate survey](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6032402289) with bounded synthetic conversion/failure measurements. It selects no runtime decoder and establishes no license/security exception. #116's actual catalog evidence and live measurement trigger remain outstanding.
+Evidence refreshed 2026-10-15 for [#118](https://github.com/slackysoba/sobafm/issues/118) and [Proposed ADR-0007](decisions/0007-bound-catalog-audio-decoding.md). The original 7 October Windows control and its measurement record are preserved below. Later sections reconcile the separate 8 October C1 Linux assessments, D1 metadata and 13 October qualitative research acceptance. The [candidate survey](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6032402289) remains dated evidence, not a new survey. No runtime decoder, distribution choice or policy exception is accepted.
 
-## Artifact and tested platform
+## Original Windows control: artifact and tested platform
 
 - **Executed:** Windows 11 x86-64, build 26200; CPython 3.14.7, `ProactorEventLoop`. One local machine; no Linux execution or container-image measurement.
 - **Provider:** [BtbN dated release](https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-10-07-13-07), provider tag commit `9acad4a9ef1583096af7836cc1e9c8cbcb4d3950`.
@@ -40,7 +40,7 @@ Child memory is observed via [`GetProcessMemoryInfo`](https://learn.microsoft.co
 
 Every case has a bounded deadline (30 seconds, except the 0.25-second idle test). Deliberate cancel/kill occurs 0.35 seconds after spawn. The final harness cancels/joins every owned task, terminates the child, closes stdin, drains/discards remaining output/errors to EOF in bounded chunks and waits for exit. It ran with `ResourceWarning` promoted to errors and completed without a warning/traceback. An earlier long run reached its 30-second deadline with per-read pacing; early harness versions also exposed unclosed parent pipe transports. Those attempts are preserved, and neither is counted as a successful complete-stream or clean-lifecycle result.
 
-## Actual results
+## Original Windows control: actual results
 
 The table records the final corrected run. PCM byte counts are bytes accepted by the sample counter before the boundary, including a current read waiting for queue space; a cap-crossing read is excluded. They are not padded Discord frames. Timing describes this host/run only; there is no universal latency or memory guarantee.
 
@@ -67,6 +67,40 @@ For the complete 240-second case:
 
 The event-loop heartbeat's largest observed gap across final cases was about 30 ms. There was no Discord player/mixer in this harness, so that observation does not prove playback-thread latency or NFR-2. No OS Job Object/cgroup limit, OOM event, hostile corpus, full cancellation matrix, real-time crossfade or platform concurrency qualification was run.
 
+## Selected C1 Linux assessment and remaining qualification
+
+The maintainer [selected minimal LGPL FFmpeg assessment only](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6064977166). M118-LGPL-9.0.2-C1 uses official FFmpeg 9.0.2 commit `946fcce07b6dcd0331c8cc609192aeff5e1924f8`, source archive SHA-256 `c8a74e6eff0d38850403ee8eff3a95721984b45a3cd25f92b8905886571fc1be`. The requested MP3float/MPEG parser/MP3 demux/PCM s16le/pipe configuration uses shared libraries, disables network/GPL/nonfree/version3, and targets LGPL-2.1-or-later. It is distinct from the older broad Windows LGPLv3 control above; its executed platform was Linux AMD64 under a non-root, network-disabled assessment container.
+
+| Completed assessment | Observed result and limit |
+| --- | --- |
+| [Initial build and static review](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6066397238) | Exact upstream tree and installed hashes/configuration/imports checked. Initial RUNPATH was wrong; the failure is retained, not an install pass. Six original ELF files totalled 2,396,784 bytes excluding runtime dependencies/notices/source/packaging; this is not an image delta or total footprint. |
+| [Behavior](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6066661962) | Eleven candidate cases plus two separate TERM-resistant controls; full mono/stereo yielded 2,307,340/46,082,716 PCM bytes and healthy recovery matched. This earlier package used an explicit loader path. Truncated MP3 exited zero after 1.96025 seconds; frame remainders still need assembly/EOF policy. |
+| [Corrected relocation and smoke](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6067186434) | Rebuilt archive SHA-256 `3ca5e16f1219b6f2d344bc201828a7ef332da3e4ebe04db5bb63627ac8514d02`; all 182 installed hashes checked. Startup/own-library resolution succeeded after relocation, including a path with spaces, without loader overrides; missing-library negative control failed as expected. One mono smoke matched the prior digest. This was not a repeat of the full matrix or clean-host qualification. |
+| [Source/support/notice inventory](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6068002879) | Source/build/install/dependency/support/notice records independently matched. IJG/ISC/MIT/zlib-derived material and compiler/runtime support remain relevant. Matching GCC/glibc originals and Debian patches are retained; descriptor signatures and installed source-to-object mapping remain unverified. Full shipped-runtime SBOM, recipient rebuild/replacement and durable source/update/distribution ownership remain open. |
+| [Limited resource observations](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6068002879) | Six cases under an experimental aggregate 128 MiB container envelope recorded zero memory/OOM/PID event changes. Cumulative charge peak 29,036,544 bytes includes setup/supervision. A separate touched-allocation control reached 134,217,728 bytes with child exit -9 and one OOM kill; supervisor exit zero was enforcement evidence, not workload success. This is not strict per-child, ordinary-source, whole-host, native-audio or NFR-3 qualification. |
+| [Focused evaluator correction](https://github.com/slackysoba/sobafm/issues/118#issuecomment-6068937334) | Original shield/gather diagnostic and results retained. Corrected structured-concurrency controls joined 13 tasks; focused unchanged-candidate idle/cancellation/golden-mono confirmation joined 24 tracked tasks and nine cleanup futures, with zero final diagnostics after quiescence/shutdown/GC. This closes only the demonstrated evaluator gap for those paths, not every external-caller cancellation/error/cleanup interruption or production lifecycle. |
+
+These completed observations need no unchanged build, broad resource study or relocation smoke rerun. Linux ARM64 native execution, a selected C1 Windows build, compiler-free clean installation and ordinary source/container containment remain unqualified. Neither the Windows control nor container metadata fills those gaps. Image/layer delta, exact resource enforcement semantics, native audio reservations and all-source accounting remain separate from measured executable size or aggregate charge.
+
+## Research disposition and catalog technical evidence
+
+M4's prerequisite is recorded by the [stable v1.0.0 delivery disposition](https://github.com/slackysoba/sobafm/issues/4#issuecomment-6097955604), with its specific exceptions and incomplete/unmeasured checks preserved. It is not a decoder or broader NFR pass.
+
+The [D1 outcome](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6104976415) ran on source `a1e463903fa289f215ad2fd8d0d106471f39db3e`: all 48 cases executed and classifications passed, yielding 189 track appearances/180 distinct IDs. Thirty-eight of all 42 music cases returned at least three tracks; four returned none and remain in the denominator. Report file SHA-256 is `0f29ddc0d1dcb143011917b661364cf400b8c54e66835590c5bde1d0b39a41c4`; canonical report digest is `56f20ba83f405db084dfae3ad381518ac4142e050ef218442e6e74a4db8ef1e8`. Earlier partial/fatal reports remain separate; their original causes are unproven.
+
+D1 recorded 378 stream observations: mp31 had 189 successes; mp32 had 126 successes and 63 opaque errors. The 315 successes retained single HTTP 200 HEAD observations; opaque errors retained no status/length, and false flags prove no absence. Missing content length stays unavailable. Stream labels and HEAD metadata do not prove an audio GET, actual MP3 bitstream/sample rate/channels, decoded completeness, playback or the suitability of the candidate 16 MiB/900-second limits. No audio was fetched, decoded or played in D1.
+
+Across the 189 track appearances, duration metadata ranges from 16 to 2,111 seconds, with two appearances above the candidate 900-second cap. The HEAD size metadata is:
+
+| Format | Known lengths | Unavailable | Known byte range | Appearances above candidate 16 MiB |
+| --- | ---: | ---: | --- | ---: |
+| mp31 | 189 | 0 | 198,348–25,364,992 | 2 |
+| mp32 | 126 | 63 | 666,487–37,842,699 | 1 |
+
+These are appearance counts, not unique tracks, catalog prevalence or filtered/license-eligible coverage. Duration and size outlier counts may overlap and are not summed. The proposed caps would exclude some of this returned sample on metadata checks; accepting those exclusions remains a decision. HEAD sizes are not observed GET byte counts, and the unavailable mp32 lengths remain unknown. No cap, delivery or decoder-memory qualification follows.
+
+On 13 October the maintainer [accepted the research premise qualitatively and waived structured listening/export and calculated go/no-go](https://github.com/slackysoba/sobafm/issues/116#issuecomment-6145275917), closing #116. The original deadline, 2026-10-12T23:40:29.544021Z, was missed and is not reset. Preserved ratings remain null; the official frozen summary remains `complete=false` / `recommendation=pending`. The original numerical criterion, 28 of 42 music cases with three fitting tracks in the top five, remains unmeasured. The maintainer's first-ten weak-fit feedback feeds #117/#126 without per-track scores or agent hearing. This resolves research disposition, not decoder/platform/distribution/legal acceptance or later filtered catalog quality.
+
 ## Station-wide interpretation
 
 These decoder-only measurements do not establish a station-wide PCM ceiling or available native-memory headroom. ADR-0004's historical estimate of three nominal 60-second buffers gives 34,560,000 PCM bytes and a nominal 5,440,000-byte difference from NFR-3; neither is a demonstrated current worst-case allowance. The [supplemental independent station review](https://github.com/slackysoba/sobafm/pull/157#pullrequestreview-5449091514) reports four retained nonempty Lyria buffers of 8/60/2/2 seconds with two open producers, totaling 13,824,000 PCM bytes. That fixture does not demonstrate an NFR-3 overrun. The proposed future byte envelope needs qualification across all retained/retired/spare/filling/incoming sources, receive overshoot and transitions between modes while preserving current Lyria behavior or obtaining approval for a material change.
@@ -84,4 +118,4 @@ The small [measurement record](decoder-feasibility-results.json) contains saniti
 | `evaluation-v3.log` | `6b4af21810bfe12047993d25a3272d147aa16fa620288a898a174b10ce2ed234` |
 | `version-license.txt` | `1d8dc9f950a5a656e745ab0fee9baf67862e05d09ffea258c735e60b97b0e383` |
 
-The proposal's [adoption gates](decisions/0007-bound-catalog-audio-decoding.md#consequences) assign the remaining #116 measurements to its operator/maintainer, licensing/build/cap choices to the maintainer on #118, and actual three-platform/native-memory/image qualification to a build evaluator after those choices. The primary coordinates those gates and independent review. Runtime integration remains gated on accepted decisions.
+The proposal's [adoption gates](decisions/0007-bound-catalog-audio-decoding.md#consequences) retain separate owners for policy/distribution, source-to-binary/SBOM/notices/rebuild/replacement/update evidence, compiler-free platform/source containment, shared audio reservations and HTTP/duration/EOF completion. Unknown-duration behavior and the one-second allowance remain proposed; zero decoder exit is insufficient, and streaming may expose a prefix before a later failure is detected. Actual catalog audio qualification needs separate bounded authority. The primary coordinates independent review and accepted decisions before #119/#125 runtime work. This factual refresh changes no historical measurements or committed results JSON and runs no new decoder, audio or provider experiment.
