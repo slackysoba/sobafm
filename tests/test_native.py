@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+from scripts.package_ffmpeg import source_record
+from scripts.qualify_native_runtime import MARKER, stage_replacement
 from sobafm.native import (
     NativeSupplyError,
     Target,
@@ -300,3 +302,83 @@ def test_no_path_fallback_or_untrusted_digest(tmp_path: Path) -> None:
         verify_native_runtime(Path("runtime"), expected, target="linux-amd64")
     with pytest.raises(NativeSupplyError, match="trusted native manifest"):
         verify_native_runtime(root, "", target="linux-amd64")
+
+
+def test_recipient_replacement_keeps_original_source_archive_identity(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    data, _ = package(root)
+    library = root / "lib/libavutil.so.61.1.102"
+    library.parent.mkdir()
+    library.write_bytes(binary("linux-amd64") + b"original library")
+    source_package = {
+        "SPDXID": "SPDXRef-Source-original",
+        "name": "ffmpeg-9.0.2.tar.xz",
+        "sourceInfo": "Exact original source archive",
+    }
+    derived = {"SPDXID": "SPDXRef-Component-derived", "name": "ffmpeg-adler32"}
+    sbom = {
+        "documentNamespace": "https://example.invalid/sbom",
+        "files": [{"fileName": "./lib/libavutil.so.61.1.102"}],
+        "packages": [
+            source_package,
+            derived,
+            {
+                "SPDXID": "SPDXRef-Component-0",
+                "name": "ffmpeg",
+                "versionInfo": "9.0.2",
+                "sourceInfo": "Selected upstream contribution",
+            },
+        ],
+        "relationships": [],
+    }
+    (root / "sbom.spdx.json").write_text(json.dumps(sbom))
+    for path in (library, root / "sbom.spdx.json"):
+        relative = path.relative_to(root).as_posix()
+        data["files"].append(
+            {
+                "path": relative,
+                "sha256": digest(path.read_bytes()),
+                "size": path.stat().st_size,
+                "binary": path == library,
+            }
+        )
+    data["components"][0]["files"].append(library.relative_to(root).as_posix())
+    packages = tmp_path / "packages"
+    packages.mkdir()
+    sources = packages / "sources.tar.xz"
+    sources.write_bytes(b"complete source bundle fixture")
+    data["source_bundle"] = source_record(sources).model_dump()
+    expected = save_manifest(root, data)
+    (packages / "index.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "target": "linux-amd64",
+                "status": "candidate-unqualified",
+                "catalog_ready": False,
+                "manifest_sha256": expected,
+                "runtime": {"name": "runtime.tar.xz", "sha256": "a" * 64, "size": 1},
+                "sources": data["source_bundle"],
+            }
+        )
+    )
+    changed = tmp_path / "changed.so"
+    changed.write_bytes(binary("linux-amd64") + b"changed library")
+    patch, changed_source = tmp_path / "recipient-change.patch", tmp_path / "version.modified.c"
+    patch.write_bytes(b"exact recipient source patch")
+    changed_source.write_bytes(b"exact changed source")
+    output = tmp_path / "recipient"
+    stage_replacement(root, packages, changed, patch, changed_source, output)
+    updated = json.loads((output / "runtime/sbom.spdx.json").read_bytes())
+    assert updated["packages"][:2] == [source_package, derived]
+    assert updated["packages"][2]["versionInfo"] == "9.0.2" + MARKER
+    assert updated["relationships"] == [
+        {
+            "spdxElementId": "SPDXRef-Component-0",
+            "relationshipType": "GENERATED_FROM",
+            "relatedSpdxElement": "SPDXRef-Source-" + digest(patch.read_bytes()),
+        }
+    ]
+    manifest = json.loads((output / "runtime/manifest.json").read_bytes())
+    assert manifest["components"][0]["version"] == "9.0.2" + MARKER
+    assert manifest["components"][0]["sources"][-1] == source_record(patch).model_dump()
