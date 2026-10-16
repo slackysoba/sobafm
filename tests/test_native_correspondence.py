@@ -158,6 +158,7 @@ def test_recipient_tools_manifest_covers_modules_lock_recipe_and_instructions(
         "native/ffmpeg/replace-library.sh",
         "native/ffmpeg/qualify-ci.sh",
         "native/ffmpeg/security-review.json",
+        "native/ffmpeg/RECIPIENT.md",
     ):
         source = project / relative
         source.parent.mkdir(parents=True, exist_ok=True)
@@ -174,6 +175,9 @@ def test_recipient_tools_manifest_covers_modules_lock_recipe_and_instructions(
     }
     assert actual == {item["path"] for item in inventory["files"]}
     assert "RECIPIENT.md" in actual
+    assert (destination / "RECIPIENT.md").read_bytes() == (
+        project / "native/ffmpeg/RECIPIENT.md"
+    ).read_bytes()
     for item in inventory["files"]:
         data = (destination / item["path"]).read_bytes()
         assert len(data) == item["size"]
