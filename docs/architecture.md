@@ -370,6 +370,21 @@ request starts fresh, with that limitation explained. Validate before a source
 action. Both modes translate artist/work names into descriptive terms and reject
 non-music/injection classifications or safety refusals without source calls.
 
+`Interpreter[P]` shares the call, ten-second timeout, safety checks, validation and
+redacted failure logging. A `Task[P]` supplies the instruction, the Pydantic
+`Interpretation[P]` answer model, a failure policy returning `Result[P]`, and a
+refinement merge. `GENERATED_TASK` holds the existing generated instruction,
+`MusicPlan` answer, raw-text fallback and merge of omitted/unset `KEPT_FIELDS`.
+The two-argument `Interpreter(client, model)` still selects this task; another
+task is passed as the third argument. The generated instruction and schema sent
+to Gemini remain unchanged. Shared configuration keeps minimal thinking, tools
+disabled and the existing no-redirect HTTP options.
+
+The failure policy can instead return `UNAVAILABLE` with no plan and the safe
+failure category, allowing a caller to preserve current music without creating
+a raw-text query. This seam does not implement the catalog task or search; those
+belong to #126. Task-specific configuration stays with each interpreter instance.
+
 The generated interpreter preserves ADR-0002's behavior:
 
 - **Input:** the request text and the current plan, sent as data in the user turn. The system instruction distills the [Lyria prompt guide](https://ai.google.dev/gemini-api/docs/lyria-prompt-guide), asks for instrumental descriptors in English, and has names of artists and works translated into descriptive terms.
