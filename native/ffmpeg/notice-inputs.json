@@ -270,6 +270,90 @@
       "targets": [
         "linux-arm64"
       ]
+    },
+    {
+      "archive": "gcc-14_14.2.0.orig.tar.gz",
+      "archive_sha256": "e162a5ef3f0077ecae598c6556908d2ab80841532df3398072a96a6df6e6aa29",
+      "member": "gcc-14.2.0/libgcc/soft-fp/floatunsitf.c",
+      "nested": "gcc-14-14.2.0/gcc-14.2.0-dfsg.tar.xz",
+      "nested_archive_sha256": "8a4a42c41cabb37b61de3a5ef3ef62b4e10b79decfb504705b5cefa092da765f",
+      "nested_archive_size": 89448352,
+      "path": "gcc/libgcc/soft-fp/floatunsitf.c",
+      "sha256": "fb16efa44e60d410b55ed5402a2cc0aff16364dcca1c6c67a5a1b602fd3ddbf6",
+      "size": 1610,
+      "targets": [
+        "linux-arm64"
+      ]
+    },
+    {
+      "archive": "gcc-14_14.2.0.orig.tar.gz",
+      "archive_sha256": "e162a5ef3f0077ecae598c6556908d2ab80841532df3398072a96a6df6e6aa29",
+      "member": "gcc-14.2.0/libgcc/soft-fp/trunctfdf2.c",
+      "nested": "gcc-14-14.2.0/gcc-14.2.0-dfsg.tar.xz",
+      "nested_archive_sha256": "8a4a42c41cabb37b61de3a5ef3ef62b4e10b79decfb504705b5cefa092da765f",
+      "nested_archive_size": 89448352,
+      "path": "gcc/libgcc/soft-fp/trunctfdf2.c",
+      "sha256": "72ec9b9f464a5f30d2ee1fcec8eb04e2ee7577289b49d5d5d2b6da5b688128bd",
+      "size": 1761,
+      "targets": [
+        "linux-arm64"
+      ]
+    },
+    {
+      "archive": "gcc-14_14.2.0.orig.tar.gz",
+      "archive_sha256": "e162a5ef3f0077ecae598c6556908d2ab80841532df3398072a96a6df6e6aa29",
+      "member": "gcc-14.2.0/libgcc/soft-fp/extenddftf2.c",
+      "nested": "gcc-14-14.2.0/gcc-14.2.0-dfsg.tar.xz",
+      "nested_archive_sha256": "8a4a42c41cabb37b61de3a5ef3ef62b4e10b79decfb504705b5cefa092da765f",
+      "nested_archive_size": 89448352,
+      "path": "gcc/libgcc/soft-fp/extenddftf2.c",
+      "sha256": "3319c63778099151d94760052bf9b5afa2cbab762a0ec394331661094653f95f",
+      "size": 1783,
+      "targets": [
+        "linux-arm64"
+      ]
+    },
+    {
+      "archive": "gcc-14_14.2.0.orig.tar.gz",
+      "archive_sha256": "e162a5ef3f0077ecae598c6556908d2ab80841532df3398072a96a6df6e6aa29",
+      "member": "gcc-14.2.0/libgcc/soft-fp/addtf3.c",
+      "nested": "gcc-14-14.2.0/gcc-14.2.0-dfsg.tar.xz",
+      "nested_archive_sha256": "8a4a42c41cabb37b61de3a5ef3ef62b4e10b79decfb504705b5cefa092da765f",
+      "nested_archive_size": 89448352,
+      "path": "gcc/libgcc/soft-fp/addtf3.c",
+      "sha256": "23a4e6349d2d27435736acc7f14241f1277acca5a27e3545e67267610bdea8fa",
+      "size": 1693,
+      "targets": [
+        "linux-arm64"
+      ]
+    },
+    {
+      "archive": "gcc-14_14.2.0.orig.tar.gz",
+      "archive_sha256": "e162a5ef3f0077ecae598c6556908d2ab80841532df3398072a96a6df6e6aa29",
+      "member": "gcc-14.2.0/libgcc/soft-fp/soft-fp.h",
+      "nested": "gcc-14-14.2.0/gcc-14.2.0-dfsg.tar.xz",
+      "nested_archive_sha256": "8a4a42c41cabb37b61de3a5ef3ef62b4e10b79decfb504705b5cefa092da765f",
+      "nested_archive_size": 89448352,
+      "path": "gcc/libgcc/soft-fp/soft-fp.h",
+      "sha256": "e8183cf960a0771a80d5e33e58ea6d64150ed213d3e107b3cdbc88f5f921cd08",
+      "size": 9840,
+      "targets": [
+        "linux-arm64"
+      ]
+    },
+    {
+      "archive": "gcc-14_14.2.0.orig.tar.gz",
+      "archive_sha256": "e162a5ef3f0077ecae598c6556908d2ab80841532df3398072a96a6df6e6aa29",
+      "member": "gcc-14.2.0/libgcc/soft-fp/multf3.c",
+      "nested": "gcc-14-14.2.0/gcc-14.2.0-dfsg.tar.xz",
+      "nested_archive_sha256": "8a4a42c41cabb37b61de3a5ef3ef62b4e10b79decfb504705b5cefa092da765f",
+      "nested_archive_size": 89448352,
+      "path": "gcc/libgcc/soft-fp/multf3.c",
+      "sha256": "844b3e9141e55278efeaef5b9d9570497cc13264a5895e3f1fbee1666eea9008",
+      "size": 1669,
+      "targets": [
+        "linux-arm64"
+      ]
     }
   ],
   "schema_version": 1
