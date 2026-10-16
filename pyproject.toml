@@ -68,7 +68,7 @@ select = [
 "tests/eval/**" = ["T20"]  # the evaluation set reports its results
 
 [tool.pyright]
-include = ["src", "tests", "scripts"]
+include = ["src", "tests", "scripts", "native/ffmpeg"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 venvPath = "."

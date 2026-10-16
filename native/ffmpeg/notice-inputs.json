@@ -1,0 +1,276 @@
+{
+  "files": [
+    {
+      "archive": "glibc_2.41.orig.tar.xz",
+      "archive_sha256": "f24aa441021121a79266f0d75242706cab8843a47901fefe74527491807f1998",
+      "member": "glibc-2.41/sysdeps/x86_64/start.S",
+      "path": "glibc/sysdeps/x86_64/start.S",
+      "sha256": "b7da99f854538a38e13da5c24cfdd977fcfbd2588606ccf14b03c50b9f457cd4",
+      "size": 4431,
+      "targets": [
+        "linux-amd64",
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "glibc_2.41.orig.tar.xz",
+      "archive_sha256": "f24aa441021121a79266f0d75242706cab8843a47901fefe74527491807f1998",
+      "member": "glibc-2.41/sysdeps/x86_64/crti.S",
+      "path": "glibc/sysdeps/x86_64/crti.S",
+      "sha256": "2f1d46e561994731aeefb897fb4e3f18dcf1f6cce99c6045185651e46669248d",
+      "size": 2805,
+      "targets": [
+        "linux-amd64",
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "glibc_2.41.orig.tar.xz",
+      "archive_sha256": "f24aa441021121a79266f0d75242706cab8843a47901fefe74527491807f1998",
+      "member": "glibc-2.41/sysdeps/x86_64/crtn.S",
+      "path": "glibc/sysdeps/x86_64/crtn.S",
+      "sha256": "7a8784a30733bb9ee726e8877f79d6ac8193632f80d14adfeaf44daf854e33d0",
+      "size": 1971,
+      "targets": [
+        "linux-amd64",
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "glibc_2.41.orig.tar.xz",
+      "archive_sha256": "f24aa441021121a79266f0d75242706cab8843a47901fefe74527491807f1998",
+      "member": "glibc-2.41/sysdeps/unix/sysv/linux/sys/ttydefaults.h",
+      "path": "glibc/sys/ttydefaults.h",
+      "sha256": "23dbc1caef6d19508707ffb8aef4498beba70340c87440dfafcf4f3c9dd6589f",
+      "size": 3568,
+      "targets": [
+        "linux-amd64",
+        "linux-arm64",
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "linux_6.12.111.orig.tar.xz",
+      "archive_sha256": "716516cd85c3ff9e5c197203730b698ad7c0fb4c6c2d1d1e44ab3ced2faba178",
+      "member": "linux-6.12.111/LICENSES/exceptions/Linux-syscall-note",
+      "path": "linux/Linux-syscall-note",
+      "sha256": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f",
+      "size": 1258,
+      "targets": [
+        "linux-amd64",
+        "linux-arm64",
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-headers/crt/stdarg.h",
+      "path": "mingw/selected-headers/stdarg.h",
+      "sha256": "a8d9a1579cba5e022684e5b01b6a210a3939a6513f3a5edb7590bd3fb5b18f4b",
+      "size": 4456,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-libraries/winpthreads/include/pthread_signal.h",
+      "path": "mingw/selected-headers/pthread_signal.h",
+      "sha256": "46915f25fb94f61ac4bdfa9b38736e6524a5b36bc42b00f7e87526fbc24287a6",
+      "size": 1304,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-libraries/winpthreads/include/pthread_time.h",
+      "path": "mingw/selected-headers/pthread_time.h",
+      "sha256": "ea42558733f36df8473f10b91a86c95d48fe32abbd0469067ea319811020d568",
+      "size": 3055,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-libraries/winpthreads/include/pthread_unistd.h",
+      "path": "mingw/selected-headers/pthread_unistd.h",
+      "sha256": "920925577b990df78791e757b557bf83c2c4f9a6b91e87b3178a97258b011da2",
+      "size": 5012,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/COPYING",
+      "path": "mingw/COPYING",
+      "sha256": "99a69660981156c21336fdb5661f89341b013c94e4bf9e1c7467b4745718397f",
+      "size": 2326,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt",
+      "path": "mingw/COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt",
+      "sha256": "e9b2dc02451ea29092a1f25fa0f3c07207ed421f1807dffb0c4e6dce69dee7bd",
+      "size": 10936,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/DISCLAIMER",
+      "path": "mingw/DISCLAIMER",
+      "sha256": "039ed6b4f31bb7fb97e733170b58cc435335352e4745734fcfd113877fdaf340",
+      "size": 2245,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/DISCLAIMER.PD",
+      "path": "mingw/DISCLAIMER.PD",
+      "sha256": "87f33608570312a0f2a9745edcb2527275df813b13982e8c3b3f893d88a4141a",
+      "size": 454,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-crt/stdio/mingw_pformat.c",
+      "path": "mingw/selected-crt/stdio/mingw_pformat.c",
+      "sha256": "c2cd491a6e75846d52e3566dd01b73a13c9bb74f52e29e085b40838e1204be41",
+      "size": 107926,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-crt/gdtoa/dmisc.c",
+      "path": "mingw/selected-crt/gdtoa/dmisc.c",
+      "sha256": "e73637f5fe5e171d13ab4ce51671f20af98c2707fe6c3ba4f25c7bcd108e0f85",
+      "size": 4443,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-crt/gdtoa/g__fmt.c",
+      "path": "mingw/selected-crt/gdtoa/g__fmt.c",
+      "sha256": "a88e1635fff22d637e51e9f3d79fa5224f312a49df5dabe282e895151a003934",
+      "size": 4501,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-crt/gdtoa/gdtoa.c",
+      "path": "mingw/selected-crt/gdtoa/gdtoa.c",
+      "sha256": "09ea9686def889450b16910562c5a884e87eee161c52e6c127d373688aac8559",
+      "size": 16665,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-crt/gdtoa/strtodg.c",
+      "path": "mingw/selected-crt/gdtoa/strtodg.c",
+      "sha256": "8d2b5adcd5460558f2e1e8ab559322b7426beef13a39feb1c6527357a8f2f0e7",
+      "size": 19725,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-crt/gdtoa/strtodnrp.c",
+      "path": "mingw/selected-crt/gdtoa/strtodnrp.c",
+      "sha256": "acfa3b302c520bbe728f0d1cb93fd39e97c08b6cee0822ddba8ee80beb8c47cb",
+      "size": 2982,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-crt/stdio/mingw_vfprintf.c",
+      "path": "mingw/selected-crt/stdio/mingw_vfprintf.c",
+      "sha256": "e1aad22ed6191e55596c4b06316f5d3396f0a8ef2551fd9bb5f04e07ee5b8846",
+      "size": 2438,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "mingw-w64_12.0.0.orig.tar.bz2",
+      "archive_sha256": "cc41898aac4b6e8dd5cffd7331b9d9515b912df4420a3a612b5ea2955bbeed2f",
+      "member": "mingw-w64-v12.0.0/mingw-w64-crt/stdio/mingw_vsnprintf.c",
+      "path": "mingw/selected-crt/stdio/mingw_vsnprintf.c",
+      "sha256": "175d62a404a3616d275e9804b5cb661b81d981dec730fc5d31df57fd66bde130",
+      "size": 1860,
+      "targets": [
+        "windows-amd64"
+      ]
+    },
+    {
+      "archive": "glibc_2.41.orig.tar.xz",
+      "archive_sha256": "f24aa441021121a79266f0d75242706cab8843a47901fefe74527491807f1998",
+      "member": "glibc-2.41/sysdeps/aarch64/crti.S",
+      "path": "glibc/sysdeps/aarch64/crti.S",
+      "sha256": "2df9cfdbade782f8e58eb80cc47a326b21df51c37d6312115d67b94c2a5606e1",
+      "size": 3033,
+      "targets": [
+        "linux-arm64"
+      ]
+    },
+    {
+      "archive": "glibc_2.41.orig.tar.xz",
+      "archive_sha256": "f24aa441021121a79266f0d75242706cab8843a47901fefe74527491807f1998",
+      "member": "glibc-2.41/sysdeps/aarch64/crtn.S",
+      "path": "glibc/sysdeps/aarch64/crtn.S",
+      "sha256": "6a5e9015f3b4c340fa61079055d38a7f9736657b66effbe480da78e951c07c6d",
+      "size": 2094,
+      "targets": [
+        "linux-arm64"
+      ]
+    },
+    {
+      "archive": "glibc_2.41.orig.tar.xz",
+      "archive_sha256": "f24aa441021121a79266f0d75242706cab8843a47901fefe74527491807f1998",
+      "member": "glibc-2.41/sysdeps/aarch64/start.S",
+      "path": "glibc/sysdeps/aarch64/start.S",
+      "sha256": "396cd7535451f86c5b6f4455d8d594892e782dcc4635870643e48a888208cae6",
+      "size": 3747,
+      "targets": [
+        "linux-arm64"
+      ]
+    }
+  ],
+  "schema_version": 1
+}

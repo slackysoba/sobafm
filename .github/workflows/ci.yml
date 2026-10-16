@@ -82,12 +82,16 @@ jobs:
           test "$uid" -ne 0
           docker run --rm --platform "$PLATFORM" sobafm:ci python -c "import discord.opus as o; o.Encoder()"
 
+  native:
+    name: Native runtime supply
+    uses: ./.github/workflows/native.yml
+
   # The single required check: fails when any job above fails or is cancelled, so jobs can be
   # added without changing the branch ruleset.
   gate:
     name: ci
     if: always()
-    needs: [check, docs, image]
+    needs: [check, docs, image, native]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}

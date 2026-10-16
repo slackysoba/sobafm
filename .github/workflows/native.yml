@@ -1,0 +1,154 @@
+name: Native FFmpeg packages
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Native supply (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: windows-amd64
+            runner: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Build and inspect paired runtime and source packages
+        env:
+          NATIVE_TARGET: ${{ matrix.target }}
+        run: sh native/ffmpeg/build-ci.sh "$NATIVE_TARGET"
+      - name: Retain paired packages and raw success or failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-${{ matrix.target }}
+          retention-days: 90
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            native-dist/index.json
+            native-dist/footprint.json
+            native-dist/runtime/sbom.spdx.json
+            native-dist/source-materials/component-assessment.json
+            native-dist/*.tar.xz
+            native-dist/*.zip
+            .local/native-ci-${{ matrix.target }}/*.log
+            .local/native-ci-${{ matrix.target }}/*.txt
+            .local/native-ci-${{ matrix.target }}/*.json
+            .local/native-ci-${{ matrix.target }}/*.stderr
+            .local/native-ci-${{ matrix.target }}/out/build-evidence.tar
+            .local/native-ci-${{ matrix.target }}/out/toolchain-notices.tar
+            .local/native-ci-${{ matrix.target }}/work/evidence/**
+            .local/native-ci-${{ matrix.target }}/work/build/config.h
+            .local/native-ci-${{ matrix.target }}/work/build/config_components.h
+            .local/native-ci-${{ matrix.target }}/work/build/ffbuild/config.*
+            .local/native-ci-${{ matrix.target }}/work/recipe/**
+            native-dist/provenance/**
+            native-replacement/runtime/**
+            native-replacement/replacement.json
+            native-replacement/replacement-materials/**
+            native-replacement/recipient-replacement-sources.zip
+            .local/native-ci-${{ matrix.target }}/recipient-out/build-evidence.tar
+            .local/native-ci-${{ matrix.target }}/replacement-out/**
+
+  security:
+    name: Native advisory coverage (${{ matrix.target }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux-amd64, linux-arm64, windows-amd64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-${{ matrix.target }}
+          path: downloaded
+      - name: Record complete native SBOM matches, gaps and raw findings
+        run: |
+          curl --fail --location --retry 3 --connect-timeout 15 --max-time 120 -o osv-scanner https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64
+          echo 'ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108  osv-scanner' | sha256sum --check --strict
+          chmod +x osv-scanner
+          ./osv-scanner --version > native-scanner-version.txt
+          date --utc --iso-8601=seconds > native-scan-started.txt
+          set +e
+          ./osv-scanner scan source --format json --all-packages --all-vulns --lockfile downloaded/native-dist/runtime/sbom.spdx.json > native-scan.json 2> native-scan.stderr
+          result=$?
+          set -e
+          printf '%s\n' "$result" > native-scan-exit.txt
+          uv run --frozen python scripts/record_native_scan.py downloaded/native-dist/runtime/sbom.spdx.json native-scan.json "$result" native-coverage.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: native-security-${{ matrix.target }}
+          retention-days: 90
+          path: |
+            native-scanner-version.txt
+            native-scan-started.txt
+            native-scan-exit.txt
+            native-scan.json
+            native-scan.stderr
+            native-coverage.json
+
+  windows:
+    name: Windows x64 compiler-free installation
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-windows-amd64
+          path: downloaded
+      - name: Install into a fresh spaced path with build tools unavailable
+        shell: pwsh
+        run: |
+          $nativePython = (Resolve-Path '.venv/Scripts/python.exe').Path
+          $env:PATH = "$env:SYSTEMROOT\System32;$env:SYSTEMROOT;$(Split-Path $nativePython)"
+          & $nativePython scripts/check_native_runtime.py install downloaded/native-dist 'installed native runtime'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $manifest = (Get-Content -LiteralPath downloaded/native-dist/index.json -Raw | ConvertFrom-Json).manifest_sha256
+          & $nativePython scripts/check_native_runtime.py smoke 'installed native runtime' $manifest --require-no-compiler > windows-smoke.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $nativePython scripts/qualify_native_runtime.py check-replacement downloaded/native-replacement/runtime downloaded/native-replacement/replacement.json > windows-replacement.json
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: native-windows-installation
+          retention-days: 90
+          path: |
+            windows-smoke.json
+            windows-replacement.json

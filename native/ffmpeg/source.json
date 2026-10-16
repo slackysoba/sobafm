@@ -1,0 +1,19 @@
+{
+  "version": "9.0.2",
+  "commit": "946fcce07b6dcd0331c8cc609192aeff5e1924f8",
+  "git_tree": "f314f188666de54687c464fc975e5ee43fae26e1",
+  "archive": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+  "archive_sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+  "signature_sha256": "d617fd94ea354dadd2a8bb16243d37c44e1e9729b06b6ad58fe30bfb0fa943f2",
+  "key_url": "https://ffmpeg.org/ffmpeg-devel.asc",
+  "public_certificate_sha256": "397b3becedcd5a98769967ff1ff8501ddc89f8368b8f766e4701377d7dbaabe5",
+  "signing_fingerprint": "FCF986EA15E6E293A5644F10B4322F04D67658D8",
+  "source_date_epoch": 1789692057,
+  "patches": [],
+  "security_review_date": "2026-10-15",
+  "security_sources": [
+    "https://ffmpeg.org/download.html",
+    "https://ffmpeg.org/security.html",
+    "https://github.com/FFmpeg/FFmpeg/compare/n9.0.2...release/9.0"
+  ]
+}
