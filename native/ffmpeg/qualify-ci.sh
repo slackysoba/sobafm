@@ -8,7 +8,8 @@ supplier="$PWD/native-dist"
 recipient="$material/recipient"
 uv run --frozen python scripts/qualify_native_runtime.py extract-sources "$supplier" "$recipient" > "$material/recipient-extraction.json"
 tools="$recipient/recipient-tools"
-recipient_python="$PWD/.venv/bin/python"
+uv sync --project "$tools" --locked --no-dev --no-install-project > "$material/recipient-environment.log" 2>&1
+recipient_python="$tools/.venv/bin/python"
 export PYTHONPATH="$tools/src"
 mkdir "$material/recipient-work" "$material/recipient-out"
 set +e

@@ -125,6 +125,7 @@ def stage_recipient_tools(destination: Path, project: Path, frozen_recipe: Path)
         "native/ffmpeg/replace-library.sh",
         "native/ffmpeg/qualify-ci.sh",
         "native/ffmpeg/security-review.json",
+        "native/ffmpeg/RECIPIENT.md",
     )
     shutil.copytree(frozen_recipe, destination / "native/ffmpeg")
     for relative in paths:
@@ -134,33 +135,7 @@ def stage_recipient_tools(destination: Path, project: Path, frozen_recipe: Path)
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    (destination / "RECIPIENT.md").write_text(
-        "# Recipient tool context\n\n"
-        "Use Python 3.14 and the existing locked dependency context. From this directory:\n\n"
-        "```sh\nuv sync --locked --no-dev --no-install-project\n"
-        "PYTHONPATH=src uv run --no-sync python scripts/package_ffmpeg.py --help\n"
-        "PYTHONPATH=src uv run --no-sync python scripts/check_native_runtime.py --help\n```\n\n"
-        "On Windows set PYTHONPATH to this directory's src before those Python commands.\n"
-        "The frozen native/ffmpeg recipe and the accompanying upstream materials are supplied.\n"
-        "Use the top-level recipe/build.sh with the exact upstream archive mounted at /inputs,\n"
-        "a fresh owned /work, writable /out, and read-only /recipe. The pinned Dockerfile and\n"
-        "signed toolchain metadata describe the build inputs. Run unprivileged with network\n"
-        "disabled, read-only root, dropped capabilities and no-new-privileges. /work/tmp\n"
-        "supports configure probes; /tmp remains noexec. Build limits:2CPU,1GiB,128pids,\n"
-        "600seconds plus15seconds termination grace. The source bundle is the input; do not\n"
-        "reuse a supplier build directory. The repository docs/native-runtime.md and CI\n"
-        "build-ci.sh give the complete sequence and qualification evidence requirements.\n\n"
-        "Compare your prefix against the supplied installed-files/manifest using\n"
-        "scripts/qualify_native_runtime.py compare. For a real ABI-compatible replacement,\n"
-        "copy your successful recipient work into separate scratch, mount it as /work and\n"
-        "run sh native/ffmpeg/replace-library.sh TARGET with fresh writable /out. This adds\n"
-        "a version marker and increments the reported micro version. stage-replacement\n"
-        "binds the changed library to the complete original sources plus exact patch;\n"
-        "check-replacement proves native loading/decoding with the original executable.\n"
-        "Its identity is explicitly unqualified. For production, review the new identity\n"
-        "in an external operator registry and repeat the applicable execution qualification.\n",
-        encoding="utf-8",
-    )
+    shutil.copy2(project / "native/ffmpeg/RECIPIENT.md", destination / "RECIPIENT.md")
     write_json(
         destination / "material-manifest.json",
         {

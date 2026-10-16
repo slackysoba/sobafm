@@ -7,16 +7,12 @@ necessary support contributions; it does not change the Python dependency policy
 
 This document describes the supply contract for [#174](https://github.com/slackysoba/sobafm/issues/174).
 No native package is currently approved for production distribution or catalog
-readiness. Corrected Linux x86-64 and Windows cross-builds have complete checked
-compiler-header, source, linker-member and installed-file mappings. The earlier
-candidate passes compiler-free native Windows/Linux decoding and reproduces both
-complete Linux archives from a separate recipient build; its real changed-library
-replacement also loads and decodes with the unchanged executable. The recipe now
-explicitly disables unused iconv support. Its fresh Linux and Windows builds pass,
-including Linux CONFIG_ICONV=0 and no iconv imports, and require refreshed paired
-packages and recipient/platform qualification. Windows replacement, native ARM64
-execution and independent final review remain required. Cross-compilation or
-emulation alone does not establish native-platform qualification.
+readiness. Qualification binds the exact per-target artifacts to retained native
+execution, correspondence, recipient rebuild/replacement and advisory records.
+All three targets and independent final review are required before adding a
+reviewed identity. Cross-compilation or emulation alone does not establish
+native-platform qualification. A passed coverage-reporting job does not approve
+its findings or close scanner gaps.
 
 ## Exact identity and readiness
 
@@ -141,9 +137,12 @@ the Windows workflow separately installs and executes its original and modified
 packages on Windows. These commands create fresh paths and retain failures.
 They do not publish a release or update trusted identities.
 
-Recipients can use the same sequence from `recipient-tools/` in the delivered
-source bundle. `RECIPIENT.md` records the locked import context, fresh mount
-layout, limits and replacement commands. `qualify_native_runtime.py extract-sources`
+The delivered [recipient instructions](../native/ffmpeg/RECIPIENT.md) provide a
+standalone sequence using only the source bundle, paired packages and obtainable
+compiler inputs. They do not require the supplier checkout or its application
+image Dockerfile. `RECIPIENT.md` records the locked import context, exact material
+layout, bounded build/package/archive comparison, replacement and native
+installation commands. `qualify_native_runtime.py extract-sources`
 checks the complete source-bundle hash and every delivered tool's byte inventory;
 `compare` checks actual rebuilt binaries/links, and `compare-packages` checks both
 complete archive identities. `replace-library.sh` modifies the version API and
