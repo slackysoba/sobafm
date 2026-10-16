@@ -487,7 +487,7 @@ is persisted (OPS-5, USE-6).
 | `SOBAFM_LOG_LEVEL` | No | `INFO` | Log level |
 | `SOBAFM_DEV_GUILD_ID` | No | None | Registers commands to one server for development |
 | `SOBAFM_MAX_SESSIONS` | No | `4` | Global cap on concurrent Lyria RealTime sessions, an even number: each playing server reserves two |
-| `SOBAFM_JAMENDO_CLIENT_ID` | No | None | M5 runtime Jamendo application client id, secret-held per operator; catalog additionally requires qualified runtime readiness |
+| `SOBAFM_JAMENDO_CLIENT_ID` | No | None | Runtime Jamendo application client id, held as `SecretStr` and validated like the Gemini key; catalog additionally requires qualified runtime readiness |
 
 Without catalog configuration, synchronization omits/removes `/play` and `/skip`
 and logs a fixed startup explanation, retaining `/freestyle`. Never use generated

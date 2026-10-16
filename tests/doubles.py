@@ -10,8 +10,24 @@ from typing import Any, Literal
 import discord
 from google.genai import errors, types
 
+from sobafm.catalog import CatalogQuery, CatalogTrack
 from sobafm.pcm import BYTES_PER_SECOND, MIME_TYPE
 from sobafm.plan import MusicPlan
+
+
+class FakeCatalog:
+    """Scripted catalog discovery; records validated queries without provider I/O."""
+
+    def __init__(self, *results: tuple[CatalogTrack, ...] | Exception) -> None:
+        self.results = list(results)
+        self.queries: list[CatalogQuery] = []
+
+    async def search(self, query: CatalogQuery) -> tuple[CatalogTrack, ...]:
+        self.queries.append(query)
+        result = self.results.pop(0) if self.results else ()
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakeSession:
