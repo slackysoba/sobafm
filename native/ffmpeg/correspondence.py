@@ -70,6 +70,10 @@ def linker_inputs(text: str) -> tuple[set[str], set[tuple[str, str]], set[tuple[
             # GNU ld pe-dll.c creates this exact fake input for generated thunks.
             scaffolding.add(("linker-generated-import-thunk", "dll stuff"))
             continue
+        if stripped == "LOAD linker stubs":
+            # GNU ld aarch64elf.em creates this exact fake input for branch stubs.
+            scaffolding.add(("linker-generated-branch-stub", "linker stubs"))
+            continue
         if stripped.startswith("SEARCH_DIR("):
             directories = re.findall(r'SEARCH_DIR\("=?([^"\n]+)"\);?', stripped)
             remainder = re.sub(r'SEARCH_DIR\("=?[^"\n]+"\);?', "", stripped)

@@ -71,6 +71,18 @@ def test_only_gnu_pe_fake_import_input_is_scaffolding() -> None:
         correspondence.linker_inputs("LOAD unreviewed fake input\n")
 
 
+def test_only_gnu_aarch64_fake_stub_input_is_scaffolding() -> None:
+    selected, members, classified = correspondence.linker_inputs("LOAD linker stubs\n")
+    assert not selected
+    assert not members
+    assert classified == {("linker-generated-branch-stub", "linker stubs")}
+    with pytest.raises(ValueError, match="unsupported linker LOAD"):
+        correspondence.linker_inputs("LOAD linker stubs unexpected\n")
+    selected, _, classified = correspondence.linker_inputs("LOAD linker-stubs.o\n")
+    assert selected == {"linker-stubs.o"}
+    assert not classified
+
+
 def test_source_correspondence_rejects_changed_extracted_bytes(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()

@@ -178,10 +178,33 @@ def stage_replacement(
     for entry in sbom["files"]:
         path = runtime / entry["fileName"].removeprefix("./")
         entry["checksums"] = [{"algorithm": "SHA256", "checksumValue": file_sha256(path)}]
-    for package in sbom["packages"]:
-        if package["name"].startswith("ffmpeg"):
-            package["versionInfo"] += MARKER
-            package["sourceInfo"] += "; recipient-change.patch SHA256 " + file_sha256(patch)
+    components = [package for package in sbom["packages"] if package["name"] == "ffmpeg"]
+    if len(components) != 1:
+        raise ValueError("replacement SBOM requires one FFmpeg component identity")
+    component = components[0]
+    component["versionInfo"] += MARKER
+    component["sourceInfo"] += "; recipient-change.patch SHA256 " + file_sha256(patch)
+    patch_id = "SPDXRef-Source-" + file_sha256(patch)
+    sbom["packages"].append(
+        {
+            "SPDXID": patch_id,
+            "name": patch.name,
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "checksums": [{"algorithm": "SHA256", "checksumValue": file_sha256(patch)}],
+            "licenseDeclared": "NOASSERTION",
+            "licenseConcluded": "NOASSERTION",
+            "copyrightText": "NOASSERTION",
+            "sourceInfo": "Exact recipient patch accompanies the original full source bundle.",
+        }
+    )
+    sbom["relationships"].append(
+        {
+            "spdxElementId": component["SPDXID"],
+            "relationshipType": "GENERATED_FROM",
+            "relatedSpdxElement": patch_id,
+        }
+    )
     sbom["documentNamespace"] += "/recipient-" + file_sha256(target)
     write_json(sbom_path, sbom)
     data = manifest.model_dump()
@@ -191,7 +214,8 @@ def stage_replacement(
         path = runtime / item["path"]
         item.update(sha256=file_sha256(path), size=path.stat().st_size)
     for component in data["components"]:
-        if component["name"].startswith("ffmpeg"):
+        if component["name"] == "ffmpeg":
+            component["version"] += MARKER
             component["sources"].append(
                 source_record(materials / "recipient-change.patch").model_dump()
             )
