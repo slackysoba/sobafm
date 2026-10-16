@@ -380,10 +380,10 @@ task is passed as the third argument. The generated instruction and schema sent
 to Gemini remain unchanged. Shared configuration keeps minimal thinking, tools
 disabled and the existing no-redirect HTTP options.
 
-The failure policy can instead return `UNAVAILABLE` with no plan and the safe
-failure category, allowing a caller to preserve current music without creating
-a raw-text query. This seam does not implement the catalog task or search; those
-belong to #126. Task-specific configuration stays with each interpreter instance.
+`CATALOG_TASK` returns `UNAVAILABLE` with no plan and the safe failure category,
+allowing its caller to preserve current music without creating a raw-text query.
+Task-specific configuration stays with each interpreter instance. Search,
+playback and command wiring are separate from interpretation.
 
 The generated interpreter preserves ADR-0002's behavior:
 
@@ -416,13 +416,36 @@ class Interpretation(BaseModel):
 
 `MusicPlan.to_config()` always builds the complete Lyria config. Guidance (4.0), temperature (1.1), and top-k (40) stay at Lyria's defaults, the mode is `QUALITY` (or `VOCALIZATION` for wordless vocals), and no seed is set.
 
-Catalog output is a separate validated query with descriptive terms and explicit
-requested attributes, including requested vocal/instrumental direction. Its exact
-schema belongs to #126, not the experimental probe model. Error, timeout or invalid
-output reports interpretation unavailable, preserves heard music and makes no
-raw-text search. Only a successful valid query reaches bounded relaxation; explicit
-attributes/eligible-license constraints remain throughout. Keep catalog and
-generated evaluation sets separate and live calls opt-in.
+The catalog task produces an immutable `CatalogPlan(title, query)` in the shared
+`Interpretation[CatalogPlan]` envelope. Its title is one normalized line of 1–60
+characters. `query` is the existing immutable `CatalogQuery`: one to six distinct
+lowercase English tags (at most 40 characters each), optional descriptive search
+text (at most 120 characters), and optional `speed` (`verylow`, `low`, `medium`,
+`high`, `veryhigh`), `vocalinstrumental` (`vocal`, `instrumental`) and
+`acousticelectric` (`acoustic`, `electric`). Existing query validation rejects
+unsupported fields, URLs and malformed values. Program metadata never becomes a
+second discovery-query type: a future engine passes `plan.query` to the client.
+All-tags → any-tags → descriptive-text matching remains the client's fixed
+bounded sequence; Gemini neither selects a stage nor returns a matching-mode knob.
+
+Every music answer supplies a title and tags. Refinements repeat unchanged tags
+and preserve optional query values omitted or left null; explicit valid values
+replace them. New requests do not inherit unrelated current filters. The
+instruction translates artist/work references into descriptive musical traits
+and treats both the request and same-mode current plan as untrusted data. It does
+not promise exact BPM, key, drum removal or wordless recordings. Error, timeout or
+invalid output reports interpretation unavailable, preserves heard music and makes
+no raw-text search. Only a successful valid query reaches bounded relaxation;
+explicit attributes/eligible-license constraints remain throughout.
+
+The opt-in catalog evaluation has 38 fresh cases and 63 property checks. Its gates
+require valid output for every case, all eight non-music/injection controls refused,
+no referenced artist/work names in title/tags/search, all nine focused properties
+in the four piano/lo-fi and synthwave cases passing, and at least 90% of all 101
+classification/property checks passing. These focused cases carry #116's first-ten
+weak-fit feedback forward without inventing case/track ratings or a D1 numerical
+relevance pass. Generated evaluation targets and frozen research stay unchanged;
+neither evaluation searches the catalog or measures audible fit.
 
 ### Quiet catalog credits
 

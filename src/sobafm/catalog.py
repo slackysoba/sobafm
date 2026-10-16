@@ -40,7 +40,7 @@ class Model(BaseModel):
 
 
 class CatalogQuery(Model):
-    """Descriptive search input; interpretation and program titles belong to #126."""
+    """Descriptive discovery input, separate from a catalog program's title."""
 
     tags: tuple[Tag, ...] = Field(min_length=1, max_length=6)
     search: Annotated[str, Field(pattern=r"^[a-zA-Z][a-zA-Z0-9 ',-]{0,119}$")] | None = None
