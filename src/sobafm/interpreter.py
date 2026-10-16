@@ -4,9 +4,10 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, Protocol, Self, cast
+from typing import Literal, Protocol, Self, cast, overload
 
 from google.genai import errors, types
 from pydantic import BaseModel, ValidationError, model_validator
@@ -67,9 +68,9 @@ their style instead: their genre, instruments, tempo, and mood.
 """
 
 
-class Interpretation(BaseModel):
+class Interpretation[P: BaseModel = MusicPlan](BaseModel):
     kind: Literal["new", "refine", "not_music"]
-    plan: MusicPlan | None = None
+    plan: P | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -105,28 +106,61 @@ def without_descriptions(schema: object, *, names: bool = False) -> object:
     return schema
 
 
-CONFIG = types.GenerateContentConfig(
-    system_instruction=INSTRUCTION,
-    response_mime_type="application/json",
-    response_json_schema=without_descriptions(Interpretation.model_json_schema()),
-    thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
-    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-)
-
-
 class Outcome(StrEnum):
     INTERPRETED = "interpreted"
     FALLBACK = "fallback"  # the model call failed, so the request text joins or becomes the plan
     NOT_MUSIC = "not_music"
     BLOCKED = "blocked"  # Gemini's safety filters blocked the request
+    UNAVAILABLE = "unavailable"  # the task cannot produce a usable plan after a failed call
 
 
 @dataclass(frozen=True)
-class Result:
+class Result[P: BaseModel = MusicPlan]:
     outcome: Outcome
-    plan: MusicPlan | None  # None when the request is refused
+    plan: P | None  # None when the request is refused or interpretation is unavailable
     failure: Failure | None = None  # why the model call failed, when known
     extends_current: bool = False  # a fallback that added the request to the current plan
+
+
+@dataclass(frozen=True)
+class Task[P: BaseModel]:
+    """The plan-specific policy; failure need not turn raw request text into a plan."""
+
+    instruction: str
+    answer_model: type[Interpretation[P]]
+    fallback: Callable[[str, P | None, Failure | None], Result[P]]
+    refine: Callable[[P, P], P]
+
+    @property
+    def config(self) -> types.GenerateContentConfig:
+        return types.GenerateContentConfig(
+            system_instruction=self.instruction,
+            response_mime_type="application/json",
+            response_json_schema=without_descriptions(self.answer_model.model_json_schema()),
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+
+
+def _generated_fallback(
+    request: str, current: MusicPlan | None, failure: Failure | None
+) -> Result[MusicPlan]:
+    plan = current.with_request(request) if current else MusicPlan.from_request(request)
+    return Result(Outcome.FALLBACK, plan, failure, current is not None)
+
+
+def _refine_generated(current: MusicPlan, plan: MusicPlan) -> MusicPlan:
+    # Keep what a refinement leaves out, or leaves unset.
+    kept = {
+        field: getattr(current, field)
+        for field in KEPT_FIELDS
+        if field not in plan.model_fields_set or getattr(plan, field) is None
+    }
+    return plan.model_copy(update=kept)
+
+
+GENERATED_TASK = Task(INSTRUCTION, Interpretation, _generated_fallback, _refine_generated)
+CONFIG = GENERATED_TASK.config
 
 
 class Models(Protocol):
@@ -148,18 +182,25 @@ class Gemini(Protocol):
     def models(self) -> Models: ...
 
 
-class Interpreter:
-    def __init__(self, gemini: Gemini, model: str) -> None:
+class Interpreter[P: BaseModel = MusicPlan]:
+    @overload
+    def __init__(self: Interpreter[MusicPlan], gemini: Gemini, model: str) -> None: ...
+
+    @overload
+    def __init__(self, gemini: Gemini, model: str, task: Task[P]) -> None: ...
+
+    def __init__(self, gemini: Gemini, model: str, task: Task[P] | None = None) -> None:
         self._gemini = gemini
         self._model = model
+        # The no-task overload fixes P to MusicPlan, matching the generated default.
+        self._task = task if task is not None else cast(Task[P], GENERATED_TASK)
+        self._config = self._task.config
 
-    async def interpret(self, request: str, current: MusicPlan | None) -> Result:
+    async def interpret(self, request: str, current: P | None) -> Result[P]:
         """Interpret `request`, refining `current` when the request is relative to it.
 
-        Only the request and the current plan are sent (AI-6). Any failure of the model call
-        falls back to the request text (AI-4), added to `current` as a lighter prompt when there
-        is one and as the whole plan otherwise, with the cause when SobaFM can tell it. A request
-        that is blank on one line is refused.
+        Only the request and the current plan are sent (AI-6). The task handles failed calls
+        and refinement merges (AI-4). A request that is blank on one line is refused.
         """
         if not one_line(request):
             return Result(Outcome.NOT_MUSIC, None)
@@ -172,41 +213,34 @@ class Interpreter:
         try:
             async with asyncio.timeout(TIMEOUT_S):
                 response = await self._gemini.models.generate_content(
-                    model=self._model, contents=contents, config=CONFIG
+                    model=self._model, contents=contents, config=self._config
                 )
             result = self._read(response, current)
-        except Exception as error:  # any failure falls back to the request text
+        except Exception as error:  # any failure uses the task's fallback policy
             expected = isinstance(error, TimeoutError | errors.APIError | INVALID_OUTPUT)
+            result = self._task.fallback(request, current, call_failure(error))
             log.warning(
-                "Interpreter failed (%s); using the request text",
+                "Interpreter failed (%s); outcome %s",
                 describe(error),
+                result.outcome,
                 exc_info=not expected,
             )
-            plan = current.with_request(request) if current else MusicPlan.from_request(request)
-            result = Result(Outcome.FALLBACK, plan, call_failure(error), current is not None)
         log.info("Interpretation took %.1f s: %s", time.monotonic() - started, result.outcome)
         return result
 
-    @staticmethod
-    def _read(response: types.GenerateContentResponse, current: MusicPlan | None) -> Result:
+    def _read(self, response: types.GenerateContentResponse, current: P | None) -> Result[P]:
         feedback = response.prompt_feedback
         candidate = response.candidates[0] if response.candidates else None
         if (feedback is not None and feedback.block_reason is not None) or (
             candidate is not None and candidate.finish_reason in SAFETY_FINISH_REASONS
         ):
             return Result(Outcome.BLOCKED, None)
-        answer = Interpretation.model_validate_json(response.text or "")
+        answer = self._task.answer_model.model_validate_json(response.text or "")
         if answer.plan is None or answer.kind == "not_music":
             return Result(Outcome.NOT_MUSIC, None)
         plan = answer.plan
         if answer.kind == "refine" and current is not None:
-            # Keep what a refinement leaves out, or leaves unset.
-            kept = {
-                field: getattr(current, field)
-                for field in KEPT_FIELDS
-                if field not in plan.model_fields_set or getattr(plan, field) is None
-            }
-            plan = plan.model_copy(update=kept)
+            plan = self._task.refine(current, plan)
         return Result(Outcome.INTERPRETED, plan)
 
 
