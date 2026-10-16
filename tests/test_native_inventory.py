@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from scripts.native_inventory import component_inventory, write_spdx
-from sobafm.native import NativeComponent, NativeFile, SourceArchive, file_sha256
+from sobafm.native import NativeComponent, NativeFile, SourceArchive, Target, file_sha256
 
 
 def write(path: Path, value: object) -> None:
@@ -170,6 +170,65 @@ def test_as_needed_shared_library_and_unselected_archive_do_not_own_bytes(tmp_pa
     gcc = next(item for item in components if item.name == "source-gcc-14")
     assert gcc.files == []
     assert gcc.distribution == "build-only"
+
+
+@pytest.mark.parametrize("target", ["linux-amd64", "linux-arm64", "windows-amd64"])
+def test_selected_arm_soft_fp_terms_do_not_change_other_target_routes(
+    tmp_path: Path, target: Target
+) -> None:
+    build, toolchain, policy, files, upstream = inventory_fixture(tmp_path)
+    base = "GPL-3.0-or-later WITH GCC-exception-3.1"
+    arm = "(" + base + ") AND (LGPL-2.1-or-later WITH GCC-exception-2.0)"
+    data = json.loads(policy.read_bytes())
+    data["source_packages"]["gcc-14"]["license_expression"] = base
+    data["target_source_packages"] = {
+        "linux-arm64": {
+            "gcc-14": {
+                "license_expression": arm,
+                "route": "Selected soft-fp support retains its distinct unlimited-link terms.",
+                "required_archive_members": ["support.o"],
+            }
+        }
+    }
+    write(policy, data)
+    closure = build / "evidence/runtime-closure.json"
+    record = json.loads(closure.read_bytes())
+    record["target"] = target
+    write(closure, record)
+    if target == "linux-arm64":
+        files.append(
+            NativeFile(path="notices/extra/gcc/libgcc/soft-fp/soft-fp.h", sha256="c" * 64, size=1)
+        )
+    components, assessment, _ = component_inventory(
+        build, toolchain, files, upstream, "9.0.2", policy, target
+    )
+    gcc = next(item for item in components if item.name == "source-gcc-14")
+    assert gcc.license_expression == (arm if target == "linux-arm64" else base)
+    assert ("notices/extra/gcc/libgcc/soft-fp/soft-fp.h" in gcc.notices) == (
+        target == "linux-arm64"
+    )
+    routes = cast(list[dict[str, Any]], assessment["assessments"])
+    gcc_route = next(item for item in routes if item["component"] == "source-gcc-14")
+    assert gcc_route["license_route_member_files"] == (
+        {"support.o": ["bin/ffmpeg"]} if target == "linux-arm64" else {}
+    )
+
+
+def test_target_license_route_requires_its_actual_selected_members(tmp_path: Path) -> None:
+    build, toolchain, policy, files, upstream = inventory_fixture(tmp_path)
+    data = json.loads(policy.read_bytes())
+    data["target_source_packages"] = {
+        "linux-amd64": {
+            "gcc-14": {
+                "license_expression": "LGPL-2.1-or-later WITH GCC-exception-2.0",
+                "route": "Absent contribution must not acquire a reviewed route.",
+                "required_archive_members": ["absent-soft-fp.o"],
+            }
+        }
+    }
+    write(policy, data)
+    with pytest.raises(ValueError, match="lacks its selected archive members"):
+        component_inventory(build, toolchain, files, upstream, "9.0.2", policy, "linux-amd64")
 
 
 @pytest.mark.parametrize("defect", ["missing-compile", "unknown-input", "wrong-install"])

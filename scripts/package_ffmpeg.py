@@ -271,6 +271,14 @@ def package(
         "source bundle and source-access.json. No compiler is needed to install.\n",
         encoding="utf-8",
     )
+    if target == "linux-arm64":
+        with (runtime / "NOTICE.txt").open("a", encoding="utf-8") as notice:
+            notice.write(
+                "ARM GCC soft-fp support uses LGPL-2.1-or-later with the unlimited-link\n"
+                "GCC-exception-2.0 permission. Full original attribution/terms accompany\n"
+                "the runtime under notices/extra/gcc/libgcc/soft-fp/. Other selected GCC\n"
+                "support retains its separate GCC Runtime Library Exception 3.1 terms.\n"
+            )
     source_root = output / "source-materials"
     source_root.mkdir()
     shutil.copytree(frozen_recipe, source_root / "recipe")

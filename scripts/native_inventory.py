@@ -107,6 +107,7 @@ class ComponentRoute(_Record):
     license_expression: str
     route: str
     additional_sources: list[str] = Field(default_factory=list)
+    required_archive_members: list[str] = Field(default_factory=list)
 
 
 class FfmpegTerm(ComponentRoute):
@@ -126,6 +127,9 @@ class ComponentPolicy(_Record):
     status: str
     scope: str
     source_packages: dict[str, ComponentRoute]
+    target_source_packages: dict[Target, dict[str, ComponentRoute]] = Field(
+        default_factory=dict[Target, dict[str, ComponentRoute]]
+    )
     ffmpeg_terms: list[FfmpegTerm]
     license_ref_resolution: dict[str, str]
     license_ref_texts: dict[str, list[LicenseText]]
@@ -193,6 +197,8 @@ def component_inventory(
             inputs.update(compile_units.get(path, []))
         if not inputs.issubset(selected):
             raise ValueError("component mapping references an unverified selected input")
+        if not {member.archive for member in unit.archive_members}.issubset(inputs):
+            raise ValueError("archive member mapping lacks its selected linker input")
         related[unit.installed.path] = inputs
     upstream_paths = sorted(
         package_path(path.removeprefix("/work/source/"))
@@ -263,17 +269,28 @@ def component_inventory(
             f"notices/toolchain/{package_path(row[0].split(':')[0])}/copyright"
         )
     source_by_name = {item.name: item for item in authentication.sources}
+    overrides = policy.target_source_packages.get(target, {})
+    if not overrides.keys() <= policy.source_packages.keys():
+        raise ValueError("target license route overrides an unreviewed source package")
+    routes = policy.source_packages | overrides
     for source in authentication.sources:
         for archive in source.files:
             material = toolchain / "sources" / archive.name
             if material.stat().st_size != archive.size or file_sha256(material) != archive.sha256:
                 raise ValueError("corresponding source changed after authentication")
-        route = policy.source_packages.get(source.name)
+        route = routes.get(source.name)
         if route is None:
             raise ValueError(f"native source component lacks a reviewed route: {source.name}")
         source_owners = {
             name for name, pair in covered.items() if pair == (source.name, source.version)
         }
+        member_files: dict[str, set[str]] = {}
+        for unit in mapping.link_units:
+            for member in unit.archive_members:
+                if set(selected[member.archive][1].split(",")) & source_owners:
+                    member_files.setdefault(member.member, set()).add(unit.installed.path)
+        if not set(route.required_archive_members).issubset(member_files):
+            raise ValueError("reviewed target license route lacks its selected archive members")
         owned: set[str] = set()
         observed: set[str] = set()
         for unit in mapping.link_units:
@@ -290,7 +307,12 @@ def component_inventory(
                 owned.add(unit.installed.path)
         corresponding = list(source.files)
         component_notices = set(notices[source.name])
-        extra_prefix = {"mingw-w64": "mingw", "glibc": "glibc", "linux": "linux"}.get(source.name)
+        extra_prefix = {
+            "gcc-14": "gcc",
+            "mingw-w64": "mingw",
+            "glibc": "glibc",
+            "linux": "linux",
+        }.get(source.name)
         if extra_prefix:
             component_notices.update(
                 file.path
@@ -320,6 +342,10 @@ def component_inventory(
                 "route": route.route,
                 "inputs": sorted(observed),
                 "files": sorted(owned),
+                "license_route_member_files": {
+                    member: sorted(member_files[member])
+                    for member in route.required_archive_members
+                },
             }
         )
     return (

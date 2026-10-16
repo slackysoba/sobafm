@@ -74,7 +74,7 @@ and then omitted, and an archive can contribute only a few selected members.
 | FFmpeg executable and five shared libraries | LGPL-2.1-or-later; complete exact source/build/install materials, license text, full selected notices and recipient replacement route accompany the package. |
 | IJG DCT source in FFmpeg | Preserve full original notices and upstream modification statements for `jfdctfst.c`, `jfdctint_template.c` and `jrevdct.c`; include the explicit IJG acknowledgement. `jfdctint.c` is an LGPL wrapper. |
 | FFmpeg `faandct.c`, `avsscanf.c`, `adler32.c` | ISC, MIT and Zlib terms respectively; preserve exact copyright/permission/disclaimer and modified-source notices. The adler code does not imply a linked external libz. |
-| GCC selected headers/startup/libgcc code | GPL-3.0-or-later with GCC Runtime Library Exception 3.1 for the actual selected contributions and eligible compilation process. Retain exact corresponding sources and the exception. Compiler executables stay build-only. |
+| GCC selected headers/startup/libgcc code | Selected general support uses GPL-3.0-or-later with GCC Runtime Library Exception 3.1 and its eligible-compilation conditions. ARM soft-fp members additionally use LGPL-2.1-or-later with the distinct GCC-exception-2.0 unlimited-link permission. Preserve their complete original attribution/terms under `notices/extra/gcc/libgcc/soft-fp/`, exact sources and both applicable exceptions. Compiler executables stay build-only. |
 | glibc selected startup objects and headers | Record exact incorporated inputs and applicable per-file terms with their sources. Distinguish these from the host's dynamically supplied libc, libm and loader. |
 | Linux UAPI headers | Use each actual header's SPDX terms and syscall exception where present; no kernel runtime is bundled by the native archive. |
 | MinGW-w64 CRT/header contributions | Preserve the actual mixed ZPL, public-domain, Lucent and other selected terms. A top-level ZPL label does not cover all selected CRT code. Distinguish incorporated CRT objects and generated import thunks from Windows-provided DLLs. |
@@ -86,6 +86,11 @@ requirements. SPDX custom license references must resolve to preserved complete
 text; a label or an archive name is not source-to-object proof. Complete source
 archives may contain additional independently licensed build/test/documentation
 files, whose original notices remain intact.
+
+The ARM soft-fp [GCC-exception-2.0](https://spdx.org/licenses/GCC-exception-2.0.html)
+permission differs from the glibc startup
+[note variant](https://spdx.org/licenses/GCC-exception-2.0-note.html). Apply and
+preserve the exact selected source text rather than substituting a newer exception.
 
 The runtime includes a plain `NOTICE.txt`, full license texts and directly indexed
 notices. A standard compressed archive of actual selected source/header notices

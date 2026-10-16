@@ -115,7 +115,7 @@
     ]
   },
   "schema_version": 1,
-  "scope": "Expressions describe selected incorporated/header contributions and accompanying build materials, not every file in complete source archives. Complete compiler dependency notices were byte-checked776 Linux/858 Windows. Retain all original source-package per-file terms, even for build-only/unselected source files.",
+  "scope": "Expressions describe selected incorporated/header contributions and accompanying build materials, not every file in complete source archives. Actual dependency-notice inventories contain775 LinuxAMD64,782 LinuxARM64 and858 Windows files. ARM GCC soft-fp has a distinct reviewed member-scoped route. Preserve all original source-package per-file terms, including build-only/unselected files.",
   "source_packages": {
     "binutils": {
       "license_expression": "GPL-3.0-or-later",
@@ -152,5 +152,28 @@
       "route": "Actual cross-a3 selects129 MinGW compiler headers.127 match exact upstream original archive bytes:123 map to Debian public-domain file stanzas,3 pthread_{signal,time,unistd}.h use MIT, and stdarg.h is GPL2-or-later with its explicit GCC header-inclusion exception. The remaining _mingw.h and sdks/_mingw_ddk.h are configured outputs from retained public-domain CRT templates. The129 count includes swprintf.inl. Selected prebuilt CRT members also include public-domain startup/math, ZPL powi/vfscanf, Lucent gdtoa and mixed Keith Marshall/Lucent pformat. Preserve runtime upstream COPYING/COPYING.MinGW-w64-runtime, exact DISCLAIMER.PD/DISCLAIMER and selected header/CRT notice blocks from notices-extra/mingw plus Debian copyright. This older header exception is not GCC-exception-3.1 or either current SPDX GCC2.0 linking-exception text. Generated OS DLL import thunks do not redistribute Windows DLL implementations. Import .dll.a libraries remain relinking/development materials, distinct from incorporated CRT .a code. Selected strtodnrp.o has a distinct David M.Gay2004 notice with its stated Lucent1998/2000 basis; preserve exact strtodnrp.c header rather than only generic Lucent terms. Also preserve exact Marshall vfprintf/vsnprintf notices. Basename matching finds source candidates for all81 selected CRT code members; ambiguity between alternate architecture/source variants is explicitly retained in crt-member-source-candidates.json and is not a new toolchain rebuild proof."
     }
   },
-  "status": "Selected Linux a11 and Windows cross-a3 compiler header terms refreshed; candidate-unqualified: final package, native platforms, independent rebuild/replacement and final review still required"
+  "status": "Candidate-unqualified: ARM soft-fp attribution/exception corrected from independent selected-source review; final paired packages, all native qualification and independent whole-change review remain required.",
+  "target_source_packages": {
+    "linux-arm64": {
+      "gcc-14": {
+        "license_expression": "(GPL-3.0-or-later WITH GCC-exception-3.1) AND (LGPL-2.1-or-later WITH GCC-exception-2.0)",
+        "required_archive_members": [
+          "addtf3.o",
+          "extenddftf2.o",
+          "floatunsitf.o",
+          "multf3.o",
+          "trunctfdf2.o"
+        ],
+        "route": "Actual ARM64 libgcc.a selects five soft-fp members: addtf3.o, extenddftf2.o, floatunsitf.o, multf3.o and trunctfdf2.o. Their exact authenticated GCC14 libgcc/soft-fp source and common soft-fp.h use LGPL-2.1-or-later WITH GCC-exception-2.0 (the single unlimited-link permission, not GCC-exception-2.0-note). Preserve the six complete original files with attribution/permission/disclaimers under notices-extra/gcc/libgcc/soft-fp and the full LGPL text. Other selected GCC headers, lse.S/lse-init.c/sfp-exceptions.c and crtstuff.c retain GPL-3.0-or-later WITH GCC-exception-3.1 and eligible-compilation conditions. Both terms apply to the actual selected contributions; compiler tools remain build-only. Complete exact GCC source/descriptor/Debian archives and original per-file terms remain supplied. The five soft-fp members contribute only to lib/libavutil.so.61.1.102 in this actual target mapping; retain the per-member installed-file assessment rather than inferring their presence in every GCC-supported binary."
+      },
+      "glibc": {
+        "license_expression": "LGPL-2.1-or-later AND (LGPL-2.1-or-later WITH GCC-exception-2.0-note) AND BSD-3-Clause",
+        "route": "Actual ARM64 selects164 glibc headers:140 LGPL,23 generated/unmarked under package default LGPL2.1+, and one BSD-3-Clause ttydefaults.h. Exact AArch64 start.S/crti.S/crtn.S preserve LGPL2.1+ plus their GCC-exception-2.0-note linking permission; all three accompanying files match authenticated original source bytes. These incorporated startup/header inputs are distinct from separately provided OS libc/libm/loader. Preserve full selected headers, full startup/ttydefaults source notices and corresponding source archives; complete source-package archives retain broader per-file terms."
+      },
+      "linux": {
+        "license_expression": "GPL-2.0-only WITH Linux-syscall-note",
+        "route": "Actual ARM64 selects31 Linux UAPI inputs:24 SPDX GPL2.0 WITH Linux-syscall-note headers,6 tiny include wrappers and one generated syscall-number table. Exact bytes independently match authenticated Debian package payloads. Preserve every selected input, full original package terms/GPL2 text and the complete Linux-syscall-note. No kernel runtime is distributed in the native archive; source-package advisory matches require exact scope review."
+      }
+    }
+  }
 }
