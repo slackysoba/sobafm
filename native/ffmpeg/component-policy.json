@@ -1,0 +1,179 @@
+{
+  "ffmpeg_terms": [
+    {
+      "input_paths": [
+        "libavcodec/jfdctfst.c",
+        "libavcodec/jfdctint_template.c",
+        "libavcodec/jrevdct.c"
+      ],
+      "license_expression": "IJG",
+      "name": "ffmpeg-ijg-dct",
+      "route": "Preserve each full unaltered copyright/permission/disclaimer notice, upstream modification comments and explicit IJG acknowledgement in plain accompanying NOTICE. SobaFM patch list is empty. State that these are the FFmpeg upstream variants rather than unmodified original IJG code. libavcodec/jfdctint.c is an LGPL wrapper and is not itself one of the three IJG files."
+    },
+    {
+      "input_paths": [
+        "libavcodec/faandct.c"
+      ],
+      "license_expression": "ISC",
+      "name": "ffmpeg-faandct",
+      "route": "Preserve the complete Michael Niedermayer/Roman Shaposhnik copyright, permission and warranty text with binary accompanying materials; source header notes its IJG basis."
+    },
+    {
+      "input_paths": [
+        "libavutil/avsscanf.c"
+      ],
+      "license_expression": "MIT",
+      "name": "ffmpeg-avsscanf",
+      "route": "Preserve Rich Felker et al. copyright and complete MIT text with accompanying materials."
+    },
+    {
+      "input_paths": [
+        "libavutil/adler32.c"
+      ],
+      "license_expression": "Zlib",
+      "name": "ffmpeg-adler32",
+      "route": "Preserve Mark Adler copyright, full zlib terms and existing modified-version statement. This is incorporated code, not an external linked libz library."
+    }
+  ],
+  "license_ref_resolution": {
+    "LicenseRef-MinGW-David-Gay": "Exact full notice block in notices-extra/mingw/selected-crt/gdtoa/strtodnrp.c: David M.Gay2004 copyright plus explicitly stated Lucent1998/2000 basis, permission, no endorsement and disclaimer.",
+    "LicenseRef-MinGW-Keith-Marshall": "Exact Marshall permission and disclaimer block in notices-extra/mingw/selected-crt/stdio/mingw_pformat.c plus that file embedded Lucent terms; do not substitute only the differently-scoped dirname.c Debian notice. Preserve the original complete first-comment notices in mingw_vfprintf.c and mingw_vsnprintf.c as well.",
+    "LicenseRef-MinGW-Lucent": "Complete exact Lucent copyright/permission/non-endorsement/disclaimer blocks from notices-extra/mingw/selected-crt/gdtoa and stdio/mingw_pformat.c, also reproduced in upstream combined runtime notice.",
+    "LicenseRef-MinGW-public-domain": "Exact public-domain declarations in selected headers/CRT sources and full notices-extra/mingw/DISCLAIMER.PD. Not CC0; retain original disclaimers.",
+    "LicenseRef-MinGW-stdarg-GPL2-with-header-exception": "Exact combined licensing notice at beginning of notices-extra/mingw/selected-headers/stdarg.h, including GPL2-or-later base and the following special GCC inclusion exception. Preserve both. This custom reference denotes the full combined terms; do not replace it with bare GPL2+ or mislabel it GCC3.1."
+  },
+  "license_ref_texts": {
+    "LicenseRef-MinGW-David-Gay": [
+      {
+        "first_line": 1,
+        "last_line": 29,
+        "path": "notices/extra/mingw/selected-crt/gdtoa/strtodnrp.c",
+        "sha256": "710f4bab5ea4693dc92a60bce42de6f17908f100b19863b0c0c68947952064c3"
+      }
+    ],
+    "LicenseRef-MinGW-Keith-Marshall": [
+      {
+        "first_line": 1,
+        "last_line": 52,
+        "path": "notices/extra/mingw/selected-crt/stdio/mingw_pformat.c",
+        "sha256": "7afbf27def09bcf57f2bb40fd732ea0548b08275e9fc85c052c9ec88ef2d53da"
+      },
+      {
+        "first_line": 1,
+        "last_line": 41,
+        "path": "notices/extra/mingw/selected-crt/stdio/mingw_vfprintf.c",
+        "sha256": "b544bacef90124af724cf96f8acc72444547371363e5fdfc532a5df5cfda6435"
+      },
+      {
+        "first_line": 1,
+        "last_line": 24,
+        "path": "notices/extra/mingw/selected-crt/stdio/mingw_vsnprintf.c",
+        "sha256": "8d3c764508d7bb992fceefe944f9d836332aee0ea0d981127c06b9af19138074"
+      }
+    ],
+    "LicenseRef-MinGW-Lucent": [
+      {
+        "first_line": 1,
+        "last_line": 27,
+        "path": "notices/extra/mingw/selected-crt/gdtoa/dmisc.c",
+        "sha256": "a9164d2074a955204858a6ea1211333566a864bc21adf244cf8b49f2f345e70c"
+      },
+      {
+        "first_line": 1,
+        "last_line": 27,
+        "path": "notices/extra/mingw/selected-crt/gdtoa/g__fmt.c",
+        "sha256": "a9164d2074a955204858a6ea1211333566a864bc21adf244cf8b49f2f345e70c"
+      },
+      {
+        "first_line": 1,
+        "last_line": 27,
+        "path": "notices/extra/mingw/selected-crt/gdtoa/gdtoa.c",
+        "sha256": "f1f85fc659df4b09ca80c64c368689e823bff5ea551ab3b31126b6693c6d14f7"
+      },
+      {
+        "first_line": 1,
+        "last_line": 27,
+        "path": "notices/extra/mingw/selected-crt/gdtoa/strtodg.c",
+        "sha256": "74eae56cdb74e2f26c5b8edc0e8466e6bb5566fd3a63165097968687a0bc1d1f"
+      }
+    ],
+    "LicenseRef-MinGW-public-domain": [
+      {
+        "first_line": 1,
+        "last_line": null,
+        "path": "notices/extra/mingw/DISCLAIMER.PD",
+        "sha256": "87f33608570312a0f2a9745edcb2527275df813b13982e8c3b3f893d88a4141a"
+      }
+    ],
+    "LicenseRef-MinGW-stdarg-GPL2-with-header-exception": [
+      {
+        "first_line": 1,
+        "last_line": 25,
+        "path": "notices/extra/mingw/selected-headers/stdarg.h",
+        "sha256": "b78df49dfb0faf34b2558d6fa85f6dabf10287b8d9503d61fa8416c50910f2f2"
+      }
+    ]
+  },
+  "schema_version": 1,
+  "scope": "Expressions describe selected incorporated/header contributions and accompanying build materials, not every file in complete source archives. Actual dependency-notice inventories contain775 LinuxAMD64,782 LinuxARM64 and858 Windows files. ARM GCC soft-fp has a distinct reviewed member-scoped route. Preserve all original source-package per-file terms, including build-only/unselected files.",
+  "source_packages": {
+    "binutils": {
+      "license_expression": "GPL-3.0-or-later",
+      "route": "Build-only assembler/linker/strip/inspection tools; no BFD or binutils executable is in the native runtime. Preserve exact binutils_2.44-3 descriptor/original/Debian source and copyright, with source archive per-file and documentation terms. Generated PE import thunks are classified linker output; do not misreport GNU ld's literal 'LOAD dll stuff' as a missing external input."
+    },
+    "binutils-mingw-w64": {
+      "additional_sources": [
+        "binutils"
+      ],
+      "license_expression": "GPL-3.0-or-later",
+      "route": "Build-only cross-tool packaging. Preserve source package12 and underlying binutils2.44-3 sources and their notices. This component is not a runtime libbfd distribution."
+    },
+    "gcc-14": {
+      "license_expression": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "route": "Selected libgcc headers, crtbegin/crtend and actual selected libgcc archive members use the GCC Runtime Library Exception 3.1. The recorded unmodified GCC plus GPL-compatible build process is the applicable eligible-compilation route. Preserve exact gcc-14_14.2.0-19 source descriptor/original/Debian archive, GCC copyright and COPYING.RUNTIME. Compiler executables are build-only GPL-3.0-or-later and are not redistributed in the runtime. The full source archive has additional independently licensed files and documentation. libatomic selected during linking but absent from DT_NEEDED is build-only, not a shipped shared library."
+    },
+    "gcc-mingw-w64": {
+      "additional_sources": [
+        "gcc-14"
+      ],
+      "license_expression": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "route": "Selected GCC Windows support uses the same runtime exception, including actual _chkstk_ms.o, _ctors.o, _popcountsi2.o and selected crt objects when confirmed by the final mapping. Debian source package 27 is build packaging for GCC14.2.0-19; preserve both the gcc-mingw-w64_27 descriptor/archive and actual gcc-14 source inputs, plus both package copyright notices. Keep any selected libssp contribution explicit; do not infer it from the package name."
+    },
+    "glibc": {
+      "license_expression": "LGPL-2.1-or-later AND (LGPL-2.1-or-later WITH GCC-exception-2.0-note) AND BSD-3-Clause",
+      "route": "Actual a11 headers:140 LGPL header notices,24 unmarked/generated typedef/architecture headers under glibc package default LGPL2.1+, and sys/ttydefaults.h BSD-3-Clause. Exact x86_64 start.S selected via Scrt1 includes LGPL2.1+ plus GCC-exception-2.0-note; crti/crtn preserve their own LGPL notice/extra permission. Preserve full selected headers and notices-extra/glibc startup sources/ttydefaults. Native archive OS libc/libm/loader remain system-provided, distinct from incorporated startup. Windows host glibc headers only build the non-shipped bin2c host tool. Full source archives keep broader per-file terms. Future image glibc closure needs exact independent #132 source/notices mapping."
+    },
+    "linux": {
+      "license_expression": "GPL-2.0-only WITH Linux-syscall-note",
+      "route": "Actual a11 selects24 UAPI headers:19 carry GPL2.0 WITH Linux-syscall-note SPDX notices;5 are tiny include wrappers. Preserve exact wrapper bytes, upstream package terms, GPL2 text and complete LICENSES/exceptions/Linux-syscall-note from the authenticated original archive. These are UAPI header inputs, not a distributed kernel runtime. Their inclusion is within the Linux syscall exception; no bare GPL-enabled FFmpeg configuration is selected."
+    },
+    "mingw-w64": {
+      "license_expression": "ZPL-2.1 AND MIT AND LicenseRef-MinGW-public-domain AND LicenseRef-MinGW-Lucent AND LicenseRef-MinGW-Keith-Marshall AND LicenseRef-MinGW-stdarg-GPL2-with-header-exception AND LicenseRef-MinGW-David-Gay",
+      "route": "Actual cross-a3 selects129 MinGW compiler headers.127 match exact upstream original archive bytes:123 map to Debian public-domain file stanzas,3 pthread_{signal,time,unistd}.h use MIT, and stdarg.h is GPL2-or-later with its explicit GCC header-inclusion exception. The remaining _mingw.h and sdks/_mingw_ddk.h are configured outputs from retained public-domain CRT templates. The129 count includes swprintf.inl. Selected prebuilt CRT members also include public-domain startup/math, ZPL powi/vfscanf, Lucent gdtoa and mixed Keith Marshall/Lucent pformat. Preserve runtime upstream COPYING/COPYING.MinGW-w64-runtime, exact DISCLAIMER.PD/DISCLAIMER and selected header/CRT notice blocks from notices-extra/mingw plus Debian copyright. This older header exception is not GCC-exception-3.1 or either current SPDX GCC2.0 linking-exception text. Generated OS DLL import thunks do not redistribute Windows DLL implementations. Import .dll.a libraries remain relinking/development materials, distinct from incorporated CRT .a code. Selected strtodnrp.o has a distinct David M.Gay2004 notice with its stated Lucent1998/2000 basis; preserve exact strtodnrp.c header rather than only generic Lucent terms. Also preserve exact Marshall vfprintf/vsnprintf notices. Basename matching finds source candidates for all81 selected CRT code members; ambiguity between alternate architecture/source variants is explicitly retained in crt-member-source-candidates.json and is not a new toolchain rebuild proof."
+    }
+  },
+  "status": "Candidate-unqualified: ARM soft-fp attribution/exception corrected from independent selected-source review; final paired packages, all native qualification and independent whole-change review remain required.",
+  "target_source_packages": {
+    "linux-arm64": {
+      "gcc-14": {
+        "license_expression": "(GPL-3.0-or-later WITH GCC-exception-3.1) AND (LGPL-2.1-or-later WITH GCC-exception-2.0)",
+        "required_archive_members": [
+          "addtf3.o",
+          "extenddftf2.o",
+          "floatunsitf.o",
+          "multf3.o",
+          "trunctfdf2.o"
+        ],
+        "route": "Actual ARM64 libgcc.a selects five soft-fp members: addtf3.o, extenddftf2.o, floatunsitf.o, multf3.o and trunctfdf2.o. Their exact authenticated GCC14 libgcc/soft-fp source and common soft-fp.h use LGPL-2.1-or-later WITH GCC-exception-2.0 (the single unlimited-link permission, not GCC-exception-2.0-note). Preserve the six complete original files with attribution/permission/disclaimers under notices-extra/gcc/libgcc/soft-fp and the full LGPL text. Other selected GCC headers, lse.S/lse-init.c/sfp-exceptions.c and crtstuff.c retain GPL-3.0-or-later WITH GCC-exception-3.1 and eligible-compilation conditions. Both terms apply to the actual selected contributions; compiler tools remain build-only. Complete exact GCC source/descriptor/Debian archives and original per-file terms remain supplied. The five soft-fp members contribute only to lib/libavutil.so.61.1.102 in this actual target mapping; retain the per-member installed-file assessment rather than inferring their presence in every GCC-supported binary."
+      },
+      "glibc": {
+        "license_expression": "LGPL-2.1-or-later AND (LGPL-2.1-or-later WITH GCC-exception-2.0-note) AND BSD-3-Clause",
+        "route": "Actual ARM64 selects164 glibc headers:140 LGPL,23 generated/unmarked under package default LGPL2.1+, and one BSD-3-Clause ttydefaults.h. Exact AArch64 start.S/crti.S/crtn.S preserve LGPL2.1+ plus their GCC-exception-2.0-note linking permission; all three accompanying files match authenticated original source bytes. These incorporated startup/header inputs are distinct from separately provided OS libc/libm/loader. Preserve full selected headers, full startup/ttydefaults source notices and corresponding source archives; complete source-package archives retain broader per-file terms."
+      },
+      "linux": {
+        "license_expression": "GPL-2.0-only WITH Linux-syscall-note",
+        "route": "Actual ARM64 selects31 Linux UAPI inputs:24 SPDX GPL2.0 WITH Linux-syscall-note headers,6 tiny include wrappers and one generated syscall-number table. Exact bytes independently match authenticated Debian package payloads. Preserve every selected input, full original package terms/GPL2 text and the complete Linux-syscall-note. No kernel runtime is distributed in the native archive; source-package advisory matches require exact scope review."
+      }
+    }
+  }
+}

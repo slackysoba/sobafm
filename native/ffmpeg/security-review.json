@@ -1,0 +1,2775 @@
+{
+  "limitations": [
+    "Raw primary responses and successful/failed execution evidence are retained separately; referenced private evidence names are not release assets.",
+    "The 70 binutils and1031 kernel individual triggers remain unreviewed; build-tool roles/UAPI-only inclusion are not individual patch or call-graph proofs.",
+    "Separately supplied OS libc, loader, kernel, resolver and application networking still require updates.",
+    "Manual source/architecture/launch scope is not a blanket VEX not-affected declaration or absence-of-vulnerability claim.",
+    "New iconv-disabled payloads require refreshed package/native/recipient/replacement/scanner evidence. Native ARM64 qualification remains pending.",
+    "No production trust or publication is granted by this review record."
+  ],
+  "narrowed_linux_addendum": {
+    "CONFIG_ICONV": 0,
+    "added_inputs": [],
+    "all_28_patch_scope_configuration_and_absence_checks_still_hold": true,
+    "all_selected_upstream_input_bytes_same_as_audited_a11": true,
+    "candidate": "linux-amd64-a12",
+    "changed_hash_inputs": [
+      "/work/build/config.h"
+    ],
+    "config_changes_from_a11": {
+      "CONFIG_ICONV": {
+        "a11": 1,
+        "a12": 0
+      }
+    },
+    "files": [
+      {
+        "origin": "preserved candidate-a12 reports/authenticated-toolchain.json",
+        "path": "authenticated-toolchain.json",
+        "sha256": "6deaa1968de6ddbebe83435e444adaf9171bd693b9fd442bbf40bcfcb7147a04"
+      },
+      {
+        "origin": "preserved candidate-a12 reports/compiled-input-correspondence.tsv",
+        "path": "compiled-input-correspondence.tsv",
+        "sha256": "be98e2a2dcd1f78f4291a76800ef5ceddc1f7c6500c734865a7f8eb917850dbf"
+      },
+      {
+        "origin": "preserved candidate-a12 reports/config.h",
+        "path": "config.h",
+        "sha256": "e2a5f28aeb2ee8da9ea271e3953f5775a723c4fb78ae6650440de055588a96f8"
+      },
+      {
+        "origin": "preserved candidate-a12 reports/config_components.h",
+        "path": "config_components.h",
+        "sha256": "8368710edb2eac8a7150d14119882fb46ebc019e88e68211f51bc74e1089ce4b"
+      },
+      {
+        "origin": "preserved candidate-a12 reports/input-mapping.json",
+        "path": "input-mapping.json",
+        "sha256": "c4507cea405f5c10c3b717798741d71e5cfccfa93c7cec8b6c967b3a06cc7eef"
+      },
+      {
+        "origin": "preserved candidate-a12 reports/notice-index.json",
+        "path": "notice-index.json",
+        "sha256": "0ccd56c9a8b6c2e63827cc780436773c078666b439203bdb5573d4fad72321ed"
+      },
+      {
+        "origin": "preserved candidate-a12 reports/runtime-closure.json",
+        "path": "runtime-closure.json",
+        "sha256": "f89e4b9d3625e95942cf0b3e78fc8f69ca8c1c1ec88caa3975dbefaf1cc5658b"
+      }
+    ],
+    "iconv_import_search": [
+      {
+        "binary": "bin/ffmpeg",
+        "symbols": []
+      },
+      {
+        "binary": "lib/libavcodec.so.63.1.102",
+        "symbols": []
+      },
+      {
+        "binary": "lib/libavfilter.so.12.1.102",
+        "symbols": []
+      },
+      {
+        "binary": "lib/libavformat.so.63.1.102",
+        "symbols": []
+      },
+      {
+        "binary": "lib/libavutil.so.61.1.102",
+        "symbols": []
+      },
+      {
+        "binary": "lib/libswresample.so.7.1.102",
+        "symbols": []
+      }
+    ],
+    "notice_entries": 775,
+    "notice_export_all_bytes_verified_against_index_and_exact_dependency_union": true,
+    "payloads": [
+      {
+        "needed": [
+          "libavcodec.so.63",
+          "libavfilter.so.12",
+          "libavformat.so.63",
+          "libavutil.so.61",
+          "libc.so.6",
+          "libm.so.6",
+          "libswresample.so.7"
+        ],
+        "path": "bin/ffmpeg",
+        "sha256": "dc2d380618a236b55f843cf7986b57f5e0d18537981e7df38c6ed71311404d43"
+      },
+      {
+        "needed": [
+          "libavutil.so.61",
+          "libc.so.6",
+          "libm.so.6"
+        ],
+        "path": "lib/libavcodec.so.63.1.102",
+        "sha256": "096865e42ec8a1221ef576bcffc74508892ccb537656569c429555545c5d2f8f"
+      },
+      {
+        "needed": [
+          "libavutil.so.61",
+          "libc.so.6",
+          "libm.so.6",
+          "libswresample.so.7"
+        ],
+        "path": "lib/libavfilter.so.12.1.102",
+        "sha256": "f5d14539eeea739d5a8ef1b2207a0577e3e6a4e7cf276ce9cbc9ba803b7c6b02"
+      },
+      {
+        "needed": [
+          "libavcodec.so.63",
+          "libavutil.so.61",
+          "libc.so.6"
+        ],
+        "path": "lib/libavformat.so.63.1.102",
+        "sha256": "b5448fc076e54ce2f0842c5c03caef236b0c48aadd58cde574c537c8990a8400"
+      },
+      {
+        "needed": [
+          "libc.so.6",
+          "libm.so.6"
+        ],
+        "path": "lib/libavutil.so.61.1.102",
+        "sha256": "38af9ed6df5087c7b0f5f8bdf1f6548c6ca797e5e7df52947eb3c8b15e707bb9"
+      },
+      {
+        "needed": [
+          "libavutil.so.61",
+          "libc.so.6",
+          "libm.so.6"
+        ],
+        "path": "lib/libswresample.so.7.1.102",
+        "sha256": "6f19d3c393c4880b91d50d181bdece01d747e85dc651dd212d8b74f770246a13"
+      }
+    ],
+    "remaining_gates": [
+      "New candidate recipient source-only rebuild/library replacement/compiler-free installed package qualification is author-owned and not assessed here.",
+      "Windows cross-a4 and native ARM64 evidence are not included.",
+      "OSV snapshot remains old Linux SBOM; no scanner result is transferred to changed candidate bytes.",
+      "Final independent whole-PR review remains required."
+    ],
+    "removed_inputs": [
+      "/usr/include/iconv.h"
+    ],
+    "scope": "Bounded static report/selected-export comparison only; no execution, recipient rebuild, replacement, package qualification or scanner run by auditor. Historical checkpoint is preserved unchanged.",
+    "upstream_inputs": 565
+  },
+  "primary_advisory_assessment": {
+    "advisories": [
+      {
+        "affected_operation": "Power8 strncasecmp optimized implementation",
+        "candidate_specific_disposition": "Architecture-specific implementation is absent from x86-64 startup/header/native payload; no direct strncasecmp import. The stated Power8 issue does not describe the x86-64 candidate. ARM64 is a different architecture but its actual native qualification remains pending.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-97399",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-97399",
+        "saved_primary_html_sha256": "3fc856316476a66d6279a005beb47d499a7b486b870a6c072424b4a32b20a5b6",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "ld.so; AT_SECURE setuid/setgid plus ORIGIN RUNPATH",
+        "candidate_specific_disposition": "OS loader is separately supplied, not embedded startup code. Actual six a11 payload archive files have no setuid/setgid mode; fixed ordinary unprivileged launch excludes the stated AT_SECURE prerequisite. ORIGIN is present, so ORIGIN alone is not a sufficient exclusion. Retain OS-loader update responsibility.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "linux-payload-modes.json"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-95818",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-95818",
+        "saved_primary_html_sha256": "88a593e9a655640e719f6f7bf985252e4569ec85acab41e5150498fb6c52f271",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "ld.so; AT_SECURE ORIGIN race plus hardlinks conditions",
+        "candidate_specific_disposition": "Separately supplied OS loader. No setuid/setgid a11 payload archive files; supported ordinary unprivileged launch excludes AT_SECURE. No inference about host protected_hardlinks setting, capabilities or unrelated installed privileged programs; retain OS updates.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "linux-payload-modes.json"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-86805",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-86805",
+        "saved_primary_html_sha256": "dc3e479b2edf14d97823b10c1012e791e1473d61fb0be659e16e868c773a2127",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "nscd service and oversized response from malicious DNS server",
+        "candidate_specific_disposition": "No nscd service implementation is incorporated in startup/header/native payload; decoder network config is zero. Host nscd and application networking remain outside this child-code exclusion and need OS maintenance.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-89092",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-89092",
+        "saved_primary_html_sha256": "31eb3351ac16b6b226841b8faf481de52043d50e94d7d65db3aba87325d31099",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "glibc EUC_JISX0213 converter; split output state",
+        "candidate_specific_disposition": "Historical Linux a11 has CONFIG_ICONV=1 and imports iconv/open/close. Selected decode.c uses conversion for sub_charenc text-subtitle recoding; its initialization rejects sub_charenc for non-subtitle codecs, and only MP3 audio decoding is compiled. Thus the fixed MP3 route excludes the subtitle guard, not the iconv code. New explicit --disable-iconv Linux build is pending actual CONFIG_ICONV=0/no-import evidence and renewed qualification. Windows cross-a3 already has CONFIG_ICONV=0.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-80489",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-80489",
+        "saved_primary_html_sha256": "c639e01a744829ce5bdb9a22e2eeebdbc33626ea2cb93c454b310626c9362032",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "glibc SHIFT_JISX0213 converter; split output state",
+        "candidate_specific_disposition": "Same historical-a11 iconv/subtitle guard and pending explicit-disable proof as CVE-2026-80489. Do not describe a11 as lacking iconv.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-77117",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-77117",
+        "saved_primary_html_sha256": "ed3ff25f7f5c15f2f957eb6beb981723cf305f53a86bdccff8a7d9cbe4a93004",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "tsearch/tdelete million-node deep tree",
+        "candidate_specific_disposition": "No direct tsearch/tdelete import or implementation in selected startup/header/native code. Fixed route has no tree-building API. This direct-call scope does not audit all transitive host libc consumers.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-19542",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-19542",
+        "saved_primary_html_sha256": "dbcdf805c206777ed25f95e2fea9952a174b245e5dd69d212393e2f8f8a5af87",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "strfmon/strfmon_l right-justified monetary padding",
+        "candidate_specific_disposition": "No direct monetary-formatting import or selected implementation. MP3/PCM route does not supply the vulnerable formatting operation; OS libc remains separately maintained.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-19499",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-19499",
+        "saved_primary_html_sha256": "5ae203e2503db74b024563d3a6cbac974337438d5f3db69b93cbdd0ec38aecd7",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "fopen attacker-controlled effectively empty ,ccs= mode",
+        "candidate_specific_disposition": "fopen64 IS imported. Selected source call sites use fixed modes r/w/rb/wb/ab, including the build-only bin2c tool; forwarding wrappers do not make MP3 bytes into the mode string. No supported route passes attacker-controlled ,ccs= text. Do not claim fopen is absent.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-18374",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-18374",
+        "saved_primary_html_sha256": "a00ae4be86617e03a5eca95bd14869a2baf5ea5ae196356c682f1de2c7117c9f",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "DNS resolver initialization; long search-list domain",
+        "candidate_specific_disposition": "No direct resolver-family imports in the six a11 ELFs and CONFIG_NETWORK=0. No resolver implementation embedded by startup/header inputs. Python/application DNS, host configuration and OS internal/transitive resolver users remain outside this child scope; retain OS updates.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-8674",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-8674",
+        "saved_primary_html_sha256": "254763c444adc3aad987289503312aecd31d3e8ef8aa952e3f171a91cdac29d0",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "wordexp tilde expansion of unbounded username",
+        "candidate_specific_disposition": "No wordexp/wordfree imports or selected implementation. Fixed argument-array launch and MP3 pipe do not ask libc to expand attacker-controlled shell words.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-6791",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-6791",
+        "saved_primary_html_sha256": "b90c441e5a74f8025eb132fbc1156d06771123f95cbc48cc5aaa1174cd34a096",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "wordexp WRDE_APPEND invalid returned memory",
+        "candidate_specific_disposition": "No wordexp/wordfree imports or selected implementation; no supported wordexp route.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-6368",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-6368",
+        "saved_primary_html_sha256": "a8c3722420dc1aefb9b9953e3be13e4784264c49b9bee8975739a0370c66b0dd",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "deprecated DNS debug printers and invalid RDATA length",
+        "candidate_specific_disposition": "No ns_printrrf/ns_printrr/fp_nquery imports or selected implementation. Advisory explicitly distinguishes these debugging APIs from normal DNS resolver execution. Host/application updates still apply.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-6238",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-6238",
+        "saved_primary_html_sha256": "b2e9c31388df4262186d0645acff6fc7994b53511e4a04f4d4468e5bca7f6343",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "deprecated DNS debug printers and TSIG output bound",
+        "candidate_specific_disposition": "No ns_printrrf/ns_printrr/fp_nquery imports or selected implementation; same direct API scope limitation as CVE-2026-6238.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2026-5435",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-5435",
+        "saved_primary_html_sha256": "2361f3d31bc16c0ed30e5f79e4398e73155b117f7c2097c4208f9d756cdd0959",
+        "tracker_scope": "current trixie open"
+      },
+      {
+        "affected_operation": "glob pattern resource exhaustion",
+        "candidate_specific_disposition": "No glob/glob64 imports or selected glob implementation. Fixed pipe input does not expand attacker glob patterns.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2010-4756",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2010-4756",
+        "saved_primary_html_sha256": "1533aa64c5b15064840929759355263b7de877ee56a438ea7a38a115ecf9d9e3",
+        "tracker_scope": "tracker unimportant"
+      },
+      {
+        "affected_operation": "regexec crafted regex recursion",
+        "candidate_specific_disposition": "No regcomp/regexec/regfree imports or selected regex implementation; no supported attacker-regex route.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2018-20796",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2018-20796",
+        "saved_primary_html_sha256": "e6432d5fc861355dacd40700ae7169b572f03a69c17791bf5bb70543511c76e9",
+        "tracker_scope": "tracker unimportant"
+      },
+      {
+        "affected_operation": "regexec crafted regex recursion",
+        "candidate_specific_disposition": "No regex imports or selected implementation; same direct route scope as CVE-2018-20796. Preserve the tracker upstream-dispute/unimportant classification rather than inventing a fix.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2019-9192",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2019-9192",
+        "saved_primary_html_sha256": "31d6c3fae656f6efab2173c5b95dfe8d843ebc6e37110cd9f5de3347fb957dc7",
+        "tracker_scope": "tracker unimportant"
+      },
+      {
+        "affected_operation": "NPTL stack-guard bypass requiring an independent overflow",
+        "candidate_specific_disposition": "Separately supplied OS threading code is used (pthread_create/join imports present), not embedded startup/header implementation. Tracker records upstream non-security position. This assessment proves no general stack-guard immunity and does not dismiss an independent overflow.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2019-1010022",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2019-1010022",
+        "saved_primary_html_sha256": "cbef0ea746e9555c4d04761bf8ef09f236c787e9fc9033113695d351d480ab1d",
+        "tracker_scope": "tracker unimportant"
+      },
+      {
+        "affected_operation": "malicious ELF files and ldd execution",
+        "candidate_specific_disposition": "MP3 bytes are sent to the fixed decoder pipe, not executed as ELF or inspected by a runtime ldd subprocess. No ldd component shipped. Preserve upstream non-security position and host responsibility.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2019-1010023",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2019-1010023",
+        "saved_primary_html_sha256": "316608e29cf6e9690c7cb3c8424fd54d9ac31173423d112c1bcbda4ca881faba",
+        "tracker_scope": "tracker unimportant"
+      },
+      {
+        "affected_operation": "stack/heap ASLR information from thread caches",
+        "candidate_specific_disposition": "Separately supplied OS threading/allocator code. Preserve tracker upstream non-security position; no claim that cache/ASLR bypass techniques are solved by this package.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2019-1010024",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2019-1010024",
+        "saved_primary_html_sha256": "c59a28082119a9ded2f8562007694cd70e5357e727064de5eea447e49a75b4c0",
+        "tracker_scope": "tracker unimportant"
+      },
+      {
+        "affected_operation": "inference of pthread heap addresses",
+        "candidate_specific_disposition": "pthread runtime is separately supplied OS code. Preserve vendor position that ASLR bypass alone is not a vulnerability; no claim of package-level ASLR immunity.",
+        "component": "glibc",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "2.41-12+deb13u4",
+        "id": "CVE-2019-1010025",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2019-1010025",
+        "saved_primary_html_sha256": "48754f59ff21707ba10211ef7ade27c43c12dd422dbb1acab80155c321ae00a7",
+        "tracker_scope": "tracker unimportant"
+      },
+      {
+        "affected_operation": "libstdc++ erase_if binary heap UAF",
+        "candidate_specific_disposition": "Actual selected GCC archive members are libgcc/startup support, not libstdc++ C++ heap code. No libstdc++ runtime closure. Compiler/source package identity alone does not incorporate this implementation into native bytes.",
+        "component": "gcc-14",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "14.2.0-19",
+        "id": "CVE-2026-102010",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-102010",
+        "saved_primary_html_sha256": "cdba9431b7b3106f524ffe90efabf22b05b11afd40b25d0889947422179720bf",
+        "tracker_scope": "open source-package match; output/source scope assessed"
+      },
+      {
+        "affected_operation": "libstdc++ aligned operator new overflow",
+        "candidate_specific_disposition": "No libstdc++ implementation or dynamic closure in this C build; selected GCC runtime/startup members do not include aligned C++ operator new.",
+        "component": "gcc-14",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "14.2.0-19",
+        "id": "CVE-2026-95619",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2026-95619",
+        "saved_primary_html_sha256": "f8cc5c1a30cd0238a23cf369b2ea3db3cbd1a7064d217575cfd49cdb7c533f11",
+        "tracker_scope": "open source-package match; output/source scope assessed"
+      },
+      {
+        "affected_operation": "MinGW output claiming ASLR without relocations",
+        "candidate_specific_disposition": "All six actual cross-a3 PE outputs have DYNAMIC_BASE and NX_COMPAT (DllCharacteristics=352/0x160) and nonempty .reloc (572..5088 bytes); exact per-file values and hashes in pe-relocation-scope.json. Excludes this missing-relocation artifact condition, not every ASLR bypass.",
+        "component": "mingw-w64",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "pe-relocation-scope.json"
+        ],
+        "exact_source_version": "12.0.0-5",
+        "id": "CVE-2018-5392",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2018-5392",
+        "saved_primary_html_sha256": "ec38c9660e6ba55c25d9ce48026c535ffbc1b4ad7c6fe7d7024091e6a228e5b7",
+        "tracker_scope": "open source-package match; output/source scope assessed"
+      },
+      {
+        "affected_operation": "libssp lack of object-size checking",
+        "candidate_specific_disposition": "No selected libssp archive/runtime member or import in the actual Windows ledger/closure. Preserve Debian unimportant/missing-feature classification. Does not prove every buffer operation receives object-size checking or a general hardening guarantee.",
+        "component": "gcc-mingw-w64",
+        "evidence": [
+          "input-unions.json",
+          "import-scope.json",
+          "selected-source-index.json",
+          "evidence-index.json",
+          "evidence/linux-amd64/evidence/selected-archive-members.tsv"
+        ],
+        "exact_source_version": "27 (binary 14.2.0-19+27+b1)",
+        "id": "CVE-2016-4973",
+        "not_a_claim": "Not a statement that the source package is fixed, that the installed OS is vulnerability-free, or that all transitive consumers are unreachable.",
+        "primary_url": "https://security-tracker.debian.org/tracker/CVE-2016-4973",
+        "saved_primary_html_sha256": "a9843356fba7534a612abd9c7da3eeb944144c7b4346a9187adc90397ba1aa48",
+        "tracker_scope": "tracker unimportant"
+      }
+    ],
+    "scope": "Candidate a11/cross-a3 selected incorporated code versus build tools and separately supplied OS code; primary tracker snapshot retained. Not a blanket VEX not-affected declaration."
+  },
+  "primary_patch_assessment": {
+    "commits": [
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_FFV1_VULKAN_ENCODER": 0,
+              "CONFIG_VULKAN": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/ffv1enc_vulkan.c": [],
+              "libavutil/vulkan.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_FFV1_VULKAN_ENCODER": 0,
+              "CONFIG_VULKAN": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/ffv1enc_vulkan.c": [],
+              "libavutil/vulkan.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/ffv1enc_vulkan.c",
+          "libavutil/vulkan.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Changes Vulkan queue initialization/rotation and pins video pools to a single queue.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/669f5ab083c7732c10f1ce9e4f1915960dd88457",
+        "raw_primary_response_sha256": "92bdd7cf12dd36ec76ff7c343a10122f033f2667cdedebe590faa8c19f912189",
+        "saved_primary_record": "primary/commit/669f5ab083c7732c10f1ce9e4f1915960dd88457.json",
+        "saved_record_sha256": "d562117664d1ba0a3f63b30ae0783b0a763317cb6afa7124f2c72f7d052cd24d",
+        "sha": "669f5ab083c7732c10f1ce9e4f1915960dd88457",
+        "subject": "vulkan: de-phase queue rotation and pin video pools to a single queue"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_VULKAN": 0
+            },
+            "selected_input_objects": {
+              "libavutil/hwcontext_vulkan.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_VULKAN": 0
+            },
+            "selected_input_objects": {
+              "libavutil/hwcontext_vulkan.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavutil/hwcontext_vulkan.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Restricts host image layout copies to compatible Vulkan layouts and preserves a fallback transition.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/7e93014c5bbb61e7c22afebb478bf92f7a08d59a",
+        "raw_primary_response_sha256": "83b0c87b7047fa463c1bf8c24b626034d03a23a002aaa6a18ad9ddcee237defa",
+        "saved_primary_record": "primary/commit/7e93014c5bbb61e7c22afebb478bf92f7a08d59a.json",
+        "saved_record_sha256": "5884ed1cb088f612f19b597c8fa3716620c7c47c9fe047042390a0e3f9dfc785",
+        "sha": "7e93014c5bbb61e7c22afebb478bf92f7a08d59a",
+        "subject": "hwcontext_vulkan: only originate host image layout transitions from copyable layouts"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_HLS_DEMUXER": 0,
+              "CONFIG_NETWORK": 0
+            },
+            "selected_input_objects": {
+              "libavformat/hls.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_HLS_DEMUXER": 0,
+              "CONFIG_NETWORK": 0
+            },
+            "selected_input_objects": {
+              "libavformat/hls.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavformat/hls.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Tracks the end of requested HLS byte ranges across contiguous segments instead of reopening/seeking incorrectly.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/2120a1d6266dc28bbd698bd0f61d992a4dbef67b",
+        "raw_primary_response_sha256": "223924f9d24425648ef6b8f8c8a273c8ce2a389658fc2dac727aa549e04e644f",
+        "saved_primary_record": "primary/commit/2120a1d6266dc28bbd698bd0f61d992a4dbef67b.json",
+        "saved_record_sha256": "ac4d0b41993239b69d2e9ceff1d6147dce5a17b01a9157540ba393667cb2caf3",
+        "sha": "2120a1d6266dc28bbd698bd0f61d992a4dbef67b",
+        "subject": "avformat/hls: fix reading byte-range segments after the first one"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_IMF_DEMUXER": 0
+            },
+            "selected_input_objects": {
+              "libavformat/imfdec.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_IMF_DEMUXER": 0
+            },
+            "selected_input_objects": {
+              "libavformat/imfdec.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavformat/imfdec.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Advances the XML iterator on non-Asset IMF nodes to avoid a busy loop.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/67b60c310bc305c9b1c17d413431226570c2e500",
+        "raw_primary_response_sha256": "18a188c5ddb81ef5ffd177ce77f3bf37300d22592da32232cb1b7d4d144a5b32",
+        "saved_primary_record": "primary/commit/67b60c310bc305c9b1c17d413431226570c2e500.json",
+        "saved_record_sha256": "73179253297b6f5cc17c9c1d600378fad0341db23878c005d6334c5fb962b8fe",
+        "sha": "67b60c310bc305c9b1c17d413431226570c2e500",
+        "subject": "avformat/imfdec: don't busy-loop if non-Asset in Asset-list"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_DXVA2": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/dxva2.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_DXVA2": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/dxva2.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/dxva2.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Retains the DXVA decoder reference during postprocessing to avoid a frame-buffer race.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/fd5d616c294faef421ca1c8b28cb0f6560fd5f31",
+        "raw_primary_response_sha256": "65017945cb4160144a2eda20ef470c5a93ec7883fafef6f6c2d3a9da152683e1",
+        "saved_primary_record": "primary/commit/fd5d616c294faef421ca1c8b28cb0f6560fd5f31.json",
+        "saved_record_sha256": "cb20e308aecf2a1516813b04a68f437e21873e8f97a6d6aeb094226979d9e29b",
+        "sha": "fd5d616c294faef421ca1c8b28cb0f6560fd5f31",
+        "subject": "avcodec/dxva2: fix frame->buf[] data race with frame threading"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_VORBIS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/vorbisenc.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_VORBIS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/vorbisenc.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/vorbisenc.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Sets Vorbis frame size from the proper block and changes initial padding/audio placement.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/27b46f0fbcf8d4ef8ba68f7bdc67f14f246de07a",
+        "raw_primary_response_sha256": "ca72538daf3fb164c6ffa6eabde0b0a2ec6fb91a77b9e9441fcab71b34ef4f72",
+        "saved_primary_record": "primary/commit/27b46f0fbcf8d4ef8ba68f7bdc67f14f246de07a.json",
+        "saved_record_sha256": "909dd9bbfae5c75f8f5e547e19148d40342787e060c8f5e395dd68b28e57e87d",
+        "sha": "27b46f0fbcf8d4ef8ba68f7bdc67f14f246de07a",
+        "subject": "avcodec/vorbisenc: fix setting frame_size"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavfilter/vf_scale_cuda.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Includes chroma subsampling in CUDA scaling pass decisions.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/46d8f462eeb87ee1f704d8c44a0ee24fca471ad1",
+        "raw_primary_response_sha256": "49312e44a5d80e57f15f64b3a349645bdbdfbda2fb40e7b94e42786cbc93819e",
+        "saved_primary_record": "primary/commit/46d8f462eeb87ee1f704d8c44a0ee24fca471ad1.json",
+        "saved_record_sha256": "b1828e1bcf4852b14b9c7ab63d5100e187686deaa933a92755fefe06f06026fd",
+        "sha": "46d8f462eeb87ee1f704d8c44a0ee24fca471ad1",
+        "subject": "avfilter/vf_scale_cuda: consider chroma subsampling for scaling decisions"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavfilter/vf_scale_cuda.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Keeps a valid CUDA vertical pass fallback even when heights match.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/38a8f88ca846ca8c98cf9481d31875331b84bbf4",
+        "raw_primary_response_sha256": "c62557028ed375b5332b0d8c150835085de3ac5cea8bf15be416f179609ad1c1",
+        "saved_primary_record": "primary/commit/38a8f88ca846ca8c98cf9481d31875331b84bbf4.json",
+        "saved_record_sha256": "37690662b5b96d9fd3859d19d56ef2d33b679b5fe458f3b07e6346619892c7d3",
+        "sha": "38a8f88ca846ca8c98cf9481d31875331b84bbf4",
+        "subject": "avfilter/vf_scale_cuda: always have valid passes setup"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavfilter/vf_scale_cuda.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Extracts CUDA pass selection and invokes it when initializing the filter chain.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/1da95554740faa52799f3b7ff045da8b0d6e5270",
+        "raw_primary_response_sha256": "44a66b1d0ed585410a4cb224e8a3dab675dba5484513aa2e50a1f9d9c6af098d",
+        "saved_primary_record": "primary/commit/1da95554740faa52799f3b7ff045da8b0d6e5270.json",
+        "saved_record_sha256": "5d25a14732093e294946149221c77d5f0f9e9e8c8932748bc057977dbc927caa",
+        "sha": "1da95554740faa52799f3b7ff045da8b0d6e5270",
+        "subject": "avfilter/vf_scale_cuda: extract pass determination into its own function"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavfilter/vf_scale_cuda.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Allocates an intermediate CUDA texture only when the temporary pass is needed.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/979b335e33376a10e315ada4f1dd3f267c39e8b0",
+        "raw_primary_response_sha256": "f7f234a0e3311b19c204d65e40c7733be91dce2e9f697df870d93d5fefe1ab2d",
+        "saved_primary_record": "primary/commit/979b335e33376a10e315ada4f1dd3f267c39e8b0.json",
+        "saved_record_sha256": "820fb11e2ef75d1ce8deaf8d4586ea42cc301a3b70bfb6a32f62c5eb668dfd5b",
+        "sha": "979b335e33376a10e315ada4f1dd3f267c39e8b0",
+        "subject": "avfilter/vf_scale_cuda: skip allocating intermediate texture if not needed"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_SCALE_CUDA_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_scale_cuda.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavfilter/vf_scale_cuda.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Persists enabled pass state so disabled CUDA passes are not executed.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/7832132d32054b9f9b04d479e0a52262ad07461b",
+        "raw_primary_response_sha256": "23511e1a0a88c20787ba678c651a73adcc6f9159bda10a88c929b1df6860d352",
+        "saved_primary_record": "primary/commit/7832132d32054b9f9b04d479e0a52262ad07461b.json",
+        "saved_record_sha256": "501d671cf9821fbc4391fb01be94f082e5499d51c40d5a89dbabec4088bcd0a5",
+        "sha": "7832132d32054b9f9b04d479e0a52262ad07461b",
+        "subject": "avfilter/vf_scale_cuda: don't try to execute disabled filter passes"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_AAC_DECODER": 0,
+              "CONFIG_AAC_FIXED_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/aacsbr_template.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_AAC_DECODER": 0,
+              "CONFIG_AAC_FIXED_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/aacsbr_template.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/aacsbr_template.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Uninitializes the AAC SBR MDCT and frees the extension on context-allocation failure.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/2a571b606854520cf89804d8030c8b328e621689",
+        "raw_primary_response_sha256": "5a00c1bf1f8813bc3ebff8414eaeace1ca3950161b4d4c14a4eaa80412c48e78",
+        "saved_primary_record": "primary/commit/2a571b606854520cf89804d8030c8b328e621689.json",
+        "saved_record_sha256": "1ea44557bbb96edeaa6a9135d49ddf02cd3e9a1bf552bec30fdd930ecda47f94",
+        "sha": "2a571b606854520cf89804d8030c8b328e621689",
+        "subject": "avcodec/aacsbr_template: don't leak on ff_aac_sbr_ctx_alloc_init failure"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_CONVOLUTION_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_convolution.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_CONVOLUTION_FILTER": 0
+            },
+            "selected_input_objects": {
+              "libavfilter/vf_convolution.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavfilter/vf_convolution.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Bounds convolution columns and slice rows by actual remaining image dimensions.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/0a76163ce2e9b0bc4512df57d36e7e92a745c3b1",
+        "raw_primary_response_sha256": "fa729a3546205ce4a422453c07d13f661e4c14f9e52bfbf296c59250d326aab1",
+        "saved_primary_record": "primary/commit/0a76163ce2e9b0bc4512df57d36e7e92a745c3b1.json",
+        "saved_record_sha256": "a4280d989576ff87606b6628d9cb8982bfc21430719cf0f04209ad32ab547669",
+        "sha": "0a76163ce2e9b0bc4512df57d36e7e92a745c3b1",
+        "subject": "avfilter/vf_convolution: don't assume frame is multiple of 16 pixels wide"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {},
+            "selected_input_objects": {
+              "libavformat/avformat.h": [
+                "/work/build/fftools/cmdutils.o",
+                "/work/build/fftools/ffmpeg.o",
+                "/work/build/fftools/ffmpeg_dec.o",
+                "/work/build/fftools/ffmpeg_demux.o",
+                "/work/build/fftools/ffmpeg_enc.o",
+                "/work/build/fftools/ffmpeg_filter.o",
+                "/work/build/fftools/ffmpeg_hw.o",
+                "/work/build/fftools/ffmpeg_mux.o",
+                "/work/build/fftools/ffmpeg_mux_init.o",
+                "/work/build/fftools/ffmpeg_opt.o",
+                "/work/build/fftools/ffmpeg_sched.o",
+                "/work/build/fftools/graph/graphprint.o",
+                "/work/build/fftools/opt_common.o",
+                "/work/build/fftools/resources/resman.o",
+                "/work/build/libavcodec/mpegaudio_parser.o",
+                "/work/build/libavformat/allformats.o",
+                "/work/build/libavformat/avformat.o",
+                "/work/build/libavformat/avio.o",
+                "/work/build/libavformat/aviobuf.o",
+                "/work/build/libavformat/codecstring.o",
+                "/work/build/libavformat/demux.o",
+                "/work/build/libavformat/demux_utils.o",
+                "/work/build/libavformat/dump.o",
+                "/work/build/libavformat/dv.o",
+                "/work/build/libavformat/format.o",
+                "/work/build/libavformat/id3v1.o",
+                "/work/build/libavformat/id3v2.o",
+                "/work/build/libavformat/isom_tags.o",
+                "/work/build/libavformat/metadata.o",
+                "/work/build/libavformat/mp3dec.o",
+                "/work/build/libavformat/mux.o",
+                "/work/build/libavformat/mux_utils.o",
+                "/work/build/libavformat/options.o",
+                "/work/build/libavformat/os_support.o",
+                "/work/build/libavformat/pcmenc.o",
+                "/work/build/libavformat/rawenc.o",
+                "/work/build/libavformat/replaygain.o",
+                "/work/build/libavformat/riff.o",
+                "/work/build/libavformat/sdp.o",
+                "/work/build/libavformat/seek.o",
+                "/work/build/libavformat/utils.o",
+                "/work/build/libavformat/version.o"
+              ],
+              "libavformat/mux.c": [
+                "/work/build/libavformat/mux.o"
+              ]
+            }
+          },
+          "windows-amd64": {
+            "config_values": {},
+            "selected_input_objects": {
+              "libavformat/avformat.h": [
+                "/work/build/fftools/cmdutils.o",
+                "/work/build/fftools/ffmpeg.o",
+                "/work/build/fftools/ffmpeg_dec.o",
+                "/work/build/fftools/ffmpeg_demux.o",
+                "/work/build/fftools/ffmpeg_enc.o",
+                "/work/build/fftools/ffmpeg_filter.o",
+                "/work/build/fftools/ffmpeg_hw.o",
+                "/work/build/fftools/ffmpeg_mux.o",
+                "/work/build/fftools/ffmpeg_mux_init.o",
+                "/work/build/fftools/ffmpeg_opt.o",
+                "/work/build/fftools/ffmpeg_sched.o",
+                "/work/build/fftools/graph/graphprint.o",
+                "/work/build/fftools/opt_common.o",
+                "/work/build/fftools/resources/resman.o",
+                "/work/build/libavcodec/mpegaudio_parser.o",
+                "/work/build/libavformat/allformats.o",
+                "/work/build/libavformat/avformat.o",
+                "/work/build/libavformat/avio.o",
+                "/work/build/libavformat/aviobuf.o",
+                "/work/build/libavformat/codecstring.o",
+                "/work/build/libavformat/demux.o",
+                "/work/build/libavformat/demux_utils.o",
+                "/work/build/libavformat/dump.o",
+                "/work/build/libavformat/dv.o",
+                "/work/build/libavformat/format.o",
+                "/work/build/libavformat/id3v1.o",
+                "/work/build/libavformat/id3v2.o",
+                "/work/build/libavformat/isom_tags.o",
+                "/work/build/libavformat/metadata.o",
+                "/work/build/libavformat/mp3dec.o",
+                "/work/build/libavformat/mux.o",
+                "/work/build/libavformat/mux_utils.o",
+                "/work/build/libavformat/options.o",
+                "/work/build/libavformat/os_support.o",
+                "/work/build/libavformat/pcmenc.o",
+                "/work/build/libavformat/rawenc.o",
+                "/work/build/libavformat/replaygain.o",
+                "/work/build/libavformat/riff.o",
+                "/work/build/libavformat/sdp.o",
+                "/work/build/libavformat/seek.o",
+                "/work/build/libavformat/utils.o",
+                "/work/build/libavformat/version.o"
+              ],
+              "libavformat/mux.c": [
+                "/work/build/libavformat/mux.o"
+              ]
+            }
+          }
+        },
+        "changed_files": [
+          "libavformat/avformat.h",
+          "libavformat/mux.c"
+        ],
+        "disposition": "selected-common-code; positive-trailer precondition excluded by the sole PCM muxer and return-value proof",
+        "patch_semantics_review": "Preserves an AVIO error when a muxer trailer callback returned a positive success value; also corrects the public comment to allow nonnegative success.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/9695f0c831d46444b6e5d92e3a20f94b30a2c1dc",
+        "raw_primary_response_sha256": "3cf7ab04b51df59d66bf3db7852f4c6ec4927355ca897a333428b3cd87a6c9e7",
+        "saved_primary_record": "primary/commit/9695f0c831d46444b6e5d92e3a20f94b30a2c1dc.json",
+        "saved_record_sha256": "d59fa5a4d142d5b18792b8f671906007ab90c34e4053922d1471b17d54e599cb",
+        "sha": "9695f0c831d46444b6e5d92e3a20f94b30a2c1dc",
+        "subject": "avformat/mux: don't let positive write_trailer ret shadow pb failure"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_H264_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/h264dec.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_H264_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/h264dec.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/h264dec.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Uses FF_PTR_ADD for a possibly null missing-field pointer, avoiding null-plus-zero arithmetic.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/ebafaee10ab45fce1964bd09efcd848e2da5b401",
+        "raw_primary_response_sha256": "8406891dc24bc63069c3ac1f957f16965c5100320e9a8fe26e779d8c54919123",
+        "saved_primary_record": "primary/commit/ebafaee10ab45fce1964bd09efcd848e2da5b401.json",
+        "saved_record_sha256": "39ec496dbc9aa1a6d5afa9aa5ad0241c79fd5fa3b662a18b2287d98c23b579e4",
+        "sha": "ebafaee10ab45fce1964bd09efcd848e2da5b401",
+        "subject": "avcodec/h264dec: do not add 0 to the NULL plane pointers when filling a missing field"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_DASH_MUXER": 0
+            },
+            "selected_input_objects": {
+              "libavformat/dashenc.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_DASH_MUXER": 0
+            },
+            "selected_input_objects": {
+              "libavformat/dashenc.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavformat/dashenc.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Avoids computing DASH average bitrate with a zero total duration.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/df8dce0eb35161ddf86f1979d1ed6af020f49b11",
+        "raw_primary_response_sha256": "ca3e86d759a8c9e0caf9dc154cd362225a26eed3105d5bc04987d21c38f294f9",
+        "saved_primary_record": "primary/commit/df8dce0eb35161ddf86f1979d1ed6af020f49b11.json",
+        "saved_record_sha256": "31fc02b3e1442df7a14f492ca609111424c141fdd11cf2bf02004505108a856c",
+        "sha": "df8dce0eb35161ddf86f1979d1ed6af020f49b11",
+        "subject": "libavformat/dashenc.c: check if packets were muxed before calculating average bitrate"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_MOV_DEMUXER": 0
+            },
+            "selected_input_objects": {
+              "libavformat/mov.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_MOV_DEMUXER": 0
+            },
+            "selected_input_objects": {
+              "libavformat/mov.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavformat/mov.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Uses av_reallocp_array so an allocation failure does not lose the original MOV pointer.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/c867e135494d97b27158d17837d254bbbb8d4f7b",
+        "raw_primary_response_sha256": "9920dcf7d297cc88dc70bb964db299c36b2042baee69f43437d297f73615cb53",
+        "saved_primary_record": "primary/commit/c867e135494d97b27158d17837d254bbbb8d4f7b.json",
+        "saved_record_sha256": "465894431bbe6419dbab5a8a1749ef4a5b02cc2b7bfb0cc0aec72a1dfe8686c5",
+        "sha": "c867e135494d97b27158d17837d254bbbb8d4f7b",
+        "subject": "avformat/mov: don't leak on realloc failure"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_LIBOAPV": 0,
+              "CONFIG_LIBOAPV_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/liboapvenc.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_LIBOAPV": 0,
+              "CONFIG_LIBOAPV_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/liboapvenc.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/liboapvenc.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Adapts OpenAPV encoder context construction to its newer API.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/a7502e5ff39ef53d475b9ee7dd6d4aeb48f047e6",
+        "raw_primary_response_sha256": "b3b5b2089950ff33116936feb449d2c8e81affdbf65868306025fb76d3de2c8c",
+        "saved_primary_record": "primary/commit/a7502e5ff39ef53d475b9ee7dd6d4aeb48f047e6.json",
+        "saved_record_sha256": "bfa8e6b05c79b619838aa5a7f33aaadabd8b322c99a35ad9c269e9a3c5f4f7a3",
+        "sha": "a7502e5ff39ef53d475b9ee7dd6d4aeb48f047e6",
+        "subject": "avcodec/liboapvenc: fix build with openapv >= 1.1"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/dec.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/dec.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/opus/dec.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Offsets only valid Opus output channels.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/51c4a23d74ac2fbf2fb066e0ce274a966a16da23",
+        "raw_primary_response_sha256": "cc63d12a469b51188f8d5f86f80c00b222d6b1f861b6eeebe52da92386d2f440",
+        "saved_primary_record": "primary/commit/51c4a23d74ac2fbf2fb066e0ce274a966a16da23.json",
+        "saved_record_sha256": "f8051d87fe2dbb86acf56edb5c502cfdc8c28f31eb6f9a72ce4a69b9582265a6",
+        "sha": "51c4a23d74ac2fbf2fb066e0ce274a966a16da23",
+        "subject": "avcodec/opus/dec: only add offsets to valid channel pointers"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/silk.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/silk.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/opus/silk.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Zeros inactive/redundant SILK arrays in the Opus decoder.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/eeb491a848b19acd9c84e86a3e7093f37a359d3a",
+        "raw_primary_response_sha256": "6394a392c28a0d6acef34232b2d4dee22ddb391a626a97c9652827a02536ee9d",
+        "saved_primary_record": "primary/commit/eeb491a848b19acd9c84e86a3e7093f37a359d3a.json",
+        "saved_record_sha256": "fcfd784c3a48914b2bb1523ec3264a40fd1deed8a996da94b6e1ee4f98c7e841",
+        "sha": "eeb491a848b19acd9c84e86a3e7093f37a359d3a",
+        "subject": "avcodec/opus/silk: zero-initialize active and redundancy arrays"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/enc_psy.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/enc_psy.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/opus/enc_psy.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Clamps Opus psychoacoustic EOF buffering to avoid added silent frames.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/b135b25c19b56f909b1d529dedfffbb14ddf170d",
+        "raw_primary_response_sha256": "e52b855435035e21b39d3bb9b1f1efdd177606c4e69789f423fe6b61bbb79832",
+        "saved_primary_record": "primary/commit/b135b25c19b56f909b1d529dedfffbb14ddf170d.json",
+        "saved_record_sha256": "975f47c489a91e61c954a1b772ea3e75ef6327c8a185f32836e34b630921aaec",
+        "sha": "b135b25c19b56f909b1d529dedfffbb14ddf170d",
+        "subject": "avcodec/opus/enc_psy: don't make the last frame silent at EOF"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/enc.c": [],
+              "libavcodec/opus/enc_psy.c": [],
+              "tests/ref/fate/opus-enc-silence": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/enc.c": [],
+              "libavcodec/opus/enc_psy.c": [],
+              "tests/ref/fate/opus-enc-silence": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/opus/enc.c",
+          "libavcodec/opus/enc_psy.c",
+          "tests/ref/fate/opus-enc-silence"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Uses an explicit 16-bit silence frame and updates Opus energy/silence state; changes a test reference too.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/5ee24ba241f71e05c316291d8b675c5ec4affe81",
+        "raw_primary_response_sha256": "71c7968399334bd769eaa844365cf569b4034c5ac23f53db6fe391f9628e230a",
+        "saved_primary_record": "primary/commit/5ee24ba241f71e05c316291d8b675c5ec4affe81.json",
+        "saved_record_sha256": "86d020c691cb4d1b54a6154ecd5b62b4285b2ec92871c8958789e15e4220f01e",
+        "sha": "5ee24ba241f71e05c316291d8b675c5ec4affe81",
+        "subject": "avcodec/opus/enc: signal silence explicitly"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/enc.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/enc.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/opus/enc.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Applies Opus preemphasis state before the overlap tail.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/a0980502d0329c429f6e794b423aa4a099d662f6",
+        "raw_primary_response_sha256": "d3d4008967d0173dbc5b244140af7ceaa8feab84ed1ac6e984023f536327e688",
+        "saved_primary_record": "primary/commit/a0980502d0329c429f6e794b423aa4a099d662f6.json",
+        "saved_record_sha256": "483d62b83eecf0d0b1b7109023dbc3a9bcd9ab2de3a2418ef05eb3479e9f4e69",
+        "sha": "a0980502d0329c429f6e794b423aa4a099d662f6",
+        "subject": "avcodec/opus/enc: fix the pre-emphasis filter state between frames"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/enc.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/enc.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/opus/enc.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Corrects short-frame overlap and zero-padding offsets in the Opus encoder.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/4076c581d66876dcb4639800504edaa312fa8d77",
+        "raw_primary_response_sha256": "a711467420252b858ede777520d9d4b45a24f35e58e79b62e324933e44145def",
+        "saved_primary_record": "primary/commit/4076c581d66876dcb4639800504edaa312fa8d77.json",
+        "saved_record_sha256": "882ed08ddb61f5d9e68ebecb7589c37b154926bca041ba68a6d33ba2722ba74d",
+        "sha": "4076c581d66876dcb4639800504edaa312fa8d77",
+        "subject": "avcodec/opus/enc: fix the input setup of frames shorter than frame_size"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_DECODER": 0,
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/rc.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_OPUS_DECODER": 0,
+              "CONFIG_OPUS_ENCODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/opus/rc.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/opus/rc.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Zeros unused Opus range-coder bytes; both encoder and decoder are excluded, including the shared rc.c input.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/82a4f22c8333ddc63e141b7d8b89a8e3e279b960",
+        "raw_primary_response_sha256": "6d04ad320fa1725b08c7c05e6a0cfc946a28562ff028dfd95401bae09639da6a",
+        "saved_primary_record": "primary/commit/82a4f22c8333ddc63e141b7d8b89a8e3e279b960.json",
+        "saved_record_sha256": "3ca3b60b4a4728c451381bda7bb9afb0c6201a800d96a8664b7089318e1528bd",
+        "sha": "82a4f22c8333ddc63e141b7d8b89a8e3e279b960",
+        "subject": "avcodec/opus/rc: zero the unused bytes of an encoded frame"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_LIBFDK_AAC": 0,
+              "CONFIG_LIBFDK_AAC_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/libfdk-aacdec.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_LIBFDK_AAC": 0,
+              "CONFIG_LIBFDK_AAC_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/libfdk-aacdec.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/libfdk-aacdec.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Resets libfdk AAC flush/history fields and removes the old delay-discard shift.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/a5923073bfd8f25b7300d93af3f8e690174ebd30",
+        "raw_primary_response_sha256": "f3659ac126bad5d3ab797c3406784d33816c63ea70935a929bb2e823a0a73297",
+        "saved_primary_record": "primary/commit/a5923073bfd8f25b7300d93af3f8e690174ebd30.json",
+        "saved_record_sha256": "9c0b44a00df1197b9c435657d6281c83142bfb8bbb66f773467d459f267bea5e",
+        "sha": "a5923073bfd8f25b7300d93af3f8e690174ebd30",
+        "subject": "avcodec/libfdk-aacdec: clear and reset some fields when flushing"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {
+              "CONFIG_LIBFDK_AAC": 0,
+              "CONFIG_LIBFDK_AAC_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/libfdk-aacdec.c": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {
+              "CONFIG_LIBFDK_AAC": 0,
+              "CONFIG_LIBFDK_AAC_DECODER": 0
+            },
+            "selected_input_objects": {
+              "libavcodec/libfdk-aacdec.c": []
+            }
+          }
+        },
+        "changed_files": [
+          "libavcodec/libfdk-aacdec.c"
+        ],
+        "disposition": "changed code absent from both actual compiler-input unions; relevant feature configurations zero",
+        "patch_semantics_review": "Changes libfdk AAC delay/timestamp/skip-data handling and obtains the output buffer earlier.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/7632bc2a9acdb9f481c8ac7f520352d171b37001",
+        "raw_primary_response_sha256": "d4bd9f26da7d54958faa82a0c6be0f06366edbc1bd1524a8400448e694fe28a2",
+        "saved_primary_record": "primary/commit/7632bc2a9acdb9f481c8ac7f520352d171b37001.json",
+        "saved_record_sha256": "7df2916b3fcfd56f263689921f715da7b5d24dc6621ce5db716efb8ae32f190c",
+        "sha": "7632bc2a9acdb9f481c8ac7f520352d171b37001",
+        "subject": "avcodec/libfdk-aacdec: properly handle decoder delay"
+      },
+      {
+        "actual_candidate_evidence": {
+          "linux-amd64": {
+            "config_values": {},
+            "selected_input_objects": {
+              "Changelog": []
+            }
+          },
+          "windows-amd64": {
+            "config_values": {},
+            "selected_input_objects": {
+              "Changelog": []
+            }
+          }
+        },
+        "changed_files": [
+          "Changelog"
+        ],
+        "disposition": "documentation-only",
+        "patch_semantics_review": "Corrects a Changelog typo; no runtime code change.",
+        "primary_url": "https://github.com/FFmpeg/FFmpeg/commit/a15a8e15bf5573a557895471d29b82c30d3570c0",
+        "raw_primary_response_sha256": "0061b85ecee86e6a68a3a9e0bc9795a6f15b281a78fdb5fd0f684c4bef668481",
+        "saved_primary_record": "primary/commit/a15a8e15bf5573a557895471d29b82c30d3570c0.json",
+        "saved_record_sha256": "5a95b92e948a3cc33ff26f07c77e300a2de6f52e3ed6318b2a1f45ba2a5a9531",
+        "sha": "a15a8e15bf5573a557895471d29b82c30d3570c0",
+        "subject": "Changelog: fix typo in an entry"
+      }
+    ],
+    "pin": "946fcce07b6dcd0331c8cc609192aeff5e1924f8",
+    "scope": "Exactly the 28 records newer than the pinned tag in the retained 40-record primary branch snapshot. This is not an assertion about later branch commits or all possible security defects.",
+    "snapshot_count": 28
+  },
+  "reviewed_at_utc": "2026-10-16",
+  "scanner": {
+    "exit_code": 1,
+    "input_scope": "Historical a11 Linux source-component SBOM; no result transferred to changed payloads",
+    "invocation": "scan source --format json --all-packages --lockfile SBOM (without --all-vulns)",
+    "matches": [
+      {
+        "advisory_ids": [
+          "DEBIAN-CVE-2017-13716",
+          "DEBIAN-CVE-2018-20673",
+          "DEBIAN-CVE-2018-20712",
+          "DEBIAN-CVE-2018-9996",
+          "DEBIAN-CVE-2021-32256",
+          "DEBIAN-CVE-2025-11081",
+          "DEBIAN-CVE-2025-11082",
+          "DEBIAN-CVE-2025-11083",
+          "DEBIAN-CVE-2025-11412",
+          "DEBIAN-CVE-2025-11413",
+          "DEBIAN-CVE-2025-11414",
+          "DEBIAN-CVE-2025-1147",
+          "DEBIAN-CVE-2025-1148",
+          "DEBIAN-CVE-2025-1149",
+          "DEBIAN-CVE-2025-11494",
+          "DEBIAN-CVE-2025-11495",
+          "DEBIAN-CVE-2025-1150",
+          "DEBIAN-CVE-2025-1151",
+          "DEBIAN-CVE-2025-1152",
+          "DEBIAN-CVE-2025-1153",
+          "DEBIAN-CVE-2025-1176",
+          "DEBIAN-CVE-2025-1178",
+          "DEBIAN-CVE-2025-1180",
+          "DEBIAN-CVE-2025-1181",
+          "DEBIAN-CVE-2025-1182",
+          "DEBIAN-CVE-2025-11839",
+          "DEBIAN-CVE-2025-11840",
+          "DEBIAN-CVE-2025-3198",
+          "DEBIAN-CVE-2025-5244",
+          "DEBIAN-CVE-2025-5245",
+          "DEBIAN-CVE-2025-66861",
+          "DEBIAN-CVE-2025-66862",
+          "DEBIAN-CVE-2025-66863",
+          "DEBIAN-CVE-2025-66864",
+          "DEBIAN-CVE-2025-66865",
+          "DEBIAN-CVE-2025-66866",
+          "DEBIAN-CVE-2025-69644",
+          "DEBIAN-CVE-2025-69645",
+          "DEBIAN-CVE-2025-69646",
+          "DEBIAN-CVE-2025-69647",
+          "DEBIAN-CVE-2025-69648",
+          "DEBIAN-CVE-2025-69649",
+          "DEBIAN-CVE-2025-69650",
+          "DEBIAN-CVE-2025-69651",
+          "DEBIAN-CVE-2025-69652",
+          "DEBIAN-CVE-2025-7545",
+          "DEBIAN-CVE-2025-7546",
+          "DEBIAN-CVE-2025-8225",
+          "DEBIAN-CVE-2026-15003",
+          "DEBIAN-CVE-2026-18220",
+          "DEBIAN-CVE-2026-19548",
+          "DEBIAN-CVE-2026-19582",
+          "DEBIAN-CVE-2026-3441",
+          "DEBIAN-CVE-2026-3442",
+          "DEBIAN-CVE-2026-4647",
+          "DEBIAN-CVE-2026-6844",
+          "DEBIAN-CVE-2026-6845",
+          "DEBIAN-CVE-2026-6846",
+          "DEBIAN-CVE-2026-90801",
+          "DEBIAN-CVE-2026-90802",
+          "DEBIAN-CVE-2026-90803",
+          "DEBIAN-CVE-2026-90804",
+          "DEBIAN-CVE-2026-90828",
+          "DEBIAN-CVE-2026-90829",
+          "DEBIAN-CVE-2026-90830",
+          "DEBIAN-CVE-2026-90831",
+          "DEBIAN-CVE-2026-91779",
+          "DEBIAN-CVE-2026-91780",
+          "DEBIAN-CVE-2026-91781",
+          "DEBIAN-CVE-2026-91782"
+        ],
+        "package": {
+          "ecosystem": "Debian:13",
+          "name": "binutils",
+          "version": "2.44-3"
+        }
+      },
+      {
+        "advisory_ids": [
+          "DEBIAN-CVE-2026-102010",
+          "DEBIAN-CVE-2026-95619"
+        ],
+        "package": {
+          "ecosystem": "Debian:13",
+          "name": "gcc-14",
+          "version": "14.2.0-19"
+        }
+      },
+      {
+        "advisory_ids": [
+          "DEBIAN-CVE-2010-4756",
+          "DEBIAN-CVE-2018-20796",
+          "DEBIAN-CVE-2019-1010022",
+          "DEBIAN-CVE-2019-1010023",
+          "DEBIAN-CVE-2019-1010024",
+          "DEBIAN-CVE-2019-1010025",
+          "DEBIAN-CVE-2019-9192",
+          "DEBIAN-CVE-2026-18374",
+          "DEBIAN-CVE-2026-19499",
+          "DEBIAN-CVE-2026-19542",
+          "DEBIAN-CVE-2026-5435",
+          "DEBIAN-CVE-2026-6238",
+          "DEBIAN-CVE-2026-6368",
+          "DEBIAN-CVE-2026-6791",
+          "DEBIAN-CVE-2026-77117",
+          "DEBIAN-CVE-2026-80489",
+          "DEBIAN-CVE-2026-8674",
+          "DEBIAN-CVE-2026-86805",
+          "DEBIAN-CVE-2026-89092",
+          "DEBIAN-CVE-2026-95818",
+          "DEBIAN-CVE-2026-97399"
+        ],
+        "package": {
+          "ecosystem": "Debian:13",
+          "name": "glibc",
+          "version": "2.41-12+deb13u4"
+        }
+      },
+      {
+        "advisory_ids": [
+          "DEBIAN-CVE-2004-0230",
+          "DEBIAN-CVE-2005-3660",
+          "DEBIAN-CVE-2007-3719",
+          "DEBIAN-CVE-2008-2544",
+          "DEBIAN-CVE-2008-4609",
+          "DEBIAN-CVE-2010-4563",
+          "DEBIAN-CVE-2010-5321",
+          "DEBIAN-CVE-2011-4915",
+          "DEBIAN-CVE-2011-4916",
+          "DEBIAN-CVE-2011-4917",
+          "DEBIAN-CVE-2012-4542",
+          "DEBIAN-CVE-2013-7445",
+          "DEBIAN-CVE-2014-9892",
+          "DEBIAN-CVE-2014-9900",
+          "DEBIAN-CVE-2015-2877",
+          "DEBIAN-CVE-2016-10723",
+          "DEBIAN-CVE-2016-8660",
+          "DEBIAN-CVE-2017-0630",
+          "DEBIAN-CVE-2017-13693",
+          "DEBIAN-CVE-2017-13694",
+          "DEBIAN-CVE-2018-1121",
+          "DEBIAN-CVE-2018-12928",
+          "DEBIAN-CVE-2018-17977",
+          "DEBIAN-CVE-2019-11191",
+          "DEBIAN-CVE-2019-12378",
+          "DEBIAN-CVE-2019-12379",
+          "DEBIAN-CVE-2019-12380",
+          "DEBIAN-CVE-2019-12381",
+          "DEBIAN-CVE-2019-12382",
+          "DEBIAN-CVE-2019-12455",
+          "DEBIAN-CVE-2019-12456",
+          "DEBIAN-CVE-2019-15213",
+          "DEBIAN-CVE-2019-16089",
+          "DEBIAN-CVE-2019-16229",
+          "DEBIAN-CVE-2019-16230",
+          "DEBIAN-CVE-2019-16231",
+          "DEBIAN-CVE-2019-16232",
+          "DEBIAN-CVE-2019-16233",
+          "DEBIAN-CVE-2019-16234",
+          "DEBIAN-CVE-2019-19070",
+          "DEBIAN-CVE-2019-19378",
+          "DEBIAN-CVE-2019-19449",
+          "DEBIAN-CVE-2019-19814",
+          "DEBIAN-CVE-2019-20794",
+          "DEBIAN-CVE-2020-0347",
+          "DEBIAN-CVE-2020-11725",
+          "DEBIAN-CVE-2020-14304",
+          "DEBIAN-CVE-2020-35501",
+          "DEBIAN-CVE-2020-36694",
+          "DEBIAN-CVE-2021-26934",
+          "DEBIAN-CVE-2021-3714",
+          "DEBIAN-CVE-2021-3847",
+          "DEBIAN-CVE-2021-3864",
+          "DEBIAN-CVE-2022-0400",
+          "DEBIAN-CVE-2022-1247",
+          "DEBIAN-CVE-2022-25265",
+          "DEBIAN-CVE-2022-2961",
+          "DEBIAN-CVE-2022-3238",
+          "DEBIAN-CVE-2022-41848",
+          "DEBIAN-CVE-2022-44032",
+          "DEBIAN-CVE-2022-44033",
+          "DEBIAN-CVE-2022-4543",
+          "DEBIAN-CVE-2022-45884",
+          "DEBIAN-CVE-2022-45885",
+          "DEBIAN-CVE-2023-23039",
+          "DEBIAN-CVE-2023-26242",
+          "DEBIAN-CVE-2023-31081",
+          "DEBIAN-CVE-2023-31082",
+          "DEBIAN-CVE-2023-31085",
+          "DEBIAN-CVE-2023-3397",
+          "DEBIAN-CVE-2023-3640",
+          "DEBIAN-CVE-2023-37454",
+          "DEBIAN-CVE-2023-6238",
+          "DEBIAN-CVE-2023-6240",
+          "DEBIAN-CVE-2024-0564",
+          "DEBIAN-CVE-2024-21803",
+          "DEBIAN-CVE-2024-2193",
+          "DEBIAN-CVE-2024-24864",
+          "DEBIAN-CVE-2024-25740",
+          "DEBIAN-CVE-2024-56709",
+          "DEBIAN-CVE-2024-58015",
+          "DEBIAN-CVE-2024-58074",
+          "DEBIAN-CVE-2025-21752",
+          "DEBIAN-CVE-2025-21949",
+          "DEBIAN-CVE-2025-22109",
+          "DEBIAN-CVE-2025-23132",
+          "DEBIAN-CVE-2025-23135",
+          "DEBIAN-CVE-2025-37743",
+          "DEBIAN-CVE-2025-37746",
+          "DEBIAN-CVE-2025-37880",
+          "DEBIAN-CVE-2025-37906",
+          "DEBIAN-CVE-2025-38029",
+          "DEBIAN-CVE-2025-38036",
+          "DEBIAN-CVE-2025-38041",
+          "DEBIAN-CVE-2025-38042",
+          "DEBIAN-CVE-2025-38064",
+          "DEBIAN-CVE-2025-38132",
+          "DEBIAN-CVE-2025-38137",
+          "DEBIAN-CVE-2025-38140",
+          "DEBIAN-CVE-2025-38187",
+          "DEBIAN-CVE-2025-38199",
+          "DEBIAN-CVE-2025-38204",
+          "DEBIAN-CVE-2025-38207",
+          "DEBIAN-CVE-2025-38261",
+          "DEBIAN-CVE-2025-38284",
+          "DEBIAN-CVE-2025-38311",
+          "DEBIAN-CVE-2025-38359",
+          "DEBIAN-CVE-2025-38421",
+          "DEBIAN-CVE-2025-38597",
+          "DEBIAN-CVE-2025-38605",
+          "DEBIAN-CVE-2025-38636",
+          "DEBIAN-CVE-2025-39677",
+          "DEBIAN-CVE-2025-39762",
+          "DEBIAN-CVE-2025-39775",
+          "DEBIAN-CVE-2025-39789",
+          "DEBIAN-CVE-2025-39822",
+          "DEBIAN-CVE-2025-39830",
+          "DEBIAN-CVE-2025-39834",
+          "DEBIAN-CVE-2025-39859",
+          "DEBIAN-CVE-2025-39862",
+          "DEBIAN-CVE-2025-39910",
+          "DEBIAN-CVE-2025-39933",
+          "DEBIAN-CVE-2025-39958",
+          "DEBIAN-CVE-2025-40025",
+          "DEBIAN-CVE-2025-40065",
+          "DEBIAN-CVE-2025-40086",
+          "DEBIAN-CVE-2025-40113",
+          "DEBIAN-CVE-2025-40130",
+          "DEBIAN-CVE-2025-40136",
+          "DEBIAN-CVE-2025-40146",
+          "DEBIAN-CVE-2025-40158",
+          "DEBIAN-CVE-2025-40217",
+          "DEBIAN-CVE-2025-40247",
+          "DEBIAN-CVE-2025-40338",
+          "DEBIAN-CVE-2025-40355",
+          "DEBIAN-CVE-2025-68174",
+          "DEBIAN-CVE-2025-68193",
+          "DEBIAN-CVE-2025-68209",
+          "DEBIAN-CVE-2025-68236",
+          "DEBIAN-CVE-2025-68304",
+          "DEBIAN-CVE-2025-68318",
+          "DEBIAN-CVE-2025-68319",
+          "DEBIAN-CVE-2025-68353",
+          "DEBIAN-CVE-2025-68359",
+          "DEBIAN-CVE-2025-68360",
+          "DEBIAN-CVE-2025-68368",
+          "DEBIAN-CVE-2025-68376",
+          "DEBIAN-CVE-2025-68729",
+          "DEBIAN-CVE-2025-68730",
+          "DEBIAN-CVE-2025-68735",
+          "DEBIAN-CVE-2025-68745",
+          "DEBIAN-CVE-2025-68751",
+          "DEBIAN-CVE-2025-68755",
+          "DEBIAN-CVE-2025-71074",
+          "DEBIAN-CVE-2025-71117",
+          "DEBIAN-CVE-2025-71141",
+          "DEBIAN-CVE-2025-71188",
+          "DEBIAN-CVE-2025-71202",
+          "DEBIAN-CVE-2025-71227",
+          "DEBIAN-CVE-2025-71285",
+          "DEBIAN-CVE-2025-71302",
+          "DEBIAN-CVE-2025-71313",
+          "DEBIAN-CVE-2025-71315",
+          "DEBIAN-CVE-2026-100072",
+          "DEBIAN-CVE-2026-100074",
+          "DEBIAN-CVE-2026-100076",
+          "DEBIAN-CVE-2026-100077",
+          "DEBIAN-CVE-2026-23007",
+          "DEBIAN-CVE-2026-23017",
+          "DEBIAN-CVE-2026-23102",
+          "DEBIAN-CVE-2026-23143",
+          "DEBIAN-CVE-2026-23152",
+          "DEBIAN-CVE-2026-23208",
+          "DEBIAN-CVE-2026-23217",
+          "DEBIAN-CVE-2026-23259",
+          "DEBIAN-CVE-2026-23265",
+          "DEBIAN-CVE-2026-23327",
+          "DEBIAN-CVE-2026-23348",
+          "DEBIAN-CVE-2026-23371",
+          "DEBIAN-CVE-2026-23377",
+          "DEBIAN-CVE-2026-23385",
+          "DEBIAN-CVE-2026-23472",
+          "DEBIAN-CVE-2026-31435",
+          "DEBIAN-CVE-2026-31493",
+          "DEBIAN-CVE-2026-31526",
+          "DEBIAN-CVE-2026-31536",
+          "DEBIAN-CVE-2026-31537",
+          "DEBIAN-CVE-2026-31562",
+          "DEBIAN-CVE-2026-31568",
+          "DEBIAN-CVE-2026-31579",
+          "DEBIAN-CVE-2026-31591",
+          "DEBIAN-CVE-2026-31592",
+          "DEBIAN-CVE-2026-31630",
+          "DEBIAN-CVE-2026-31692",
+          "DEBIAN-CVE-2026-31771",
+          "DEBIAN-CVE-2026-31777",
+          "DEBIAN-CVE-2026-43009",
+          "DEBIAN-CVE-2026-43022",
+          "DEBIAN-CVE-2026-43029",
+          "DEBIAN-CVE-2026-43034",
+          "DEBIAN-CVE-2026-43042",
+          "DEBIAN-CVE-2026-43048",
+          "DEBIAN-CVE-2026-43053",
+          "DEBIAN-CVE-2026-43083",
+          "DEBIAN-CVE-2026-43101",
+          "DEBIAN-CVE-2026-43115",
+          "DEBIAN-CVE-2026-43118",
+          "DEBIAN-CVE-2026-43127",
+          "DEBIAN-CVE-2026-43172",
+          "DEBIAN-CVE-2026-43185",
+          "DEBIAN-CVE-2026-43191",
+          "DEBIAN-CVE-2026-43204",
+          "DEBIAN-CVE-2026-43213",
+          "DEBIAN-CVE-2026-43234",
+          "DEBIAN-CVE-2026-43263",
+          "DEBIAN-CVE-2026-43272",
+          "DEBIAN-CVE-2026-43294",
+          "DEBIAN-CVE-2026-43298",
+          "DEBIAN-CVE-2026-43299",
+          "DEBIAN-CVE-2026-43301",
+          "DEBIAN-CVE-2026-43308",
+          "DEBIAN-CVE-2026-43309",
+          "DEBIAN-CVE-2026-43310",
+          "DEBIAN-CVE-2026-43311",
+          "DEBIAN-CVE-2026-43325",
+          "DEBIAN-CVE-2026-43326",
+          "DEBIAN-CVE-2026-43337",
+          "DEBIAN-CVE-2026-43346",
+          "DEBIAN-CVE-2026-43352",
+          "DEBIAN-CVE-2026-43353",
+          "DEBIAN-CVE-2026-43414",
+          "DEBIAN-CVE-2026-43416",
+          "DEBIAN-CVE-2026-43443",
+          "DEBIAN-CVE-2026-43463",
+          "DEBIAN-CVE-2026-43464",
+          "DEBIAN-CVE-2026-43465",
+          "DEBIAN-CVE-2026-43485",
+          "DEBIAN-CVE-2026-45932",
+          "DEBIAN-CVE-2026-45934",
+          "DEBIAN-CVE-2026-45940",
+          "DEBIAN-CVE-2026-45956",
+          "DEBIAN-CVE-2026-45961",
+          "DEBIAN-CVE-2026-46014",
+          "DEBIAN-CVE-2026-46017",
+          "DEBIAN-CVE-2026-46032",
+          "DEBIAN-CVE-2026-46044",
+          "DEBIAN-CVE-2026-46059",
+          "DEBIAN-CVE-2026-46066",
+          "DEBIAN-CVE-2026-46071",
+          "DEBIAN-CVE-2026-46096",
+          "DEBIAN-CVE-2026-46130",
+          "DEBIAN-CVE-2026-46147",
+          "DEBIAN-CVE-2026-46148",
+          "DEBIAN-CVE-2026-46153",
+          "DEBIAN-CVE-2026-46171",
+          "DEBIAN-CVE-2026-46175",
+          "DEBIAN-CVE-2026-46181",
+          "DEBIAN-CVE-2026-46228",
+          "DEBIAN-CVE-2026-46245",
+          "DEBIAN-CVE-2026-46256",
+          "DEBIAN-CVE-2026-46272",
+          "DEBIAN-CVE-2026-46279",
+          "DEBIAN-CVE-2026-46302",
+          "DEBIAN-CVE-2026-46314",
+          "DEBIAN-CVE-2026-46317",
+          "DEBIAN-CVE-2026-46324",
+          "DEBIAN-CVE-2026-46325",
+          "DEBIAN-CVE-2026-46330",
+          "DEBIAN-CVE-2026-52937",
+          "DEBIAN-CVE-2026-52953",
+          "DEBIAN-CVE-2026-52956",
+          "DEBIAN-CVE-2026-52983",
+          "DEBIAN-CVE-2026-52988",
+          "DEBIAN-CVE-2026-52991",
+          "DEBIAN-CVE-2026-52994",
+          "DEBIAN-CVE-2026-53000",
+          "DEBIAN-CVE-2026-53009",
+          "DEBIAN-CVE-2026-53017",
+          "DEBIAN-CVE-2026-53018",
+          "DEBIAN-CVE-2026-53024",
+          "DEBIAN-CVE-2026-53025",
+          "DEBIAN-CVE-2026-53091",
+          "DEBIAN-CVE-2026-53103",
+          "DEBIAN-CVE-2026-53104",
+          "DEBIAN-CVE-2026-53106",
+          "DEBIAN-CVE-2026-53107",
+          "DEBIAN-CVE-2026-53108",
+          "DEBIAN-CVE-2026-53109",
+          "DEBIAN-CVE-2026-53118",
+          "DEBIAN-CVE-2026-53178",
+          "DEBIAN-CVE-2026-53224",
+          "DEBIAN-CVE-2026-53246",
+          "DEBIAN-CVE-2026-53258",
+          "DEBIAN-CVE-2026-53277",
+          "DEBIAN-CVE-2026-53281",
+          "DEBIAN-CVE-2026-53284",
+          "DEBIAN-CVE-2026-53285",
+          "DEBIAN-CVE-2026-53292",
+          "DEBIAN-CVE-2026-53297",
+          "DEBIAN-CVE-2026-53321",
+          "DEBIAN-CVE-2026-53330",
+          "DEBIAN-CVE-2026-53368",
+          "DEBIAN-CVE-2026-53377",
+          "DEBIAN-CVE-2026-53401",
+          "DEBIAN-CVE-2026-63805",
+          "DEBIAN-CVE-2026-63811",
+          "DEBIAN-CVE-2026-63819",
+          "DEBIAN-CVE-2026-63825",
+          "DEBIAN-CVE-2026-63832",
+          "DEBIAN-CVE-2026-63853",
+          "DEBIAN-CVE-2026-63857",
+          "DEBIAN-CVE-2026-63858",
+          "DEBIAN-CVE-2026-63859",
+          "DEBIAN-CVE-2026-63879",
+          "DEBIAN-CVE-2026-63941",
+          "DEBIAN-CVE-2026-63979",
+          "DEBIAN-CVE-2026-63998",
+          "DEBIAN-CVE-2026-63999",
+          "DEBIAN-CVE-2026-64006",
+          "DEBIAN-CVE-2026-64024",
+          "DEBIAN-CVE-2026-64036",
+          "DEBIAN-CVE-2026-64038",
+          "DEBIAN-CVE-2026-64060",
+          "DEBIAN-CVE-2026-64066",
+          "DEBIAN-CVE-2026-64067",
+          "DEBIAN-CVE-2026-64068",
+          "DEBIAN-CVE-2026-64076",
+          "DEBIAN-CVE-2026-64077",
+          "DEBIAN-CVE-2026-64078",
+          "DEBIAN-CVE-2026-64079",
+          "DEBIAN-CVE-2026-64117",
+          "DEBIAN-CVE-2026-64146",
+          "DEBIAN-CVE-2026-64154",
+          "DEBIAN-CVE-2026-64159",
+          "DEBIAN-CVE-2026-64160",
+          "DEBIAN-CVE-2026-64190",
+          "DEBIAN-CVE-2026-64212",
+          "DEBIAN-CVE-2026-64213",
+          "DEBIAN-CVE-2026-64255",
+          "DEBIAN-CVE-2026-64283",
+          "DEBIAN-CVE-2026-64388",
+          "DEBIAN-CVE-2026-64389",
+          "DEBIAN-CVE-2026-64400",
+          "DEBIAN-CVE-2026-64513",
+          "DEBIAN-CVE-2026-64520",
+          "DEBIAN-CVE-2026-68081",
+          "DEBIAN-CVE-2026-68086",
+          "DEBIAN-CVE-2026-68105",
+          "DEBIAN-CVE-2026-68211",
+          "DEBIAN-CVE-2026-68233",
+          "DEBIAN-CVE-2026-68238",
+          "DEBIAN-CVE-2026-68241",
+          "DEBIAN-CVE-2026-68242",
+          "DEBIAN-CVE-2026-68258",
+          "DEBIAN-CVE-2026-68291",
+          "DEBIAN-CVE-2026-68295",
+          "DEBIAN-CVE-2026-68312",
+          "DEBIAN-CVE-2026-68323",
+          "DEBIAN-CVE-2026-68375",
+          "DEBIAN-CVE-2026-68382",
+          "DEBIAN-CVE-2026-68383",
+          "DEBIAN-CVE-2026-68393",
+          "DEBIAN-CVE-2026-68399",
+          "DEBIAN-CVE-2026-68400",
+          "DEBIAN-CVE-2026-68401",
+          "DEBIAN-CVE-2026-68404",
+          "DEBIAN-CVE-2026-68409",
+          "DEBIAN-CVE-2026-68412",
+          "DEBIAN-CVE-2026-68418",
+          "DEBIAN-CVE-2026-68421",
+          "DEBIAN-CVE-2026-68426",
+          "DEBIAN-CVE-2026-68435",
+          "DEBIAN-CVE-2026-68436",
+          "DEBIAN-CVE-2026-68441",
+          "DEBIAN-CVE-2026-68447",
+          "DEBIAN-CVE-2026-68448",
+          "DEBIAN-CVE-2026-68453",
+          "DEBIAN-CVE-2026-68470",
+          "DEBIAN-CVE-2026-68471",
+          "DEBIAN-CVE-2026-72009",
+          "DEBIAN-CVE-2026-72031",
+          "DEBIAN-CVE-2026-72042",
+          "DEBIAN-CVE-2026-72073",
+          "DEBIAN-CVE-2026-72098",
+          "DEBIAN-CVE-2026-72162",
+          "DEBIAN-CVE-2026-72288",
+          "DEBIAN-CVE-2026-72315",
+          "DEBIAN-CVE-2026-72321",
+          "DEBIAN-CVE-2026-72329",
+          "DEBIAN-CVE-2026-72337",
+          "DEBIAN-CVE-2026-72341",
+          "DEBIAN-CVE-2026-72355",
+          "DEBIAN-CVE-2026-72365",
+          "DEBIAN-CVE-2026-72366",
+          "DEBIAN-CVE-2026-72367",
+          "DEBIAN-CVE-2026-72375",
+          "DEBIAN-CVE-2026-72380",
+          "DEBIAN-CVE-2026-72383",
+          "DEBIAN-CVE-2026-72388",
+          "DEBIAN-CVE-2026-72397",
+          "DEBIAN-CVE-2026-72398",
+          "DEBIAN-CVE-2026-72404",
+          "DEBIAN-CVE-2026-72423",
+          "DEBIAN-CVE-2026-72439",
+          "DEBIAN-CVE-2026-72440",
+          "DEBIAN-CVE-2026-72454",
+          "DEBIAN-CVE-2026-72463",
+          "DEBIAN-CVE-2026-72488",
+          "DEBIAN-CVE-2026-72493",
+          "DEBIAN-CVE-2026-72494",
+          "DEBIAN-CVE-2026-72495",
+          "DEBIAN-CVE-2026-72497",
+          "DEBIAN-CVE-2026-72499",
+          "DEBIAN-CVE-2026-72500",
+          "DEBIAN-CVE-2026-72501",
+          "DEBIAN-CVE-2026-74257",
+          "DEBIAN-CVE-2026-74261",
+          "DEBIAN-CVE-2026-74264",
+          "DEBIAN-CVE-2026-74269",
+          "DEBIAN-CVE-2026-74272",
+          "DEBIAN-CVE-2026-74273",
+          "DEBIAN-CVE-2026-74314",
+          "DEBIAN-CVE-2026-74317",
+          "DEBIAN-CVE-2026-74324",
+          "DEBIAN-CVE-2026-74337",
+          "DEBIAN-CVE-2026-74338",
+          "DEBIAN-CVE-2026-74342",
+          "DEBIAN-CVE-2026-74344",
+          "DEBIAN-CVE-2026-74347",
+          "DEBIAN-CVE-2026-74350",
+          "DEBIAN-CVE-2026-74354",
+          "DEBIAN-CVE-2026-74368",
+          "DEBIAN-CVE-2026-74373",
+          "DEBIAN-CVE-2026-74374",
+          "DEBIAN-CVE-2026-74375",
+          "DEBIAN-CVE-2026-74385",
+          "DEBIAN-CVE-2026-74388",
+          "DEBIAN-CVE-2026-74405",
+          "DEBIAN-CVE-2026-74407",
+          "DEBIAN-CVE-2026-74449",
+          "DEBIAN-CVE-2026-74466",
+          "DEBIAN-CVE-2026-74506",
+          "DEBIAN-CVE-2026-74513",
+          "DEBIAN-CVE-2026-74520",
+          "DEBIAN-CVE-2026-74527",
+          "DEBIAN-CVE-2026-74529",
+          "DEBIAN-CVE-2026-74530",
+          "DEBIAN-CVE-2026-74533",
+          "DEBIAN-CVE-2026-74534",
+          "DEBIAN-CVE-2026-74537",
+          "DEBIAN-CVE-2026-74538",
+          "DEBIAN-CVE-2026-74542",
+          "DEBIAN-CVE-2026-74544",
+          "DEBIAN-CVE-2026-74558",
+          "DEBIAN-CVE-2026-74559",
+          "DEBIAN-CVE-2026-74560",
+          "DEBIAN-CVE-2026-74571",
+          "DEBIAN-CVE-2026-74600",
+          "DEBIAN-CVE-2026-74605",
+          "DEBIAN-CVE-2026-74611",
+          "DEBIAN-CVE-2026-74638",
+          "DEBIAN-CVE-2026-74687",
+          "DEBIAN-CVE-2026-74690",
+          "DEBIAN-CVE-2026-74695",
+          "DEBIAN-CVE-2026-74697",
+          "DEBIAN-CVE-2026-74711",
+          "DEBIAN-CVE-2026-74713",
+          "DEBIAN-CVE-2026-74715",
+          "DEBIAN-CVE-2026-74723",
+          "DEBIAN-CVE-2026-74728",
+          "DEBIAN-CVE-2026-74729",
+          "DEBIAN-CVE-2026-74733",
+          "DEBIAN-CVE-2026-74734",
+          "DEBIAN-CVE-2026-74747",
+          "DEBIAN-CVE-2026-74752",
+          "DEBIAN-CVE-2026-74754",
+          "DEBIAN-CVE-2026-80579",
+          "DEBIAN-CVE-2026-80580",
+          "DEBIAN-CVE-2026-80581",
+          "DEBIAN-CVE-2026-80607",
+          "DEBIAN-CVE-2026-80614",
+          "DEBIAN-CVE-2026-80616",
+          "DEBIAN-CVE-2026-80623",
+          "DEBIAN-CVE-2026-80628",
+          "DEBIAN-CVE-2026-80631",
+          "DEBIAN-CVE-2026-80634",
+          "DEBIAN-CVE-2026-80643",
+          "DEBIAN-CVE-2026-80653",
+          "DEBIAN-CVE-2026-80655",
+          "DEBIAN-CVE-2026-80662",
+          "DEBIAN-CVE-2026-80668",
+          "DEBIAN-CVE-2026-80670",
+          "DEBIAN-CVE-2026-80692",
+          "DEBIAN-CVE-2026-80693",
+          "DEBIAN-CVE-2026-80698",
+          "DEBIAN-CVE-2026-80705",
+          "DEBIAN-CVE-2026-80721",
+          "DEBIAN-CVE-2026-80738",
+          "DEBIAN-CVE-2026-80747",
+          "DEBIAN-CVE-2026-80761",
+          "DEBIAN-CVE-2026-80785",
+          "DEBIAN-CVE-2026-80786",
+          "DEBIAN-CVE-2026-80866",
+          "DEBIAN-CVE-2026-80872",
+          "DEBIAN-CVE-2026-80884",
+          "DEBIAN-CVE-2026-80899",
+          "DEBIAN-CVE-2026-80905",
+          "DEBIAN-CVE-2026-80920",
+          "DEBIAN-CVE-2026-80935",
+          "DEBIAN-CVE-2026-80937",
+          "DEBIAN-CVE-2026-80939",
+          "DEBIAN-CVE-2026-80948",
+          "DEBIAN-CVE-2026-80980",
+          "DEBIAN-CVE-2026-81010",
+          "DEBIAN-CVE-2026-81016",
+          "DEBIAN-CVE-2026-89437",
+          "DEBIAN-CVE-2026-89441",
+          "DEBIAN-CVE-2026-89445",
+          "DEBIAN-CVE-2026-89452",
+          "DEBIAN-CVE-2026-89467",
+          "DEBIAN-CVE-2026-89500",
+          "DEBIAN-CVE-2026-89503",
+          "DEBIAN-CVE-2026-89520",
+          "DEBIAN-CVE-2026-89527",
+          "DEBIAN-CVE-2026-89528",
+          "DEBIAN-CVE-2026-89534",
+          "DEBIAN-CVE-2026-89537",
+          "DEBIAN-CVE-2026-89601",
+          "DEBIAN-CVE-2026-89610",
+          "DEBIAN-CVE-2026-89611",
+          "DEBIAN-CVE-2026-89631",
+          "DEBIAN-CVE-2026-89633",
+          "DEBIAN-CVE-2026-89637",
+          "DEBIAN-CVE-2026-89638",
+          "DEBIAN-CVE-2026-89639",
+          "DEBIAN-CVE-2026-89642",
+          "DEBIAN-CVE-2026-89648",
+          "DEBIAN-CVE-2026-89654",
+          "DEBIAN-CVE-2026-89675",
+          "DEBIAN-CVE-2026-89682",
+          "DEBIAN-CVE-2026-89705",
+          "DEBIAN-CVE-2026-89709",
+          "DEBIAN-CVE-2026-89722",
+          "DEBIAN-CVE-2026-89757",
+          "DEBIAN-CVE-2026-89766",
+          "DEBIAN-CVE-2026-89773",
+          "DEBIAN-CVE-2026-89788",
+          "DEBIAN-CVE-2026-89795",
+          "DEBIAN-CVE-2026-89797",
+          "DEBIAN-CVE-2026-89806",
+          "DEBIAN-CVE-2026-89808",
+          "DEBIAN-CVE-2026-89810",
+          "DEBIAN-CVE-2026-89811",
+          "DEBIAN-CVE-2026-89812",
+          "DEBIAN-CVE-2026-89813",
+          "DEBIAN-CVE-2026-89826",
+          "DEBIAN-CVE-2026-89827",
+          "DEBIAN-CVE-2026-89832",
+          "DEBIAN-CVE-2026-89833",
+          "DEBIAN-CVE-2026-89837",
+          "DEBIAN-CVE-2026-89838",
+          "DEBIAN-CVE-2026-89840",
+          "DEBIAN-CVE-2026-89859",
+          "DEBIAN-CVE-2026-89862",
+          "DEBIAN-CVE-2026-89866",
+          "DEBIAN-CVE-2026-89868",
+          "DEBIAN-CVE-2026-89906",
+          "DEBIAN-CVE-2026-89912",
+          "DEBIAN-CVE-2026-89913",
+          "DEBIAN-CVE-2026-89920",
+          "DEBIAN-CVE-2026-89921",
+          "DEBIAN-CVE-2026-89935",
+          "DEBIAN-CVE-2026-89956",
+          "DEBIAN-CVE-2026-89971",
+          "DEBIAN-CVE-2026-89972",
+          "DEBIAN-CVE-2026-89987",
+          "DEBIAN-CVE-2026-89996",
+          "DEBIAN-CVE-2026-90002",
+          "DEBIAN-CVE-2026-90013",
+          "DEBIAN-CVE-2026-90016",
+          "DEBIAN-CVE-2026-90023",
+          "DEBIAN-CVE-2026-90029",
+          "DEBIAN-CVE-2026-90030",
+          "DEBIAN-CVE-2026-90040",
+          "DEBIAN-CVE-2026-90061",
+          "DEBIAN-CVE-2026-90083",
+          "DEBIAN-CVE-2026-90084",
+          "DEBIAN-CVE-2026-90086",
+          "DEBIAN-CVE-2026-90087",
+          "DEBIAN-CVE-2026-90093",
+          "DEBIAN-CVE-2026-90097",
+          "DEBIAN-CVE-2026-90098",
+          "DEBIAN-CVE-2026-90099",
+          "DEBIAN-CVE-2026-90104",
+          "DEBIAN-CVE-2026-90105",
+          "DEBIAN-CVE-2026-90106",
+          "DEBIAN-CVE-2026-90111",
+          "DEBIAN-CVE-2026-90116",
+          "DEBIAN-CVE-2026-90142",
+          "DEBIAN-CVE-2026-90144",
+          "DEBIAN-CVE-2026-90146",
+          "DEBIAN-CVE-2026-90149",
+          "DEBIAN-CVE-2026-90154",
+          "DEBIAN-CVE-2026-90155",
+          "DEBIAN-CVE-2026-90156",
+          "DEBIAN-CVE-2026-90161",
+          "DEBIAN-CVE-2026-90162",
+          "DEBIAN-CVE-2026-90167",
+          "DEBIAN-CVE-2026-90168",
+          "DEBIAN-CVE-2026-90174",
+          "DEBIAN-CVE-2026-90177",
+          "DEBIAN-CVE-2026-90179",
+          "DEBIAN-CVE-2026-90182",
+          "DEBIAN-CVE-2026-90183",
+          "DEBIAN-CVE-2026-90204",
+          "DEBIAN-CVE-2026-90205",
+          "DEBIAN-CVE-2026-90206",
+          "DEBIAN-CVE-2026-90208",
+          "DEBIAN-CVE-2026-90211",
+          "DEBIAN-CVE-2026-90217",
+          "DEBIAN-CVE-2026-90231",
+          "DEBIAN-CVE-2026-90232",
+          "DEBIAN-CVE-2026-90234",
+          "DEBIAN-CVE-2026-90237",
+          "DEBIAN-CVE-2026-90240",
+          "DEBIAN-CVE-2026-90247",
+          "DEBIAN-CVE-2026-90256",
+          "DEBIAN-CVE-2026-90259",
+          "DEBIAN-CVE-2026-90260",
+          "DEBIAN-CVE-2026-90261",
+          "DEBIAN-CVE-2026-90263",
+          "DEBIAN-CVE-2026-90264",
+          "DEBIAN-CVE-2026-90265",
+          "DEBIAN-CVE-2026-90267",
+          "DEBIAN-CVE-2026-90273",
+          "DEBIAN-CVE-2026-90289",
+          "DEBIAN-CVE-2026-90300",
+          "DEBIAN-CVE-2026-90301",
+          "DEBIAN-CVE-2026-90306",
+          "DEBIAN-CVE-2026-90311",
+          "DEBIAN-CVE-2026-90315",
+          "DEBIAN-CVE-2026-90317",
+          "DEBIAN-CVE-2026-90320",
+          "DEBIAN-CVE-2026-90321",
+          "DEBIAN-CVE-2026-90324",
+          "DEBIAN-CVE-2026-90326",
+          "DEBIAN-CVE-2026-90328",
+          "DEBIAN-CVE-2026-90330",
+          "DEBIAN-CVE-2026-90333",
+          "DEBIAN-CVE-2026-90335",
+          "DEBIAN-CVE-2026-90336",
+          "DEBIAN-CVE-2026-90337",
+          "DEBIAN-CVE-2026-90343",
+          "DEBIAN-CVE-2026-90345",
+          "DEBIAN-CVE-2026-90346",
+          "DEBIAN-CVE-2026-90347",
+          "DEBIAN-CVE-2026-90351",
+          "DEBIAN-CVE-2026-90359",
+          "DEBIAN-CVE-2026-90363",
+          "DEBIAN-CVE-2026-90365",
+          "DEBIAN-CVE-2026-90367",
+          "DEBIAN-CVE-2026-90379",
+          "DEBIAN-CVE-2026-90401",
+          "DEBIAN-CVE-2026-90408",
+          "DEBIAN-CVE-2026-90409",
+          "DEBIAN-CVE-2026-90417",
+          "DEBIAN-CVE-2026-90421",
+          "DEBIAN-CVE-2026-90422",
+          "DEBIAN-CVE-2026-90424",
+          "DEBIAN-CVE-2026-90427",
+          "DEBIAN-CVE-2026-92480",
+          "DEBIAN-CVE-2026-92482",
+          "DEBIAN-CVE-2026-92485",
+          "DEBIAN-CVE-2026-92493",
+          "DEBIAN-CVE-2026-92499",
+          "DEBIAN-CVE-2026-92500",
+          "DEBIAN-CVE-2026-92503",
+          "DEBIAN-CVE-2026-92518",
+          "DEBIAN-CVE-2026-92520",
+          "DEBIAN-CVE-2026-93044",
+          "DEBIAN-CVE-2026-93047",
+          "DEBIAN-CVE-2026-93058",
+          "DEBIAN-CVE-2026-93081",
+          "DEBIAN-CVE-2026-93099",
+          "DEBIAN-CVE-2026-93100",
+          "DEBIAN-CVE-2026-93104",
+          "DEBIAN-CVE-2026-93105",
+          "DEBIAN-CVE-2026-93116",
+          "DEBIAN-CVE-2026-93122",
+          "DEBIAN-CVE-2026-93125",
+          "DEBIAN-CVE-2026-93129",
+          "DEBIAN-CVE-2026-93135",
+          "DEBIAN-CVE-2026-93144",
+          "DEBIAN-CVE-2026-93146",
+          "DEBIAN-CVE-2026-93148",
+          "DEBIAN-CVE-2026-93154",
+          "DEBIAN-CVE-2026-93168",
+          "DEBIAN-CVE-2026-93175",
+          "DEBIAN-CVE-2026-93176",
+          "DEBIAN-CVE-2026-93179",
+          "DEBIAN-CVE-2026-93181",
+          "DEBIAN-CVE-2026-93196",
+          "DEBIAN-CVE-2026-93199",
+          "DEBIAN-CVE-2026-93200",
+          "DEBIAN-CVE-2026-93202",
+          "DEBIAN-CVE-2026-93216",
+          "DEBIAN-CVE-2026-93221",
+          "DEBIAN-CVE-2026-93230",
+          "DEBIAN-CVE-2026-93231",
+          "DEBIAN-CVE-2026-93237",
+          "DEBIAN-CVE-2026-93243",
+          "DEBIAN-CVE-2026-93244",
+          "DEBIAN-CVE-2026-93251",
+          "DEBIAN-CVE-2026-93260",
+          "DEBIAN-CVE-2026-93270",
+          "DEBIAN-CVE-2026-93272",
+          "DEBIAN-CVE-2026-93276",
+          "DEBIAN-CVE-2026-93282",
+          "DEBIAN-CVE-2026-93285",
+          "DEBIAN-CVE-2026-97422",
+          "DEBIAN-CVE-2026-97424",
+          "DEBIAN-CVE-2026-97432",
+          "DEBIAN-CVE-2026-97477",
+          "DEBIAN-CVE-2026-97478",
+          "DEBIAN-CVE-2026-97479",
+          "DEBIAN-CVE-2026-97480",
+          "DEBIAN-CVE-2026-97493",
+          "DEBIAN-CVE-2026-97499",
+          "DEBIAN-CVE-2026-97501",
+          "DEBIAN-CVE-2026-97503",
+          "DEBIAN-CVE-2026-97513",
+          "DEBIAN-CVE-2026-97515",
+          "DEBIAN-CVE-2026-97526",
+          "DEBIAN-CVE-2026-97527",
+          "DEBIAN-CVE-2026-97528",
+          "DEBIAN-CVE-2026-97529",
+          "DEBIAN-CVE-2026-97530",
+          "DEBIAN-CVE-2026-97531",
+          "DEBIAN-CVE-2026-97532",
+          "DEBIAN-CVE-2026-97534",
+          "DEBIAN-CVE-2026-97535",
+          "DEBIAN-CVE-2026-97536",
+          "DEBIAN-CVE-2026-97537",
+          "DEBIAN-CVE-2026-97538",
+          "DEBIAN-CVE-2026-97549",
+          "DEBIAN-CVE-2026-97554",
+          "DEBIAN-CVE-2026-97558",
+          "DEBIAN-CVE-2026-97559",
+          "DEBIAN-CVE-2026-97561",
+          "DEBIAN-CVE-2026-97563",
+          "DEBIAN-CVE-2026-97565",
+          "DEBIAN-CVE-2026-97566",
+          "DEBIAN-CVE-2026-97567",
+          "DEBIAN-CVE-2026-97571",
+          "DEBIAN-CVE-2026-97574",
+          "DEBIAN-CVE-2026-97594",
+          "DEBIAN-CVE-2026-97597",
+          "DEBIAN-CVE-2026-97603",
+          "DEBIAN-CVE-2026-97609",
+          "DEBIAN-CVE-2026-97615",
+          "DEBIAN-CVE-2026-97618",
+          "DEBIAN-CVE-2026-97619",
+          "DEBIAN-CVE-2026-97620",
+          "DEBIAN-CVE-2026-97901",
+          "DEBIAN-CVE-2026-97906",
+          "DEBIAN-CVE-2026-97918",
+          "DEBIAN-CVE-2026-97919",
+          "DEBIAN-CVE-2026-97928",
+          "DEBIAN-CVE-2026-97933",
+          "DEBIAN-CVE-2026-97934",
+          "DEBIAN-CVE-2026-97935",
+          "DEBIAN-CVE-2026-97938",
+          "DEBIAN-CVE-2026-97939",
+          "DEBIAN-CVE-2026-97949",
+          "DEBIAN-CVE-2026-97950",
+          "DEBIAN-CVE-2026-97960",
+          "DEBIAN-CVE-2026-97962",
+          "DEBIAN-CVE-2026-97975",
+          "DEBIAN-CVE-2026-97988",
+          "DEBIAN-CVE-2026-97989",
+          "DEBIAN-CVE-2026-97997",
+          "DEBIAN-CVE-2026-98003",
+          "DEBIAN-CVE-2026-98019",
+          "DEBIAN-CVE-2026-98032",
+          "DEBIAN-CVE-2026-98033",
+          "DEBIAN-CVE-2026-98034",
+          "DEBIAN-CVE-2026-98038",
+          "DEBIAN-CVE-2026-98043",
+          "DEBIAN-CVE-2026-98044",
+          "DEBIAN-CVE-2026-98047",
+          "DEBIAN-CVE-2026-98048",
+          "DEBIAN-CVE-2026-98049",
+          "DEBIAN-CVE-2026-98053",
+          "DEBIAN-CVE-2026-98058",
+          "DEBIAN-CVE-2026-98062",
+          "DEBIAN-CVE-2026-98067",
+          "DEBIAN-CVE-2026-98073",
+          "DEBIAN-CVE-2026-98079",
+          "DEBIAN-CVE-2026-98084",
+          "DEBIAN-CVE-2026-98085",
+          "DEBIAN-CVE-2026-98087",
+          "DEBIAN-CVE-2026-98099",
+          "DEBIAN-CVE-2026-98101",
+          "DEBIAN-CVE-2026-98115",
+          "DEBIAN-CVE-2026-98118",
+          "DEBIAN-CVE-2026-98119",
+          "DEBIAN-CVE-2026-98124",
+          "DEBIAN-CVE-2026-98125",
+          "DEBIAN-CVE-2026-98131",
+          "DEBIAN-CVE-2026-98134",
+          "DEBIAN-CVE-2026-98147",
+          "DEBIAN-CVE-2026-98148",
+          "DEBIAN-CVE-2026-98156",
+          "DEBIAN-CVE-2026-98161",
+          "DEBIAN-CVE-2026-98162",
+          "DEBIAN-CVE-2026-98167",
+          "DEBIAN-CVE-2026-98168",
+          "DEBIAN-CVE-2026-98169",
+          "DEBIAN-CVE-2026-98170",
+          "DEBIAN-CVE-2026-98171",
+          "DEBIAN-CVE-2026-98172",
+          "DEBIAN-CVE-2026-98173",
+          "DEBIAN-CVE-2026-98174",
+          "DEBIAN-CVE-2026-98175",
+          "DEBIAN-CVE-2026-98176",
+          "DEBIAN-CVE-2026-98177",
+          "DEBIAN-CVE-2026-98179",
+          "DEBIAN-CVE-2026-98180",
+          "DEBIAN-CVE-2026-98181",
+          "DEBIAN-CVE-2026-98182",
+          "DEBIAN-CVE-2026-98184",
+          "DEBIAN-CVE-2026-98185",
+          "DEBIAN-CVE-2026-98186",
+          "DEBIAN-CVE-2026-98187",
+          "DEBIAN-CVE-2026-98188",
+          "DEBIAN-CVE-2026-98189",
+          "DEBIAN-CVE-2026-98190",
+          "DEBIAN-CVE-2026-98191",
+          "DEBIAN-CVE-2026-98192",
+          "DEBIAN-CVE-2026-98193",
+          "DEBIAN-CVE-2026-98194",
+          "DEBIAN-CVE-2026-98195",
+          "DEBIAN-CVE-2026-98196",
+          "DEBIAN-CVE-2026-98197",
+          "DEBIAN-CVE-2026-98198",
+          "DEBIAN-CVE-2026-98199",
+          "DEBIAN-CVE-2026-98200",
+          "DEBIAN-CVE-2026-98201",
+          "DEBIAN-CVE-2026-98202",
+          "DEBIAN-CVE-2026-98203",
+          "DEBIAN-CVE-2026-98204",
+          "DEBIAN-CVE-2026-98205",
+          "DEBIAN-CVE-2026-98206",
+          "DEBIAN-CVE-2026-98207",
+          "DEBIAN-CVE-2026-98208",
+          "DEBIAN-CVE-2026-98209",
+          "DEBIAN-CVE-2026-98210",
+          "DEBIAN-CVE-2026-98211",
+          "DEBIAN-CVE-2026-98212",
+          "DEBIAN-CVE-2026-98213",
+          "DEBIAN-CVE-2026-98214",
+          "DEBIAN-CVE-2026-98215",
+          "DEBIAN-CVE-2026-98216",
+          "DEBIAN-CVE-2026-98217",
+          "DEBIAN-CVE-2026-98218",
+          "DEBIAN-CVE-2026-98221",
+          "DEBIAN-CVE-2026-98222",
+          "DEBIAN-CVE-2026-98227",
+          "DEBIAN-CVE-2026-98228",
+          "DEBIAN-CVE-2026-98229",
+          "DEBIAN-CVE-2026-98230",
+          "DEBIAN-CVE-2026-98231",
+          "DEBIAN-CVE-2026-98232",
+          "DEBIAN-CVE-2026-98233",
+          "DEBIAN-CVE-2026-98234",
+          "DEBIAN-CVE-2026-98235",
+          "DEBIAN-CVE-2026-98236",
+          "DEBIAN-CVE-2026-98237",
+          "DEBIAN-CVE-2026-98238",
+          "DEBIAN-CVE-2026-98239",
+          "DEBIAN-CVE-2026-98241",
+          "DEBIAN-CVE-2026-98245",
+          "DEBIAN-CVE-2026-98246",
+          "DEBIAN-CVE-2026-98247",
+          "DEBIAN-CVE-2026-98248",
+          "DEBIAN-CVE-2026-98249",
+          "DEBIAN-CVE-2026-98251",
+          "DEBIAN-CVE-2026-98252",
+          "DEBIAN-CVE-2026-98253",
+          "DEBIAN-CVE-2026-98254",
+          "DEBIAN-CVE-2026-98255",
+          "DEBIAN-CVE-2026-98257",
+          "DEBIAN-CVE-2026-98260",
+          "DEBIAN-CVE-2026-98261",
+          "DEBIAN-CVE-2026-98262",
+          "DEBIAN-CVE-2026-98263",
+          "DEBIAN-CVE-2026-98264",
+          "DEBIAN-CVE-2026-98265",
+          "DEBIAN-CVE-2026-98266",
+          "DEBIAN-CVE-2026-98267",
+          "DEBIAN-CVE-2026-98269",
+          "DEBIAN-CVE-2026-98270",
+          "DEBIAN-CVE-2026-98271",
+          "DEBIAN-CVE-2026-98272",
+          "DEBIAN-CVE-2026-98273",
+          "DEBIAN-CVE-2026-98275",
+          "DEBIAN-CVE-2026-98276",
+          "DEBIAN-CVE-2026-98277",
+          "DEBIAN-CVE-2026-98279",
+          "DEBIAN-CVE-2026-98282",
+          "DEBIAN-CVE-2026-98283",
+          "DEBIAN-CVE-2026-98284",
+          "DEBIAN-CVE-2026-98285",
+          "DEBIAN-CVE-2026-98286",
+          "DEBIAN-CVE-2026-98287",
+          "DEBIAN-CVE-2026-98288",
+          "DEBIAN-CVE-2026-98289",
+          "DEBIAN-CVE-2026-98290",
+          "DEBIAN-CVE-2026-98291",
+          "DEBIAN-CVE-2026-98292",
+          "DEBIAN-CVE-2026-98293",
+          "DEBIAN-CVE-2026-98294",
+          "DEBIAN-CVE-2026-98295",
+          "DEBIAN-CVE-2026-98296",
+          "DEBIAN-CVE-2026-98297",
+          "DEBIAN-CVE-2026-98298",
+          "DEBIAN-CVE-2026-98299",
+          "DEBIAN-CVE-2026-98300",
+          "DEBIAN-CVE-2026-98301",
+          "DEBIAN-CVE-2026-98302",
+          "DEBIAN-CVE-2026-98303",
+          "DEBIAN-CVE-2026-98304",
+          "DEBIAN-CVE-2026-98306",
+          "DEBIAN-CVE-2026-98307",
+          "DEBIAN-CVE-2026-98308",
+          "DEBIAN-CVE-2026-98309",
+          "DEBIAN-CVE-2026-98311",
+          "DEBIAN-CVE-2026-98312",
+          "DEBIAN-CVE-2026-98313",
+          "DEBIAN-CVE-2026-98314",
+          "DEBIAN-CVE-2026-98316",
+          "DEBIAN-CVE-2026-98317",
+          "DEBIAN-CVE-2026-98319",
+          "DEBIAN-CVE-2026-98320",
+          "DEBIAN-CVE-2026-98321",
+          "DEBIAN-CVE-2026-98322",
+          "DEBIAN-CVE-2026-98323",
+          "DEBIAN-CVE-2026-98325",
+          "DEBIAN-CVE-2026-98326",
+          "DEBIAN-CVE-2026-98327",
+          "DEBIAN-CVE-2026-98328",
+          "DEBIAN-CVE-2026-98329",
+          "DEBIAN-CVE-2026-98330",
+          "DEBIAN-CVE-2026-98331",
+          "DEBIAN-CVE-2026-98332",
+          "DEBIAN-CVE-2026-98333",
+          "DEBIAN-CVE-2026-98334",
+          "DEBIAN-CVE-2026-98335",
+          "DEBIAN-CVE-2026-98336",
+          "DEBIAN-CVE-2026-98337",
+          "DEBIAN-CVE-2026-98338",
+          "DEBIAN-CVE-2026-98339",
+          "DEBIAN-CVE-2026-98340",
+          "DEBIAN-CVE-2026-98341",
+          "DEBIAN-CVE-2026-98342",
+          "DEBIAN-CVE-2026-98343",
+          "DEBIAN-CVE-2026-98344",
+          "DEBIAN-CVE-2026-98345",
+          "DEBIAN-CVE-2026-98346",
+          "DEBIAN-CVE-2026-98347",
+          "DEBIAN-CVE-2026-98348",
+          "DEBIAN-CVE-2026-98349",
+          "DEBIAN-CVE-2026-98351",
+          "DEBIAN-CVE-2026-98352",
+          "DEBIAN-CVE-2026-98353",
+          "DEBIAN-CVE-2026-98354",
+          "DEBIAN-CVE-2026-98355",
+          "DEBIAN-CVE-2026-98357",
+          "DEBIAN-CVE-2026-98358",
+          "DEBIAN-CVE-2026-98359",
+          "DEBIAN-CVE-2026-98360",
+          "DEBIAN-CVE-2026-98362",
+          "DEBIAN-CVE-2026-98363",
+          "DEBIAN-CVE-2026-98364",
+          "DEBIAN-CVE-2026-98365",
+          "DEBIAN-CVE-2026-98366",
+          "DEBIAN-CVE-2026-98367",
+          "DEBIAN-CVE-2026-98368",
+          "DEBIAN-CVE-2026-98369",
+          "DEBIAN-CVE-2026-98370",
+          "DEBIAN-CVE-2026-98373",
+          "DEBIAN-CVE-2026-98374",
+          "DEBIAN-CVE-2026-98375",
+          "DEBIAN-CVE-2026-98376",
+          "DEBIAN-CVE-2026-98377",
+          "DEBIAN-CVE-2026-98378",
+          "DEBIAN-CVE-2026-98379",
+          "DEBIAN-CVE-2026-98380",
+          "DEBIAN-CVE-2026-98381",
+          "DEBIAN-CVE-2026-98382",
+          "DEBIAN-CVE-2026-98383",
+          "DEBIAN-CVE-2026-98384",
+          "DEBIAN-CVE-2026-98386",
+          "DEBIAN-CVE-2026-98389",
+          "DEBIAN-CVE-2026-98393",
+          "DEBIAN-CVE-2026-98403",
+          "DEBIAN-CVE-2026-98406",
+          "DEBIAN-CVE-2026-98407",
+          "DEBIAN-CVE-2026-98408",
+          "DEBIAN-CVE-2026-98409",
+          "DEBIAN-CVE-2026-98410",
+          "DEBIAN-CVE-2026-98411",
+          "DEBIAN-CVE-2026-98412",
+          "DEBIAN-CVE-2026-98413",
+          "DEBIAN-CVE-2026-98416",
+          "DEBIAN-CVE-2026-98417",
+          "DEBIAN-CVE-2026-98419",
+          "DEBIAN-CVE-2026-98420",
+          "DEBIAN-CVE-2026-98421",
+          "DEBIAN-CVE-2026-98422",
+          "DEBIAN-CVE-2026-98423",
+          "DEBIAN-CVE-2026-98424",
+          "DEBIAN-CVE-2026-98425",
+          "DEBIAN-CVE-2026-98426",
+          "DEBIAN-CVE-2026-98427",
+          "DEBIAN-CVE-2026-98428",
+          "DEBIAN-CVE-2026-98429",
+          "DEBIAN-CVE-2026-98430",
+          "DEBIAN-CVE-2026-98431",
+          "DEBIAN-CVE-2026-98432",
+          "DEBIAN-CVE-2026-99999"
+        ],
+        "package": {
+          "ecosystem": "Debian:13",
+          "name": "linux",
+          "version": "6.12.111-1"
+        }
+      }
+    ],
+    "query_finished_at_utc": "2026-10-16T04:33:38Z",
+    "sbom_sha256": "4fc4318d683b1bf56beb4d142abb4264adb2e07fedf390ee37afb7c39d925b8c",
+    "sha256": "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108",
+    "version": "OSV-Scanner2.6.0;osv-scalibr0.5.2"
+  },
+  "schema_version": 1,
+  "source_pin": "946fcce07b6dcd0331c8cc609192aeff5e1924f8",
+  "status": "candidate-unqualified; final artifacts/platforms and independent review required"
+}
