@@ -38,11 +38,14 @@ uv run pytest                       # tests
 uv run pre-commit run --all-files   # every hook, including Markdown lint and a secret scan of staged changes
 ```
 
-The evaluation set measures how well the interpreter turns requests into music plans. It calls Gemini with your `GEMINI_API_KEY`, so `uv run pytest` and CI skip it. Run it after changing the interpreter's instruction, schema, or model, and record the results on the pull request. Set `SOBAFM_GEMINI_MODEL` to evaluate another model.
+Separate evaluation sets measure generated plans and catalog interpretation. They call Gemini with your `GEMINI_API_KEY`, so `uv run pytest` and CI skip both. Run the affected set after changing its instruction, schema, or model, and record the results on the pull request. Set `SOBAFM_GEMINI_MODEL` to evaluate another model. Neither set searches Jamendo or plays audio.
 
 ```sh
-uv run --env-file .env pytest -m eval -s   # about 4 minutes, plus 1 to 2 for each retry
+uv run --env-file .env pytest tests/eval/test_interpretation.py -m eval -s
+uv run --env-file .env pytest tests/eval/test_catalog_interpretation.py -m eval -s
 ```
+
+Each set takes about four minutes, plus one to two minutes per transient retry. The generated target remains valid output for every case, every non-music/injection request refused, and at least 90% of classification/property checks passing. Catalog interpretation additionally forbids artist/work reference names across title/tags/search and requires all focused piano/lo-fi and synthwave checks to pass; its remaining classification/property target is also 90%. Catalog failures produce no raw-text query. These interpretation checks follow up #116's qualitative weak-fit feedback without assigning historical listening ratings, rerunning frozen D1 or claiming audible/discovery relevance.
 
 The standalone [catalog relevance probe](docs/catalog-probe.md) prepares #116 with offline commands and tests. Its live measurement remains gated by M4 readiness, operator credentials, a maintainer-approved pass mark and listening ratings; it is not part of CI.
 
