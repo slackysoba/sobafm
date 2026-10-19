@@ -15,8 +15,9 @@ FFmpeg children. Generated-to-generated transitions keep v1's crossfades; every
 catalog-involving boundary is successive, without catalog fades or overlap.
 
 The station now implements the source/engine seam and shared allocation ledger;
-production construction installs Lyria only. Catalog commands/decoder/credits
-remain accepted M5 targets, and actual resource qualification remains open. The
+production construction installs Lyria only. The bounded TrackDeck and native
+load check are implemented; catalog engine/command/credit wiring and actual
+resource qualification remain open. The
 requirements identify these changes with stable M5 IDs. Accepted historical ADRs
 remain intact; ADR-0006/ADR-0007 record the scoped changes.
 
@@ -94,6 +95,10 @@ flowchart LR
 | `lyria_engine` | Per-station Lyria deck lifecycle, retries, ready-deck selection and reservations from the shared `SessionPool` |
 | `status` | One per server, outliving its stations: the voice channel statuses SobaFM set, and their requests |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |
+| `track_deck` | One eligible catalog track, strict production outcome, bounded PCM and persistent decoder cleanup ownership |
+| `catalog_audio` | One credential-free, non-replayed incremental audio response with counted encoded bytes and verified HTTP EOF |
+| `decoder_process` | Fixed pipe-only native launch, pre-input cgroup/Job verification and owned process/pipe release |
+| `decoder_check` | Off-loop approved-supply verification and small owned-fixture codec load check; no catalog qualification |
 | `mixer` | The `discord.AudioSource`: buffered sources, generated fades/crossfades, successive catalog boundaries and shared volume; no I/O or decoding |
 | `pcm` | PCM format constants, the silence frame, and the chunk-to-frame splitter |
 | `plan` | `MusicPlan` and its mapping to Lyria prompts and the full generation config |
@@ -166,6 +171,48 @@ applied only while no catalog audio is audible. At every catalog boundary,
 outgoing audio ends before incoming audio starts, with no catalog fade or overlap
 (PLAY-9). Underrun/exception still returns silence so the player does not stop on
 its own. No mixer read performs HTTP, decoding, pipe I/O, waiting or cleanup.
+
+### Catalog track production
+
+`TrackDeck` implements `Source` without selecting tracks or driving station state.
+It revalidates one eligible track and keeps that track's immutable credits with
+its PCM. `AudioStream` uses a dedicated credential-free aiohttp session, verified
+TLS, identity encoding, no redirects and no automatic request replay. It counts
+actual bytes before each 16KiB decoder write/drain, rejects advertised or actual
+16MiB excess, and distinguishes clean HTTP EOF from a short read.
+
+The supervisor reserves a complete explicit `AudioBytes` envelope and one child
+slot before starting. It requires an absolute supply-verified executable, fixed
+forced-MP3/pipe-only arguments, minimum environment and verified pre-input cgroup
+or Job limits. The trusted minimal executable starts with an untouched input pipe;
+no feeder becomes reachable before membership and limit readback succeed. This
+ordering relies on that fixed executable's no-helper startup; #175 must qualify
+it and inherited containment on every supported installation. A process group or
+a whole-container limit is not a substitute for containment.
+
+The frame deque never exceeds its admitted capacity. Admission also requires
+space for six seconds, or all duration-valid shorter output including the
+one-second duration allowance. This prevents an unready source from blocking
+before it can verify EOF. Raw samples, strict HTTP and both pipe EOFs, zero exit,
+reaping and duration agreement precede the single aligned final padding frame.
+`completed` means verified production; `drained` additionally means its deque is
+empty, not that mixer/encoder storage has released. A playable prefix followed
+by a late error remains failed. Retirement preserves buffered PCM and cannot be
+reversed by a stale `start()`.
+
+One original three-second cleanup deadline covers cancellation, concurrent pipe
+drains, stdin/HTTP closure, all task joins, terminate/kill and actual tree/handle
+release. A missed deadline produces sticky cleanup failure while a supervisor
+owner outlives station replacement and continues best-effort closure. Pending
+launch, descendants or pipe debt retain the child slot until release is verified.
+The separate complete audio lease remains charged until its storage owner proves
+all covered PCM/player/copy/transport/native allocations released; EOF or deque
+pops cannot release it. The later engine must supply that storage proof.
+
+No production `Envelope` is supplied yet. Unknown native/transport or reachable
+Lyria obligations refuse admission, even with an empty deque. Startup supply and
+owned-fixture capability checks do not fill the trust registry, qualify an audio
+envelope, enable commands or satisfy #175/#131. Generated behavior is unchanged.
 
 ### Threads and buffers
 

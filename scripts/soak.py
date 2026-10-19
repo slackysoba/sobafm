@@ -316,7 +316,9 @@ def report(directory: Path, label: str, commit: str) -> int:
     )
 
     decks = [
-        match for r in records if r.logger == "sobafm.deck" and (match := DECK.search(r.message))
+        match
+        for r in records
+        if r.logger in {"sobafm.deck", "sobafm.track_deck"} and (match := DECK.search(r.message))
     ]
     by_reason = Counter(deck[2] for deck in decks)
     rates = [float(deck[6]) for deck in decks if deck[6]]

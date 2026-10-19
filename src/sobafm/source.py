@@ -1,10 +1,18 @@
 """Buffered source contract shared by playback engines (ADR-0006)."""
 
+import itertools
 from collections import deque
 from enum import StrEnum
 from typing import Protocol
 
 from sobafm.program import Mode, Program
+
+_numbers = itertools.count(1)
+
+
+def next_source_number() -> int:
+    """One diagnostic sequence across generated and catalog deck summaries."""
+    return next(_numbers)
 
 
 class State(StrEnum):

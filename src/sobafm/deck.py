@@ -1,7 +1,6 @@
 """A deck: one Lyria RealTime session filling a buffer of 20 ms frames (ADR-0004)."""
 
 import asyncio
-import itertools
 import logging
 import time
 from collections import deque
@@ -20,6 +19,7 @@ from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, matches_m
 from sobafm.plan import MusicPlan
 from sobafm.program import Mode, Program
 from sobafm.source import State as State
+from sobafm.source import next_source_number
 
 log = logging.getLogger(__name__)
 
@@ -96,8 +96,6 @@ class Deck:
     which is logged only at debug level (OPS-5).
     """
 
-    _numbers = itertools.count(1)
-
     def __init__(
         self,
         connect: Connect,
@@ -108,7 +106,7 @@ class Deck:
     ) -> None:
         self.plan = plan
         self.program = program
-        self.number = next(Deck._numbers)
+        self.number = next_source_number()
         # Appended on the event loop and popped by the mixer on discord.py's player thread;
         # deque appends and pops are thread-safe.
         self.frames: deque[bytes] = deque()

@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     discord_token: SecretStr = Field(validation_alias="DISCORD_TOKEN", min_length=1)
     gemini_api_key: ApiKey = Field(validation_alias="GEMINI_API_KEY", min_length=1)
     jamendo_client_id: ApiKey | None = None
+    native_runtime_root: Path | None = None
+    native_registry: Path | None = None
     gemini_model: str = "gemini-3.5-flash-lite"
     log_level: LogLevel = "INFO"
     data_dir: Path = Path("data")

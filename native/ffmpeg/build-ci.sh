@@ -73,7 +73,7 @@ if [ "$target" != windows-amd64 ]; then
         --mount "type=bind,source=$installed,target=/native package,readonly" \
         --mount "type=bind,source=$PWD/scripts/check_native_runtime.py,target=/checks/check_native_runtime.py,readonly" \
         --entrypoint python "sobafm-native-clean-$target" /checks/check_native_runtime.py \
-        smoke '/native package' "$manifest" --require-no-compiler > "$material/clean-smoke.json" 2> "$material/clean-smoke.stderr"
+        smoke '/native package' "$manifest" --require-no-compiler --application-check > "$material/clean-smoke.json" 2> "$material/clean-smoke.stderr"
     result=$?
     set -e
     docker inspect "sobafm-native-$target-clean" --format '{{json .State}}' > "$material/clean-container-state.json"
