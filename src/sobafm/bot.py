@@ -18,6 +18,7 @@ from discord.types.voice import GuildVoiceState, VoiceServerUpdate
 from google import genai
 
 from sobafm.audio_budget import AudioLedger
+from sobafm.catalog_interpreter import CatalogPlan
 from sobafm.commands import add_commands
 from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
@@ -25,6 +26,7 @@ from sobafm.failures import Failure
 from sobafm.interpreter import GEMINI_HTTP, Interpreter, Result
 from sobafm.interpreter import Outcome as Interpreted
 from sobafm.plan import MusicPlan, one_line
+from sobafm.program import Mode
 from sobafm.station import Outcome, SessionPool, Station
 from sobafm.status import Statuses
 from sobafm.store import GuildSettings, Store
@@ -41,7 +43,7 @@ VOICE_CHECK_S = 10.0  # how often SobaFM looks for voice clients discord.py has 
 STRANDED_FOR_S = 60.0
 REJOIN_RETRY_S = 30.0  # after each failed remembered-channel connection attempt finishes
 
-PLAY_REPLIES = {
+GENERATED_REPLIES = {
     Outcome.BUSY: "SobaFM is already playing in as many servers as it can. Try again later.",
     Outcome.REFUSED: (
         "Lyria RealTime couldn't make music from that request. Try describing it differently."
@@ -56,6 +58,22 @@ PLAY_REPLIES = {
     Outcome.DISCONNECTED: "SobaFM lost its voice connection before the music started.",
     Outcome.REPLACED: "A newer request replaced this one before it started.",
     Outcome.STOPPED: "The music was stopped before this request started.",
+}
+PLAY_REPLIES = {
+    Mode.GENERATED: GENERATED_REPLIES,
+    Mode.CATALOG: GENERATED_REPLIES
+    | {
+        Outcome.BUSY: "SobaFM can't prepare more catalog music right now. Try again later.",
+        Outcome.REFUSED: (
+            "No matching catalog music is available for that request. "
+            "Try describing it differently."
+        ),
+        Outcome.REJECTED: (
+            "Google rejected SobaFM's API key, so it can't interpret music requests. "
+            "Ask whoever runs SobaFM to check its Gemini API key."
+        ),
+        Outcome.UNAVAILABLE: "Catalog music isn't available right now. Try again later.",
+    },
 }
 REFUSALS = {  # the current music keeps playing
     Interpreted.NOT_MUSIC: (
@@ -390,16 +408,19 @@ class SobaFM(discord.Client):
         request: str,
         cooldown: float | None,
         announce: Callable[[str], Awaitable[object]] | None = None,
+        *,
+        mode: Mode = Mode.GENERATED,
     ) -> str:
         """Interpret the request, play it, and describe the outcome once it plays or fails.
 
-        A relative request refines the current program's plan. A request that reaches the
+        A relative request refines only a current program of the same mode. A request reaching the
         station ends the older ones still being interpreted, and /stop or leaving the channel
         ends them all. `cooldown` is when `admit()` started this request's cooldown, if it did.
         A request that ends without playing, including one Gemini refuses, frees it, even after
         the reply. When the start outlasts START_TIMEOUT_S, the answer says so, and `announce`
         receives the answer once it plays or doesn't (FB-1).
         """
+        replies = PLAY_REPLIES[mode]
         playing = False  # or may still play
         voice = cast(discord.VoiceClient | None, member.guild.voice_client)
         interpreting: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
@@ -409,20 +430,23 @@ class SobaFM(discord.Client):
             async with self.voice_locks[member.guild.id]:
                 await self.retire_stale_state(member.guild)
                 if interpreting.done():
-                    return PLAY_REPLIES[interpreting.result()]
+                    return replies[interpreting.result()]
                 if self._closing or self.is_closed():
-                    return PLAY_REPLIES[Outcome.STOPPED]
+                    return replies[Outcome.STOPPED]
                 if self.get_guild(member.guild.id) is not member.guild:
-                    return PLAY_REPLIES[Outcome.DISCONNECTED]
+                    return replies[Outcome.DISCONNECTED]
+            if mode is Mode.CATALOG:
+                return replies[Outcome.UNAVAILABLE]  # catalog command wiring belongs to #128
             station = self.stations.get(member.guild.id)
             current = station.program.plan if station and station.program else None
+            cross_mode = current is not None and not isinstance(current, MusicPlan)
             result = await self.interpreter.interpret(
                 request, current if isinstance(current, MusicPlan) else None
             )
             settings = await self.store.settings(member.guild.id)
             # No await from this check to the station, so nothing can end the request unseen.
             if interpreting.done():
-                return PLAY_REPLIES[interpreting.result()]
+                return replies[interpreting.result()]
             if (plan := result.plan) is None:
                 return REFUSALS[result.outcome]
             if (
@@ -430,7 +454,7 @@ class SobaFM(discord.Client):
                 or member.guild.voice_client is not voice
                 or voice is None
             ):  # the interpreting request no longer owns this guild/client
-                return PLAY_REPLIES[Outcome.DISCONNECTED]
+                return replies[Outcome.DISCONNECTED]
             ends = discord.utils.utcnow() + timedelta(seconds=settings.duration_seconds)
             started = self.station(member.guild, settings.volume).play(
                 plan, member.mention, duration_seconds=settings.duration_seconds
@@ -446,10 +470,12 @@ class SobaFM(discord.Client):
 
                 started.add_done_callback(settled)
                 if announce is not None:
-                    answer = note(f"Now playing {describe(plan, member.mention, ends)}", result)
-                    self.announce_when_settled(started, answer, announce)
+                    answer = note(
+                        f"Now playing {describe(plan, member.mention, ends)}", result, cross_mode
+                    )
+                    self.announce_when_settled(started, answer, announce, mode)
                 playing = True
-                return note("The music is taking longer than usual to start.", result)
+                return note("The music is taking longer than usual to start.", result, cross_mode)
             playing = outcome is Outcome.PLAYING
         finally:
             self.request_owners.pop(interpreting, None)
@@ -458,21 +484,24 @@ class SobaFM(discord.Client):
             if not playing:
                 self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
-            return note(f"Now playing {describe(plan, member.mention, ends)}", result)
-        return PLAY_REPLIES[outcome]
+            return note(f"Now playing {describe(plan, member.mention, ends)}", result, cross_mode)
+        return replies[outcome]
 
     def announce_when_settled(
         self,
         started: asyncio.Future[Outcome],
         playing: str,
         announce: Callable[[str], Awaitable[object]],
+        mode: Mode,
     ) -> None:
         """Pass `announce` the answer to a slow start once it settles: `playing`, or why not."""
 
         async def run() -> None:
             outcome = await asyncio.shield(started)  # cancelling this leaves the program alone
             try:
-                await announce(playing if outcome is Outcome.PLAYING else PLAY_REPLIES[outcome])
+                await announce(
+                    playing if outcome is Outcome.PLAYING else PLAY_REPLIES[mode][outcome]
+                )
             except Exception:  # the answer is cosmetic, so a failed edit changes nothing else
                 log.warning("Could not update the answer to a slow start", exc_info=True)
 
@@ -497,14 +526,13 @@ class SobaFM(discord.Client):
         """Describe the server's program for /now (CMD-3)."""
         station = self.stations.get(guild.id)
         program = station.program if station is not None else None
-        if (
-            station is None
-            or program is None
-            or not isinstance(program.plan, MusicPlan)
-            or (time_left := station.time_left) is None
-        ):
+        if station is None or program is None:
             return "Nothing is playing."
-        ends = discord.utils.utcnow() + timedelta(seconds=time_left)
+        ends = None
+        if program.mode is Mode.GENERATED:
+            if (time_left := station.time_left) is None:
+                return "Nothing is playing."
+            ends = discord.utils.utcnow() + timedelta(seconds=time_left)
         phase = "Now playing" if program.playing else "Starting"
         return f"{phase} {describe(program.plan, program.requester, ends)}"
 
@@ -881,16 +909,35 @@ async def move(voice: discord.VoiceClient, channel: discord.VoiceChannel) -> Non
     await channel.guild.change_voice_state(channel=channel, self_deaf=True)
 
 
-def describe(plan: MusicPlan, requester: str, ends: datetime) -> str:
-    """A program's title, requester, style, and end time, with model-written text escaped."""
+def describe(plan: MusicPlan | CatalogPlan, requester: str, ends: datetime | None) -> str:
+    """A program's direction and mode-specific duration, with model-written text escaped."""
+    title = f"**{escape(plan.title)}**, requested by {requester}.\n"
+    if isinstance(plan, CatalogPlan):
+        speed = {
+            "verylow": "very slow",
+            "low": "slow",
+            "medium": "moderate speed",
+            "high": "fast",
+            "veryhigh": "very fast",
+        }
+        direction = ", ".join(
+            item
+            for item in (
+                *plan.query.tags,
+                speed[plan.query.speed] if plan.query.speed is not None else None,
+                plan.query.vocalinstrumental,
+                plan.query.acousticelectric,
+                plan.query.search,
+            )
+            if item is not None
+        )
+        return title + f"Catalog direction: {escape(direction)}\nPlays until stopped or replaced."
+    if ends is None:
+        raise ValueError("a generated program requires an end time")
     style = ", ".join(prompt.text for prompt in plan.prompts)
     if plan.bpm is not None:
         style += f", {plan.bpm} BPM"
-    return (
-        f"**{escape(plan.title)}**, requested by {requester}.\n"
-        f"Style: {escape(style)}\n"
-        f"Ends {discord.utils.format_dt(ends, 'R')}."
-    )
+    return title + f"Style: {escape(style)}\nEnds {discord.utils.format_dt(ends, 'R')}."
 
 
 def escape(text: str) -> str:
@@ -929,8 +976,10 @@ def listeners(guild: discord.Guild) -> int:
     return count
 
 
-def note(reply: str, interpreted: Result) -> str:
+def note(reply: str, interpreted: Result, cross_mode: bool = False) -> str:
     """`reply`, saying why the request was used as typed, if it was (AI-4)."""
+    if cross_mode:
+        reply += "\nRequests start fresh when switching between catalog and generated music."
     if interpreted.outcome is not Interpreted.FALLBACK:
         return reply
     text = FALLBACK_NOTES.get(interpreted.failure, FALLBACK_NOTES[None])

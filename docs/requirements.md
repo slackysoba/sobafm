@@ -10,6 +10,11 @@ origin of revised requirements. The accepted decisions authorize implementation;
 the [qualification gates](architecture.md#qualification-and-evidence) still gate
 catalog runtime readiness and shipping.
 
+The #123 command migration delivers `/freestyle` for generated music while
+temporarily retaining `/play` as its explicit generated alias. #128 replaces that
+alias with the catalog command and implements CMD-9's registration rule. The M5
+catalog requirements below remain targets during this intermediate step.
+
 ## Product summary
 
 SobaFM is a self-hosted Discord bot with one station per server. A server manager

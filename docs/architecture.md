@@ -85,8 +85,8 @@ flowchart LR
 | --- | --- |
 | `__main__` | Entry point: configuration, logging, signal handling, and a startup watchdog |
 | `config` | Typed settings from the environment and `.env`; secrets held as `SecretStr` |
-| `bot` | The discord.py client: intents, configuration-aware command sync, station registry, interpreting/playing requests, voice-state events, failed remembered-channel joins and voice recovery |
-| `commands` | Slash command handlers: checks, deferral, and replies with mentions disabled |
+| `bot` | The discord.py client: intents, command sync, station registry, mode-aware request context/replies, voice-state events, failed remembered-channel joins and voice recovery; catalog command wiring follows in #128 |
+| `commands` | Slash command handlers: shared generated request admission, deferral and replies with mentions/previews disabled |
 | `station` | One per server: desired/heard/previous program identity, reconcile loop, listener tracking, transitions, audio ledger and audible-source feedback |
 | `program` | Program state, start outcomes and one-time settlement |
 | `source`, `engine` | Buffered source and per-mode lifecycle protocols, including source-specific completion/handover and audible settlement |
@@ -557,6 +557,22 @@ is persisted (OPS-5, USE-6).
 ## Interfaces
 
 **Slash commands** are specified in the [requirements](requirements.md#commands).
+
+During the #123 migration, `/freestyle request:<text>` and `/play request:<text>`
+both explicitly request generated music through the same handler. Both retain
+the 1–200 character option, Google disclosure, voice checks, server-wide cooldown,
+public result and slow-start edit. A cancelled deferral releases only its own
+cooldown. `/play` stays available until #128 replaces it with the catalog command;
+the configuration-aware registration rule below is the M5 target for that step.
+
+`SobaFM.play()` takes a mode and selects mode-specific failure replies. Catalog
+requests remain unavailable without interpretation or source work until #128;
+they preserve current music and release their own cooldown. Generated requests
+send only a current `MusicPlan` to Gemini. If a catalog program exists, a generated
+request starts fresh, including raw-text fallback, and its reply explains this
+context limit. Generated descriptions retain their deadline; catalog descriptions
+show query direction without a generated deadline. Full source-bound catalog
+credits and heard-source presentation remain #128's responsibility.
 
 **Configuration** comes from environment variables or a `.env` file:
 

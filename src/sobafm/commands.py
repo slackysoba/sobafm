@@ -1,7 +1,7 @@
 """Slash commands.
 
-Replies are private, except /play's answer once the request plays, fails, or is refused. A slow
-start's answer is edited once it plays or doesn't.
+Replies are private, except a music request's answer once it plays, fails, or is refused.
+A slow start's answer is edited once it plays or doesn't.
 """
 
 import asyncio
@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
+
+from sobafm.program import Mode
 
 if TYPE_CHECKING:
     from sobafm.bot import SobaFM
@@ -37,10 +39,9 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
         await interaction.response.defer(ephemeral=True)
         await interaction.followup.send(await bot.leave(interaction.guild), ephemeral=True)
 
-    @tree.command(description="Play music in SobaFM's voice channel; requests are sent to Google")
     @app_commands.guild_only()
     @app_commands.describe(request="The music you want, for example: rainy lo-fi with soft piano")
-    async def play(
+    async def generated(
         interaction: discord.Interaction, request: app_commands.Range[str, 1, 200]
     ) -> None:
         if not isinstance(interaction.user, discord.Member):
@@ -51,21 +52,27 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
         cooldown = bot.cooldowns.get(interaction.user.guild.id)  # the one admit() started
         try:
             await interaction.response.defer()
-        except Exception:  # such as an expired interaction, so nothing will play
+        except BaseException:  # expired or cancelled before playback can start
             bot.free_cooldown(interaction.user.guild, cooldown)
             raise
         sent: asyncio.Future[discord.WebhookMessage] = asyncio.get_running_loop().create_future()
 
         async def announce(answer: str) -> None:  # a slow start's answer, once it plays or doesn't
-            # Shielded, so cancelling this at shutdown leaves `sent` for /play to set.
+            # Shielded, so cancelling this at shutdown leaves `sent` for the command to set.
             await (await asyncio.shield(sent)).edit(content=answer)
 
-        reply = await bot.play(interaction.user, request, cooldown, announce)
+        reply = await bot.play(interaction.user, request, cooldown, announce, mode=Mode.GENERATED)
         try:  # titles are model-written, so links get no preview, then or after an edit
             sent.set_result(await interaction.followup.send(reply, suppress_embeds=True, wait=True))
         except BaseException:
             sent.cancel()  # nothing to edit
             raise
+
+    for name in ("freestyle", "play"):  # /play stays generated until catalog wiring in #128
+        tree.command(
+            name=name,
+            description="Play music in SobaFM's voice channel; requests are sent to Google",
+        )(generated)
 
     @tree.command(description="Show what is playing")
     @app_commands.guild_only()
