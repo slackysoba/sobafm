@@ -88,6 +88,8 @@ flowchart LR
 | `bot` | The discord.py client: intents, configuration-aware command sync, station registry, interpreting/playing requests, voice-state events, failed remembered-channel joins and voice recovery |
 | `commands` | Slash command handlers: checks, deferral, and replies with mentions disabled |
 | `station` | One per server: desired/heard/previous program identity, reconcile loop, listener tracking, transitions, audio ledger and audible-source feedback |
+| `program` | Program state, start outcomes and one-time settlement |
+| `lyria_engine` | Per-station Lyria deck lifecycle, retries, ready-deck selection and reservations from the shared `SessionPool` |
 | `status` | One per server, outliving its stations: the voice channel statuses SobaFM set, and their requests |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |
 | `mixer` | The `discord.AudioSource`: buffered sources, generated fades/crossfades, successive catalog boundaries and shared volume; no I/O or decoding |
