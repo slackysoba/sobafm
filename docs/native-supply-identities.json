@@ -1,0 +1,98 @@
+{
+  "record_date": "2026-10-19",
+  "status": "verified-candidate-supply; production and catalog approval separate",
+  "source_version": "9.0.2",
+  "upstream_commit": "946fcce07b6dcd0331c8cc609192aeff5e1924f8",
+  "upstream_archive_sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+  "sobafm_source_patches": [],
+  "targets": [
+    {
+      "target": "linux-amd64",
+      "observed_artifact_head": "755a1f89cb2376ee6162dc44941bc02818790cc0",
+      "native_ci_run": 38861442962,
+      "native_runner": "ubuntu-24.04; native x86-64",
+      "manifest_sha256": "61eba74c41695133c068bf1534f33c085766c661b190fbfc97d62c701800d836",
+      "runtime": {
+        "name": "ffmpeg-9.0.2-sobafm1-linux-amd64.tar.xz",
+        "sha256": "25c68b6c0870d7f253c6b372f5b40eda565ddb7f8615e4475bca0ac74e11e672",
+        "size": 2135616
+      },
+      "sources": {
+        "name": "ffmpeg-9.0.2-sobafm1-linux-amd64-sources.tar.xz",
+        "sha256": "34108370144d64ccdf53dcf65c795e5771dc52c38a1b4ffe9840b0ab27561f23",
+        "size": 341785680
+      },
+      "runtime_regular_files": 62,
+      "runtime_loader_links": 10,
+      "compiler_dependency_notices": 775,
+      "components": 10,
+      "sbom_sha256": "a5e339386f04349885f0500e34b9aa188d18fa2b189b0734df6fbcac9e1e8866",
+      "replacement_manifest_sha256": "35063cffc03096f92678d17c291dd9b782c9c8779276db2694b7ccf87cf9e50c",
+      "package_review": "https://github.com/slackysoba/sobafm/pull/180#pullrequestreview-5562432659",
+      "source_scope_review": "https://github.com/slackysoba/sobafm/pull/180#pullrequestreview-5570048094"
+    },
+    {
+      "target": "linux-arm64",
+      "observed_artifact_head": "755a1f89cb2376ee6162dc44941bc02818790cc0",
+      "native_ci_run": 38861442962,
+      "native_runner": "ubuntu-24.04-arm; native AArch64",
+      "manifest_sha256": "fb7bd24eb32f8266cb2208b27282bedbc91eacc0aad053885bed096c0dc5e828",
+      "runtime": {
+        "name": "ffmpeg-9.0.2-sobafm1-linux-arm64.tar.xz",
+        "sha256": "43b16ecafa1be0beeab42722378a20d20b62034fe55773a6398e6375709a3e58",
+        "size": 2093792
+      },
+      "sources": {
+        "name": "ffmpeg-9.0.2-sobafm1-linux-arm64-sources.tar.xz",
+        "sha256": "4383f13c858b783b4ac5ab6788a261e5093cb8ba0384560dd0beb6877f293a5a",
+        "size": 341700708
+      },
+      "runtime_regular_files": 68,
+      "runtime_loader_links": 10,
+      "compiler_dependency_notices": 782,
+      "sbom_sha256": "278e5aa17283e5066cd7d14905353ff31e407a4974065e423fb2b1150b1fdf91",
+      "package_review": "https://github.com/slackysoba/sobafm/pull/180#pullrequestreview-5545963463",
+      "source_scope_review": "https://github.com/slackysoba/sobafm/pull/180#pullrequestreview-5546414699"
+    },
+    {
+      "target": "windows-amd64",
+      "observed_artifact_head": "f4c163dbdbd4dcc79e5488141f032c17acd2b6ef",
+      "native_ci_run": 39236687203,
+      "native_runner": "windows-2025; native x86-64 installation and replacement; Linux cross-build",
+      "manifest_sha256": "31ecaa983a01314231fcd8f374c070aa9fe0ec64b0d947e83c421be91c1399b7",
+      "runtime": {
+        "name": "ffmpeg-9.0.2-sobafm1-windows-amd64.zip",
+        "sha256": "0283b21dfd5c15e23563eb0c5e2f0174905f99a27293ef178a98a3dc01d7c227",
+        "size": 3098864
+      },
+      "sources": {
+        "name": "ffmpeg-9.0.2-sobafm1-windows-amd64-sources.tar.xz",
+        "sha256": "c86da9d19d00d07377d112d8829baa2745c8018d2aa661c4a53d141e4b8e3929",
+        "size": 353024756
+      },
+      "runtime_regular_files": 84,
+      "runtime_loader_links": 0,
+      "compiler_dependency_notices": 858,
+      "components": 13,
+      "sbom_sha256": "6c934ffd5fed0b3f7de1ddd5cc6b7e8dc5276a10bff0adeda1f57cb978a1b831",
+      "replacement_manifest_sha256": "72add12a445ea2ef0acddff9ad0586489ac731ab03b3e5bd6ea19afbe5e9c9a3",
+      "package_review": "https://github.com/slackysoba/sobafm/pull/180#pullrequestreview-5570932861"
+    }
+  ],
+  "source_equivalence": {
+    "qualified_lineage_heads": [
+      "755a1f89cb2376ee6162dc44941bc02818790cc0",
+      "f4c163dbdbd4dcc79e5488141f032c17acd2b6ef"
+    ],
+    "delivered_git_bindings": 47,
+    "meaning": "Identical pinned recipe, source/toolchain policy, recipient tools and locked context permit reuse of these exact observed package results; newly uploaded artifact identities are not inferred."
+  },
+  "historical_direct_observation_limits": {
+    "amd_independent_oracle_gaps_retained": 19,
+    "amd_binary_package_chain_independently_observed": false,
+    "windows_full_source_interiors_independently_scanned": false,
+    "full_replacement_source_zip_interiors_independently_scanned": false
+  },
+  "production_publication_authorized": false,
+  "catalog_runtime_approved": false
+}

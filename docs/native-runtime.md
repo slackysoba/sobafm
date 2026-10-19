@@ -14,6 +14,11 @@ reviewed identity. Cross-compilation or emulation alone does not establish
 native-platform qualification. A passed coverage-reporting job does not approve
 its findings or close scanner gaps.
 
+The [19 October supply qualification record](native-supply-qualification.md)
+identifies the verified candidate pairs, their actual native execution and
+recipient results, source/notice assurance, advisory scope and retained limits.
+This supplies #174's handoff without approving catalog integration or publication.
+
 ## Exact identity and readiness
 
 The recipe under `native/ffmpeg/` pins FFmpeg source, upstream commit, patches,
