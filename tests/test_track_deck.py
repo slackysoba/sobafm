@@ -4,6 +4,7 @@ import logging
 import weakref
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -12,13 +13,14 @@ from sobafm.audio_budget import AudioBytes, AudioLedger
 from sobafm.catalog import CatalogQuery, CatalogTrack
 from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.catalog_interpreter import CatalogPlan
-from sobafm.decoder_process import Boundary
+from sobafm.decoder_process import Boundary, InputCloser
 from sobafm.native import SourceArchive, VerifiedNativeRuntime
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES
 from sobafm.program import Program
 from sobafm.source import Source, State
 from sobafm.track_deck import DecoderSupervisor, EndReason, Envelope, Slots, TrackDeck
 from tests.test_catalog import credit, discovered
+from tests.test_decoder_check import Writer
 
 
 class FakeBoundary:
@@ -130,6 +132,18 @@ class FakeChild:
             raise OSError("untrusted diagnostic")
         self.pipes_closed = True
         return True
+
+
+class SharedCloseChild(FakeChild):
+    def __init__(self, boundary: FakeBoundary, output: bytes) -> None:
+        super().__init__(boundary, output)
+        self.writer = Writer()
+        self.writer.defer_close = True
+        self.closer = InputCloser(cast(asyncio.StreamWriter, self.writer))
+
+    async def close_input(self) -> None:
+        self.input_closed.set()
+        await self.closer.close()
 
 
 class Rig:
@@ -340,6 +354,28 @@ async def test_waiter_cancellation_never_cancels_cleanup_owner(tmp_path: Path) -
     await settle(rig)
     assert rig.child.reaped
     assert rig.slots.count == 0
+
+
+async def test_retire_during_shared_stdin_close_keeps_owner_and_slot_until_callback(
+    tmp_path: Path,
+) -> None:
+    rig = Rig(tmp_path)
+    child = SharedCloseChild(rig.boundary, rig.child.output)
+    rig.child = child
+    rig.deck.start()
+    await child.writer.waiting.wait()
+    rig.deck.retire()
+    await asyncio.sleep(0.01)
+    assert not child.writer.close_waiter.cancelled()
+    assert rig.slots.count == 1
+    assert rig.supervisor.debt_count == 1
+    child.writer.complete_close()
+    await settle(rig)
+    assert rig.deck.end_reason is EndReason.RETIRED
+    assert not rig.deck.cleanup_failed
+    assert child.writer.wait_calls == 1
+    assert rig.slots.count == 0
+    assert rig.supervisor.debt_count == 0
 
 
 async def test_tree_debt_is_not_refunded_for_direct_child_exit(

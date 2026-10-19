@@ -205,6 +205,8 @@ drains, stdin/HTTP closure, all task joins, terminate/kill and actual tree/handl
 release. A missed deadline produces sticky cleanup failure while a supervisor
 owner outlives station replacement and continues best-effort closure. Pending
 launch, descendants or pipe debt retain the child slot until release is verified.
+Stdin closure has one shielded wait owner shared by feeding and cleanup; cancelling
+a feeder cannot cancel CPython's shared protocol-close Future.
 The separate complete audio lease remains charged until its storage owner proves
 all covered PCM/player/copy/transport/native allocations released; EOF or deque
 pops cannot release it. The later engine must supply that storage proof.

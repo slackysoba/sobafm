@@ -14,6 +14,10 @@ class Writer:
     def __init__(self) -> None:
         self.blocks: list[bytes] = []
         self.closed = asyncio.Event()
+        self.waiting = asyncio.Event()
+        self.close_waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self.defer_close = False
+        self.wait_calls = 0
 
     def write(self, chunk: bytes) -> None:
         self.blocks.append(chunk)
@@ -22,10 +26,20 @@ class Writer:
         await asyncio.sleep(0)
 
     def close(self) -> None:
-        self.closed.set()
+        if not self.closed.is_set():
+            self.closed.set()
+            if not self.defer_close:
+                asyncio.get_running_loop().call_soon(self.complete_close)
+
+    def complete_close(self) -> None:
+        # Match CPython SubprocessStreamProtocol's unconditional callback. A
+        # poisoned/cancelled shared Future raises InvalidStateError here.
+        self.close_waiter.set_result(None)
 
     async def wait_closed(self) -> None:
-        await self.closed.wait()
+        self.wait_calls += 1
+        self.waiting.set()
+        await self.close_waiter
 
 
 class Pipe:
@@ -186,6 +200,32 @@ async def test_repeated_cancellation_waits_for_owned_cleanup(
     await asyncio.sleep(0)
     assert not checks._owners  # pyright: ignore[reportPrivateUsage]
     assert all(pipe.closed for pipe in child._transport.pipes)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_feeder_cancellation_cannot_poison_shared_stdin_close_future(
+    runtime: VerifiedNativeRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = Process()
+    child.stdin.defer_close = True
+
+    async def spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        return cast(asyncio.subprocess.Process, child)
+
+    monkeypatch.setattr(checks.asyncio, "create_subprocess_exec", spawn)
+    caller = asyncio.create_task(checks.check_decoder(runtime))
+    await child.stdin.waiting.wait()
+    caller.cancel()
+    await asyncio.sleep(0.01)
+    assert not child.stdin.close_waiter.cancelled()
+    assert not caller.done()
+    assert checks._owners  # pyright: ignore[reportPrivateUsage]
+    child.stdin.complete_close()  # must not raise CPython's InvalidStateError
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    await asyncio.sleep(0)
+    assert child.stdin.wait_calls == 1
+    assert not checks._owners  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_failed_closure_blocks_another_check_until_actual_release(

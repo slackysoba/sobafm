@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from sobafm.catalog_audio import TrackError, TrackFailure
-from sobafm.decoder_process import close_pipes, command, environment
+from sobafm.decoder_process import InputCloser, close_pipes, command, environment
 from sobafm.native import VerifiedNativeRuntime, verify_approved_native_runtime
 
 PCM_CAP = 256 * 1024
@@ -113,12 +113,14 @@ async def _probe(
         )
     )
     workers: list[asyncio.Task[Any]] = []
+    closer: InputCloser | None = None
     count: int | None = None
     try:
         async with asyncio.timeout(CHECK_SECONDS):
             process = await asyncio.shield(spawn)
+            closer = InputCloser(process.stdin)
             workers = [
-                asyncio.create_task(_feed(process, encoded)),
+                asyncio.create_task(_feed(process, encoded, closer)),
                 asyncio.create_task(_read(process.stdout, PCM_CAP, silence=True)),
                 asyncio.create_task(_read(process.stderr, STDERR_CAP, silence=False)),
                 asyncio.create_task(process.wait()),
@@ -139,7 +141,7 @@ async def _probe(
         error.__traceback__ = error.__context__ = error.__cause__ = None
     finally:
         cleaning.set()
-        await _cleanup(spawn, workers, decision, count)
+        await _cleanup(spawn, workers, decision, count, closer)
 
 
 async def _cleanup(
@@ -147,6 +149,7 @@ async def _cleanup(
     workers: list[asyncio.Task[Any]],
     decision: asyncio.Future[int | None],
     count: int | None,
+    closer: InputCloser | None,
 ) -> None:
     deadline = time.monotonic() + CLEANUP_SECONDS
     timer = asyncio.get_running_loop().call_later(
@@ -170,10 +173,12 @@ async def _cleanup(
         return
     # No wait-before-drain dependency. These are trusted fixed-input children;
     # production TrackDeck separately requires an enforced cgroup/Job before input.
+    if closer is None:
+        closer = InputCloser(process.stdin)  # pending spawn never entered its feeder
     cleanup: list[Coroutine[Any, Any, object]] = [
         _read(process.stdout, PCM_CAP, silence=False),
         _read(process.stderr, STDERR_CAP, silence=False),
-        _close_input(process),
+        closer.close(),
         process.wait(),
         _join(workers),
     ]
@@ -201,7 +206,7 @@ async def _cleanup(
             if closed and count is None:
                 # Failed/cancelled probes need actual handle release, not success
                 # EOF. A broken reader must not prevent trying transport closure.
-                for task in tasks:
+                for task in tasks[:2]:
                     if not task.done():
                         task.cancel()
         if all(task.done() for task in tasks) and process.returncode is not None:
@@ -223,19 +228,13 @@ def _deadline(decision: asyncio.Future[int | None], deadline: float) -> None:
         decision.set_result(None)
 
 
-async def _feed(process: asyncio.subprocess.Process, encoded: bytes) -> None:
+async def _feed(process: asyncio.subprocess.Process, encoded: bytes, closer: InputCloser) -> None:
     if process.stdin is None:
         raise TrackError(TrackFailure.DECODER)
     for offset in range(0, len(encoded), 16384):
         process.stdin.write(encoded[offset : offset + 16384])
         await process.stdin.drain()
-    await _close_input(process)
-
-
-async def _close_input(process: asyncio.subprocess.Process) -> None:
-    if process.stdin is not None:
-        process.stdin.close()
-        await process.stdin.wait_closed()
+    await closer.close()
 
 
 async def _read(reader: asyncio.StreamReader | None, cap: int, *, silence: bool) -> int:

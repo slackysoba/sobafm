@@ -300,12 +300,32 @@ def close_pipes(process: asyncio.subprocess.Process) -> bool:
     )
 
 
+class InputCloser:
+    """One owned close wait; cancelling a borrower cannot poison CPython's Future."""
+
+    def __init__(self, writer: asyncio.StreamWriter | None) -> None:
+        self._writer = writer
+        self._waiter: asyncio.Task[None] | None = None
+
+    async def close(self) -> None:
+        if self._writer is None:
+            return
+        if self._waiter is None:
+            self._writer.close()
+            self._waiter = asyncio.create_task(self._writer.wait_closed())
+        # Subprocess StreamWriter.wait_closed directly awaits a shared protocol
+        # Future. Keep its one waiter alive through feeder/caller cancellation;
+        # the cleanup owner awaits this same task before refunding resources.
+        await asyncio.shield(self._waiter)
+
+
 class Child:
     """One awaited process and its owned pipes. Binding precedes every input write."""
 
     def __init__(self, process: asyncio.subprocess.Process, boundary: Boundary) -> None:
         self.process, self.boundary = process, boundary
         self.bound = False
+        self._input_closer = InputCloser(process.stdin)
 
     @classmethod
     async def launch(cls, runtime: VerifiedNativeRuntime, boundary: Boundary) -> Child:
@@ -334,9 +354,7 @@ class Child:
         await self.process.stdin.drain()
 
     async def close_input(self) -> None:
-        if self.process.stdin is not None:
-            self.process.stdin.close()
-            await self.process.stdin.wait_closed()
+        await self._input_closer.close()
 
     async def read(self, pipe: int, size: int) -> bytes:
         reader = self.process.stdout if pipe == 1 else self.process.stderr

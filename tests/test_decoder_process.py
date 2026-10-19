@@ -19,7 +19,7 @@ from sobafm.decoder_process import (
     command,
 )
 from sobafm.native import SourceArchive, VerifiedNativeRuntime
-from tests.test_decoder_check import Process
+from tests.test_decoder_check import Process, Writer
 
 
 @pytest.fixture
@@ -84,6 +84,40 @@ async def test_pipe_closing_flag_is_not_actual_handle_closure() -> None:
     assert not close_pipes(cast(asyncio.subprocess.Process, process))
     process._transport.allow_close = True  # pyright: ignore[reportPrivateUsage]
     assert close_pipes(cast(asyncio.subprocess.Process, process))
+
+
+async def test_child_reuses_close_owner_after_borrower_cancellation() -> None:
+    process = Process()
+    process.stdin.defer_close = True
+    child = Child(cast(asyncio.subprocess.Process, process), MagicMock())
+    first = asyncio.create_task(child.close_input())
+    await process.stdin.waiting.wait()
+    first.cancel()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert not process.stdin.close_waiter.cancelled()
+    cleanup = asyncio.create_task(child.close_input())
+    await asyncio.sleep(0)
+    assert not cleanup.done()
+    process.stdin.complete_close()  # shared protocol callback remains valid
+    await cleanup
+    assert process.stdin.wait_calls == 1
+    assert process.stdin.close_waiter.done()
+
+
+async def test_shared_protocol_future_negative_control_exposes_poisoning() -> None:
+    writer = Writer()
+    writer.defer_close = True
+    writer.close()
+    unprotected = asyncio.create_task(writer.wait_closed())
+    await writer.waiting.wait()
+    unprotected.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await unprotected
+    assert writer.close_waiter.cancelled()
+    with pytest.raises(asyncio.InvalidStateError):
+        writer.complete_close()
 
 
 class API:
