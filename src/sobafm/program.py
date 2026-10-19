@@ -4,7 +4,13 @@ import asyncio
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from sobafm.catalog_interpreter import CatalogPlan
 from sobafm.plan import MusicPlan
+
+
+class Mode(StrEnum):
+    GENERATED = "generated"
+    CATALOG = "catalog"
 
 
 class Outcome(StrEnum):
@@ -20,20 +26,23 @@ class Outcome(StrEnum):
     STOPPED = "stopped"
 
 
-@dataclass
+@dataclass(eq=False)
 class Program:
-    plan: MusicPlan
+    plan: MusicPlan | CatalogPlan
     requester: str
-    ends_at: float  # on the station's clock
+    ends_at: float | None  # on the station's clock; catalog has no deadline
     started: asyncio.Future[Outcome] = field(
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
-    refusals: int = 0
-    refused_until: float = 0.0  # a refusal's round, in which another refusal doesn't count
-    failures: int = 0
-    retry_at: float = 0.0
-    deferred: Outcome | None = None  # the cause of a last-round failure that waits for a deck
     underruns: int = 0  # frames of silence while it played
+
+    def __post_init__(self) -> None:
+        if (self.mode is Mode.CATALOG) != (self.ends_at is None):
+            raise ValueError("only generated programs have a deadline")
+
+    @property
+    def mode(self) -> Mode:
+        return Mode.GENERATED if isinstance(self.plan, MusicPlan) else Mode.CATALOG
 
     @property
     def playing(self) -> bool:

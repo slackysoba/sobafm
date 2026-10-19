@@ -28,7 +28,7 @@ from sobafm.interpreter import Outcome as Interpreted
 from sobafm.plan import MusicPlan, Prompt
 from sobafm.station import Outcome, Program, Station
 from sobafm.store import GuildSettings, Store
-from tests.doubles import FakeClock, FakeGemini, FakeLyria, answer, settle
+from tests.doubles import FakeClock, FakeGemini, FakeLyria, FakeSource, answer, settle
 
 NOW = datetime(2026, 10, 2, 12, tzinfo=UTC)
 GUILD_ID = 1
@@ -1181,6 +1181,14 @@ async def test_rejoins_when_the_server_becomes_available(bot: SobaFM) -> None:
     assert GUILD_ID not in bot.stations  # no status was left to clear
 
 
+def settle_source_playing(station: Station) -> None:
+    """Settle source identity as the station does at connected-player acceptance."""
+    assert station.program is not None
+    source = FakeSource(station.program)
+    station.mixer.switch_to(source, 0)
+    station._settle_playing(station.program, source)  # pyright: ignore[reportPrivateUsage]
+
+
 async def show_a_title_then_close(bot: SobaFM, guild: Any, *, connected: bool) -> AsyncMock:
     """Play a program until its title shows, then close the station, connected or not."""
     shown = AsyncMock(return_value=True)
@@ -1188,7 +1196,7 @@ async def show_a_title_then_close(bot: SobaFM, guild: Any, *, connected: bool) -
     station = bot.station(guild, 0.5)
     station.play(LOFI, "<@5>", duration_seconds=600)
     assert station.program is not None
-    station.program.settle(Outcome.PLAYING)
+    settle_source_playing(station)
     await station.reconcile()
     await settle()
     guild.voice_client.is_connected.return_value = connected
@@ -1298,7 +1306,7 @@ async def test_availability_leaves_the_current_station_to_show_its_own_title(bot
     station = bot.station(guild, 0.5)
     station.play(LOFI, "<@5>", duration_seconds=600)
     assert station.program is not None
-    station.program.settle(Outcome.PLAYING)
+    settle_source_playing(station)
     await station.reconcile()
     await settle()
     # Availability with the same current client preserves the playing station.
@@ -1345,7 +1353,7 @@ async def test_the_voice_check_leaves_a_playing_stations_title(bot: SobaFM) -> N
     station = bot.station(guild, 0.5)
     station.play(LOFI, "<@5>", duration_seconds=600)
     assert station.program is not None
-    station.program.settle(Outcome.PLAYING)
+    settle_source_playing(station)
     await station.reconcile()
     await settle()
 
@@ -1407,7 +1415,7 @@ async def test_connecting_clears_a_title_once_a_closed_stations_request_lands(
     station = bot.station(guild, 0.5)
     station.play(LOFI, "<@5>", duration_seconds=600)
     assert station.program is not None
-    station.program.settle(Outcome.PLAYING)
+    settle_source_playing(station)
     await station.reconcile()  # the title's request is held, as by a rate limit
     guild.voice_client.is_connected.return_value = False
     await bot.close_station(guild, Outcome.DISCONNECTED)
@@ -2981,7 +2989,7 @@ async def test_a_station_shows_its_status_in_sobafms_channel(
     station = bot.station(guild, 0.5)
     station.play(LOFI, "<@5>", duration_seconds=600)
     assert station.program is not None
-    station.program.settle(Outcome.PLAYING)  # as the station does once the program is heard
+    settle_source_playing(station)  # as the station does once the program is heard
 
     await station.reconcile()
     await settle()

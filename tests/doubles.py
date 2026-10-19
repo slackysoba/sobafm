@@ -1,18 +1,179 @@
 """Test doubles for Lyria RealTime sessions, Gemini, the voice player, the clock, and servers."""
 
 import asyncio
+import itertools
 import json
 import threading
-from collections.abc import AsyncGenerator, Awaitable, Callable
+import weakref
+from collections import deque
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 import discord
 from google.genai import errors, types
 
+from sobafm.audio_budget import AudioBytes, AudioLease, AudioLedger
 from sobafm.catalog import CatalogQuery, CatalogTrack
-from sobafm.pcm import BYTES_PER_SECOND, MIME_TYPE
+from sobafm.lyria_engine import SessionPool
+from sobafm.mixer import Mixer
+from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, MIME_TYPE
 from sobafm.plan import MusicPlan
+from sobafm.program import Mode, Outcome, Program
+from sobafm.source import Source, State
+
+
+class FakeSource:
+    """A buffered producer with explicit verified completion and delayed cleanup controls."""
+
+    _numbers = itertools.count(1)
+
+    def __init__(self, program: Program) -> None:
+        self.program = program
+        self.mode = program.mode
+        self.title = program.plan.title
+        self.number = next(self._numbers)
+        self.frames: deque[bytes] = deque()
+        self.state = State.GENERATING
+        self.completed = False
+        self.failure: Outcome | None = None
+        self.retired = False
+        self.hold_cleanup = False
+        self._ended = asyncio.Event()
+
+    @property
+    def buffered_seconds(self) -> float:
+        return len(self.frames) * FRAME_SECONDS
+
+    @property
+    def ready(self) -> bool:
+        return self.buffered_seconds >= 6 or (self.completed and bool(self.frames))
+
+    def start(self) -> None:
+        pass
+
+    def send_audio(self, seconds: float, *, sample: int = 0) -> None:
+        frame = sample.to_bytes(2, "little", signed=True) * 1920
+        self.frames.extend(frame for _ in range(round(seconds / FRAME_SECONDS)))
+
+    def finish(self, failure: Outcome | None = None) -> None:
+        self.completed = failure is None
+        self.failure = failure
+        self.release_cleanup()
+
+    def retire(self) -> None:
+        self.retired = True
+        if not self.hold_cleanup:
+            self.release_cleanup()
+
+    def release_cleanup(self) -> None:
+        self.state = State.ENDED
+        self._ended.set()
+
+    async def wait_ended(self) -> None:
+        await self._ended.wait()
+
+    async def regulate(self) -> None:
+        pass
+
+
+class FakeEngine:
+    """Controllable engine; no provider policy is needed to test station coordination.
+
+    Its synthetic complete-envelope leases are test assumptions, never actual
+    Lyria/native qualification. The production Lyria engine remains unqualified.
+    """
+
+    def __init__(self, mode: Mode, audio: AudioLedger, pool: SessionPool | None = None) -> None:
+        self.mode = mode
+        self.audio = audio
+        self.pool = pool
+        self.sources: list[FakeSource] = []
+        self.live_numbers: list[int] = []
+        self._seen: weakref.WeakSet[FakeSource] = weakref.WeakSet()
+        self._lease: AudioLease | None = None
+        self.close_calls = 0
+
+    def reserve(self, program: Program) -> bool:
+        if self.pool is not None and self.mode is Mode.GENERATED and not self.pool.reserve(self):
+            return False
+        if self._lease is None:
+            self._lease = self.audio.reserve(AudioBytes(pcm=12_000_000, other=512_000))
+        return self._lease is not None
+
+    def release_if_ended(self, retained: Sequence[Program]) -> None:
+        if any(p.mode is self.mode for p in retained):
+            return
+        if all(s.state is State.ENDED for s in self.sources) and self.pool is not None:
+            self.pool.release(self)
+        if not self.sources and self._lease is not None:
+            self._lease.release()
+            self._lease = None
+
+    def generate(self, program: Program) -> None:
+        for _ in range(2 - sum(s.state is not State.ENDED for s in self.sources)):
+            self.sources.append(FakeSource(program))
+
+    def ended_failures(self, program: Program | None) -> list[FakeSource]:
+        ended = [s for s in self.sources if s.state is State.ENDED and s not in self._seen]
+        self._seen.update(ended)
+        return [s for s in ended if s.failure is not None and s.program is program]
+
+    def count_failure(
+        self, source: Source, program: Program | None, connected: bool
+    ) -> Outcome | None:
+        if (
+            program is not None
+            and isinstance(source, FakeSource)
+            and source.program is program
+            and not program.playing
+        ):
+            return source.failure
+        return None
+
+    def drop_ended(self, program: Program | None, mixer: Mixer) -> None:
+        self.sources = [
+            source
+            for source in self.sources
+            if source.state is not State.ENDED
+            or mixer.uses(source)
+            or (source.program is program and source.ready and source.failure is None)
+        ]
+
+    def retire(self, program: Program | None, mixer: Mixer) -> None:
+        for source in self.sources:
+            if source.program is not program and not mixer.uses(source):
+                source.retire()
+
+    def ready_source(self, program: Program, exclude: Source | None = None) -> FakeSource | None:
+        ready = [s for s in self.sources if s.program is program and s.ready and s is not exclude]
+        if self.mode is Mode.CATALOG:
+            return next(iter(ready), None)
+        return max(ready, key=lambda s: s.buffered_seconds, default=None)
+
+    def handover_due(self, source: Source) -> bool:
+        if self.mode is Mode.GENERATED:
+            return source.buffered_seconds < 4
+        return (
+            isinstance(source, FakeSource)
+            and (source.completed or source.failure is not None)
+            and not source.frames
+        )
+
+    def going_live(self, source: Source) -> None:
+        self.live_numbers.append(source.number)
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        for source in self.sources:
+            source.retire()
+        await asyncio.gather(*(s.wait_ended() for s in self.sources))
+        self.sources.clear()
+        if self.pool is not None:
+            self.pool.release(self)
+        if self._lease is not None:
+            self._lease.release()
+            self._lease = None
 
 
 class FakeCatalog:
