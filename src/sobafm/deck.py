@@ -18,6 +18,8 @@ from websockets.exceptions import InvalidStatus, WebSocketException
 from sobafm.failures import Failure, as_token, call_failure, close_failure
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, matches_mime_type
 from sobafm.plan import MusicPlan
+from sobafm.program import Mode, Program
+from sobafm.source import State as State
 
 log = logging.getLogger(__name__)
 
@@ -80,12 +82,6 @@ class LyriaMessageError(Exception):
     """
 
 
-class State(StrEnum):
-    CONNECTING = "connecting"
-    GENERATING = "generating"
-    ENDED = "ended"
-
-
 class EndReason(StrEnum):
     RETIRED = "retired"  # SobaFM ended the session
     CLOSED = "closed"  # the session closed while receiving, usually by Lyria
@@ -103,9 +99,15 @@ class Deck:
     _numbers = itertools.count(1)
 
     def __init__(
-        self, connect: Connect, plan: MusicPlan, *, clock: Callable[[], float] = time.monotonic
+        self,
+        connect: Connect,
+        plan: MusicPlan,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        program: Program | None = None,
     ) -> None:
         self.plan = plan
+        self.program = program
         self.number = next(Deck._numbers)
         # Appended on the event loop and popped by the mixer on discord.py's player thread;
         # deque appends and pops are thread-safe.
@@ -126,6 +128,14 @@ class Deck:
         self._generating_since: float | None = None
         self._retiring = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+
+    @property
+    def mode(self) -> Mode:
+        return Mode.GENERATED
+
+    @property
+    def title(self) -> str:
+        return self.plan.title
 
     @property
     def age(self) -> float:

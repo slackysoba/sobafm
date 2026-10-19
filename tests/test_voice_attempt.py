@@ -18,7 +18,9 @@ from pydantic import SecretStr
 from sobafm.bot import SobaFM, Voice
 from sobafm.config import Settings
 from sobafm.interpreter import Interpreter
+from sobafm.lyria_engine import LyriaEngine
 from sobafm.plan import MusicPlan, Prompt
+from sobafm.program import Mode
 from sobafm.station import Outcome, Program, Station
 from sobafm.store import Store
 from tests.doubles import FakeGemini, FakeLyria, settle
@@ -329,10 +331,12 @@ def reserve_backoff_program(station: Station, bot: SobaFM) -> Program:
         MusicPlan(title="synthetic", prompts=[Prompt(text="synthetic")]),
         "synthetic",
         time.monotonic() + 60,
-        retry_at=time.monotonic() + 60,
     )
     station.program = program
-    assert bot.pool.reserve(station)
+    engine = station.engines[Mode.GENERATED]
+    assert isinstance(engine, LyriaEngine)
+    engine.retry(program).retry_at = time.monotonic() + 60
+    assert engine.reserve(program)
     return program
 
 
@@ -408,7 +412,7 @@ async def test_stale_client_cleanup_preserves_current_replacement_station_and_re
     assert bot.stations[1] is station
     assert station.program is program
     assert not request.done()
-    assert station in cast(Any, bot.pool)._holders
+    assert station.engines[Mode.GENERATED] in cast(Any, bot.pool)._holders
     assert world.changes == before
     bot.interpreting.pop(1)
     bot.request_owners.pop(request)
@@ -434,7 +438,7 @@ async def test_current_library_reconnect_preserves_station_and_pending_request(
     assert station.program is program
     assert bot.stations[1] is station
     assert not request.done()
-    assert station in cast(Any, bot.pool)._holders
+    assert station.engines[Mode.GENERATED] in cast(Any, bot.pool)._holders
     bot.interpreting.pop(1)
     bot.request_owners.pop(request)
     await bot.close_station(world.guild)

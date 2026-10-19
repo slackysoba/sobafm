@@ -14,9 +14,9 @@ settings and command admission. Catalog decoding runs in separately supervised
 FFmpeg children. Generated-to-generated transitions keep v1's crossfades; every
 catalog-involving boundary is successive, without catalog fades or overlap.
 
-The generated path described here is the v1 baseline. Two-engine ownership,
-catalog commands/client/decoder/credits and the shared byte ledger are accepted
-M5 targets, not a claim that current source implements or qualifies them. The
+The station now implements the source/engine seam and shared allocation ledger;
+production construction installs Lyria only. Catalog commands/decoder/credits
+remain accepted M5 targets, and actual resource qualification remains open. The
 requirements identify these changes with stable M5 IDs. Accepted historical ADRs
 remain intact; ADR-0006/ADR-0007 record the scoped changes.
 
@@ -89,6 +89,8 @@ flowchart LR
 | `commands` | Slash command handlers: checks, deferral, and replies with mentions disabled |
 | `station` | One per server: desired/heard/previous program identity, reconcile loop, listener tracking, transitions, audio ledger and audible-source feedback |
 | `program` | Program state, start outcomes and one-time settlement |
+| `source`, `engine` | Buffered source and per-mode lifecycle protocols, including source-specific completion/handover and audible settlement |
+| `audio_budget` | Per-server allocation envelopes, strict shared byte admission and retained cleanup debt |
 | `lyria_engine` | Per-station Lyria deck lifecycle, retries, ready-deck selection and reservations from the shared `SessionPool` |
 | `status` | One per server, outliving its stations: the voice channel statuses SobaFM set, and their requests |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |
@@ -123,10 +125,19 @@ without values retaining their keys. All Lyria engines share one process-wide
 tracks, bounded recent/failed history and normal completion versus failure.
 Catalog work consumes no Lyria slots, but needs shared-byte admission.
 
-This is the final M5 ownership target. Stage #120 preserves existing `Program`
-retry fields/public API and the `sobafm.station` logger identity so its unchanged
-behavior tests remain valid while lifecycle implementation moves. Exact state/type
-migration and the weak program-keyed retry ownership are integrated in #121.
+The generic station routes each program to its mode's engine. `Program.mode` follows
+its validated `MusicPlan` or `CatalogPlan`; only generated programs carry a deadline.
+Each request has distinct identity even when it reuses the same plan object.
+`LyriaEngine.retry()` owns refusal/backoff/deferred-cause state in a
+`WeakKeyDictionary` whose values do not reference the program. Ended-deck tracking
+remains a `WeakSet`, with no engine map keyed strongly by source. The operational
+logger remains `sobafm.station`.
+
+Production construction currently installs Lyria only; catalog engine/command
+wiring follows in #127/#128. Offline station coordination uses `FakeEngine` and
+`FakeSource`, while Lyria behavior tests retain `FakeLyria` sessions. The source
+protocol exposes producer-ended state separately from engine-specific natural
+handover; a catalog low buffer or exit alone cannot cause a successful handover.
 
 A **source** owns buffered `frames`, diagnostic number, program/plan identity,
 producer state, readiness, buffered duration, display title, and lifecycle
@@ -273,7 +284,38 @@ defer/refuse catalog work or reduce catalog prefetch when reservations cannot fi
 No fixed source-count ceiling, suppressed Lyria replacement or discarded playable
 fallback may substitute for accounting. If a feasible envelope cannot be proven,
 keep catalog unavailable and record a reviewed revision. The selected ceilings
-remain unqualified, not an assertion of current enforcement or available headroom.
+remain unqualified for actual provider/native storage.
+
+`AudioLedger` implements these shared admission ceilings with immutable
+`AudioBytes` envelopes for PCM, other parent audio and audited native audio.
+Owners reserve a complete reachable allocation before production, including
+future growth, assembler/transport overshoot and separate copies. Aliases share
+the same lease. A fixed envelope also covers a frame popped by the player and
+temporary mixing/output copies until their actual release. Neither producer exit,
+an empty deque, caller cancellation, a timeout nor garbage collection refunds a
+lease. Only verified release by its owner does. `SobaFM.audio_ledgers` retains the
+same server ledger across replacement stations; engine cleanup never clears
+unrelated leases or outstanding debt.
+
+There is still no qualified hard Lyria receive/copy/transport envelope. Its engine
+therefore records an explicit unknown obligation, blocking catalog
+admission even when current queues are empty. That debt remains after producer
+cleanup and across replacement stations: player stop/callback alone does not
+prove that the encoder, transports and returned PCM copies released storage. No
+qualified release signal is available yet. Generated production and spare
+retention retain their existing behavior. This fail-closed gate implements the
+accepted unresolved-bound policy, not measured NFR-3 compliance or available
+decoder headroom. #125/#127/#175 must supply enforced and qualified producer,
+transport/native and reachable-growth bounds before catalog readiness. Synthetic
+envelope tests exercise arithmetic and ownership only.
+
+Station shutdown invalidates requests and detaches the mixer before cleanup;
+one shielded cleanup task survives repeated caller cancellation. Session slots
+release after all Lyria producers actually end and neither desired nor retained
+previous intent requires them. Byte leases have their separate storage/cleanup
+release condition. Catalog's bounded process cleanup and child-slot ownership
+remain #125/#127 work; this seam adds no decoder or claim of a three-second
+production cleanup result.
 
 ### Catalog selection and failure bounds
 

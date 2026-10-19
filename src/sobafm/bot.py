@@ -17,6 +17,7 @@ from discord.ext import tasks
 from discord.types.voice import GuildVoiceState, VoiceServerUpdate
 from google import genai
 
+from sobafm.audio_budget import AudioLedger
 from sobafm.commands import add_commands
 from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
@@ -229,6 +230,7 @@ class SobaFM(discord.Client):
         )
         self.pool = SessionPool(settings.max_sessions)
         self.stations: dict[int, Station] = {}
+        self.audio_ledgers: dict[int, AudioLedger] = {}
         self.station_owners: dict[Station, VoiceOwner] = {}
         self.request_owners: dict[asyncio.Future[Outcome], VoiceOwner] = {}
         self.statuses: dict[int, Statuses] = {}  # each server's, which outlive its stations
@@ -282,6 +284,7 @@ class SobaFM(discord.Client):
                 self.pool,
                 volume=volume,
                 statuses=self.statuses_for(guild),
+                audio=self.audio_ledgers.setdefault(guild.id, AudioLedger()),
             )
             station.start()
             self.stations[guild.id] = station
@@ -413,7 +416,9 @@ class SobaFM(discord.Client):
                     return PLAY_REPLIES[Outcome.DISCONNECTED]
             station = self.stations.get(member.guild.id)
             current = station.program.plan if station and station.program else None
-            result = await self.interpreter.interpret(request, current)
+            result = await self.interpreter.interpret(
+                request, current if isinstance(current, MusicPlan) else None
+            )
             settings = await self.store.settings(member.guild.id)
             # No await from this check to the station, so nothing can end the request unseen.
             if interpreting.done():
@@ -492,7 +497,12 @@ class SobaFM(discord.Client):
         """Describe the server's program for /now (CMD-3)."""
         station = self.stations.get(guild.id)
         program = station.program if station is not None else None
-        if station is None or program is None or (time_left := station.time_left) is None:
+        if (
+            station is None
+            or program is None
+            or not isinstance(program.plan, MusicPlan)
+            or (time_left := station.time_left) is None
+        ):
             return "Nothing is playing."
         ends = discord.utils.utcnow() + timedelta(seconds=time_left)
         phase = "Now playing" if program.playing else "Starting"

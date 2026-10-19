@@ -1,0 +1,47 @@
+"""Buffered source contract shared by playback engines (ADR-0006)."""
+
+from collections import deque
+from enum import StrEnum
+from typing import Protocol
+
+from sobafm.program import Mode, Program
+
+
+class State(StrEnum):
+    CONNECTING = "connecting"
+    GENERATING = "generating"
+    ENDED = "ended"  # producer/cleanup ended; playable PCM may remain
+
+
+class Source(Protocol):
+    @property
+    def frames(self) -> deque[bytes]: ...
+
+    @property
+    def number(self) -> int: ...
+
+    @property
+    def program(self) -> Program | None: ...
+
+    @property
+    def mode(self) -> Mode: ...
+
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def state(self) -> State: ...
+
+    @property
+    def ready(self) -> bool: ...
+
+    @property
+    def buffered_seconds(self) -> float: ...
+
+    def start(self) -> None: ...
+
+    def retire(self) -> None: ...
+
+    async def wait_ended(self) -> None: ...
+
+    async def regulate(self) -> None: ...

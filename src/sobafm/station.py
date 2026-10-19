@@ -4,14 +4,18 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import Any, Literal, Protocol
 
 import discord
 
+from sobafm.audio_budget import AudioLedger
+from sobafm.catalog_interpreter import CatalogPlan
 from sobafm.deck import Connect, Deck
+from sobafm.engine import Engine
 from sobafm.lyria_engine import CONNECT_BACKOFF_S as CONNECT_BACKOFF_S
 from sobafm.lyria_engine import FAILED_STARTS as FAILED_STARTS
+from sobafm.lyria_engine import HANDOVER_BELOW_S as HANDOVER_BELOW_S
 from sobafm.lyria_engine import REFUSAL_RETRY_S as REFUSAL_RETRY_S
 from sobafm.lyria_engine import SESSION_LIMIT_S as SESSION_LIMIT_S
 from sobafm.lyria_engine import SESSIONS_PER_STATION as SESSIONS_PER_STATION
@@ -21,14 +25,15 @@ from sobafm.lyria_engine import SessionPool as SessionPool
 from sobafm.mixer import Mixer
 from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan
+from sobafm.program import Mode
 from sobafm.program import Outcome as Outcome
 from sobafm.program import Program as Program
+from sobafm.source import Source
 from sobafm.status import Statuses
 
 log = logging.getLogger(__name__)
 
 TICK_S = 0.25
-HANDOVER_BELOW_S = 4.0
 CROSSFADE_S = 4.0
 FADE_IN_S = 2.0
 FADE_OUT_S = 3.0
@@ -62,18 +67,33 @@ class Station:
         self,
         voice: Callable[[], Player | None],
         listeners: Callable[[], int],
-        connect: Connect,
-        pool: SessionPool,
+        connect: Connect | None = None,
+        pool: SessionPool | None = None,
         *,
         volume: float,
         statuses: Statuses,
+        engines: Sequence[Engine] | None = None,
+        audio: AudioLedger | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.mixer = Mixer(volume)
         self.program: Program | None = None
         # What played when the program was requested, which resumes if the program can't start
         self._previous: Program | None = None
-        self._lyria = LyriaEngine(connect, pool, clock=clock)
+        if engines is None:
+            if connect is None or pool is None:
+                raise ValueError("Lyria requires a connector and the process-wide session pool")
+            self.audio = audio if audio is not None else AudioLedger()
+            engines = [LyriaEngine(connect, pool, audio=self.audio, clock=clock)]
+        else:
+            if not engines:
+                raise ValueError("a station requires an engine")
+            self.audio = audio if audio is not None else engines[0].audio
+        self.engines = {engine.mode: engine for engine in engines}
+        if len(self.engines) != len(engines) or any(e.audio is not self.audio for e in engines):
+            raise ValueError("one engine per mode must share the station audio ledger")
+        self._closed = False
+        self._closing: asyncio.Task[None] | None = None
         self._voice = voice
         self._listeners = listeners
         self._empty_since: float | None = None
@@ -85,6 +105,7 @@ class Station:
         self._recovered = 0  # reads with audio since the run's last underrun
         self._clock = clock
         self._playing: object | None = None  # identifies the running player, if any
+        self._heard_source: Source | None = None
         self._next_play = 0.0
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -94,23 +115,44 @@ class Station:
     @property
     def decks(self) -> list[Deck]:
         """The Lyria engine's retained decks, including playable ended buffers."""
-        return self._lyria.decks
+        return [source for source in self.sources if isinstance(source, Deck)]
+
+    @property
+    def sources(self) -> list[Source]:
+        return [source for engine in self.engines.values() for source in engine.sources]
 
     @property
     def time_left(self) -> float | None:
         """Seconds until the program ends, or None without one."""
-        return None if self.program is None else max(0.0, self.program.ends_at - self._clock())
+        if self.program is None or self.program.ends_at is None:
+            return None
+        return max(0.0, self.program.ends_at - self._clock())
 
     def play(
-        self, plan: MusicPlan, requester: str, *, duration_seconds: float
+        self,
+        plan: MusicPlan | CatalogPlan,
+        requester: str,
+        *,
+        duration_seconds: float | None = None,
     ) -> asyncio.Future[Outcome]:
         """Start or replace the program, which ends `duration_seconds` from now.
 
         The result resolves once it plays or fails.
         """
-        program = Program(plan, requester, ends_at=self._clock() + duration_seconds)
-        if not self._lyria.reserve(self):
-            log.info("No Lyria RealTime session capacity left")
+        ends_at = self._clock() + duration_seconds if duration_seconds is not None else None
+        program = Program(plan, requester, ends_at=ends_at)
+        if self._closed:
+            program.settle(Outcome.STOPPED)
+            return program.started
+        engine = self.engines.get(program.mode)
+        if engine is None:
+            program.settle(Outcome.UNAVAILABLE)
+            return program.started
+        if program.mode is Mode.CATALOG and not self.audio.bounded:
+            program.settle(Outcome.UNAVAILABLE)
+            return program.started
+        if not engine.reserve(program):
+            log.info("No playback source capacity left")
             program.settle(Outcome.BUSY)
             return program.started
         if self.program is not None:
@@ -135,18 +177,27 @@ class Station:
         self._wake.set()
 
     async def close(self, outcome: Outcome = Outcome.STOPPED) -> None:
-        """Stop at once: end the program with `outcome`, retire every deck, and stop the loop.
+        """Invalidate playback now; one cleanup owner survives repeated caller cancellation."""
+        if self._closing is None:
+            self._closed = True
+            self._finish(outcome)
+            self._closing = asyncio.create_task(self._close(), name="station cleanup")
+        await asyncio.shield(self._closing)
+
+    async def _close(self) -> None:
+        """Detach playback, retire all engines, and stop the loop.
 
         It also clears the voice channel status, which needs SobaFM still in the channel.
         """
-        self._finish(outcome)
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
-        await self._lyria.close(self)
         self.mixer.switch_to(None, 0)
         if (player := self._voice()) is not None:
             player.stop()
+        self._playing = None
+        self._heard_source = None
+        await asyncio.gather(*(engine.close() for engine in self.engines.values()))
         await self.statuses.clear()
 
     @contextlib.asynccontextmanager
@@ -172,12 +223,18 @@ class Station:
 
     async def reconcile(self) -> None:
         """Apply the reconcile rules once, in order."""
+        if self._closed:
+            return
         self._watch_underruns()
         player = self._voice()
         if self.program is not None and player is None:
             log.info("Voice connection lost; ending the program")
             self._finish(Outcome.DISCONNECTED)
-        if self.program is not None and self._clock() >= self.program.ends_at:
+        if (
+            self.program is not None
+            and self.program.ends_at is not None
+            and self._clock() >= self.program.ends_at
+        ):
             log.info("Play duration elapsed; ending the program")
             self._finish(Outcome.STOPPED)
         if self.program is not None and self._abandoned():
@@ -186,14 +243,17 @@ class Station:
         self._discard(player)
         if self.program is not None:
             self._retire(self.program)
-            self._lyria.generate(self.program)
+            self.engines[self.program.mode].generate(self.program)
         if self.program is not None:
             self._start(self.program, player)
         if self.program is not None:  # starting the player can end the program
             self._hand_over(self.program, player)
         else:
             self._wind_down(player)
-        await asyncio.gather(*(deck.regulate() for deck in self.decks))
+        retained = [p for p in (self.program, self._previous) if p is not None]
+        for engine in self.engines.values():
+            engine.release_if_ended(retained)
+        await asyncio.gather(*(source.regulate() for source in self.sources))
         self._sync_status()
 
     def _sync_status(self) -> None:
@@ -205,7 +265,8 @@ class Station:
         """
         if not self._status_held:
             heard = self._program_heard()
-            self.statuses.show(heard.plan.title if heard is not None else None)
+            source = self.heard_source
+            self.statuses.show(source.title if heard is not None and source is not None else None)
 
     def _abandoned(self) -> bool:
         """Whether the channel has had no listeners for the whole grace period."""
@@ -235,20 +296,27 @@ class Station:
             self._finish(outcome)
             return
         self.program.settle(outcome)  # it never played
-        if self._clock() >= previous.ends_at:
+        if previous.ends_at is not None and self._clock() >= previous.ends_at:
             log.info("Play duration elapsed; ending the program")
             self._finish(Outcome.STOPPED)
             return
         self.program, self._previous = previous, None
         log.info("Returning to the program still playing")
 
-    def _settle_playing(self, program: Program) -> None:
+    def _settle_playing(self, program: Program, source: Source) -> None:
         """Settle `program` as playing, so the program it replaced is no longer heard."""
         self._watch_underruns()
         program.settle(Outcome.PLAYING)
+        self._heard_source = source
+        self.engines[program.mode].going_live(source)
         if (previous := self._previous) is not None:
             self._log_ended(previous, Outcome.REPLACED)
             self._previous = None
+
+    @property
+    def heard_source(self) -> Source | None:
+        """The accepted source, including the incoming target during a generated fade."""
+        return self._heard_source
 
     def _program_heard(self) -> Program | None:
         """The program listeners hear: the program once it plays, or the one it is replacing."""
@@ -294,39 +362,45 @@ class Station:
 
     def _wind_down(self, player: Player | None) -> None:
         """Without a program: drop idle decks, fade out, stop the player, and free sessions."""
-        for deck in self.decks:
-            if not self.mixer.uses(deck):
-                deck.retire()
-        self._lyria.release_if_ended(self)
-        if self._playing is None:  # nothing reads the mixer, so a fade would never finish
+        for source in self.sources:
+            if not self.mixer.uses(source):
+                source.retire()
+        if self._playing is None or player is None:  # unread fades cannot finish
             self.mixer.switch_to(None, 0)
+            self._heard_source = None
             return
+        if self.heard_source is not None and self.heard_source.mode is Mode.CATALOG:
+            self.mixer.switch_to(None, 0)
+            self._heard_source = None
         if self.mixer.switching:
             return
         if self.mixer.live is not None:
             self.mixer.switch_to(None, FADE_OUT_S)
-        elif player is not None and player.is_playing():
+        else:
+            self._heard_source = None
+        if self.mixer.live is None and player.is_playing():
             player.stop()
-            self._playing = None  # its `after` callback can come much later
+            self._playing = None
 
     def _retire(self, program: Program) -> None:
         """End sessions near Lyria's limit, and idle sessions of a replaced plan."""
-        for deck in self.decks:
-            replaced = deck.plan is not program.plan and not self.mixer.uses(deck)
-            self._lyria.retire(deck, replaced=replaced)
+        for engine in self.engines.values():
+            engine.retire(program if program.mode is engine.mode else None, self.mixer)
 
     def _start(self, program: Program, player: Player | None) -> None:
         """Keep discord.py's player running, and fade in the first ready deck once it runs."""
         if player is None:
             return
-        idle = self.mixer.live is None and not self.mixer.switching
-        deck = self._lyria.ready_deck(program.plan) if idle else None
+        # Check switching first: a player can finish a fade between property
+        # reads. Once not switching, only this event loop can change the target.
+        idle = not self.mixer.switching and self.mixer.live is None
+        deck = self.engines[program.mode].ready_source(program) if idle else None
         if self._playing is None and (deck is not None or not idle):
             self._play(player)
         if deck is None or not self._audible(player):
             return
-        self.mixer.switch_to(deck, FADE_IN_S)
-        self._settle_playing(program)
+        self.mixer.switch_to(deck, FADE_IN_S if program.mode is Mode.GENERATED else 0)
+        self._settle_playing(program, deck)
         log.info("Program started on deck %d", deck.number)
 
     def _hand_over(self, program: Program, player: Player | None) -> None:
@@ -335,17 +409,21 @@ class Station:
         Only while it can be heard, so a replacement is never reported as playing during a
         voice outage.
         """
-        live = self.mixer.live
-        if self.mixer.switching or not self._audible(player) or not isinstance(live, Deck):
+        if self.mixer.switching or not self._audible(player):
             return
-        if live.plan is program.plan and live.buffered_seconds >= HANDOVER_BELOW_S:
+        target = self.mixer.live
+        live = next((s for s in self.sources if s is target), None)
+        if live is None:
             return
-        deck = self._lyria.ready_deck(program.plan, exclude=live)
+        if live.program is program and not self.engines[live.mode].handover_due(live):
+            return
+        deck = self.engines[program.mode].ready_source(program, exclude=live)
         if deck is None:
             return
-        self.mixer.switch_to(deck, CROSSFADE_S)
+        seconds = CROSSFADE_S if live.mode is program.mode is Mode.GENERATED else 0
+        self.mixer.switch_to(deck, seconds)
         live.retire()
-        self._settle_playing(program)
+        self._settle_playing(program, deck)
 
     def _discard(self, player: Player | None) -> None:
         """Count each failure, applying any give-up before the next one, then drop ended decks.
@@ -353,11 +431,26 @@ class Station:
         A give-up can restore the program still heard, so each failure and the discard policy
         use the program current at that point.
         """
-        for deck in self._lyria.ended_failures(self.program):
-            outcome = self._lyria.count_failure(deck, self.program, player)
-            if outcome is not None:
-                self._give_up(outcome)
-        self._lyria.drop_ended(self.program, self.mixer)
+        # Snapshot ends before any give-up: old-mode failures cannot be counted
+        # retroactively against the program restored by this same round.
+        ended = [
+            (engine, engine.ended_failures(self._target(engine)))
+            for engine in self.engines.values()
+        ]
+        for engine, sources in ended:
+            for source in sources:
+                outcome = engine.count_failure(
+                    source, self._target(engine), player is not None and player.is_connected()
+                )
+                if outcome is not None:
+                    self._give_up(outcome)
+        for engine in self.engines.values():
+            engine.drop_ended(self._target(engine), self.mixer)
+
+    def _target(self, engine: Engine) -> Program | None:
+        return (
+            self.program if self.program is not None and self.program.mode is engine.mode else None
+        )
 
     def _audible(self, player: Player | None) -> bool:
         """Whether a running player sends the mixer's audio to a connected voice channel."""
