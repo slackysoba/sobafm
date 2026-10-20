@@ -1578,6 +1578,29 @@ async def test_stop_invalidates_an_armed_catalog_start_before_the_player_can_rea
     assert not rig.catalog.live_numbers
 
 
+@pytest.mark.parametrize("previous_generated", [False, True])
+async def test_stop_detaches_actual_catalog_pcm_after_its_unaccepted_delivery_is_invalidated(
+    rig: Rig, previous_generated: bool
+) -> None:
+    if previous_generated:
+        await playing(rig, Mode.GENERATED)
+    started, _, incoming = await request(rig, Mode.CATALOG)
+    incoming.send_audio(6, sample=2000)
+    await rig.tick()
+    assert rig.station.mixer.read() == (2000).to_bytes(2, "little", signed=True) * 1920
+    assert rig.station.mixer.live is incoming
+    assert not started.done()
+    rig.station.invalidate_playback()  # discards the receipt, not the actual live PCM owner
+    rig.station.stop()
+    assert rig.station.mixer.read() == SILENCE
+    assert rig.station.mixer.live is None
+    assert not rig.station.mixer.switching
+    await rig.tick()
+    assert started.result() is Outcome.STOPPED
+    assert not rig.catalog.live_numbers
+    assert rig.station.program is None
+
+
 async def test_known_incoming_failure_between_arm_and_read_cannot_settle(rig: Rig) -> None:
     started, _, incoming = await request(rig, Mode.CATALOG)
     incoming.send_audio(6, sample=2000)

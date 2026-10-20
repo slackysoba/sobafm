@@ -325,9 +325,16 @@ class Station:
             self.program.settle(outcome)
             self.program = None
         self._previous = None
-        if self._heard_source is not None and self._heard_source.mode is Mode.CATALOG:
+        if self._catalog_playback():
             self.mixer.switch_to(None, 0)
             self._heard_source = None
+
+    def _catalog_playback(self) -> bool:
+        """An unaccepted live catalog read still forbids a generated shutdown fade."""
+        live = self.mixer.live
+        return (self._heard_source is not None and self._heard_source.mode is Mode.CATALOG) or any(
+            source is live and source.mode is Mode.CATALOG for source in self.sources
+        )
 
     def _give_up(self, outcome: Outcome) -> None:
         """End a program that could not start, returning to the program still heard (FB-3)
@@ -410,7 +417,7 @@ class Station:
             self.mixer.switch_to(None, 0)
             self._heard_source = None
             return
-        if self.heard_source is not None and self.heard_source.mode is Mode.CATALOG:
+        if self._catalog_playback():
             self.mixer.switch_to(None, 0)
             self._heard_source = None
         if self.mixer.switching:
