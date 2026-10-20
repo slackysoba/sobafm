@@ -97,7 +97,18 @@ Do not put quotes or spaces around the values, and do not commit the file; the r
 | `SOBAFM_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, or `ERROR`. At `DEBUG`, requests are logged too |
 | `SOBAFM_DATA_DIR` | `data` | Where SobaFM keeps its database. The container image sets it to `/data` |
 | `SOBAFM_MAX_SESSIONS` | `4` | Most Lyria sessions at once; an even number, two per playing server |
+| `SOBAFM_NATIVE_RUNTIME_ROOT` | none | Absolute reviewed native package root; optional catalog-only startup load check |
+| `SOBAFM_NATIVE_REGISTRY` | application registry | Explicit reviewed operator trust registry outside the native package |
 | `SOBAFM_DEV_GUILD_ID` | none | For a separate development application with no global commands: registers commands to one server, where they appear at once |
+
+Native settings are optional and do not enable catalog playback. Startup verifies
+an explicitly configured package against the separate reviewed trust registry,
+then converts four small owned silent MP3 fixtures. A missing, unapproved or
+unloadable package leaves catalog decoding unavailable and generated music
+available. The application trust registry is empty; do not approve a package by
+copying its manifest into it. See [native supply](native-runtime.md) for recipient
+replacement and qualification responsibilities. Per-child containment and real
+shared audio envelopes still require #175 qualification before catalog readiness.
 
 ## 5. Run SobaFM
 

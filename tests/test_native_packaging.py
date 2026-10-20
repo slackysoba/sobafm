@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
+import importlib.util
 import io
 import json
 import tarfile
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 from scripts.check_native_runtime import install_package
 from scripts.package_ffmpeg import reproducible_archive
-from sobafm.native import package_path
+from sobafm.native import SourceArchive, VerifiedNativeRuntime, package_path
 
 
 def paired_index(directory: Path, archive: Path) -> None:
@@ -115,3 +119,82 @@ def test_packaging_is_independent_of_input_mtimes(tmp_path: Path, suffix: str) -
     reproducible_archive(source, second)
     assert first.read_bytes() == second.read_bytes()
     assert package_path("lib/libavcodec.so.63") == "lib/libavcodec.so.63"
+
+
+def test_standalone_supply_tool_import_needs_no_application_decoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def narrow_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name in {"sobafm.decoder_check", "sobafm.decoder_process", "sobafm.catalog_audio"}:
+            raise ModuleNotFoundError("application modules deliberately absent")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", narrow_import)
+    path = Path(__file__).parents[1] / "scripts/check_native_runtime.py"
+    spec = importlib.util.spec_from_file_location("recipient_supply_check", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert callable(module.install_package)
+    assert callable(module.smoke)
+
+    def verify(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(executable=Path("never-executed"), target="windows-amd64")
+
+    def run(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stderr=b"", stdout=bytes(192000))
+
+    monkeypatch.setattr(module, "verify_native_runtime", verify)
+    monkeypatch.setattr(module.subprocess, "run", run)
+    result = cast(dict[str, Any], module.smoke(Path("not-accessed"), "a" * 64))
+    assert "application_capability" not in result
+    assert result["mono"]["pcm_bytes"] == 192000
+
+
+def test_application_ci_check_uses_ephemeral_exact_package_trust(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.check_native_runtime as supply
+    import sobafm.decoder_check as checks
+
+    runtime = VerifiedNativeRuntime(
+        executable=tmp_path / "not-executed.exe",
+        manifest_sha256="a" * 64,
+        target="windows-amd64",
+        source_bundle=SourceArchive(name="paired.zip", sha256="b" * 64, size=1),
+    )
+    seen: list[Path] = []
+
+    def verify(*args: Any, **kwargs: Any) -> VerifiedNativeRuntime:
+        return runtime
+
+    def reviewed(root: Path, *, registry: Path) -> VerifiedNativeRuntime:
+        seen.append(registry)
+        data = json.loads(registry.read_text(encoding="utf-8"))
+        assert root == tmp_path
+        assert not registry.is_relative_to(root)
+        assert data["approvals"][0]["manifest_sha256"] == "a" * 64
+        assert data["approvals"][0]["source_bundle_sha256"] == "b" * 64
+        assert data["revoked_manifest_sha256"] == []
+        assert "not production approval" in data["approvals"][0]["approval_record"]
+        return runtime
+
+    def run(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stdout=bytes(192000), stderr=b"")
+
+    async def check(value: VerifiedNativeRuntime) -> dict[str, int]:
+        assert value is runtime
+        return {"owned": 192000}
+
+    monkeypatch.setattr(supply, "verify_native_runtime", verify)
+    monkeypatch.setattr(supply, "verify_approved_native_runtime", reviewed)
+    monkeypatch.setattr(supply.subprocess, "run", run)
+    monkeypatch.setattr(checks, "check_decoder", check)
+    result = supply.smoke(tmp_path, "a" * 64, application_check=True)
+    assert result["application_capability"] == {"owned": 192000}
+    assert len(seen) == 1
+    assert not seen[0].exists()  # test trust never becomes a persistent production approval

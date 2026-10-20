@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -10,12 +11,19 @@ import shutil
 import stat
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from sobafm.native import SourceArchive, file_sha256, package_path, verify_native_runtime
+from sobafm.native import (
+    SourceArchive,
+    file_sha256,
+    package_path,
+    verify_approved_native_runtime,
+    verify_native_runtime,
+)
 
 
 class PackageIndex(BaseModel):
@@ -69,7 +77,11 @@ def install_package(directory: Path, destination: Path) -> str:
 
 
 def smoke(
-    root: Path, expected_digest: str, *, require_no_compiler: bool = False
+    root: Path,
+    expected_digest: str,
+    *,
+    require_no_compiler: bool = False,
+    application_check: bool = False,
 ) -> dict[str, object]:
     """Test installation/codec capability, never production containment or budgets."""
     runtime = verify_native_runtime(root.resolve(), expected_digest)
@@ -130,6 +142,36 @@ def smoke(
             "pcm_bytes": len(result.stdout),
             "pcm_sha256": hashlib.sha256(result.stdout).hexdigest(),
         }
+    if application_check:
+        # Recipient tools deliberately retain their standalone native.py closure.
+        # Only installed application/image checks opt into the production module.
+        from sobafm.decoder_check import check_decoder
+
+        # CI test trust binds this run's exact paired package; it is temporary,
+        # outside the package, and never edits the shipped production registry.
+        with tempfile.TemporaryDirectory(prefix="sobafm-native-ci-") as directory:
+            registry = Path(directory) / "test-trust.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "approvals": [
+                            {
+                                "target": runtime.target,
+                                "manifest_sha256": runtime.manifest_sha256,
+                                "source_bundle_sha256": runtime.source_bundle.sha256,
+                                "approval_record": (
+                                    "CI owned-fixture check only; not production approval"
+                                ),
+                            }
+                        ],
+                        "revoked_manifest_sha256": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            approved = verify_approved_native_runtime(root.resolve(), registry=registry)
+            results["application_capability"] = asyncio.run(check_decoder(approved))
     return results
 
 
@@ -143,6 +185,7 @@ def main() -> None:
     check.add_argument("root", type=Path)
     check.add_argument("manifest_sha256")
     check.add_argument("--require-no-compiler", action="store_true")
+    check.add_argument("--application-check", action="store_true")
     args = parser.parse_args()
     if args.command == "install":
         print(install_package(args.directory, args.destination))
@@ -150,7 +193,10 @@ def main() -> None:
         print(
             json.dumps(
                 smoke(
-                    args.root, args.manifest_sha256, require_no_compiler=args.require_no_compiler
+                    args.root,
+                    args.manifest_sha256,
+                    require_no_compiler=args.require_no_compiler,
+                    application_check=args.application_check,
                 ),
                 indent=2,
                 sort_keys=True,

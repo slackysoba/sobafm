@@ -140,7 +140,7 @@ jobs:
           & $nativePython scripts/check_native_runtime.py install downloaded/native-dist 'installed native runtime'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $manifest = (Get-Content -LiteralPath downloaded/native-dist/index.json -Raw | ConvertFrom-Json).manifest_sha256
-          & $nativePython scripts/check_native_runtime.py smoke 'installed native runtime' $manifest --require-no-compiler > windows-smoke.json
+          & $nativePython scripts/check_native_runtime.py smoke 'installed native runtime' $manifest --require-no-compiler --application-check > windows-smoke.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $nativePython scripts/qualify_native_runtime.py check-replacement downloaded/native-replacement/runtime downloaded/native-replacement/replacement.json > windows-replacement.json
           exit $LASTEXITCODE

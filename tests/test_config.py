@@ -169,3 +169,17 @@ def test_runtime_jamendo_id_is_optional_namespaced_validated_and_secret(
     with pytest.raises(ValidationError) as caught:
         load_settings(env_file=None)
     assert "private-runtime-id" not in str(caught.value)
+
+
+def test_native_paths_are_optional_namespaced_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", TOKEN)
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+    assert load_settings(env_file=None).native_runtime_root is None
+    assert load_settings(env_file=None).native_registry is None
+    monkeypatch.setenv("SOBAFM_NATIVE_RUNTIME_ROOT", str(tmp_path / "reviewed"))
+    monkeypatch.setenv("SOBAFM_NATIVE_REGISTRY", str(tmp_path / "operator-trust.json"))
+    settings = load_settings(env_file=None)
+    assert settings.native_runtime_root == tmp_path / "reviewed"
+    assert settings.native_registry == tmp_path / "operator-trust.json"

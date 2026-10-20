@@ -22,9 +22,11 @@ from sobafm.catalog_interpreter import CatalogPlan
 from sobafm.commands import add_commands
 from sobafm.config import Settings
 from sobafm.deck import Connect, lyria
+from sobafm.decoder_check import prepare_decoder
 from sobafm.failures import Failure
 from sobafm.interpreter import GEMINI_HTTP, Interpreter, Result
 from sobafm.interpreter import Outcome as Interpreted
+from sobafm.native import VerifiedNativeRuntime
 from sobafm.plan import MusicPlan, one_line
 from sobafm.program import Mode
 from sobafm.station import Outcome, SessionPool, Station
@@ -249,6 +251,7 @@ class SobaFM(discord.Client):
         self.pool = SessionPool(settings.max_sessions)
         self.stations: dict[int, Station] = {}
         self.audio_ledgers: dict[int, AudioLedger] = {}
+        self.catalog_decoder: VerifiedNativeRuntime | None = None
         self.station_owners: dict[Station, VoiceOwner] = {}
         self.request_owners: dict[asyncio.Future[Outcome], VoiceOwner] = {}
         self.statuses: dict[int, Statuses] = {}  # each server's, which outlive its stations
@@ -585,6 +588,9 @@ class SobaFM(discord.Client):
         )
 
     async def setup_hook(self) -> None:
+        self.catalog_decoder = await prepare_decoder(
+            self.settings.native_runtime_root, self.settings.native_registry
+        )
         await self.store.initialize()
         if self.settings.dev_guild_id is None:
             await self.tree.sync()

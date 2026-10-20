@@ -59,6 +59,28 @@ and [#175](https://github.com/slackysoba/sobafm/issues/175) must additionally qu
 pre-input child containment, bounded audio accounting, strict completion and
 cleanup on the actual supported installations before catalog playback is enabled.
 
+## Application codec load check
+
+`SOBAFM_NATIVE_RUNTIME_ROOT` selects an absolute installed root; the optional
+`SOBAFM_NATIVE_REGISTRY` selects independently reviewed operator trust outside
+that package. Startup runs the existing approved-supply verifier off the event
+loop before invoking the installed `decoder_check` module. No PATH executable or
+explicit-digest supply-tool fallback is used by production startup.
+
+The module converts four owned forty-frame silent MPEG-1 Layer III fixtures at
+44.1/48kHz in mono/stereo using the same forced-MP3, pipe-only output arguments.
+Each fixture has a 15s work deadline and one original 3s cleanup decision, bounded
+PCM/stderr readers and retained ownership on incomplete release. Only fixed
+categories and numeric byte counts survive. Caller cancellation cannot cancel
+an already-entered cleanup owner. This tests loading/conversion of owned data,
+not untrusted-input containment or a production audio-memory allowance.
+
+The standalone recipient `check_native_runtime.py smoke` keeps its narrow import
+closure and existing supply check. Image and installed-application CI additionally
+select `--application-check`, which lazily imports the installed module. The
+explicit digest in that supply workflow does not approve production trust. These
+checks do not populate approvals, publish an image or close #175/#131/#132.
+
 ## Package contents and component roles
 
 Each target receives a paired compiler-free runtime archive and exact
