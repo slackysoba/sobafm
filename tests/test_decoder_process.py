@@ -1,13 +1,15 @@
 import asyncio
 import ctypes
 import io
+import sys
 from pathlib import Path, PurePosixPath
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
+import sobafm.decoder_check as checks
 import sobafm.decoder_process as processes
 from sobafm.catalog_audio import TrackError
 from sobafm.decoder_process import (
@@ -84,6 +86,140 @@ async def test_pipe_closing_flag_is_not_actual_handle_closure() -> None:
     assert not close_pipes(cast(asyncio.subprocess.Process, process))
     process._transport.allow_close = True  # pyright: ignore[reportPrivateUsage]
     assert close_pipes(cast(asyncio.subprocess.Process, process))
+
+
+class WindowsPipe:
+    """CPython PipeHandle shape: a handle/fileno API, without a .closed member."""
+
+    def __init__(self) -> None:
+        self.handle: int | None = 123
+
+    def fileno(self) -> int:
+        if self.handle is None:
+            raise ValueError("I/O operation on closed pipe")
+        return self.handle
+
+    def close(self) -> None:
+        self.handle = None
+
+
+class WindowsPipeTransport:
+    def __init__(self, handle: object) -> None:
+        self.handle = handle
+
+    def get_extra_info(self, name: str) -> object:
+        assert name == "pipe"
+        return self.handle
+
+
+class WindowsTransport:
+    def __init__(self) -> None:
+        self.pipes = [WindowsPipe() for _ in range(3)]
+        self.allow_close = True
+
+    def get_pipe_transport(self, index: int) -> WindowsPipeTransport:
+        return WindowsPipeTransport(self.pipes[index])
+
+    def close(self) -> None:
+        if self.allow_close:
+            for pipe in self.pipes:
+                pipe.close()
+
+
+@pytest.fixture
+def windows_pipe_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No OS handle exists: only the import/type boundary and documented CPython
+    # shape are replaced. The actual loop and subprocess launcher stay untouched.
+    module = ModuleType("asyncio.windows_utils")
+    module.PipeHandle = WindowsPipe  # pyright: ignore[reportAttributeAccessIssue]
+    monkeypatch.setitem(sys.modules, "asyncio.windows_utils", module)
+    monkeypatch.setattr(processes, "sys", SimpleNamespace(platform="win32"))
+
+
+def test_windows_owned_handle_must_close_before_release(windows_pipe_api: None) -> None:
+    transport = WindowsTransport()
+    process = cast(asyncio.subprocess.Process, SimpleNamespace(_transport=transport))
+    assert all(not hasattr(pipe, "closed") for pipe in transport.pipes)
+    transport.allow_close = False
+    assert not close_pipes(process)
+    assert all(pipe.fileno() == 123 for pipe in transport.pipes)
+    transport.allow_close = True
+    assert close_pipes(process)
+    assert all(pipe.handle is None for pipe in transport.pipes)
+
+
+@pytest.mark.parametrize("unknown", [None, object(), SimpleNamespace(closed=True)])
+def test_unknown_pipe_metadata_never_proves_closure(
+    windows_pipe_api: None, unknown: object
+) -> None:
+    def get_pipe_transport(index: int) -> WindowsPipeTransport:
+        return WindowsPipeTransport(unknown)
+
+    transport = SimpleNamespace(get_pipe_transport=get_pipe_transport, close=lambda: None)
+    process = cast(asyncio.subprocess.Process, SimpleNamespace(_transport=transport))
+    assert not close_pipes(process)
+
+
+def test_arbitrary_fileno_error_is_not_owned_closure(windows_pipe_api: None) -> None:
+    class Unknown:
+        def fileno(self) -> int:
+            raise ValueError("not a CPython pipe")
+
+    def get_pipe_transport(index: int) -> WindowsPipeTransport:
+        return WindowsPipeTransport(Unknown())
+
+    transport = SimpleNamespace(get_pipe_transport=get_pipe_transport, close=lambda: None)
+    process = cast(asyncio.subprocess.Process, SimpleNamespace(_transport=transport))
+    assert not close_pipes(process)
+
+
+async def test_windows_shape_capability_releases_all_four_owned_children(
+    windows_pipe_api: None,
+    runtime: VerifiedNativeRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    children: list[WindowsTransport] = []
+
+    async def spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        child = Process(bytes(200620 if len(children) < 2 else 184320))
+        transport = WindowsTransport()
+        cast(Any, child)._transport = transport
+        children.append(transport)
+        return cast(asyncio.subprocess.Process, child)
+
+    monkeypatch.setattr(checks.asyncio, "create_subprocess_exec", spawn)
+    result = await checks.check_decoder(runtime)
+    await asyncio.sleep(0)
+    assert len(result) == len(children) == 4
+    assert not checks._owners  # pyright: ignore[reportPrivateUsage]
+    assert all(pipe.handle is None for transport in children for pipe in transport.pipes)
+
+
+async def test_windows_open_handle_keeps_failed_capability_debt(
+    windows_pipe_api: None,
+    runtime: VerifiedNativeRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = WindowsTransport()
+    transport.allow_close = False
+    child = Process(bytes(200620))
+    cast(Any, child)._transport = transport
+
+    async def spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        return cast(asyncio.subprocess.Process, child)
+
+    monkeypatch.setattr(checks.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(checks, "CLEANUP_SECONDS", 0.02)
+    with pytest.raises(TrackError, match="decoder"):
+        await checks.check_decoder(runtime)
+    assert child.returncode == 0
+    assert checks._owners  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(TrackError, match="capacity"):
+        await checks.check_decoder(runtime)
+    transport.allow_close = True
+    await asyncio.gather(*checks._owners)  # pyright: ignore[reportPrivateUsage]
+    assert not checks._owners  # pyright: ignore[reportPrivateUsage]
+    assert all(pipe.handle is None for pipe in transport.pipes)
 
 
 async def test_child_reuses_close_owner_after_borrower_cancellation() -> None:

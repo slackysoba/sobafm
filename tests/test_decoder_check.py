@@ -1,4 +1,5 @@
 import asyncio
+import io
 import threading
 from pathlib import Path
 from typing import Any, cast
@@ -42,9 +43,7 @@ class Writer:
         await self.close_waiter
 
 
-class Pipe:
-    closed = False
-
+class Pipe(io.BytesIO):
     def get_extra_info(self, name: str) -> Pipe:
         assert name == "pipe"
         return self
@@ -64,7 +63,8 @@ class Transport:
         self.close_calls += 1
         self.closing.set()
         for pipe in self.pipes:
-            pipe.closed = self.allow_close
+            if self.allow_close:
+                pipe.close()
 
 
 class Process:

@@ -3,8 +3,10 @@
 import asyncio
 import contextlib
 import ctypes
+import io
 import os
 import signal
+import sys
 import uuid
 from ctypes import wintypes
 from pathlib import Path
@@ -289,15 +291,28 @@ class _ProcessTransport(Protocol):
     _transport: asyncio.SubprocessTransport
 
 
+def _pipe_closed(handle: object) -> bool:
+    if isinstance(handle, io.IOBase):
+        return handle.closed
+    if sys.platform == "win32":
+        from asyncio.windows_utils import PipeHandle
+
+        if isinstance(handle, PipeHandle):
+            # Proactor pipes have no .closed attribute. This exact CPython
+            # wrapper raises ValueError after its owned handle has closed.
+            try:
+                handle.fileno()
+            except ValueError:
+                return True
+    return False
+
+
 def close_pipes(process: asyncio.subprocess.Process) -> bool:
     """Confirm the owned CPython pipe handles actually closed, not just closing."""
     transport = cast(_ProcessTransport, process)._transport  # pyright: ignore[reportPrivateUsage] - narrow CPython pipe ownership adapter
     pipes = [transport.get_pipe_transport(index) for index in (0, 1, 2)]
     transport.close()
-    return all(
-        pipe is None or bool(getattr(pipe.get_extra_info("pipe"), "closed", False))
-        for pipe in pipes
-    )
+    return all(pipe is None or _pipe_closed(pipe.get_extra_info("pipe")) for pipe in pipes)
 
 
 class InputCloser:
