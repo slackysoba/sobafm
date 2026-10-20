@@ -4,12 +4,16 @@ import logging
 import math
 import threading
 from collections import deque
+from collections.abc import Callable
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import Protocol, override
 
 import audioop
 import discord
 
 from sobafm.pcm import FRAME_SECONDS, SAMPLE_WIDTH, SILENCE
+from sobafm.source import Source
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +26,16 @@ class FrameSource(Protocol):
 
     @property
     def frames(self) -> deque[bytes]: ...
+
+
+@dataclass(frozen=True)
+class Handoff:
+    outgoing: Source | None
+    incoming: Source
+    program: object
+    epoch: object
+    drain: bool
+    complete: bool
 
 
 class Mixer(discord.AudioSource):
@@ -41,6 +55,13 @@ class Mixer(discord.AudioSource):
         self._volume = volume
         self._gain = volume
         self._failing = False
+        self._program: object | None = None
+        self._epoch: object | None = None
+        self._armed: Handoff | None = None
+        self._delivered: Handoff | None = None
+        self._read_live: int | None = None  # identity held alive by _live after a successful read
+        self._connected: Callable[[], bool] = lambda: False
+        self._wake: Callable[[], None] = lambda: None
         self.underruns = 0  # reads with a playing source but no frame from it
         self.played = 0  # reads that returned audio
         self.errors = 0  # reads that failed; they play silence too
@@ -58,7 +79,66 @@ class Mixer(discord.AudioSource):
     def uses(self, source: FrameSource) -> bool:
         """Whether `source` is playing or fading in."""
         with self._lock:
-            return source is self._live or source is self._incoming
+            return (
+                source is self._live
+                or source is self._incoming
+                or (
+                    self._armed is not None
+                    and (source is self._armed.outgoing or source is self._armed.incoming)
+                )
+                or (
+                    self._delivered is not None
+                    and (source is self._delivered.outgoing or source is self._delivered.incoming)
+                )
+            )
+
+    def bind(
+        self,
+        program: object | None,
+        epoch: object | None,
+        connected: Callable[[], bool],
+        wake: Callable[[], None],
+    ) -> None:
+        """Install exact request/player identity and pure connected-state/wakeup callbacks."""
+        with self._lock:
+            if program is not self._program or epoch is not self._epoch:
+                self._armed = self._delivered = None
+            self._program, self._epoch = program, epoch
+            self._connected, self._wake = connected, wake
+
+    def invalidate_handoff(self, epoch: object | None = None) -> None:
+        """Invalidate synchronously; a late old-player callback cannot cancel its successor."""
+        with self._lock:
+            if epoch is None or epoch is self._epoch:
+                self._armed = self._delivered = None
+                self._epoch = None
+                self._program = None
+
+    def arm(
+        self,
+        outgoing: Source | None,
+        incoming: Source,
+        program: object,
+        epoch: object,
+        *,
+        drain: bool,
+        complete: bool,
+    ) -> None:
+        with self._lock:
+            if (
+                self._switch_frames
+                or self._delivered is not None
+                or self._live is not outgoing
+                or self._program is not program
+                or self._epoch is not epoch
+            ):
+                return
+            self._armed = Handoff(outgoing, incoming, program, epoch, drain, complete)
+
+    def take_handoff(self) -> Handoff | None:
+        with self._lock:
+            result, self._delivered = self._delivered, None
+            return result
 
     def set_volume(self, volume: float) -> None:
         """Change the volume (linear gain, 1.0 unchanged); it ramps to avoid clicks."""
@@ -76,6 +156,8 @@ class Mixer(discord.AudioSource):
         """
         frames = round(seconds / FRAME_SECONDS)
         with self._lock:
+            self._armed = None
+            self._read_live = None
             if self._switch_frames:
                 if source is self._incoming and frames > 0:
                     return
@@ -93,7 +175,11 @@ class Mixer(discord.AudioSource):
 
     @override
     def read(self) -> bytes:
+        wake: Callable[[], None] | None = None
+        failure: Exception | None = None
+        frame = SILENCE
         with self._lock:
+            previous_delivery = self._delivered
             try:
                 frame = self._next_frame()
             except Exception as error:  # noqa: BLE001 - an exception would stop discord.py's player
@@ -103,7 +189,13 @@ class Mixer(discord.AudioSource):
                 failure = error
             else:
                 self._failing = False
-                return frame
+                if self._delivered is not None and self._delivered is not previous_delivery:
+                    wake = self._wake
+        if wake is not None:
+            with suppress(RuntimeError):  # the owning event loop may have closed
+                wake()  # only a bounded loop wakeup, after successful PCM return construction
+        if failure is None:
+            return frame
         if not self._failing:  # one traceback per run of failures, logged outside the lock
             log.error("Mixer read failed; playing silence", exc_info=failure)
             self._failing = True
@@ -111,9 +203,34 @@ class Mixer(discord.AudioSource):
         return SILENCE
 
     def _next_frame(self) -> bytes:
+        handoff = self._armed
+        selected: Source | None = None
+        if handoff is not None:
+            if (
+                self._epoch is not handoff.epoch
+                or self._program is not handoff.program
+                or handoff.incoming.program is not handoff.program
+                or handoff.incoming.failed
+                or not self._connected()
+                or self._live is not handoff.outgoing
+            ):
+                self._armed = None
+            elif handoff.incoming.ready or (
+                handoff.incoming is handoff.outgoing
+                and id(handoff.incoming) == self._read_live
+                and bool(handoff.incoming.frames)
+            ):
+                drained = handoff.outgoing is None or not handoff.outgoing.frames
+                verified = not handoff.complete or (
+                    handoff.outgoing is not None
+                    and handoff.outgoing.completed
+                    and not handoff.outgoing.failed
+                )
+                if (not handoff.drain or drained) and verified:
+                    selected = handoff.incoming
         self._gain += max(-VOLUME_STEP, min(VOLUME_STEP, self._volume - self._gain))
         if not self._switch_frames:
-            sources = [(self._live, self._gain)]
+            sources = [(selected if selected is not None else self._live, self._gain)]
         else:
             angle = (self._switch_position + 0.5) / self._switch_frames * math.pi / 2
             sources = [
@@ -133,6 +250,9 @@ class Mixer(discord.AudioSource):
         for frame, gain in frames[1:]:
             mixed = audioop.add(mixed, _scaled(frame, gain), SAMPLE_WIDTH)
         self.played += 1  # once it has mixed, so a failed read never counts
+        if selected is not None and handoff is not None:
+            self._live, self._armed, self._delivered = selected, None, handoff
+            self._read_live = id(selected)
         return mixed
 
 

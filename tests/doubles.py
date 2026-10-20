@@ -14,7 +14,7 @@ import discord
 from google.genai import errors, types
 
 from sobafm.audio_budget import AudioBytes, AudioLease, AudioLedger
-from sobafm.catalog import CatalogQuery, CatalogTrack
+from sobafm.catalog import CatalogPage, CatalogQuery, CatalogTrack
 from sobafm.lyria_engine import SessionPool
 from sobafm.mixer import Mixer
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, MIME_TYPE
@@ -48,6 +48,10 @@ class FakeSource:
     @property
     def ready(self) -> bool:
         return self.buffered_seconds >= 6 or (self.completed and bool(self.frames))
+
+    @property
+    def failed(self) -> bool:
+        return self.failure is not None
 
     def start(self) -> None:
         pass
@@ -119,6 +123,10 @@ class FakeEngine:
         self._seen.update(ended)
         return [s for s in ended if s.failure is not None and s.program is program]
 
+    @staticmethod
+    def terminal(program: Program | None, connected: bool) -> Outcome | None:
+        return None
+
     def count_failure(
         self, source: Source, program: Program | None, connected: bool
     ) -> Outcome | None:
@@ -154,10 +162,8 @@ class FakeEngine:
     def handover_due(self, source: Source) -> bool:
         if self.mode is Mode.GENERATED:
             return source.buffered_seconds < 4
-        return (
-            isinstance(source, FakeSource)
-            and (source.completed or source.failure is not None)
-            and not source.frames
+        return isinstance(source, FakeSource) and (
+            source.completed or (source.failure is not None and not source.frames)
         )
 
     def going_live(self, source: Source) -> None:
@@ -176,19 +182,46 @@ class FakeEngine:
             self._lease = None
 
 
+class FakeCatalogCycle:
+    def __init__(self, results: list[tuple[CatalogTrack, ...] | CatalogPage | Exception]) -> None:
+        self.results = results
+        self.closed = False
+
+    async def next_page(self) -> CatalogPage:
+        if self.closed:
+            raise RuntimeError("closed fixture cycle")
+        result = self.results.pop(0) if self.results else ()
+        if isinstance(result, Exception):
+            raise result
+        page = (
+            result
+            if isinstance(result, CatalogPage)
+            else CatalogPage(tracks=result, received=len(result), exhausted=True)
+        )
+        self.closed = page.exhausted
+        return page
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class FakeCatalog:
     """Scripted catalog discovery; records validated queries without provider I/O."""
 
-    def __init__(self, *results: tuple[CatalogTrack, ...] | Exception) -> None:
+    def __init__(self, *results: tuple[CatalogTrack, ...] | CatalogPage | Exception) -> None:
         self.results = list(results)
         self.queries: list[CatalogQuery] = []
+
+    def open(self, query: CatalogQuery) -> FakeCatalogCycle:
+        self.queries.append(query)
+        return FakeCatalogCycle(self.results)
 
     async def search(self, query: CatalogQuery) -> tuple[CatalogTrack, ...]:
         self.queries.append(query)
         result = self.results.pop(0) if self.results else ()
         if isinstance(result, Exception):
             raise result
-        return result
+        return result.tracks if isinstance(result, CatalogPage) else result
 
 
 class FakeSession:

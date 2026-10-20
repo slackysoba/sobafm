@@ -93,6 +93,7 @@ flowchart LR
 | `source`, `engine` | Buffered source and per-mode lifecycle protocols, including source-specific completion/handover and audible settlement |
 | `audio_budget` | Per-server allocation envelopes, strict shared byte admission and retained cleanup debt |
 | `lyria_engine` | Per-station Lyria deck lifecycle, retries, ready-deck selection and reservations from the shared `SessionPool` |
+| `catalog_engine` | Bounded metadata cycles, per-server history, one prepared track and exact-program terminal outcomes |
 | `status` | One per server, outliving its stations: the voice channel statuses SobaFM set, and their requests |
 | `deck` | One Lyria RealTime session filling a buffer of 20 ms frames, with flow control |
 | `track_deck` | One eligible catalog track, strict production outcome, bounded PCM and persistent decoder cleanup ownership |
@@ -138,11 +139,13 @@ Each request has distinct identity even when it reuses the same plan object.
 remains a `WeakSet`, with no engine map keyed strongly by source. The operational
 logger remains `sobafm.station`.
 
-Production construction currently installs Lyria only; catalog engine/command
-wiring follows in #127/#128. Offline station coordination uses `FakeEngine` and
-`FakeSource`, while Lyria behavior tests retain `FakeLyria` sessions. The source
-protocol exposes producer-ended state separately from engine-specific natural
-handover; a catalog low buffer or exit alone cannot cause a successful handover.
+Production construction currently installs Lyria only; catalog command and owner
+wiring follows in #128. `CatalogEngine` takes the server owner's shared history,
+audio ledger, catalog client and an unstarted track factory. Offline coordination
+also tests the real engine with `FakeCatalog` and fixture-only PCM producers;
+Lyria behavior tests retain `FakeLyria` sessions. The source protocol exposes
+known failure and strict catalog completion separately from producer-ended state;
+a catalog low buffer or exit alone cannot cause a successful handover.
 
 A **source** owns buffered `frames`, diagnostic number, program/plan identity,
 producer state, readiness, buffered duration, display title, and lifecycle
@@ -153,7 +156,12 @@ playback-drained. Catalog credits accompany the actual source. The mixer's
 
 The engine seam covers reserve, count ended, drop ended, retire, generate,
 ready-source selection, source-specific `handover_due`, audible settlement and
-close. Engines report start failures to the station, which owns give-up/rollback.
+close. A synchronous terminal poll reports metadata-only failure for an exact
+program in the station's existing failure phase. The station snapshots original
+targets before FB-3 rollback and recomputes targets before source accounting,
+discard and generation. Background selection only stores a bounded result and
+wakes the station; it cannot settle requests or drive playback. Engines report
+start failures to the station, which owns give-up/rollback.
 These are responsibilities, not a generic engine framework or fixed scaffolding.
 In particular, a low catalog buffer may mean stalled input, never natural EOF.
 
@@ -171,6 +179,20 @@ applied only while no catalog audio is audible. At every catalog boundary,
 outgoing audio ends before incoming audio starts, with no catalog fade or overlap
 (PLAY-9). Underrun/exception still returns silence so the player does not stop on
 its own. No mixer read performs HTTP, decoding, pipe I/O, waiting or cleanup.
+
+The station arms a catalog boundary with exact program and player-epoch identity.
+For natural succession it may arm after strict outgoing completion, but the
+locked player read waits for the final outgoing frame to drain. The next read
+selects ready incoming PCM without needing an intervening station tick. Known
+incoming failure, disconnection, stop and supersession invalidate the boundary
+synchronously. Only a successfully constructed incoming PCM return creates the
+bounded handoff receipt; the station consumes that receipt for start settlement,
+history, credits and title. Arming or popping the final outgoing frame does not.
+A voice transition can invalidate an unaccepted receipt after its read; recovery
+requires another valid read in the new context, never acceptance of the stale
+receipt. All armed, delivered and live source references retain their existing
+audio allocation obligations, including player/mixing copies; this is not proof
+that unknown envelopes have been measured or storage has released.
 
 ### Catalog track production
 
@@ -363,8 +385,11 @@ one shielded cleanup task survives repeated caller cancellation. Session slots
 release after all Lyria producers actually end and neither desired nor retained
 previous intent requires them. Byte leases have their separate storage/cleanup
 release condition. Catalog's bounded process cleanup and child-slot ownership
-remain #125/#127 work; this seam adds no decoder or claim of a three-second
-production cleanup result.
+remain with the `DecoderSupervisor` and `TrackDeck` cleanup owners. Removing
+sources or completed metadata tasks never refunds their audio storage. Metadata
+tasks retain their selection/cursor independently of weak program membership
+through cancellation and join. This sequencing adds no claim of a three-second
+production cleanup or measured resource result.
 
 ### Catalog selection and failure bounds
 
@@ -387,13 +412,35 @@ PLAY-12 uses these fixed application bounds, not presumed provider quota:
 | Metadata body/concurrency | At most 512 KiB including decompression; one call per station/two per process, at most one new call per second process-wide; provider restrictions/backoff take precedence |
 | Exhaustion recovery | No tight refill loop; a playing program retries after 15, 30, then 60 seconds, retaining the 60-second ceiling; new accepted requests get their own bounded cycle |
 | Stream candidates/prefetch | At most three distinct candidates per cycle under decoder bounds, never two alternatives for one next slot; at most audible plus one prepared catalog track; cleanup completes before capacity reuse |
-| History | Last 64 audibly accepted ids per station across programs, expiring after 24 hours; at most 128 failed ids for ten minutes; clear on process restart; independently exclude current/retained/prepared ids; exhaustion reports no eligible non-recent match |
+| History | Last 64 audibly accepted ids per server across programs and replacement stations, expiring after 24 hours; at most 128 failed ids for ten minutes; clear on process restart; independently exclude current/retained/prepared ids; exhaustion reports no eligible non-recent match |
+
+One search cursor owns the original stages, pages, attempts and deadline across
+local exclusion and candidate failure. A nonempty provider stage exhausted by
+rights/history filters cannot relax into a new stage or gain a fresh budget.
+Closing a cursor invalidates further work; the engine separately owns, cancels
+and joins any in-flight page task. It retains at most one unplayed source and
+revalidates a prepared choice against the actually accepted artist before arming.
+
+Artist avoidance excludes only the last audibly accepted catalog display label,
+including across programs, for at most 24 hours. Its complete bounded comparison
+key uses Unicode NFKC, collapsed whitespace and casefolding; it is not truncated
+and does not claim authoritative performer identity. The 64-track history is
+separate from this anti-consecutive rule. Every newly observed failed source
+enters the failed-id history, including superseded unheard sources, while retry
+counts and terminal outcomes remain exact-program decisions. Exhaustion never
+clears history, relaxes artist avoidance or replays the oldest track.
 
 Catalog interpretation failure triggers no raw-text search (AI-4). Initial
 search/candidate exhaustion gives a specific failure and FB-3 rollback. A started
 program refills/retries while existing buffers play. Invalid rights/notices,
 oversize input and decode failures skip one candidate with a sanitized category;
 failure after a streamed prefix was heard is still failure, never normal EOF.
+
+Source integration and offline fixtures do not complete live qualification.
+The original multi-track live verification remains open in #131 after command
+and owner wiring (#128/#129) and applicable supported-platform/resource readiness
+(#175). Production native trust remains empty and catalog admission fails closed
+until its real prerequisites are met; #132 source/notices/publication is separate.
 
 ### Decoder guardrails
 

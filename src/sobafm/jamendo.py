@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -13,6 +13,7 @@ import aiohttp
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 
 from sobafm.catalog import (
+    CatalogPage,
     CatalogQuery,
     CatalogText,
     CatalogTrack,
@@ -170,6 +171,114 @@ async def _no_transport_replay(
         raise CatalogError("connection", call_failure(error)) from None
 
 
+class SearchCycle:
+    """Continue a single search without renewing its budget after local exclusions."""
+
+    def __init__(self, client: JamendoCatalog, query: CatalogQuery) -> None:
+        self._client = client
+        self._steps = _steps(CatalogQuery.model_validate(query.model_dump()))
+        self._deadline = client.clock() + CYCLE_SECONDS
+        self._stage = self._offset = self._attempts = self._retries = self._received = 0
+        self._had_results = False
+        self._closed = self._busy = False
+
+    def close(self) -> None:
+        self._closed = True
+
+    async def next_page(self) -> CatalogPage:
+        if self._closed or self._busy:
+            raise CatalogError("invalid")
+        self._busy = True
+        try:
+            remaining = self._deadline - self._client.clock()
+            if remaining <= 0:
+                raise CatalogError("deadline", Failure.UNAVAILABLE)
+            async with asyncio.timeout(remaining), self._client.search_lock:
+                return await self._page()
+        except TimeoutError:
+            self.close()
+            raise CatalogError("deadline", Failure.UNAVAILABLE) from None
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            self._busy = False
+
+    async def _page(self) -> CatalogPage:
+        while self._stage < len(self._steps):
+            while True:
+                if (
+                    self._attempts >= MAX_ATTEMPTS
+                    or self._client.clock() >= self._deadline
+                    or self._closed
+                ):
+                    raise CatalogError("deadline", Failure.UNAVAILABLE)
+                self._attempts += 1
+                try:
+                    reply = await self._client._fetch(  # pyright: ignore[reportPrivateUsage]
+                        self._steps[self._stage] | {"offset": str(self._offset)}
+                    )
+                    break
+                except CatalogError as error:
+                    log.warning(
+                        "Jamendo metadata failure category=%s failure=%s status=%s code=%s",
+                        error.category,
+                        error.failure,
+                        error.status,
+                        error.code,
+                    )
+                    if error.failure != Failure.UNAVAILABLE or self._retries >= 2:
+                        raise
+                    self._retries += 1
+                    delay = max(self._retries, error.retry_after)
+                    if self._client.clock() + delay >= self._deadline:
+                        raise CatalogError("deadline", Failure.UNAVAILABLE) from None
+                    await asyncio.sleep(delay)
+            count = len(reply.results)
+            self._received += count
+            if self._received > 60:
+                raise CatalogError("invalid")
+            if count:
+                self._had_results = True
+                exhausted = self._offset == PAGE_SIZE or count < PAGE_SIZE
+                self._offset += PAGE_SIZE
+                if exhausted:
+                    self.close()
+                return CatalogPage(tracks=_tracks(reply), received=count, exhausted=exhausted)
+            if self._had_results:
+                break
+            self._stage += 1
+            self._offset = 0
+        self.close()
+        return CatalogPage(tracks=(), received=0, exhausted=True)
+
+
+def _tracks(reply: Reply) -> tuple[CatalogTrack, ...]:
+    tracks: list[CatalogTrack] = []
+    for track in reply.results:
+        try:
+            license_ = License.from_url(track.license_ccurl)
+        except ValueError:
+            log.info("Jamendo candidate %s ineligible: license", track.id)
+            continue
+        if not stream_url_allowed(track.audio):
+            log.info("Jamendo candidate %s ineligible: audio_url", track.id)
+            continue
+        tags = track.musicinfo.tags
+        tracks.append(
+            CatalogTrack(
+                id=track.id,
+                title=track.name,
+                artist=track.artist_name,
+                duration=track.duration,
+                license=license_,
+                audio=SecretStr(track.audio),
+                tags=tuple(dict.fromkeys((*tags.genres, *tags.instruments, *tags.vartags))),
+            )
+        )
+    return tuple(tracks)
+
+
 class JamendoCatalog:
     """One station's client, sharing the process metadata gate and an owned aiohttp session.
 
@@ -178,81 +287,31 @@ class JamendoCatalog:
     """
 
     def __init__(
-        self, client_id: ApiKey, session: aiohttp.ClientSession, gate: MetadataGate
+        self,
+        client_id: ApiKey,
+        session: aiohttp.ClientSession,
+        gate: MetadataGate,
+        *,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._client_id = client_id
         self._session = session
         self._gate = gate
-        self._search_lock = asyncio.Lock()
+        self.search_lock = asyncio.Lock()
+        self.clock = clock
+
+    def open(self, query: CatalogQuery) -> SearchCycle:
+        return SearchCycle(self, query)
 
     async def search(self, query: CatalogQuery) -> tuple[CatalogTrack, ...]:
-        # Revalidate even constructed/copied models before they trigger I/O.
-        query = CatalogQuery.model_validate(query.model_dump())
+        cycle = self.open(query)
         try:
-            async with asyncio.timeout(CYCLE_SECONDS), self._search_lock:
-                return await self._search(query)
-        except TimeoutError:
-            raise CatalogError("deadline", Failure.UNAVAILABLE) from None
-
-    async def _search(self, query: CatalogQuery) -> tuple[CatalogTrack, ...]:
-        attempts, retries = 0, 0
-        for step in _steps(query):
-            had_results = False
-            for offset in (0, PAGE_SIZE):
-                while True:
-                    if attempts >= MAX_ATTEMPTS:
-                        raise CatalogError("deadline", Failure.UNAVAILABLE)
-                    attempts += 1
-                    try:
-                        reply = await self._fetch(step | {"offset": str(offset)})
-                        break
-                    except CatalogError as error:
-                        log.warning(
-                            "Jamendo metadata failure category=%s failure=%s status=%s code=%s",
-                            error.category,
-                            error.failure,
-                            error.status,
-                            error.code,
-                        )
-                        if error.failure != Failure.UNAVAILABLE or retries >= 2:
-                            raise
-                        retries += 1
-                        await asyncio.sleep(max(retries, error.retry_after))
-                if not reply.results:
-                    break
-                had_results = True
-                tracks: list[CatalogTrack] = []
-                for track in reply.results:
-                    try:
-                        license_ = License.from_url(track.license_ccurl)
-                    except ValueError:
-                        log.info("Jamendo candidate %s ineligible: license", track.id)
-                        continue
-                    if not stream_url_allowed(track.audio):
-                        log.info("Jamendo candidate %s ineligible: audio_url", track.id)
-                        continue
-                    tags = track.musicinfo.tags
-                    tracks.append(
-                        CatalogTrack(
-                            id=track.id,
-                            title=track.name,
-                            artist=track.artist_name,
-                            duration=track.duration,
-                            license=license_,
-                            audio=SecretStr(track.audio),
-                            tags=tuple(
-                                dict.fromkeys((*tags.genres, *tags.instruments, *tags.vartags))
-                            ),
-                        )
-                    )
-                if tracks:
-                    return tuple(tracks)
-                if len(reply.results) < PAGE_SIZE:
-                    break
-            # Filtering an unsafe/unsupported candidate is not a successful empty provider reply.
-            if had_results:
-                return ()
-        return ()
+            while True:
+                page = await cycle.next_page()
+                if page.tracks or page.exhausted:
+                    return page.tracks
+        finally:
+            cycle.close()
 
     async def _fetch(self, params: dict[str, str]) -> Reply:
         params = {

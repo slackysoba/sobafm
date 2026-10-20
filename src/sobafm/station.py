@@ -144,6 +144,7 @@ class Station:
         if self._closed:
             program.settle(Outcome.STOPPED)
             return program.started
+        self._accept_handoff(self._voice())
         engine = self.engines.get(program.mode)
         if engine is None:
             program.settle(Outcome.UNAVAILABLE)
@@ -160,11 +161,13 @@ class Station:
             if self.program.playing:
                 self._previous = self.program
         self.program = program
+        self._bind_mixer()
         self._empty_since = None
         self.wake()
         return program.started
 
     def stop(self) -> None:
+        self._accept_handoff(self._voice())
         self._finish(Outcome.STOPPED)
         self.wake()
 
@@ -175,6 +178,38 @@ class Station:
     def wake(self) -> None:
         """Reconcile now rather than at the next tick."""
         self._wake.set()
+
+    def invalidate_playback(self) -> None:
+        """Invalidate an armed boundary before a voice transition can await anything."""
+        self.mixer.invalidate_handoff()
+        self.wake()
+
+    def _bind_mixer(self) -> None:
+        loop = asyncio.get_running_loop()
+
+        def wake() -> None:
+            loop.call_soon_threadsafe(self.wake)
+
+        self.mixer.bind(
+            self.program,
+            self._playing,
+            lambda: not self._status_held and self._audible(self._voice()),
+            wake,
+        )
+
+    def _accept_handoff(self, player: Player | None) -> None:
+        handoff = self.mixer.take_handoff()
+        if (
+            handoff is None
+            or handoff.program is not self.program
+            or handoff.epoch is not self._playing
+            or not self._audible(player)
+            or self.program is None
+        ):
+            return
+        self._settle_playing(self.program, handoff.incoming)
+        if handoff.outgoing is not None and handoff.outgoing is not handoff.incoming:
+            handoff.outgoing.retire()
 
     async def close(self, outcome: Outcome = Outcome.STOPPED) -> None:
         """Invalidate playback now; one cleanup owner survives repeated caller cancellation."""
@@ -204,6 +239,7 @@ class Station:
     async def moving(self) -> AsyncGenerator[None]:
         """Clear the voice channel status before SobaFM moves, and show it again after."""
         self._status_held = True
+        self.invalidate_playback()
         try:
             await self.statuses.clear()
             yield
@@ -225,6 +261,7 @@ class Station:
         """Apply the reconcile rules once, in order."""
         if self._closed:
             return
+        self._accept_handoff(self._voice())
         self._watch_underruns()
         player = self._voice()
         if self.program is not None and player is None:
@@ -279,6 +316,7 @@ class Station:
         return now - self._empty_since >= EMPTY_GRACE_S
 
     def _finish(self, outcome: Outcome) -> None:
+        self.mixer.invalidate_handoff()
         self._watch_underruns()  # silence since the last tick, so the next tick won't count it
         if (heard := self._program_heard()) is not None:
             self._end_run()
@@ -287,6 +325,9 @@ class Station:
             self.program.settle(outcome)
             self.program = None
         self._previous = None
+        if self._heard_source is not None and self._heard_source.mode is Mode.CATALOG:
+            self.mixer.switch_to(None, 0)
+            self._heard_source = None
 
     def _give_up(self, outcome: Outcome) -> None:
         """End a program that could not start, returning to the program still heard (FB-3)
@@ -397,9 +438,35 @@ class Station:
         deck = self.engines[program.mode].ready_source(program) if idle else None
         if self._playing is None and (deck is not None or not idle):
             self._play(player)
+        # A voice transition may invalidate a delivered event after its PCM read.
+        # Re-arm the actual live source on the new context; only a new read can
+        # accept it, never the invalidated event from the disconnected epoch.
+        live = next((s for s in self.sources if s is self.mixer.live), None)
+        if (
+            not idle
+            and live is not None
+            and live is not self._heard_source
+            and live.program is program
+            and self._audible(player)
+            and (
+                live.mode is Mode.CATALOG
+                or (self._previous is not None and self._previous.mode is Mode.CATALOG)
+            )
+            and self._playing is not None
+        ):
+            self._bind_mixer()
+            self.mixer.arm(live, live, program, self._playing, drain=False, complete=False)
+            return
         if deck is None or not self._audible(player):
             return
-        self.mixer.switch_to(deck, FADE_IN_S if program.mode is Mode.GENERATED else 0)
+        if program.mode is Mode.CATALOG or (
+            self._previous is not None and self._previous.mode is Mode.CATALOG
+        ):
+            if self._playing is not None:
+                self._bind_mixer()
+                self.mixer.arm(None, deck, program, self._playing, drain=False, complete=False)
+            return
+        self.mixer.switch_to(deck, FADE_IN_S)
         self._settle_playing(program, deck)
         log.info("Program started on deck %d", deck.number)
 
@@ -421,6 +488,19 @@ class Station:
         if deck is None:
             return
         seconds = CROSSFADE_S if live.mode is program.mode is Mode.GENERATED else 0
+        if seconds == 0:
+            if self._playing is not None:
+                self._bind_mixer()
+                natural = live.program is program
+                self.mixer.arm(
+                    live,
+                    deck,
+                    program,
+                    self._playing,
+                    drain=natural,
+                    complete=natural and not live.failed,
+                )
+            return
         self.mixer.switch_to(deck, seconds)
         live.retire()
         self._settle_playing(program, deck)
@@ -437,6 +517,18 @@ class Station:
             (engine, engine.ended_failures(self._target(engine)))
             for engine in self.engines.values()
         ]
+        # Snapshot both identity and outcome before FB-3 may restore another mode.
+        terminal = [
+            (
+                engine,
+                self._target(engine),
+                engine.terminal(self._target(engine), player is not None and player.is_connected()),
+            )
+            for engine in self.engines.values()
+        ]
+        for engine, requested, outcome in terminal:
+            if requested is not None and self._target(engine) is requested and outcome is not None:
+                self._give_up(outcome)
         for engine, sources in ended:
             for source in sources:
                 outcome = engine.count_failure(
@@ -466,6 +558,7 @@ class Station:
         playing = object()
 
         def stopped(error: Exception | None) -> None:  # runs on discord.py's player thread
+            self.mixer.invalidate_handoff(playing)
             if error is not None:
                 log.warning("Voice player stopped: %s", error)
             loop.call_soon_threadsafe(self._player_stopped, playing)
@@ -485,8 +578,10 @@ class Station:
             self._finish(Outcome.FAILED)
             return
         self._playing = playing
+        self._bind_mixer()
 
     def _player_stopped(self, playing: object) -> None:
         if self._playing is playing:
+            self.mixer.invalidate_handoff(playing)
             self._playing = None
         self.wake()
