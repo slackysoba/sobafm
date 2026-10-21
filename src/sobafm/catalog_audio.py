@@ -82,6 +82,7 @@ class AudioStream:
         self._track = CatalogTrack.model_validate(track)
         if not self._track.eligible:
             raise TrackError(TrackFailure.INELIGIBLE)
+        self._responses: list[aiohttp.ClientResponse] = []
         self._observations: list[asyncio.Future[object]] = []
         self._unknown_closure = False
         self._starts = 0
@@ -95,16 +96,15 @@ class AudioStream:
                 owner = owner_ref()
                 if owner is None:
                     raise TrackError(TrackFailure.CLEANUP)
-                owner._observe(connection)
+                owner._observe(self, connection)
                 return await super().start(connection)
 
         self._session = session_factory(ObservedResponse)
-        self._response: aiohttp.ClientResponse | None = None
         self.received = 0
         self.complete = False
         self._started = False
 
-    def _observe(self, connection: Connection) -> None:
+    def _observe(self, response: aiohttp.ClientResponse, connection: Connection) -> None:
         """Observe only the locked aiohttp 3.14.4 internal lifecycle signal.
 
         This is not a public transport guarantee or proof of TLS/audio storage
@@ -112,6 +112,7 @@ class AudioStream:
         before get has assigned this input's response.
         """
         self._starts += 1
+        self._responses.append(response)
         try:
             protocol = connection.protocol
             if aiohttp.__version__ != "3.14.4" or type(protocol) is not ResponseHandler:
@@ -158,7 +159,8 @@ class AudioStream:
                     middlewares=(_no_replay,),
                     timeout=aiohttp.ClientTimeout(total=None, sock_connect=IDLE_SECONDS),
                 )
-            self._response = response
+            if all(original is not response for original in self._responses):
+                self._responses.append(response)
             if (
                 response.status != 200
                 or response.headers.get("Content-Encoding", "identity") != "identity"
@@ -202,19 +204,19 @@ class AudioStream:
     def close(self) -> None:
         if self._close_task is None:
             success = True
-            try:
-                if self._response is not None:
-                    self._response.close()
-            except Exception as error:  # noqa: BLE001 - still close the session and retain failure
-                _detach(error)
-                success = False
+            for response in self._responses:
+                try:
+                    response.close()
+                except Exception as error:  # noqa: BLE001 - still close the session and retain failure
+                    _detach(error)
+                    success = False
             self._close_task = asyncio.create_task(self._close(success), name="catalog HTTP close")
             self._close_task.add_done_callback(_retrieve_close_error)
 
     async def _close(self, success: bool) -> None:
         success &= await _finish_close(self._session.close())
-        if self._response is not None:
-            success &= await _finish_close(self._response.wait_for_close())
+        for response in self._responses:
+            success &= await _finish_close(response.wait_for_close())
         # Even unexpected additional observations remain owned. Never cancel a
         # shared library future when an independently cancelled borrower leaves.
         for future in self._observations:

@@ -76,6 +76,19 @@ class LifecycleSession:
         self.before_start_error = False
         self.start_error = False
         self.hold_headers = False
+        self.hold_writer = False
+        self.writer: asyncio.Task[None] | None = None
+        self.writer_started = asyncio.Event()
+        self.writer_cancelled = asyncio.Event()
+        self.writer_release = asyncio.Event()
+
+    async def delayed_writer(self) -> None:
+        self.writer_started.set()
+        while not self.writer_release.is_set():
+            try:
+                await self.writer_release.wait()
+            except asyncio.CancelledError:
+                self.writer_cancelled.set()
 
     @property
     def closed(self) -> bool:
@@ -96,6 +109,10 @@ class LifecycleSession:
         except BaseException:
             connection.close()
             raise
+        if self.hold_writer:
+            self.writer = asyncio.create_task(self.delayed_writer())
+            response._writer = self.writer  # pyright: ignore[reportPrivateUsage] - owned writer via real response lifecycle
+            await self.writer_started.wait()
         headers = (
             f"HTTP/1.1 {self.status} Fixture\r\nContent-Length: {len(self.body)}\r\n"
             "Connection: close\r\n\r\n"

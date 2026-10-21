@@ -122,6 +122,31 @@ async def test_pre_hook_failure_stays_unknown_after_logical_session_close() -> N
     assert rig.http.close_calls == 1
 
 
+async def test_start_failure_joins_original_response_writer_after_transport_closes() -> None:
+    rig = HTTPRig()
+    rig.http.start_error = rig.http.hold_writer = True
+    try:
+        with pytest.raises(TrackError, match=r"^transfer$"):
+            await collect(rig.source)
+        await rig.http.writer_cancelled.wait()
+        rig.http.transport.finish()
+        await wait_session_close(rig.http)
+        owner = close_owner(rig.source)
+        assert not owner.done()
+        assert not rig.source.closed
+        assert rig.http.writer is not None
+        assert not rig.http.writer.done()
+        rig.http.writer_release.set()
+        await rig.source.aclose()
+        assert rig.source.closed
+        assert rig.http.writer.done()
+        assert rig.http.close_calls == 1
+    finally:
+        rig.http.writer_release.set()
+        rig.http.transport.finish()
+        await rig.source.aclose()
+
+
 async def test_cancelled_borrowers_cannot_poison_one_owner_or_original_future() -> None:
     rig = HTTPRig()
     await collect(rig.source)
