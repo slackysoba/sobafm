@@ -3,9 +3,12 @@ from typing import Any, cast
 
 import aiohttp
 import pytest
+from aiohttp.connector import Connection
+from multidict import CIMultiDict, CIMultiDictProxy
 
 import sobafm.catalog_audio as audio
 from sobafm.catalog_audio import AudioStream, TrackError
+from tests.http_lifecycle import LifecycleSession
 from tests.test_catalog import credit, discovered
 
 
@@ -32,6 +35,12 @@ class Response:
     def close(self) -> None:
         self.closed = True
 
+    def exception(self) -> None:
+        return None
+
+    def set_exception(self, error: BaseException, cause: BaseException | None = None) -> None:
+        pass
+
 
 class Session:
     def __init__(self, response: Response) -> None:
@@ -40,23 +49,47 @@ class Session:
         self.closed = False
         self.gate: asyncio.Event | None = None
         self.error: Exception | None = None
+        self.lifecycle: LifecycleSession | None = None
 
-    async def get(self, url: str, **kwargs: Any) -> Response:
+    def factory(self, response_class: type[aiohttp.ClientResponse]) -> aiohttp.ClientSession:
+        body = self.response
+
+        class BodyResponse(response_class):
+            async def start(self, connection: Connection) -> aiohttp.ClientResponse:
+                await super().start(connection)
+                self.status = body.status
+                self._headers = CIMultiDictProxy(CIMultiDict(body.headers))  # pyright: ignore[reportPrivateUsage] - body/header policy fixture
+                self._cache.pop("headers", None)  # pyright: ignore[reportPrivateUsage] - replace only fixture headers
+                self.content = cast(aiohttp.StreamReader, body)
+                return self
+
+            def close(self) -> None:
+                super().close()
+                body.close()
+
+        self.lifecycle = LifecycleSession(BodyResponse, body=b"")
+        return cast(aiohttp.ClientSession, self)
+
+    async def get(self, url: str, **kwargs: Any) -> aiohttp.ClientResponse:
         self.calls.append(dict(url=url, **kwargs))
         if self.gate is not None:
             await self.gate.wait()
         if self.error is not None:
             raise self.error
-        return self.response
+        assert self.lifecycle is not None
+        return await self.lifecycle.get(url)
 
     async def close(self) -> None:
         self.closed = True
+        if self.lifecycle is not None:
+            self.lifecycle.transport.finish()
+            await self.lifecycle.close()
 
 
 def stream(response: Response) -> tuple[AudioStream, Session]:
     session = Session(response)
     track = discovered(duration=1).with_credits(credit())
-    return AudioStream(cast(aiohttp.ClientSession, session), track), session
+    return AudioStream(track, session_factory=session.factory), session
 
 
 async def collect(source: AudioStream) -> bytes:
@@ -189,7 +222,9 @@ async def test_one_shot_is_claimed_before_get_await_and_survives_cancel() -> Non
     with pytest.raises(TrackError, match=r"^transfer$"):
         await collect(source)
     assert len(session.calls) == 1
-    await source.aclose()
+    with pytest.raises(TrackError, match=r"^cleanup$"):
+        await source.aclose()
+    assert not source.closed
 
 
 async def test_consumer_backpressure_does_not_use_network_idle_clock(
@@ -210,5 +245,5 @@ async def test_consumer_backpressure_does_not_use_network_idle_clock(
 def test_uncredited_track_never_triggers_get() -> None:
     session = Session(Response())
     with pytest.raises(TrackError, match=r"^ineligible$"):
-        AudioStream(cast(aiohttp.ClientSession, session), discovered())
+        AudioStream(discovered(), session_factory=session.factory)
     assert not session.calls
