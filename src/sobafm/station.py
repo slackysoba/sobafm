@@ -4,7 +4,9 @@ import asyncio
 import contextlib
 import logging
 import time
+import weakref
 from collections.abc import AsyncGenerator, Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 import discord
@@ -22,7 +24,7 @@ from sobafm.lyria_engine import SESSIONS_PER_STATION as SESSIONS_PER_STATION
 from sobafm.lyria_engine import START_OUTCOMES as START_OUTCOMES
 from sobafm.lyria_engine import LyriaEngine
 from sobafm.lyria_engine import SessionPool as SessionPool
-from sobafm.mixer import Mixer
+from sobafm.mixer import Handoff, Mixer
 from sobafm.pcm import FRAME_SECONDS
 from sobafm.plan import MusicPlan, one_line
 from sobafm.program import Mode
@@ -58,6 +60,21 @@ class Player(Protocol):
     ) -> None: ...
 
     def stop(self) -> None: ...
+
+
+@dataclass
+class Skip:
+    handoff: Handoff
+    result: asyncio.Future[Outcome]
+
+
+@dataclass(frozen=True)
+class SkipTarget:
+    station: weakref.ReferenceType[Station]
+    program: weakref.ReferenceType[Program]
+    source: weakref.ReferenceType[Source]
+    player: object
+    context: object
 
 
 class Station:
@@ -106,6 +123,8 @@ class Station:
         self._clock = clock
         self._playing: object | None = None  # identifies the running player, if any
         self._heard_source: Source | None = None
+        self._skip: Skip | None = None
+        self._skip_context = object()
         self._next_play = 0.0
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -156,6 +175,8 @@ class Station:
             log.info("No playback source capacity left")
             program.settle(Outcome.BUSY)
             return program.started
+        if self._skip is not None:
+            self.cancel_skip(self._skip.result, Outcome.REPLACED)
         if self.program is not None:
             self.program.settle(Outcome.REPLACED)
             if self.program.playing:
@@ -171,6 +192,98 @@ class Station:
         self._finish(Outcome.STOPPED)
         self.wake()
 
+    def skip_target(self) -> SkipTarget | None:
+        """Capture pre-ack identity without retaining an audio source/allocation."""
+        self._accept_handoff(self._voice())
+        program, source = self.program, self._heard_source
+        if (
+            self._closed
+            or self._status_held
+            or program is None
+            or program.mode is not Mode.CATALOG
+            or not program.playing
+            or source is None
+            or source.program is not program
+            or not self._audible(self._voice())
+            or self.mixer.live is not source
+            or self._playing is None
+        ):
+            return None
+        return SkipTarget(
+            weakref.ref(self),
+            weakref.ref(program),
+            weakref.ref(source),
+            self._playing,
+            self._skip_context,
+        )
+
+    def skip(self, target: SkipTarget | None) -> asyncio.Future[Outcome]:
+        """Use the existing ready prefetch, without a new program, query or queue.
+
+        An unready prefetch keeps preparing under its original engine budgets;
+        this no-op resolves explicitly without cutting the outgoing performance.
+        Borrowers shield the result and use cancel_skip to withdraw before cutover.
+        """
+        self._accept_handoff(self._voice())
+        result: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+        program, live = self.program, self._heard_source
+        if self._closed:
+            result.set_result(Outcome.STOPPED)
+        elif (
+            target is None
+            or target.station() is not self
+            or target.program() is not program
+            or target.source() is not live
+            or target.player is not self._playing
+            or target.context is not self._skip_context
+        ):
+            result.set_result(Outcome.REPLACED)
+        elif (
+            program is None
+            or program.mode is not Mode.CATALOG
+            or not program.playing
+            or live is None
+            or live.program is not program
+        ):
+            result.set_result(Outcome.NO_MATCH)
+        elif not self._audible(self._voice()) or self.mixer.live is not live:
+            result.set_result(Outcome.DISCONNECTED)
+        elif self._skip is not None:
+            result.set_result(Outcome.BUSY)
+        else:
+            incoming = self.engines[Mode.CATALOG].ready_source(program, exclude=live)
+            if incoming is None or incoming.failed or not incoming.ready:
+                result.set_result(Outcome.NO_MATCH)
+                self.wake()
+            elif self._playing is not None:
+                self._bind_mixer()
+                handoff = self.mixer.arm(
+                    live, incoming, program, self._playing, drain=False, complete=False
+                )
+                if handoff is None:
+                    result.set_result(Outcome.REPLACED)  # a natural boundary already advanced
+                else:
+                    self._skip = Skip(handoff, result)
+                self.wake()
+        return result
+
+    def cancel_skip(
+        self, result: asyncio.Future[Outcome], outcome: Outcome = Outcome.STOPPED
+    ) -> Outcome:
+        """Withdraw only this operation, preserving actual PCM already delivered."""
+        if self._skip is not None and self._skip.result is result:
+            delivered = self.mixer.withdraw(self._skip.handoff)
+            if delivered is not None and self._accept_delivery(delivered, self._voice()):
+                return Outcome.PLAYING
+            self._end_skip(outcome)
+            return outcome
+        return result.result() if result.done() and not result.cancelled() else outcome
+
+    def _end_skip(self, outcome: Outcome) -> None:
+        pending, self._skip = self._skip, None
+        if pending is not None and not pending.result.done():
+            pending.result.set_result(outcome)
+
     def start(self) -> None:
         """Run the reconcile loop in the background until `close()`."""
         self._task = asyncio.create_task(self._run(), name="station")
@@ -181,6 +294,8 @@ class Station:
 
     def invalidate_playback(self) -> None:
         """Invalidate an armed boundary before a voice transition can await anything."""
+        self._skip_context = object()
+        self._end_skip(Outcome.DISCONNECTED)
         self.mixer.invalidate_handoff()
         self.wake()
 
@@ -198,7 +313,9 @@ class Station:
         )
 
     def _accept_handoff(self, player: Player | None) -> None:
-        handoff = self.mixer.take_handoff()
+        self._accept_delivery(self.mixer.take_handoff(), player)
+
+    def _accept_delivery(self, handoff: Handoff | None, player: Player | None) -> bool:
         if (
             handoff is None
             or handoff.program is not self.program
@@ -206,10 +323,13 @@ class Station:
             or not self._audible(player)
             or self.program is None
         ):
-            return
+            return False
         self._settle_playing(self.program, handoff.incoming)
+        if self._skip is not None and self._skip.handoff is handoff:
+            self._end_skip(Outcome.PLAYING)
         if handoff.outgoing is not None and handoff.outgoing is not handoff.incoming:
             handoff.outgoing.retire()
+        return True
 
     async def close(self, outcome: Outcome = Outcome.STOPPED) -> None:
         """Invalidate playback now; one cleanup owner survives repeated caller cancellation."""
@@ -262,6 +382,11 @@ class Station:
         if self._closed:
             return
         self._accept_handoff(self._voice())
+        if self._skip is not None:
+            if not self._audible(self._voice()):
+                self.invalidate_playback()
+            elif self._skip.handoff.incoming.failed:
+                self.cancel_skip(self._skip.result, Outcome.FAILED)
         self._watch_underruns()
         player = self._voice()
         if self.program is not None and player is None:
@@ -321,6 +446,8 @@ class Station:
         return now - self._empty_since >= EMPTY_GRACE_S
 
     def _finish(self, outcome: Outcome) -> None:
+        if self._skip is not None:
+            self.cancel_skip(self._skip.result, outcome)
         self.mixer.invalidate_handoff()
         self._watch_underruns()  # silence since the last tick, so the next tick won't count it
         if (heard := self._program_heard()) is not None:
@@ -490,7 +617,7 @@ class Station:
         Only while it can be heard, so a replacement is never reported as playing during a
         voice outage.
         """
-        if self.mixer.switching or not self._audible(player):
+        if self._skip is not None or self.mixer.switching or not self._audible(player):
             return
         target = self.mixer.live
         live = next((s for s in self.sources if s is target), None)
@@ -596,6 +723,7 @@ class Station:
 
     def _player_stopped(self, playing: object) -> None:
         if self._playing is playing:
+            self._end_skip(Outcome.DISCONNECTED)
             self.mixer.invalidate_handoff(playing)
             self._playing = None
         self.wake()
