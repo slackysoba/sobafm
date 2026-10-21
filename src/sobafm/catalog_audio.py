@@ -160,6 +160,8 @@ class AudioStream:
                     timeout=aiohttp.ClientTimeout(total=None, sock_connect=IDLE_SECONDS),
                 )
             if all(original is not response for original in self._responses):
+                # A response bypassing start cannot borrow another's observation.
+                self._unknown_closure = True
                 self._responses.append(response)
             if (
                 response.status != 200

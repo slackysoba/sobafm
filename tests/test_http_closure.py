@@ -318,6 +318,32 @@ async def test_additional_original_observation_is_awaited_but_never_accepted() -
     assert not rig.source.closed
 
 
+async def test_unregistered_returned_response_remains_unknown_debt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rig = HTTPRig()
+    extra = LifecycleSession(aiohttp.ClientResponse)
+    original_get = rig.http.get
+
+    async def mismatched_get(url: str, **kwargs: object) -> aiohttp.ClientResponse:
+        await original_get(url, **kwargs)
+        return await extra.get(url)
+
+    monkeypatch.setattr(rig.http, "get", mismatched_get)
+    await collect(rig.source)
+    rig.http.transport.finish()
+    extra.transport.finish()
+    await extra.close()
+    owner = close_owner(rig.source)
+    for _ in range(2):
+        with pytest.raises(TrackError, match=r"^cleanup$"):
+            await rig.source.aclose()
+        assert close_owner(rig.source) is owner
+        assert not rig.source.closed
+    assert rig.http.closed
+    assert rig.http.close_calls == 1
+
+
 async def test_default_session_keeps_credential_and_transport_settings() -> None:
     session: aiohttp.ClientSession | None = None
 

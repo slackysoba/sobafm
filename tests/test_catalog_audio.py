@@ -3,6 +3,8 @@ from typing import Any, cast
 
 import aiohttp
 import pytest
+from aiohttp.connector import Connection
+from multidict import CIMultiDict, CIMultiDictProxy
 
 import sobafm.catalog_audio as audio
 from sobafm.catalog_audio import AudioStream, TrackError
@@ -33,7 +35,10 @@ class Response:
     def close(self) -> None:
         self.closed = True
 
-    async def wait_for_close(self) -> None:
+    def exception(self) -> None:
+        return None
+
+    def set_exception(self, error: BaseException, cause: BaseException | None = None) -> None:
         pass
 
 
@@ -47,18 +52,32 @@ class Session:
         self.lifecycle: LifecycleSession | None = None
 
     def factory(self, response_class: type[aiohttp.ClientResponse]) -> aiohttp.ClientSession:
-        self.lifecycle = LifecycleSession(response_class, body=b"")
+        body = self.response
+
+        class BodyResponse(response_class):
+            async def start(self, connection: Connection) -> aiohttp.ClientResponse:
+                await super().start(connection)
+                self.status = body.status
+                self._headers = CIMultiDictProxy(CIMultiDict(body.headers))  # pyright: ignore[reportPrivateUsage] - body/header policy fixture
+                self._cache.pop("headers", None)  # pyright: ignore[reportPrivateUsage] - replace only fixture headers
+                self.content = cast(aiohttp.StreamReader, body)
+                return self
+
+            def close(self) -> None:
+                super().close()
+                body.close()
+
+        self.lifecycle = LifecycleSession(BodyResponse, body=b"")
         return cast(aiohttp.ClientSession, self)
 
-    async def get(self, url: str, **kwargs: Any) -> Response:
+    async def get(self, url: str, **kwargs: Any) -> aiohttp.ClientResponse:
         self.calls.append(dict(url=url, **kwargs))
         if self.gate is not None:
             await self.gate.wait()
         if self.error is not None:
             raise self.error
-        if self.lifecycle is not None:
-            await self.lifecycle.get(url)
-        return self.response
+        assert self.lifecycle is not None
+        return await self.lifecycle.get(url)
 
     async def close(self) -> None:
         self.closed = True
