@@ -637,8 +637,11 @@ playback. A known inaccessible/incomplete private route requires correction befo
 the deployment can qualify. Actual-source notice ingestion, safe links, pagination
 and desktop/mobile readability remain qualification gates. `credits` stores only
 rendered metadata and a snapshot time, never an audio Source, Station or token.
-Initial delivery and navigation have one cancellation owner per view and the
-same absolute ten-minute deadline, including time in the library rate limiter.
+Initial delivery/navigation and one additional busy or rejection acknowledgement
+have explicit cancellation owners and the same absolute ten-minute deadline,
+including time in the library rate limiter. Further callbacks do not enqueue
+edits or acknowledgements. Expired controls start no new request; the page footer
+already directs a fresh `/now`.
 Shutdown/eviction releases those pages and cancels pending delivery without a
 public fallback or application retry. Generated instructions and fallback remain
 unchanged; catalog interpretation failures never use raw-input generated fallback.

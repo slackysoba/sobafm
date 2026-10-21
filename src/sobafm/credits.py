@@ -16,7 +16,6 @@ from sobafm.catalog import CreditRecord, _escape, _units  # pyright: ignore[repo
 VIEW_SECONDS = 600.0
 SERVER_VIEWS = 16
 PROCESS_VIEWS = 64
-EXPIRED = "These credits expired. Use /now again for a new snapshot."
 log = logging.getLogger(__name__)
 
 
@@ -115,6 +114,7 @@ class CreditView(discord.ui.View):
         self.deadline = owner.clock() + VIEW_SECONDS
         self.index = 0
         self.active: asyncio.Task[Any] | None = None
+        self.acknowledging: asyncio.Task[Any] | None = None
         self._timer = asyncio.get_running_loop().call_later(VIEW_SECONDS, self.expire)
         self._buttons()
 
@@ -128,8 +128,9 @@ class CreditView(discord.ui.View):
         if self.owner.views.get(self.key) is self:
             del self.owner.views[self.key]
         self.pages = ()
-        if self.active is not None and self.active is not asyncio.current_task():
-            self.active.cancel()
+        for task in (self.active, self.acknowledging):
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
 
     @override
     async def on_timeout(self) -> None:
@@ -147,29 +148,52 @@ class CreditView(discord.ui.View):
         expired = not self.pages or self.owner.clock() >= self.deadline
         if expired:
             self.expire()
-        if expired or (interaction.guild_id, interaction.user.id) != self.key:
-            await interaction.response.send_message(
-                EXPIRED if expired else "Use /now for your own private credits.",
-                ephemeral=True,
-                suppress_embeds=True,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
+            return False  # the existing page footer directs a fresh /now; no expired I/O
+        if (interaction.guild_id, interaction.user.id) != self.key:
+            await self._acknowledge(interaction, rejected=True)
             return False
         return True
 
+    async def _acknowledge(self, interaction: discord.Interaction, *, rejected: bool) -> None:
+        # One additional acknowledgement may wait beside delivery/edit. Further
+        # callbacks neither enqueue work nor retain their interactions on this view.
+        if self.acknowledging is not None or not self.pages:
+            return
+        remaining = self.deadline - self.owner.clock()
+        if remaining <= 0:
+            self.expire()
+            return
+        self.acknowledging = asyncio.current_task()
+        try:
+            async with asyncio.timeout(remaining):
+                if rejected:
+                    await interaction.response.send_message(
+                        "Use /now for your own private credits.",
+                        ephemeral=True,
+                        suppress_embeds=True,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                else:
+                    await interaction.response.defer(ephemeral=True)
+        finally:
+            self.acknowledging = None
+
     async def _navigate(self, interaction: discord.Interaction, direction: int) -> None:
+        if not self.pages or self.owner.clock() >= self.deadline:
+            self.expire()
+            return
         if self.active is not None:
-            await interaction.response.defer(ephemeral=True)
+            await self._acknowledge(interaction, rejected=False)
             return  # no queue of edits while the library's rate limiter is waiting
         self.active = asyncio.current_task()
         try:
-            await interaction.response.defer(ephemeral=True)
-            if not self.pages or self.owner.clock() >= self.deadline:
-                self.expire()
-                return
-            self.index = max(0, min(len(self.pages) - 1, self.index + direction))
-            self._buttons()
             async with asyncio.timeout(max(0, self.deadline - self.owner.clock())):
+                await interaction.response.defer(ephemeral=True)
+                if not self.pages or self.owner.clock() >= self.deadline:
+                    self.expire()
+                    return
+                self.index = max(0, min(len(self.pages) - 1, self.index + direction))
+                self._buttons()
                 # The initial message already has suppressed previews. This edits that
                 # same private message and never saves the response/interaction object.
                 await interaction.edit_original_response(

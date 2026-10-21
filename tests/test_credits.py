@@ -118,7 +118,7 @@ async def test_navigation_is_caller_bound_private_and_does_not_extend_deadline()
     assert not await view.interaction_check(correct)
     assert not owner.views
     assert not view.pages
-    assert "Use /now again" in correct.response.send_message.call_args.args[0]
+    correct.response.send_message.assert_not_awaited()
 
 
 @pytest.mark.parametrize("end", ["replace", "station close", "expiry"])
@@ -135,7 +135,7 @@ async def test_pending_initial_send_is_owned_and_cancelled_on_eviction_or_close(
 
     call.followup.send.side_effect = held
     pending = asyncio.create_task(owner.show(call, snapshot(), "Program context"))
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), 1)
     previous = owner.views[(1, 2)]
     if end == "replace":
         owner.create(1, 2, snapshot())
@@ -157,13 +157,13 @@ async def test_pending_navigation_has_no_queue_and_is_cancelled_at_original_expi
     call, another = interaction(), interaction()
     entered = asyncio.Event()
 
-    async def held(**kwargs: object) -> None:
+    async def held(*args: object, **kwargs: object) -> None:
         entered.set()
         await asyncio.Event().wait()
 
     call.edit_original_response.side_effect = held
     pending = asyncio.create_task(view.next.callback(call))
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), 1)
     await view.next.callback(another)
     another.response.defer.assert_awaited_once()
     another.edit_original_response.assert_not_awaited()
@@ -194,3 +194,111 @@ async def test_cancelled_initial_caller_releases_view_without_swallowing_cancel(
         await owner.show(call, snapshot(), "Program context")
     await settle()
     assert not owner.views
+
+
+@pytest.mark.parametrize("end", ["expiry", "replace", "close"])
+@pytest.mark.parametrize("ack", ["busy", "rejected"])
+async def test_held_edit_and_acknowledgement_are_both_owned_until_expiry(
+    end: str,
+    ack: str,
+) -> None:
+    owner = CreditViews(FakeClock())
+    view = owner.create(1, 2, snapshot())
+    first, second, excess = (
+        interaction(),
+        interaction(caller=3 if ack == "rejected" else 2),
+        interaction(),
+    )
+    editing, acknowledging = asyncio.Event(), asyncio.Event()
+    delivered: list[str] = []
+
+    async def edit(**kwargs: object) -> None:
+        editing.set()
+        await asyncio.Event().wait()
+        delivered.append("edit")
+
+    async def acknowledge(*args: object, **kwargs: object) -> None:
+        acknowledging.set()
+        await asyncio.Event().wait()
+        delivered.append("ack")
+
+    first.edit_original_response.side_effect = edit
+    response = second.response.send_message if ack == "rejected" else second.response.defer
+    response.side_effect = acknowledge
+    pending_edit = asyncio.create_task(view.next.callback(first))
+    await asyncio.wait_for(editing.wait(), 1)
+    pending_ack = asyncio.create_task(
+        view.interaction_check(second) if ack == "rejected" else view.next.callback(second)
+    )
+    await asyncio.wait_for(acknowledging.wait(), 1)
+    assert view.active is pending_edit
+    assert view.acknowledging is pending_ack
+    deadline = view.deadline
+    # A saturated acknowledgement slot creates no queue or third retained task.
+    await view.next.callback(excess)
+    excess.response.defer.assert_not_awaited()
+    excess.edit_original_response.assert_not_awaited()
+    assert view.acknowledging is pending_ack
+    if end == "expiry":
+        view.expire()
+    elif end == "replace":
+        owner.create(1, 2, snapshot())
+    else:
+        owner.close(1)
+    results = await asyncio.gather(pending_edit, pending_ack, return_exceptions=True)
+    assert all(isinstance(result, asyncio.CancelledError) for result in results)
+    assert not view.pages
+    assert view.active is None
+    assert view.acknowledging is None
+    assert view.deadline == deadline
+    assert not delivered
+    second.edit_original_response.assert_not_awaited()
+    owner.close()
+
+
+@pytest.mark.parametrize("path", ["first defer", "busy defer", "rejection"])
+async def test_every_acknowledgement_uses_remaining_original_deadline(path: str) -> None:
+    owner = CreditViews()
+    view = owner.create(1, 2, snapshot())
+    view.deadline = owner.clock() + 0.02
+    deadline = view.deadline
+    call = interaction(caller=3 if path == "rejection" else 2)
+    entered = asyncio.Event()
+
+    async def held(*args: object, **kwargs: object) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    if path == "rejection":
+        call.response.send_message.side_effect = held
+        pending = asyncio.create_task(view.interaction_check(call))
+    else:
+        call.response.defer.side_effect = held
+        if path == "busy defer":
+            view.active = asyncio.current_task()
+        pending = asyncio.create_task(view.next.callback(call))
+    await asyncio.wait_for(entered.wait(), 1)
+    with pytest.raises(TimeoutError):
+        await pending
+    assert view.deadline == deadline
+    assert view.acknowledging is None
+    if path != "busy defer":
+        assert view.active is None
+    view.active = None
+    view.expire()
+    call.edit_original_response.assert_not_awaited()
+
+
+async def test_expired_callbacks_start_no_new_network_wait_or_metadata_delivery() -> None:
+    owner = CreditViews(FakeClock())
+    view = owner.create(1, 2, snapshot())
+    assert "use /now again" in view.pages[0]
+    view.expire()
+    call = interaction()
+    assert not await view.interaction_check(call)
+    await view.next.callback(call)
+    call.response.defer.assert_not_awaited()
+    call.response.send_message.assert_not_awaited()
+    call.edit_original_response.assert_not_awaited()
+    assert view.active is None
+    assert view.acknowledging is None
