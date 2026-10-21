@@ -699,10 +699,15 @@ class Station:
         playing = object()
 
         def stopped(error: Exception | None) -> None:  # runs on discord.py's player thread
-            self.mixer.invalidate_handoff(playing)
-            if error is not None:
-                log.warning("Voice player stopped: %s", error)
-            loop.call_soon_threadsafe(self._player_stopped, playing)
+            try:
+                self.mixer.invalidate_handoff(playing)
+                if error is not None:
+                    log.warning("Voice player stopped: %s", error)
+                loop.call_soon_threadsafe(self._player_stopped, playing)
+            finally:
+                if error is not None:
+                    # discord.py retains this error; its frames can own returned PCM.
+                    error.__traceback__ = error.__context__ = error.__cause__ = None
 
         if self._clock() < self._next_play:
             return

@@ -4,6 +4,8 @@ import asyncio
 import logging
 import threading
 import weakref
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
@@ -177,6 +179,193 @@ async def test_restarts_a_failing_player_at_most_once_per_interval(rig: Rig) -> 
         await rig.tick()
 
     assert rig.player.plays == 2
+
+
+class PlayerFrame:
+    """Owned stand-in for storage retained by a player traceback local."""
+
+
+def player_error_frame() -> tuple[RuntimeError, weakref.ReferenceType[PlayerFrame]]:
+    frame = PlayerFrame()
+    observed = weakref.ref(frame)
+    try:
+        raise RuntimeError("owned player error")
+    except RuntimeError as error:
+        return error, observed
+
+
+def player_error_graph(kind: str) -> tuple[RuntimeError, list[weakref.ReferenceType[PlayerFrame]]]:
+    error, observed = player_error_frame()
+    frames = [observed]
+    if kind in {"context", "nested"}:
+        context, observed = player_error_frame()
+        error.__context__ = context
+        frames.append(observed)
+        if kind == "nested":
+            context.__cause__, observed = player_error_frame()
+            frames.append(observed)
+        del context
+    if kind in {"cause", "nested"}:
+        cause, observed = player_error_frame()
+        error.__cause__ = cause
+        frames.append(observed)
+        if kind == "nested":
+            cause.__context__, observed = player_error_frame()
+            frames.append(observed)
+        del cause
+    # No child exception escapes separately or occurs in an ancestor's traceback frame.
+    return error, frames
+
+
+def call_player_after(after: Callable[[Exception | None], object], error: Exception | None) -> None:
+    # As with FakePlayer's end_thread, run on a worker; propagate failures to the test.
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        worker.submit(after, error).result()
+
+
+def player_after(player: FakePlayer) -> Callable[[Exception | None], object]:
+    # Capture FakePlayer's installed callback without extending its production-facing interface.
+    after = player._after  # pyright: ignore[reportPrivateUsage]
+    assert after is not None
+    return after
+
+
+@pytest.mark.parametrize("kind", ["direct", "context", "cause", "nested"])
+async def test_reported_player_error_releases_frames_while_the_error_is_retained(
+    rig: Rig, kind: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    after = player_after(rig.player)
+    error, frames = player_error_graph(kind)
+    events: list[str] = []
+    scheduled: list[tuple[Callable[[object], None], object]] = []
+    epochs: list[object] = []
+    woken: list[int] = []
+    invalidate = rig.station.mixer.invalidate_handoff
+    warn = logging.getLogger("sobafm.station").warning
+
+    def invalidated(playing: object) -> None:
+        epochs.append(playing)
+        events.append("invalidate")
+        invalidate(playing)
+
+    def warning(message: str, reported: Exception) -> None:
+        assert reported is error
+        assert reported.__traceback__ is not None
+        assert all(frame() is not None for frame in frames)
+        events.append("warning")
+        warn(message, reported)
+
+    def schedule(callback: Callable[[object], None], playing: object) -> None:
+        assert all(frame() is not None for frame in frames)
+        events.append("schedule")
+        scheduled.append((callback, playing))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(rig.station.mixer, "invalidate_handoff", invalidated)
+        patch.setattr("sobafm.station.log.warning", warning)
+        patch.setattr(asyncio.get_running_loop(), "call_soon_threadsafe", schedule)
+        patch.setattr(rig.station, "wake", lambda: woken.append(threading.get_ident()))
+        call_player_after(after, error)
+        assert events == ["invalidate", "warning", "schedule"]
+        assert len(scheduled) == len(epochs) == 1
+        callback, epoch = scheduled[0]
+        # Assert the exact installed loop callback as well as its captured epoch.
+        assert callback == rig.station._player_stopped  # pyright: ignore[reportPrivateUsage]
+        assert epoch is epochs[0]
+        assert not woken
+        callback(epoch)
+        assert woken == [threading.get_ident()]
+    assert [(r.levelno, r.msg, r.args) for r in caplog.records] == [
+        (logging.WARNING, "Voice player stopped: %s", (error,))
+    ]
+    assert caplog.messages == ["Voice player stopped: owned player error"]
+    assert error.__traceback__ is error.__context__ is error.__cause__ is None
+    assert all(frame() is None for frame in frames)  # no gc.collect; error stays retained
+    await rig.tick(PLAYER_RETRY_S)
+    assert rig.player.plays == 2
+
+
+@pytest.mark.parametrize("stale", [False, True])
+@pytest.mark.parametrize("reported_error", [False, True])
+async def test_player_callback_preserves_current_stale_none_and_retry_behavior(
+    rig: Rig, stale: bool, reported_error: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start_playing(rig)
+    after = player_after(rig.player)
+    if stale:
+        rig.station.stop()
+        await rig.tick()
+        rig.listen(FADE_OUT_S)
+        await rig.tick()
+        rig.station.play(SYNTHWAVE, "Member", duration_seconds=HOUR_S)
+        await rig.tick()
+        await rig.tick()
+        await rig.feed(-1, 10)
+        await rig.tick(PLAYER_RETRY_S)
+        assert rig.player.plays == 2
+    error = player_error_graph("nested")[0] if reported_error else None
+    call_player_after(after, error)
+    await rig.tick(0)
+    assert caplog.messages == (
+        ["Voice player stopped: owned player error"] if reported_error else []
+    )
+    if not stale:
+        assert rig.player.plays == 1  # retry still waits for its original interval
+        await rig.tick(PLAYER_RETRY_S)
+    assert rig.player.plays == 2
+
+
+@pytest.mark.parametrize("stage", ["invalidate", "warning", "schedule"])
+async def test_player_callback_detaches_original_graph_when_an_operation_raises(
+    rig: Rig, stage: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await start_playing(rig)
+    after = player_after(rig.player)
+    error, frames = player_error_graph("nested")
+    failure = RuntimeError("new callback failure")
+    context, cause = ValueError("new context"), LookupError("new cause")
+    failure.__context__, failure.__cause__ = context, cause
+    events: list[str] = []
+    epochs: list[object] = []
+
+    def operation(name: str) -> None:
+        events.append(name)
+        assert all(frame() is not None for frame in frames)
+        if name == stage:
+            raise failure
+
+    def invalidate(playing: object) -> None:
+        epochs.append(playing)
+        operation("invalidate")
+
+    def warning(message: str, reported: Exception) -> None:
+        assert message == "Voice player stopped: %s"
+        assert reported is error
+        operation("warning")
+
+    def schedule(callback: Callable[[object], None], playing: object) -> None:
+        assert callback == rig.station._player_stopped  # pyright: ignore[reportPrivateUsage]
+        assert playing is epochs[0]
+        operation("schedule")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(rig.station.mixer, "invalidate_handoff", invalidate)
+        patch.setattr("sobafm.station.log.warning", warning)
+        patch.setattr(asyncio.get_running_loop(), "call_soon_threadsafe", schedule)
+        with pytest.raises(RuntimeError) as raised:
+            call_player_after(after, error)
+
+    assert raised.value is failure
+    assert failure.__traceback__ is not None
+    assert failure.__context__ is context
+    assert failure.__cause__ is cause
+    stages = ["invalidate", "warning", "schedule"]
+    assert events == stages[: stages.index(stage) + 1]
+    assert error.__traceback__ is error.__context__ is error.__cause__ is None
+    assert all(frame() is None for frame in frames)
+    await rig.tick(PLAYER_RETRY_S)
+    assert rig.player.plays == 1  # the failing callback did not schedule a loop-state change
 
 
 async def test_waits_for_voice_to_reconnect_before_starting_the_player(rig: Rig) -> None:
