@@ -14,6 +14,11 @@ The initial source is main `4fc157559a1036a4e5e3f20ec0591c8000df3541`, tree
 `6b77282c0579d323c74ece1a7ba82ea090e86443`. Issue 129 has a separate owner.
 Station/Mixer/command integration must bind its actual integrated source before
 affected qualification; this checkpoint changes none of those implementations.
+Issue 129 subsequently merged in PR 195 as
+`6e261bbbdc896e3209ac6298b859386a4e4e3b93`. The qualification branch incorporates
+that actual integrated base while retaining the earlier WJ1 snapshot. Affected
+native integration is still unmeasured; ordinary combined-source offline checks
+cannot replace it.
 Every executed batch records exact source-file, protocol, fixture, interpreter,
 configuration and applicable runtime-package identities. Changed bytes require a
 new reviewed protocol revision; results are never transferred by equal inputs.

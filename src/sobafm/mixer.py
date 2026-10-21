@@ -123,7 +123,7 @@ class Mixer(discord.AudioSource):
         *,
         drain: bool,
         complete: bool,
-    ) -> None:
+    ) -> Handoff | None:
         with self._lock:
             if (
                 self._switch_frames
@@ -132,8 +132,19 @@ class Mixer(discord.AudioSource):
                 or self._program is not program
                 or self._epoch is not epoch
             ):
-                return
+                return None
             self._armed = Handoff(outgoing, incoming, program, epoch, drain, complete)
+            return self._armed
+
+    def withdraw(self, handoff: Handoff) -> Handoff | None:
+        """Atomically withdraw this arm, or return its already-delivered PCM receipt."""
+        with self._lock:
+            if self._delivered is handoff:
+                self._delivered = None
+                return handoff
+            if self._armed is handoff:
+                self._armed = None
+            return None
 
     def take_handoff(self) -> Handoff | None:
         with self._lock:

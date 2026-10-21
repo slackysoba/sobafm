@@ -4,6 +4,8 @@
   "checkpoint": "source-audit-and-wj1-mechanism-observation",
   "base_commit": "4fc157559a1036a4e5e3f20ec0591c8000df3541",
   "base_tree": "6b77282c0579d323c74ece1a7ba82ea090e86443",
+  "current_integration_base_commit": "6e261bbbdc896e3209ac6298b859386a4e4e3b93",
+  "affected_native_integration_qualified": false,
   "overall": "incomplete",
   "catalog_ready": false,
   "shipping_qualified": false,
@@ -76,7 +78,7 @@
     "lyria_reachable_future_receive_and_retained_storage_bound",
     "parent_native_transport_copy_and_overshoot_audio_bounds",
     "actual_storage_release_and_cleanup_debt_ownership",
-    "issue129_integrated_source_rebind_and_affected_integration",
+    "affected_native_integration_on_issue129_integrated_source",
     "actual_catalog_format_http_duration_usefulness",
     "actual_source_notices_and_listener_client_access"
   ],
