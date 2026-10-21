@@ -8,6 +8,7 @@ import math
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import closing
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -343,10 +344,12 @@ class TrackDeck:
             self._raw_bytes += len(chunk)
             if self._raw_bytes > (self.track.duration + 1) * BYTES_PER_SECOND:
                 raise TrackError(TrackFailure.DURATION)
-            frames = self._splitter.split(chunk)
-            if frames:
-                await self._room()
-                self.frames.extend(frames)
+            with closing(self._splitter.split(chunk)) as frames:
+                for frame in frames:
+                    # A bounded read yields at most one frame. Tail-only reads
+                    # must still reach EOF when the retained deque is full.
+                    await self._room()
+                    self.frames.append(frame)
 
     async def _diagnostics(self, child: Process) -> None:
         while True:
@@ -421,7 +424,8 @@ class TrackDeck:
                     if self._raw_bytes + padded > MAX_SAMPLES * 4:
                         raise TrackError(TrackFailure.OUTPUT)
                     await self._room()
-                    self.frames.extend(self._splitter.split(bytes(padded)))
+                    with closing(self._splitter.split(bytes(padded))) as frames:
+                        self.frames.extend(frames)
                 self._verified = True
         except asyncio.CancelledError:
             self._retired = True

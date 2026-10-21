@@ -1,5 +1,6 @@
 """The PCM format Lyria RealTime produces and Discord encodes: 16-bit, 48 kHz, stereo."""
 
+from collections.abc import Generator
 from email.message import Message
 
 SAMPLE_RATE = 48_000
@@ -36,14 +37,42 @@ def matches_mime_type(mime_type: str) -> bool:
 
 
 class FrameSplitter:
-    """Splits audio chunks of any length into whole frames, carrying any remainder over."""
+    """Assemble owned immutable frames incrementally, carrying less than one frame.
+
+    Consume each iterator fully, or close it before consuming another chunk.
+    Consumption starts on first advancement; overlapping consumption raises
+    RuntimeError. Closing after a yield discards the unread part of that input.
+    An unstarted iterator has no effect on the carry, even when closed.
+
+    The iterator retains its original input until exhaustion/close, but never
+    stages a whole-input copy or a collection of output frames. Only the copied
+    remainder survives exhaustion; caller-retained frames have separate storage.
+    """
 
     def __init__(self) -> None:
-        self._pending = bytearray()
+        self._pending = b""
+        self._splitting = False
 
-    def split(self, chunk: bytes) -> list[bytes]:
-        self._pending += chunk
-        whole = len(self._pending) - len(self._pending) % FRAME_BYTES
-        frames = [bytes(self._pending[i : i + FRAME_BYTES]) for i in range(0, whole, FRAME_BYTES)]
-        del self._pending[:whole]
-        return frames
+    def split(self, chunk: bytes) -> Generator[bytes]:
+        if self._splitting:
+            raise RuntimeError("consume or close the previous frame iterator first")
+        self._splitting = True
+        try:
+            with memoryview(chunk) as data:
+                offset = 0
+                if self._pending:
+                    needed = FRAME_BYTES - len(self._pending)
+                    if len(data) < needed:
+                        self._pending += data.tobytes()
+                        return
+                    frame = self._pending + data[:needed].tobytes()
+                    self._pending = b""
+                    offset = needed
+                    yield frame
+                    del frame
+                while len(data) - offset >= FRAME_BYTES:
+                    yield data[offset : offset + FRAME_BYTES].tobytes()
+                    offset += FRAME_BYTES
+                self._pending = data[offset:].tobytes()
+        finally:
+            self._splitting = False

@@ -459,6 +459,62 @@ async def test_backpressure_preserves_cap_until_owner_consumes(tmp_path: Path) -
     assert len(rig.deck.frames) == 100
 
 
+async def test_tail_only_read_reaches_eof_before_waiting_for_final_padding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = b"a" * (6 * BYTES_PER_SECOND + 4)
+    rig = Rig(tmp_path, seconds=6, output=raw, frames=300)
+    padding = asyncio.Event()
+    wait_for_room = rig.deck._room  # pyright: ignore[reportPrivateUsage]
+
+    async def room() -> None:
+        if rig.deck._eof[1]:  # pyright: ignore[reportPrivateUsage]
+            padding.set()
+        await wait_for_room()
+
+    monkeypatch.setattr(rig.deck, "_room", room)
+    rig.deck.start()
+    await asyncio.wait_for(padding.wait(), 5)
+    assert len(rig.deck.frames) == 300
+    assert not rig.deck.completed
+    assert rig.deck._raw_bytes == len(raw)  # pyright: ignore[reportPrivateUsage]
+    rig.deck.frames.clear()
+    await rig.deck.regulate()
+    await settle(rig)
+    assert rig.deck.completed
+    assert list(rig.deck.frames) == [b"a" * 4 + bytes(FRAME_BYTES - 4)]
+
+
+@pytest.mark.parametrize("split", [FRAME_BYTES - 1, FRAME_BYTES])
+async def test_cancellation_while_waiting_for_room_closes_frame_iterator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, split: int
+) -> None:
+    rig = Rig(tmp_path, seconds=8, frames=300)
+    rig.child.split = split
+    blocked = asyncio.Event()
+    wait_for_room = rig.deck._room  # pyright: ignore[reportPrivateUsage]
+
+    async def room() -> None:
+        if len(rig.deck.frames) == 300:
+            blocked.set()
+        await wait_for_room()
+
+    monkeypatch.setattr(rig.deck, "_room", room)
+    rig.deck.start()
+    await asyncio.wait_for(blocked.wait(), 5)
+    assert len(rig.deck.frames) == 300
+    splitter = rig.deck._splitter  # pyright: ignore[reportPrivateUsage]
+    rig.deck.retire()
+    await settle(rig)
+    assert rig.deck.end_reason is EndReason.RETIRED
+    assert len(rig.deck.frames) == 300
+    # A suspended iterator would reject this: cancellation must close it, and
+    # the unqueued frame/unread suffix must not contaminate later consumption.
+    assert list(splitter.split(b"new" + bytes(FRAME_BYTES - 3))) == [
+        b"new" + bytes(FRAME_BYTES - 3)
+    ]
+
+
 async def test_first_pcm_and_terminal_idle_are_bounded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

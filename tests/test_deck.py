@@ -93,6 +93,19 @@ async def test_buffers_audio_as_whole_frames(lyria: FakeLyria, clock: FakeClock)
     assert b"".join(deck.frames) == audio[: FRAME_BYTES * 3]
 
 
+async def test_generated_eof_leaves_partial_frame_unpadded(
+    lyria: FakeLyria, clock: FakeClock
+) -> None:
+    deck, session = await start_deck(lyria, clock)
+    audio = bytes(i % 251 for i in range(FRAME_BYTES + 7))
+    session.send_audio(data=audio)
+    session.close()
+    await ended(deck)
+
+    assert list(deck.frames) == [audio[:FRAME_BYTES]]
+    assert deck.end_reason is EndReason.CLOSED
+
+
 async def test_is_ready_once_the_preroll_is_buffered(lyria: FakeLyria, clock: FakeClock) -> None:
     deck, session = await start_deck(lyria, clock)
 
