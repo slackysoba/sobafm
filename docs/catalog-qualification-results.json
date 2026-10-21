@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "issue": 175,
+  "checkpoint": "source-audit-before-native-measurement",
+  "base_commit": "4fc157559a1036a4e5e3f20ec0591c8000df3541",
+  "base_tree": "6b77282c0579d323c74ece1a7ba82ea090e86443",
+  "overall": "incomplete",
+  "catalog_ready": false,
+  "shipping_qualified": false,
+  "qualified_audio_envelope": null,
+  "qualified_catalog_capacity_bytes": null,
+  "new_native_measurements": 0,
+  "provider_calls": 0,
+  "provider_call_budget": 0,
+  "owned_fixture_bytes_executed": 0,
+  "platforms": [
+    {
+      "target": "linux-amd64",
+      "installation": "source",
+      "status": "incomplete",
+      "reason": "no_source_bound_native_decoder_resource_result"
+    },
+    {
+      "target": "linux-arm64",
+      "installation": "source",
+      "status": "incomplete",
+      "reason": "no_native_arm64_execution_bound_to_protocol"
+    },
+    {
+      "target": "windows-amd64",
+      "installation": "source",
+      "status": "incomplete",
+      "reason": "no_source_bound_native_decoder_resource_result"
+    },
+    {
+      "target": "linux-amd64",
+      "installation": "image",
+      "status": "incomplete",
+      "reason": "no_delegated_child_boundary_and_complete_audio_result"
+    },
+    {
+      "target": "linux-arm64",
+      "installation": "image",
+      "status": "incomplete",
+      "reason": "no_native_arm64_image_execution_bound_to_protocol"
+    }
+  ],
+  "unresolved_proofs": [
+    "exact_decoder_runtime_and_installation_bound_to_each_new_result",
+    "pre_input_containment_and_child_only_cap_failure",
+    "native_completion_and_full_total_cleanup_matrix",
+    "lyria_reachable_future_receive_and_retained_storage_bound",
+    "parent_native_transport_copy_and_overshoot_audio_bounds",
+    "actual_storage_release_and_cleanup_debt_ownership",
+    "issue129_integrated_source_rebind_and_affected_integration",
+    "actual_catalog_format_http_duration_usefulness",
+    "actual_source_notices_and_listener_client_access"
+  ],
+  "retained_evidence": [
+    "native-supply-identities.json",
+    "native-supply-qualification.md",
+    "decoder-feasibility.md",
+    "decoder-feasibility-results.json"
+  ],
+  "evidence_reuse": "original_identity_and_scope_only",
+  "later_gates": [130, 131, 132]
+}

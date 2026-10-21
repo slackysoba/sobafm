@@ -478,9 +478,27 @@ async def test_absolute_deadline_includes_wait_for_final_padding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(tracks, "LIFETIME_SECONDS", 3.03)
     rig = Rig(tmp_path, seconds=6, output=bytes(6 * BYTES_PER_SECOND + 4), frames=300)
+    padding = asyncio.Event()
+    room = rig.deck._room  # pyright: ignore[reportPrivateUsage] - observe the exact padding wait
+    deadline = asyncio.timeout(None)
+
+    def controlled_timeout(delay: float) -> asyncio.Timeout:
+        assert 0 < delay <= tracks.LIFETIME_SECONDS - tracks.CLEANUP_SECONDS
+        return deadline
+
+    async def wait_for_room() -> None:
+        if len(rig.deck.frames) == 300:
+            padding.set()
+        await room()
+
+    monkeypatch.setattr(tracks.asyncio, "timeout", controlled_timeout)
+    monkeypatch.setattr(rig.deck, "_room", wait_for_room)
     rig.deck.start()
+    await asyncio.wait_for(padding.wait(), 1)
+    # Expire only after reaching final padding: fixture throughput must not
+    # decide whether this test exercises output production or the padding wait.
+    deadline.reschedule(asyncio.get_running_loop().time())
     await settle(rig)
     assert rig.deck.failure is TrackFailure.DEADLINE
     assert not rig.deck.completed
