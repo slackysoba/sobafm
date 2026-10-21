@@ -5,7 +5,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, suppress
+from contextlib import AbstractAsyncContextManager, closing, suppress
 from enum import StrEnum
 from typing import Protocol
 
@@ -320,7 +320,8 @@ class Deck:
                     raise LyriaMessageError("unexpected audio format")
                 data = chunk.data or b""
                 self._audio_bytes += len(data)
-                self.frames.extend(self._splitter.split(data))
+                with closing(self._splitter.split(data)) as frames:
+                    self.frames.extend(frames)
 
     def _set_generating(self, generating: bool) -> None:
         """Start or stop the clock behind `rate`."""

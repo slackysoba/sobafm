@@ -1,3 +1,6 @@
+import sys
+import tracemalloc
+
 import pytest
 from discord.opus import Encoder
 
@@ -21,19 +24,128 @@ def test_frames_match_what_discord_encodes() -> None:
 def test_splits_chunks_into_whole_frames() -> None:
     splitter = FrameSplitter()
 
-    assert len(splitter.split(bytes(FRAME_BYTES * 3))) == 3
+    assert len(list(splitter.split(bytes(FRAME_BYTES * 3)))) == 3
 
 
 def test_carries_partial_frames_over() -> None:
     splitter = FrameSplitter()
     audio = bytes(i % 251 for i in range(FRAME_BYTES * 2))
 
-    first = splitter.split(audio[: FRAME_BYTES + 100])
-    second = splitter.split(audio[FRAME_BYTES + 100 :])
+    first = list(splitter.split(audio[: FRAME_BYTES + 100]))
+    second = list(splitter.split(audio[FRAME_BYTES + 100 :]))
 
     assert [len(frame) for frame in first + second] == [FRAME_BYTES, FRAME_BYTES]
     assert b"".join(first + second) == audio
-    assert splitter.split(b"") == []
+    assert list(splitter.split(b"")) == []
+
+
+@pytest.mark.parametrize(
+    "size", [0, 1, FRAME_BYTES - 1, FRAME_BYTES, FRAME_BYTES + 1, 1024 * FRAME_BYTES + 7]
+)
+def test_exact_owned_frames_and_bounded_carry(size: int) -> None:
+    splitter = FrameSplitter()
+    audio = bytes(range(251)) * (size // 251) + bytes(range(size % 251))
+    references = sys.getrefcount(audio)
+    frames = list(splitter.split(audio))
+    whole = size - size % FRAME_BYTES
+
+    assert all(type(frame) is bytes and len(frame) == FRAME_BYTES for frame in frames)
+    assert b"".join(frames) == audio[:whole]
+    carry = splitter._pending  # pyright: ignore[reportPrivateUsage]
+    assert type(carry) is bytes
+    assert carry == audio[whole:]
+    assert len(carry) < FRAME_BYTES
+    if audio:
+        assert carry is not audio
+        assert all(frame is not audio for frame in frames)
+        assert sys.getrefcount(audio) == references
+
+
+@pytest.mark.parametrize(
+    "stride", [1, 3, 17, FRAME_BYTES - 1, FRAME_BYTES, FRAME_BYTES + 1, 2 * FRAME_BYTES + 17]
+)
+def test_arbitrary_splits_preserve_every_byte_including_the_tail(stride: int) -> None:
+    splitter = FrameSplitter()
+    audio = bytes(i % 251 for i in range(5 * FRAME_BYTES + 23))
+    frames: list[bytes] = []
+    for offset in range(0, len(audio), stride):
+        frames.extend(splitter.split(audio[offset : offset + stride]))
+        assert len(splitter._pending) < FRAME_BYTES  # pyright: ignore[reportPrivateUsage]
+    assert b"".join(frames) == audio[: 5 * FRAME_BYTES]
+    frames.extend(splitter.split(bytes(FRAME_BYTES - 23)))
+    assert b"".join(frames) == audio + bytes(FRAME_BYTES - 23)
+
+
+def test_overlap_rejection_does_not_change_the_active_iterator() -> None:
+    splitter = FrameSplitter()
+    assert list(splitter.split(b"prefix")) == []
+    audio = b"a" * (2 * FRAME_BYTES)
+    frames = splitter.split(audio)
+    assert next(frames) == b"prefix" + audio[: FRAME_BYTES - 6]
+    overlap = splitter.split(b"wrong")
+    with pytest.raises(RuntimeError, match="consume or close"):
+        next(overlap)
+    assert list(frames) == [b"a" * FRAME_BYTES]
+    assert list(overlap) == []
+    assert list(splitter.split(b"b" * (FRAME_BYTES - 6))) == [b"a" * 6 + b"b" * (FRAME_BYTES - 6)]
+
+
+@pytest.mark.parametrize("end", ["close", "throw"])
+def test_early_exit_discards_unread_input_and_releases_ownership(end: str) -> None:
+    splitter = FrameSplitter()
+    assert list(splitter.split(b"prefix")) == []
+    audio = b"a" * (1024 * FRAME_BYTES + 19)
+    references = sys.getrefcount(audio)
+    frames = splitter.split(audio)
+    first = next(frames)
+    assert first == b"prefix" + b"a" * (FRAME_BYTES - 6)
+    if end == "close":
+        frames.close()
+    else:
+        with pytest.raises(ValueError, match="interrupted"):
+            frames.throw(ValueError("interrupted"))
+    assert sys.getrefcount(audio) == references
+    assert list(splitter.split(b"b" * FRAME_BYTES)) == [b"b" * FRAME_BYTES]
+    assert list(frames) == []  # a stale iterator cannot change later chunks
+    assert first == b"prefix" + b"a" * (FRAME_BYTES - 6)
+
+
+def test_unstarted_iterators_consume_in_advancement_order_and_close_preserves_carry() -> None:
+    splitter = FrameSplitter()
+    assert list(splitter.split(b"prefix")) == []
+    later = splitter.split(b"b" * (FRAME_BYTES - 7))
+    unused = splitter.split(b"discard")
+    unused.close()
+    assert list(splitter.split(b"a")) == []
+    assert list(later) == [b"prefixa" + b"b" * (FRAME_BYTES - 7)]
+    assert list(unused) == []
+
+
+def assembly_peak(frame_count: int) -> int:
+    # Allocate original input before tracing; consume without retaining outputs.
+    # This measures assembly overhead, not the input or a caller's output queue.
+    audio = bytes(frame_count * FRAME_BYTES + 17)
+    splitter = FrameSplitter()
+    assert list(splitter.split(b"prefix")) == []
+    tracemalloc.start()
+    try:
+        count = 0
+        for frame in splitter.split(audio):
+            assert len(frame) == FRAME_BYTES
+            count += 1
+        assert count == frame_count
+        _, peak = tracemalloc.get_traced_memory()
+        return peak
+    finally:
+        tracemalloc.stop()
+
+
+def test_assembly_allocation_does_not_grow_with_input_size() -> None:
+    small = assembly_peak(32)
+    large = assembly_peak(4096)
+    assert small < 8 * FRAME_BYTES
+    assert large < 8 * FRAME_BYTES
+    assert large <= small + 2 * FRAME_BYTES
 
 
 @pytest.mark.parametrize(

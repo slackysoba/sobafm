@@ -254,6 +254,23 @@ envelope, enable commands or satisfy #175/#131. Generated behavior is unchanged.
 - The mixer's control state (live deck, pending switch, volume) sits behind one `threading.Lock`, held for one read's pops and mixing, tens of microseconds, or for a constant-time update.
 - The mixer never calls into the event loop; the station observes it on each tick. The only cross-thread signal is discord.py's `after` callback, delivered with `loop.call_soon_threadsafe`.
 
+`FrameSplitter` copies one immutable owned frame at a time from an input view;
+it stages neither a whole-input copy nor an output-frame list. Fully consuming
+an input leaves an independently copied carry shorter than 3,840 bytes. Each
+iterator starts consuming on first advancement and must be exhausted or closed
+before another consumes input; overlapping consumption raises an error. Closing
+after a yield discards unread input, while closing an unstarted iterator leaves
+the carry intact. Deck callers close iterators on early exit, including catalog
+cancellation while awaiting room for an emitted frame. A tail-only catalog read
+does not wait for room. Generated reception remains synchronous and unthrottled;
+only strictly verified catalog EOF permits final padding.
+
+The iterator still retains the caller's original input during consumption, and
+queued or caller-retained output frames occupy their own storage. Removing this
+assembly spike does not qualify complete audio envelopes or prove storage release;
+all source, SDK, transport, player, native and cleanup obligations remain charged
+under the shared accounting contract. Production catalog trust remains empty.
+
 ### Station reconcile loop
 
 A station stores desired, heard and retained previous program identity. Its
