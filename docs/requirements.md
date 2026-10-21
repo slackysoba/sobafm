@@ -68,6 +68,22 @@ Those historical criteria remain preserved with their dispositions; they are not
 observed passes. NFR-2/NFR-3, supported platforms, generated behavior and every
 other unaffected criterion retain their limits.
 
+### Exceptional Lyria ingress policy
+
+The maintainer selected exceptional bounded-input producer failure in
+[#203](https://github.com/slackysoba/sobafm/issues/203#issuecomment-6315404910).
+[ADR-0008](decisions/0008-fail-lyria-producers-at-qualified-ingress-bounds.md)
+has the conditional status **Accepted on merge of PR #206; Proposed until then**.
+It records the target: a producer may fail before admitting
+input beyond a complete, derived reservation after pause, preserving every
+already-admitted PCM frame under existing playout and retention rules. Normal
+540/60/45/6-second behavior, spares, retries, fades, NFR-3/NFR-6 ceilings and
+NFR-8 cleanup/debt remain unchanged. This is not silent frame dropping or a
+numerical allowance. Supported transport/configuration and complete allocation
+and release proof remain prerequisites; no implementation or readiness grant
+follows from the policy choice. Accepted ADRs remain intact, with the exact
+exceptional clauses identified in the proposed record.
+
 ## Interpretation
 
 - **AI-1** Gemini turns each accepted request into a validated mode-specific plan: a generated `MusicPlan` with title, one to four weighted style prompts and optional tempo, key, density, brightness, drum muting and wordless vocals, or a catalog query with descriptive search terms and explicit requested attributes. Relative requests receive only the same-mode current plan; cross-mode requests start fresh, with this limitation explained. _(M3; M5)_
