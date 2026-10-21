@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 import uuid
+from collections.abc import Callable
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -67,6 +68,55 @@ class Boundary(Protocol):
     def kill(self) -> None: ...
     def empty(self) -> bool: ...
     def close(self) -> None: ...
+
+
+class Process(Protocol):
+    def bind(self) -> None: ...
+    async def write(self, chunk: bytes) -> None: ...
+    async def close_input(self) -> None: ...
+    async def read(self, pipe: int, size: int) -> bytes: ...
+    async def wait(self) -> int: ...
+    def terminate(self) -> None: ...
+    def kill(self) -> None: ...
+    def empty(self) -> bool: ...
+    def close_pipes(self) -> bool: ...
+
+
+class Launch:
+    """Retained positive handoff, not a universal negative-creation certificate.
+
+    An injected factory must call begin immediately before invoking creation.
+    Only a positively rejected pre-call path may certify not_invoked. Any other
+    no-owner outcome stays unknown, including a factory that never marked begin.
+    """
+
+    def __init__(self, admitted: Callable[[], bool]) -> None:
+        self._admitted = admitted
+        self.invoked = self.not_invoked = False
+        self.child: Process | None = None
+        self.pending: Child | None = None
+
+    def reject(self) -> None:
+        if self.invoked:
+            raise TrackError(TrackFailure.CLEANUP)
+        self.not_invoked = True
+
+    def begin(self) -> None:
+        if self.invoked or self.not_invoked:
+            raise TrackError(TrackFailure.CAPACITY)
+        if not self._admitted():
+            self.reject()
+            raise TrackError(TrackFailure.CAPACITY)
+        self.invoked = True
+        self.not_invoked = False
+
+    @property
+    def owned(self) -> Process | None:
+        if self.child is not None:
+            return self.child
+        if self.pending is not None and self.pending.captured:
+            return self.pending
+        return None
 
 
 class LinuxCgroup:
@@ -337,26 +387,45 @@ class InputCloser:
 class Child:
     """One awaited process and its owned pipes. Binding precedes every input write."""
 
-    def __init__(self, process: asyncio.subprocess.Process, boundary: Boundary) -> None:
-        self.process, self.boundary = process, boundary
+    def __init__(self, process: asyncio.subprocess.Process | None, boundary: Boundary) -> None:
+        self._process, self.boundary = process, boundary
         self.bound = False
-        self._input_closer = InputCloser(process.stdin)
+        self._input_closer: InputCloser | None = None
+
+    @property
+    def captured(self) -> bool:
+        return self._process is not None
+
+    @property
+    def process(self) -> asyncio.subprocess.Process:
+        if self._process is None:
+            raise TrackError(TrackFailure.CLEANUP)
+        return self._process
 
     @classmethod
-    async def launch(cls, runtime: VerifiedNativeRuntime, boundary: Boundary) -> Child:
-        boundary.prepare()
-        process = await asyncio.create_subprocess_exec(
-            *command(runtime.executable),
+    async def launch(
+        cls, runtime: VerifiedNativeRuntime, boundary: Boundary, owner: Launch
+    ) -> Child:
+        try:
+            # Construct and retain the adapter BEFORE creation. The raw returned
+            # Process is assigned directly into it, before any further call/await.
+            child = owner.pending = cls(None, boundary)
+            boundary.prepare()
+            argv, env = command(runtime.executable), environment()
+            owner.begin()
+        except Exception:
+            owner.reject()  # no creation API has been invoked on this path
+            raise
+        child._process = await asyncio.create_subprocess_exec(
+            *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=environment(),
+            env=env,
             limit=PIPE_LIMIT,
             start_new_session=os.name != "nt",
         )
-        # The caller must retain this child even when assignment fails so its
-        # cleanup owner can kill/reap and close the unbound direct process too.
-        return cls(process, boundary)
+        return child
 
     def bind(self) -> None:
         self.boundary.bind(self.process.pid)
@@ -369,6 +438,8 @@ class Child:
         await self.process.stdin.drain()
 
     async def close_input(self) -> None:
+        if self._input_closer is None:
+            self._input_closer = InputCloser(self.process.stdin)
         await self._input_closer.close()
 
     async def read(self, pipe: int, size: int) -> bytes:
