@@ -1207,6 +1207,8 @@ async def playing(rig: Rig, mode: Mode) -> tuple[Program, FakeSource]:
     source.send_audio(10, sample=1000)
     await rig.tick()
     rig.listen(2)
+    if mode is Mode.CATALOG:
+        await rig.tick()  # accept only after its first successful PCM read
     assert started.result() is Outcome.PLAYING
     return program, source
 
@@ -1220,7 +1222,11 @@ async def test_cross_mode_replacement_is_successive_without_fades(rig: Rig, outg
     old_frames = len(old.frames)
     new.send_audio(6, sample=2000)
     await rig.tick()
-
+    assert not started.done()
+    assert rig.station.heard_source is old
+    assert rig.station.mixer.read() == (2000).to_bytes(2, "little", signed=True) * 1920
+    assert not started.done()
+    await rig.tick()
     assert started.result() is Outcome.PLAYING
     assert rig.station.heard_source is new
     assert rig.station.mixer.live is new
@@ -1297,6 +1303,8 @@ async def test_releases_lyria_slots_after_departure_and_actual_cleanup(clock: Fa
     started, _, new = await request(rig, Mode.CATALOG)
     new.send_audio(6)
     await rig.tick()
+    rig.listen(0.02)
+    await rig.tick()
     assert started.result() is Outcome.PLAYING
     assert old.retired
     assert old.state is not State.ENDED
@@ -1332,6 +1340,10 @@ async def test_catalog_completion_waits_for_audible_drain_then_switches(rig: Rig
     await rig.tick()
     assert rig.station.mixer.live is old
     rig.listen(8)
+    assert rig.station.mixer.live is old  # final outgoing pop is not settlement
+    assert rig.catalog.live_numbers == [old.number]
+    # No station tick occurs between the final old frame and this incoming frame.
+    assert rig.station.mixer.read() == (2000).to_bytes(2, "little", signed=True) * 1920
     await rig.tick()
     assert rig.station.mixer.live is ready
     assert not rig.station.mixer.switching
@@ -1349,6 +1361,8 @@ async def test_late_catalog_failure_recovers_without_claiming_completion(rig: Ri
     assert rig.station.mixer.live is failed
     rig.listen(8)
     await rig.tick()
+    rig.listen(0.02)
+    await rig.tick()
     assert rig.station.program is heard
     assert rig.station.mixer.live is ready
     assert failed.failure is Outcome.UNAVAILABLE
@@ -1364,9 +1378,11 @@ async def test_short_verified_catalog_source_starts_without_padding_or_fade(rig:
     assert not started.done()
     source.finish()
     await rig.tick()
-    assert started.result() is Outcome.PLAYING
+    assert not started.done()
     assert source.buffered_seconds == 1
     assert rig.station.mixer.read() == (2000).to_bytes(2, "little", signed=True) * 1920
+    await rig.tick()
+    assert started.result() is Outcome.PLAYING
 
 
 async def test_catalog_has_no_deadline_and_stop_ceases_without_a_fade(rig: Rig) -> None:
@@ -1445,6 +1461,9 @@ async def test_disconnected_readiness_preserves_heard_source_and_history(rig: Ri
     assert rig.catalog.live_numbers == [old.number]
     rig.player.connected = True
     await rig.tick()
+    assert not started.done()
+    rig.listen(0.02)
+    await rig.tick()
     assert started.result() is Outcome.PLAYING
     assert rig.catalog.live_numbers == [old.number, new.number]
 
@@ -1491,6 +1510,10 @@ async def test_identical_plan_object_still_creates_a_distinct_request(rig: Rig) 
     assert rig.station.mixer.live is old
     new.send_audio(6)
     await rig.tick()
+    assert rig.station.mixer.live is old
+    assert not started.done()
+    rig.listen(0.02)
+    await rig.tick()
     assert rig.station.mixer.live is new
 
 
@@ -1504,3 +1527,135 @@ async def test_failed_catalog_source_and_program_release_without_cycle_collectio
     assert source_ref() is None
     await rig.tick()  # the second producer has now finished retirement too
     assert program_ref() is None
+
+
+@pytest.mark.parametrize("natural", [False, True])
+async def test_delivered_then_invalidated_boundary_needs_a_new_valid_epoch_read(
+    rig: Rig, natural: bool
+) -> None:
+    if natural:
+        program, old = await playing(rig, Mode.CATALOG)
+        started = program.started
+        incoming = next(s for s in rig.catalog.sources if s is not old)
+        incoming.send_audio(6, sample=2000)
+        old.finish()
+        await rig.tick()
+        rig.listen(8)
+    else:
+        started, program, incoming = await request(rig, Mode.CATALOG)
+        incoming.send_audio(6, sample=2000)
+        await rig.tick()
+    assert rig.station.mixer.read() == (2000).to_bytes(2, "little", signed=True) * 1920
+    before = list(rig.catalog.live_numbers)
+    rig.player.connected = False
+    rig.station.invalidate_playback()
+    await rig.tick()
+    assert rig.catalog.live_numbers == before
+    if not natural:
+        assert not started.done()
+    rig.player.connected = True
+    await rig.tick()  # re-arm actual live PCM, without accepting the stale delivery
+    assert rig.catalog.live_numbers == before
+    assert rig.station.mixer.read() == (2000).to_bytes(2, "little", signed=True) * 1920
+    await rig.tick()
+    assert started.result() is Outcome.PLAYING
+    assert rig.station.heard_source is incoming
+    assert rig.catalog.live_numbers == [*before, incoming.number]
+    assert not incoming.retired
+    await rig.tick()
+    assert rig.catalog.live_numbers == [*before, incoming.number]
+
+
+async def test_stop_invalidates_an_armed_catalog_start_before_the_player_can_read(rig: Rig) -> None:
+    started, _, incoming = await request(rig, Mode.CATALOG)
+    incoming.send_audio(6)
+    await rig.tick()
+    assert not started.done()
+    rig.station.stop()
+    assert rig.station.mixer.read() == SILENCE
+    await rig.tick()
+    assert started.result() is Outcome.STOPPED
+    assert not rig.catalog.live_numbers
+
+
+@pytest.mark.parametrize("previous_generated", [False, True])
+async def test_stop_detaches_actual_catalog_pcm_after_its_unaccepted_delivery_is_invalidated(
+    rig: Rig, previous_generated: bool
+) -> None:
+    if previous_generated:
+        await playing(rig, Mode.GENERATED)
+    started, _, incoming = await request(rig, Mode.CATALOG)
+    incoming.send_audio(6, sample=2000)
+    await rig.tick()
+    assert rig.station.mixer.read() == (2000).to_bytes(2, "little", signed=True) * 1920
+    assert rig.station.mixer.live is incoming
+    assert not started.done()
+    rig.station.invalidate_playback()  # discards the receipt, not the actual live PCM owner
+    rig.station.stop()
+    assert rig.station.mixer.read() == SILENCE
+    assert rig.station.mixer.live is None
+    assert not rig.station.mixer.switching
+    await rig.tick()
+    assert started.result() is Outcome.STOPPED
+    assert not rig.catalog.live_numbers
+    assert rig.station.program is None
+
+
+async def test_known_incoming_failure_between_arm_and_read_cannot_settle(rig: Rig) -> None:
+    started, _, incoming = await request(rig, Mode.CATALOG)
+    incoming.send_audio(6, sample=2000)
+    await rig.tick()
+    incoming.finish(Outcome.FAILED)
+    assert incoming.frames  # a playable prefix is not a successful start after known failure
+    assert rig.station.mixer.read() == SILENCE
+    assert not started.done()
+    await rig.tick()
+    assert started.result() is Outcome.FAILED
+    assert not rig.catalog.live_numbers
+
+
+async def test_failed_pcm_construction_does_not_deliver_or_settle_an_armed_start(
+    rig: Rig,
+) -> None:
+    started, _, incoming = await request(rig, Mode.CATALOG)
+    incoming.send_audio(6, sample=2000)
+    incoming.frames[0] = b"x"  # deliberate fixture corruption before non-unit scaling
+    rig.station.mixer.set_volume(0.5)
+    await rig.tick()
+    assert rig.station.mixer.read() == SILENCE
+    assert rig.station.mixer.errors == 1
+    await rig.tick()
+    assert not started.done()
+    assert not rig.catalog.live_numbers
+    incoming.send_audio(0.02)  # replenish the failed read before six-second admission
+    await rig.tick()
+    rig.station.mixer.read()
+    await rig.tick()
+    assert started.result() is Outcome.PLAYING
+    assert rig.catalog.live_numbers == [incoming.number]
+
+
+async def test_metadata_terminal_failure_restores_fb3_before_generation_and_stale_failures(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous, source = await playing(rig, Mode.GENERATED)
+    snapshots: list[Program | None] = []
+    original = rig.generated.ended_failures
+
+    def ended(program: Program | None) -> list[FakeSource]:
+        snapshots.append(program)
+        return original(program)
+
+    def terminal(program: Program | None, connected: bool) -> Outcome | None:
+        return Outcome.NO_MATCH if program is not None else None
+
+    monkeypatch.setattr(rig.generated, "ended_failures", ended)
+    monkeypatch.setattr(rig.catalog, "terminal", terminal)
+    source.finish(Outcome.FAILED)
+    result = rig.station.play(CATALOG, "Other")
+    await rig.tick()
+    assert result.result() is Outcome.NO_MATCH
+    assert snapshots == [None]
+    assert rig.station.program is previous
+    assert rig.station.heard_source is source
+    assert not rig.catalog.sources  # metadata-only failure never fabricates a failed deck

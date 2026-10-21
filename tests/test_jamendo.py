@@ -17,7 +17,7 @@ import sobafm.jamendo as jamendo
 from sobafm.catalog import Catalog, CatalogQuery, License
 from sobafm.failures import Failure
 from sobafm.jamendo import CatalogError, JamendoCatalog, MetadataGate, stream_url_allowed
-from tests.doubles import FakeCatalog
+from tests.doubles import FakeCatalog, FakeClock
 
 CLIENT = "private-client-id"
 AUDIO = "https://prod-1.storage.jamendo.com/?trackid=42&client_id=private-client-id"
@@ -103,6 +103,78 @@ def gate(monkeypatch: pytest.MonkeyPatch) -> MetadataGate:
 
 def client(http: HTTP, gate: MetadataGate) -> JamendoCatalog:
     return JamendoCatalog(SecretStr(CLIENT), cast(aiohttp.ClientSession, http), gate)
+
+
+async def test_cursor_continues_one_nonempty_stage_without_relaxing(gate: MetadataGate) -> None:
+    http = HTTP(
+        Response(reply(*(track(id=str(i)) for i in range(1, 11)))),
+        Response(reply(track(id="11"))),
+    )
+    cycle = client(http, gate).open(QUERY)
+    first, second = await cycle.next_page(), await cycle.next_page()
+    assert first.received == 10
+    assert not first.exhausted
+    assert [value.id for value in second.tracks] == ["11"]
+    assert second.exhausted
+    assert [call["params"]["offset"] for call in http.calls] == ["0", "10"]
+    assert all(call["params"]["tags"] == "jazz+piano" for call in http.calls)
+    with pytest.raises(CatalogError, match="invalid"):
+        await cycle.next_page()
+
+
+async def test_provider_nonempty_but_locally_ineligible_never_relaxes(gate: MetadataGate) -> None:
+    http = HTTP(
+        Response(reply(*(track(id=str(i), license_ccurl="unsupported") for i in range(1, 11)))),
+        Response(reply()),
+        Response(reply(track())),
+    )
+    cycle = client(http, gate).open(QUERY)
+    first, second = await cycle.next_page(), await cycle.next_page()
+    assert first.received == 10
+    assert first.tracks == ()
+    assert not first.exhausted
+    assert second.exhausted
+    assert len(http.calls) == 2
+    assert all("fuzzytags" not in call["params"] for call in http.calls)
+
+
+async def test_cursor_deadline_is_not_renewed_between_pages(gate: MetadataGate) -> None:
+    clock = FakeClock()
+    http = HTTP(Response(reply(*(track(id=str(i)) for i in range(1, 11)))))
+    cycle = JamendoCatalog(
+        SecretStr(CLIENT), cast(aiohttp.ClientSession, http), gate, clock=clock
+    ).open(QUERY)
+    await cycle.next_page()
+    clock.now += jamendo.CYCLE_SECONDS
+    with pytest.raises(CatalogError, match="deadline"):
+        await cycle.next_page()
+    assert len(http.calls) == 1
+
+
+async def test_cursor_retries_remain_shared_across_pages(
+    gate: MetadataGate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    delays: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(jamendo.asyncio, "sleep", sleep)
+    http = HTTP(
+        OSError(),
+        Response(reply(*(track(id=str(i)) for i in range(1, 11)))),
+        OSError(),
+        OSError(),
+        Response(reply(track())),
+    )
+    cycle = client(http, gate).open(QUERY)
+    assert (await cycle.next_page()).received == 10
+    with pytest.raises(CatalogError, match="connection"):
+        await cycle.next_page()
+    assert delays == [1, 2]
+    assert len(http.calls) == 4
+    with pytest.raises(CatalogError, match="invalid"):
+        await cycle.next_page()
 
 
 async def test_search_retains_explicit_filters_and_only_relaxes_valid_empty(

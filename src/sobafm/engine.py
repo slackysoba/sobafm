@@ -25,6 +25,10 @@ class Engine(Protocol):
 
     def ended_failures(self, program: Program | None) -> Sequence[Source]: ...
 
+    def terminal(self, program: Program | None, connected: bool) -> Outcome | None:
+        """Consume an exact-program metadata-only outcome in the station failure phase."""
+        ...
+
     def count_failure(
         self, source: Source, program: Program | None, connected: bool
     ) -> Outcome | None: ...
@@ -40,7 +44,8 @@ class Engine(Protocol):
     def handover_due(self, source: Source) -> bool:
         """Allow natural handover or failed-source recovery.
 
-        Catalog normal completion needs strict verification AND audible drain.
+        Catalog normal completion permits arming after strict verification;
+        the mixer additionally waits for the final outgoing frame to drain.
         A failed source may recover after its performance ceases/drains, without
         marking that track complete. Low buffer or producer exit alone is neither.
         """

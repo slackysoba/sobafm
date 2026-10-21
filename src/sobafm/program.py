@@ -21,6 +21,7 @@ class Outcome(StrEnum):
     EXHAUSTED = "exhausted"  # a quota or rate limit
     UNAVAILABLE = "unavailable"  # Lyria RealTime is down or unreachable
     FAILED = "failed"  # sessions failed for another reason, or the player could not start
+    NO_MATCH = "no_match"  # the bounded catalog cycle found no eligible non-recent track
     DISCONNECTED = "disconnected"  # SobaFM lost its voice connection
     REPLACED = "replaced"  # a newer request replaced it before it started
     STOPPED = "stopped"

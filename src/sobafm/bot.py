@@ -57,6 +57,9 @@ GENERATED_REPLIES = {
     Outcome.EXHAUSTED: "SobaFM's Gemini API quota is used up for now. Try again later.",
     Outcome.UNAVAILABLE: "Lyria RealTime is unavailable right now. Try again shortly.",
     Outcome.FAILED: "SobaFM couldn't start the music. Try again shortly.",
+    Outcome.NO_MATCH: (
+        "No matching music is available for that request. Try describing it differently."
+    ),
     Outcome.DISCONNECTED: "SobaFM lost its voice connection before the music started.",
     Outcome.REPLACED: "A newer request replaced this one before it started.",
     Outcome.STOPPED: "The music was stopped before this request started.",
@@ -75,6 +78,10 @@ PLAY_REPLIES = {
             "Ask whoever runs SobaFM to check its Gemini API key."
         ),
         Outcome.UNAVAILABLE: "Catalog music isn't available right now. Try again later.",
+        Outcome.NO_MATCH: (
+            "No matching catalog music is available for that request. "
+            "Try describing it differently."
+        ),
     },
 }
 REFUSALS = {  # the current music keeps playing
@@ -116,6 +123,7 @@ class Voice(discord.VoiceClient):
             self.sobafm.connecting[owner] = self
 
     def cleanup(self) -> None:
+        self.sobafm.invalidate_voice_playback(self)
         self._ending = True
         self.failure()  # marks an error that ended discord.py's runner as handled
         current = self.guild.voice_client is self
@@ -124,6 +132,7 @@ class Voice(discord.VoiceClient):
         self.sobafm.voice_ended(self, left=current and self.joined)
 
     async def on_voice_state_update(self, data: GuildVoiceState) -> None:
+        self.sobafm.invalidate_voice_playback(self)
         joining = cast(object, data["channel_id"]) is not None
         if self._ending and joining:
             return
@@ -141,6 +150,7 @@ class Voice(discord.VoiceClient):
                 self._callbacks.discard(owner)
 
     async def on_voice_server_update(self, data: VoiceServerUpdate) -> None:
+        self.sobafm.invalidate_voice_playback(self)
         if self._ending:
             return
         owner = asyncio.current_task()
@@ -162,6 +172,7 @@ class Voice(discord.VoiceClient):
             raise_swallowed_cancel()
             return
         self._ending = True
+        self.sobafm.invalidate_voice_playback(self)
         # Callbacks already inside the library can restart a connector after an await. Stop
         # those creators first, then snapshot and drain the workers they may have created.
         await cancel_voice_tasks(self._callbacks - {asyncio.current_task()})
@@ -311,6 +322,18 @@ class SobaFM(discord.Client):
             self.stations[guild.id] = station
             self.station_owners[station] = (guild, voice)
         return station
+
+    def invalidate_voice_playback(self, voice: Voice) -> None:
+        """Invalidate only this exact voice owner's pending PCM boundary, synchronously."""
+        station = self.stations.get(voice.guild.id)
+        owner = self.station_owners.get(station) if station is not None else None
+        if (
+            station is not None
+            and owner is not None
+            and owner[0] is voice.guild
+            and owner[1] is voice
+        ):
+            station.invalidate_playback()
 
     def statuses_for(self, guild: discord.Guild) -> Statuses:
         """The voice channel statuses SobaFM sets in the guild, kept across its stations."""

@@ -149,6 +149,14 @@ class Deck:
         return self.buffered_seconds >= PREROLL_S
 
     @property
+    def failed(self) -> bool:
+        return self.end_reason not in (None, EndReason.RETIRED)
+
+    @property
+    def completed(self) -> bool:
+        return False  # generated sessions have no strict finite-track completion
+
+    @property
     def delivered_preroll(self) -> bool:
         """Whether the session produced the pre-roll's worth of audio, as one that went live did."""
         return self._audio_bytes >= PREROLL_S * BYTES_PER_SECOND

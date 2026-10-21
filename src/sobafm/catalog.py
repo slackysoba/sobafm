@@ -299,7 +299,31 @@ class CatalogTrack(Model):
         return self
 
 
+class CatalogPage(Model):
+    """One validated page; filtering never changes the provider's empty-result truth."""
+
+    tracks: tuple[CatalogTrack, ...] = Field(max_length=10)
+    received: int = Field(ge=0, le=10)
+    exhausted: bool
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        if len(self.tracks) > self.received:
+            raise ValueError("page contains more tracks than the provider returned")
+        return self
+
+
+class CatalogCycle(Protocol):
+    """One cursor owns all stages, pages, attempts and the original deadline."""
+
+    async def next_page(self) -> CatalogPage: ...
+
+    def close(self) -> None: ...
+
+
 class Catalog(Protocol):
+    def open(self, query: CatalogQuery) -> CatalogCycle: ...
+
     async def search(self, query: CatalogQuery) -> tuple[CatalogTrack, ...]:
         """Return bounded validated discovery records; do not imply playback eligibility."""
         ...

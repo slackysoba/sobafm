@@ -44,6 +44,16 @@ class Source(Protocol):
     def ready(self) -> bool: ...
 
     @property
+    def failed(self) -> bool:
+        """A known source failure; safe to inspect on the player thread."""
+        ...
+
+    @property
+    def completed(self) -> bool:
+        """Strict catalog producer completion, distinct from drained playback."""
+        ...
+
+    @property
     def buffered_seconds(self) -> float: ...
 
     def start(self) -> None: ...

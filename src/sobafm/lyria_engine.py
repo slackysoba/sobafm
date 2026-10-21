@@ -170,6 +170,10 @@ class LyriaEngine:
         )
         return early
 
+    @staticmethod
+    def terminal(program: Program | None, connected: bool) -> Outcome | None:
+        return None
+
     def drop_ended(self, program: Program | None, mixer: Mixer) -> None:
         """Drop unused ended decks, keeping one ready spare until an open deck is ready.
 

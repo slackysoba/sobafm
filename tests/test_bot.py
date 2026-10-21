@@ -129,6 +129,24 @@ def bot_voice_update(guild: Any, before: Any, after: Any) -> tuple[Any, Any, Any
     return me, fake(discord.VoiceState, channel=before), fake(discord.VoiceState, channel=after)
 
 
+def test_only_the_exact_station_voice_owner_can_invalidate_playback(bot: SobaFM) -> None:
+    guild = make_guild()
+    current = make_voice(bot, guild, current=True)
+    stale = make_voice(bot, guild, current=False)
+    station = fake(Station)
+    bot.stations[guild.id] = station
+    bot.station_owners[station] = (guild, current)
+    bot.invalidate_voice_playback(stale)
+    station.invalidate_playback.assert_not_called()
+    bot.invalidate_voice_playback(current)
+    station.invalidate_playback.assert_called_once_with()
+    station.invalidate_playback.reset_mock()
+    new_guild = make_guild()
+    newer = make_voice(bot, new_guild, current=True)
+    bot.invalidate_voice_playback(newer)
+    station.invalidate_playback.assert_not_called()
+
+
 @pytest.fixture
 def gemini() -> FakeGemini:
     return FakeGemini()

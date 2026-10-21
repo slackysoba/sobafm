@@ -230,6 +230,10 @@ class TrackDeck:
         return self.end_reason is EndReason.FINISHED
 
     @property
+    def failed(self) -> bool:
+        return self.failure is not None
+
+    @property
     def drained(self) -> bool:
         """Not an encoder-storage release proof or an automatic lease refund."""
         return self.completed and not self.frames
