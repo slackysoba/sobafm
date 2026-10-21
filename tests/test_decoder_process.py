@@ -15,6 +15,7 @@ from sobafm.catalog_audio import TrackError
 from sobafm.decoder_process import (
     CHILD_MEMORY,
     Child,
+    Launch,
     LinuxCgroup,
     WindowsJob,
     close_pipes,
@@ -62,7 +63,9 @@ async def test_child_launch_claims_boundary_before_spawn_and_bind_before_write(
         return cast(asyncio.subprocess.Process, process)
 
     monkeypatch.setattr(processes.asyncio, "create_subprocess_exec", spawn)
-    child = await Child.launch(runtime, boundary)
+    owner = Launch(lambda: True)
+    child = await Child.launch(runtime, boundary, owner)
+    assert owner.owned is child
     with pytest.raises(TrackError, match="capacity"):
         await child.write(b"untrusted")
     assert not process.stdin.blocks

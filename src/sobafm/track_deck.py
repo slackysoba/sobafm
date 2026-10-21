@@ -20,7 +20,7 @@ from sobafm.catalog_audio import (
     TrackError,
     TrackFailure,
 )
-from sobafm.decoder_process import Boundary, Child
+from sobafm.decoder_process import Boundary, Child, Launch, Process
 from sobafm.native import VerifiedNativeRuntime
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES, FRAME_SECONDS, FrameSplitter
 from sobafm.program import Mode, Program
@@ -52,16 +52,27 @@ class Input(Protocol):
     async def aclose(self) -> None: ...
 
 
-class Process(Protocol):
-    def bind(self) -> None: ...
-    async def write(self, chunk: bytes) -> None: ...
-    async def close_input(self) -> None: ...
-    async def read(self, pipe: int, size: int) -> bytes: ...
-    async def wait(self) -> int: ...
-    def terminate(self) -> None: ...
-    def kill(self) -> None: ...
-    def empty(self) -> bool: ...
-    def close_pipes(self) -> bool: ...
+class CloseOwner:
+    """One transferred resource's close; borrowers never own its cancellation."""
+
+    def __init__(self, close: Callable[[], Awaitable[None]]) -> None:
+        self._close = close
+        self._task: asyncio.Task[None] | None = None
+
+    async def close(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._run())
+        await asyncio.shield(self._task)
+
+    async def _run(self) -> None:
+        await self._close()
+
+    @property
+    def succeeded(self) -> bool:
+        task = self._task
+        return (
+            task is not None and task.done() and not task.cancelled() and task.exception() is None
+        )
 
 
 @dataclass(frozen=True)
@@ -93,15 +104,27 @@ class Slots:
 
     def __init__(self) -> None:
         self._owners: dict[object, AudioLedger] = {}
+        self._uncertain: set[object] = set()
+
+    def blocked(self, ledger: AudioLedger) -> bool:
+        return any(self._owners[token] is ledger for token in self._uncertain)
+
+    def block(self, token: object) -> None:
+        self._uncertain.add(token)
 
     def acquire(self, ledger: AudioLedger) -> object | None:
-        if len(self._owners) >= 4 or sum(owner is ledger for owner in self._owners.values()) >= 2:
+        if (
+            self.blocked(ledger)
+            or len(self._owners) >= 4
+            or sum(owner is ledger for owner in self._owners.values()) >= 2
+        ):
             return None
         token = object()
         self._owners[token] = ledger
         return token
 
     def release(self, token: object) -> None:
+        self._uncertain.discard(token)
         self._owners.pop(token, None)
 
     @property
@@ -126,13 +149,23 @@ class DecoderSupervisor:
         *,
         envelope: Envelope | None = None,
         slots: Slots = _PROCESS_SLOTS,
-        spawn: Callable[[VerifiedNativeRuntime, Boundary], Awaitable[Process]] = Child.launch,
+        spawn: Callable[
+            [VerifiedNativeRuntime, Boundary, Launch], Awaitable[Process]
+        ] = Child.launch,
     ) -> None:
         self.runtime, self.boundary = runtime, boundary
         self.envelope = envelope if envelope is not None else Envelope()
         self.slots, self.spawn = slots, spawn
         self.cleanups: set[asyncio.Task[None]] = set()
         self._debts: dict[object, TrackDeck] = {}
+        self._uncertain: set[object] = set()
+
+    def admitted(self, ledger: AudioLedger) -> bool:
+        return not self._uncertain and not self.slots.blocked(ledger)
+
+    def uncertain(self, token: object) -> None:
+        self._uncertain.add(token)
+        self.slots.block(token)
 
     def retain(self, task: asyncio.Task[None]) -> None:
         self.cleanups.add(task)
@@ -142,6 +175,7 @@ class DecoderSupervisor:
         self._debts[token] = source
 
     def released(self, token: object) -> None:
+        self._uncertain.discard(token)
         self.slots.release(token)
         self._debts.pop(token, None)
 
@@ -195,9 +229,12 @@ class TrackDeck:
         self._last_input = self._last_output = self._last_terminal = clock()
         self._task: asyncio.Task[None] | None = None
         self._spawn_task: asyncio.Task[Process] | None = None
+        self._launch: Launch | None = None
         self._workers: list[asyncio.Task[object]] = []
         self._child: Process | None = None
         self._input: Input | None = None
+        self._input_close: CloseOwner | None = None
+        self._stdin_close: CloseOwner | None = None
         self._boundary: Boundary | None = None
         self._slot: object | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
@@ -252,7 +289,11 @@ class TrackDeck:
             )
             return
         envelope = self._supervisor.envelope.allocation
-        if envelope is None or (lease := self._audio.reserve(envelope)) is None:
+        if (
+            not self._supervisor.admitted(self._audio)
+            or envelope is None
+            or (lease := self._audio.reserve(envelope)) is None
+        ):
             self.failure, self.end_reason, self.state = (
                 TrackFailure.CAPACITY,
                 EndReason.FAILED,
@@ -326,7 +367,8 @@ class TrackDeck:
                 self._last_input = self._clock()
             if not source.complete or self._encoded_bytes == 0:
                 raise TrackError(TrackFailure.TRANSFER)
-            await child.close_input()
+            if self._stdin_close is not None:
+                await self._stdin_close.close()
         finally:
             await iterator.aclose()
 
@@ -390,6 +432,8 @@ class TrackDeck:
 
     async def _run(self) -> None:
         try:
+            supervisor, audio = self._supervisor, self._audio
+            self._launch = Launch(lambda: supervisor.admitted(audio))
             self._boundary = self._supervisor.boundary()
             self._spawn_task = asyncio.create_task(self._spawn(self._boundary))
             # Pending spawn is already charged. Caller cancellation cannot lose a
@@ -398,6 +442,8 @@ class TrackDeck:
             self._child = child
             child.bind()
             source = self._input = self._input_factory(self.track)
+            self._input_close = CloseOwner(source.aclose)
+            self._stdin_close = CloseOwner(child.close_input)
             self.state = State.GENERATING
             self._last_input = self._last_output = self._clock()
             feed = asyncio.create_task(self._feed(child, source))
@@ -474,9 +520,20 @@ class TrackDeck:
     def _cleanup_failure(self) -> None:
         self.cleanup_failed = True
         self.failure, self.end_reason = TrackFailure.CLEANUP, EndReason.FAILED
+        self._bar_uncertain()
         decision = self._cleanup_result
         if decision is not None and not decision.done():
             decision.set_result(False)
+
+    def _bar_uncertain(self) -> None:
+        launch = self._launch
+        if (
+            self._slot is not None
+            and launch is not None
+            and launch.owned is None
+            and not launch.not_invoked
+        ):
+            self._supervisor.uncertain(self._slot)
 
     async def _discard(self, child: Process, pipe: int) -> None:
         async with self._locks[pipe]:
@@ -505,33 +562,43 @@ class TrackDeck:
             self._cleanup_at if self._cleanup_at is not None else self._clock()
         ) + CLEANUP_SECONDS
         decision = self._cleanup_result
+        launch = self._launch
         for task in self._workers:
             task.cancel()
         if self._spawn_task is not None:
-            while not self._spawn_task.done():
+            while not self._spawn_task.done() and (launch is None or launch.owned is None):
                 self._deadline(deadline)
                 await asyncio.sleep(0.01)
-            if self._spawn_task.cancelled():
-                # An externally cancelled launch cannot prove no child appeared.
-                self._cleanup_failure()
-                await asyncio.Future[None]()
-            else:
+            if self._spawn_task.done() and not self._spawn_task.cancelled():
                 try:
                     self._child = self._spawn_task.result()
                 except Exception as error:  # noqa: BLE001 - failed launch still owns its prepared boundary
                     error.__traceback__ = error.__context__ = error.__cause__ = None
+        if launch is not None:
+            # Task completion/exception and an empty unassigned boundary are not
+            # negative creation certificates. Keep the owner and full charges.
+            while launch.owned is None and not launch.not_invoked:
+                self._cleanup_failure()
+                await asyncio.sleep(0.01)
+            self._child = launch.owned
         child = self._child
         cleanup: list[asyncio.Task[object]] = []
         if child is not None:
+            if self._stdin_close is None:
+                self._stdin_close = CloseOwner(child.close_input)
             cleanup = [asyncio.create_task(self._discard(child, pipe)) for pipe in (1, 2)]
             cleanup.extend(
                 [
-                    asyncio.create_task(child.close_input()),
+                    asyncio.create_task(self._stdin_close.close()),
                     asyncio.create_task(self._join(self._workers)),
                 ]
             )
-            if self._input is not None:
-                cleanup.append(asyncio.create_task(self._input.aclose()))
+            if self._spawn_task is not None:
+                # A positive process can be closed before a delayed factory
+                # returns, but that factory still owns a join obligation.
+                cleanup.append(asyncio.create_task(self._join([self._spawn_task])))
+            if self._input_close is not None:
+                cleanup.append(asyncio.create_task(self._input_close.close()))
             # Start drains before waiting for joins/exit, including inherited pipes.
             self._attempt(child.terminate)
             reap = asyncio.create_task(child.wait())
@@ -560,8 +627,19 @@ class TrackDeck:
                     self._attempt(child.kill)
                     last_kill = self._clock()
                 pipes_closed = empty and self._attempt(child.close_pipes)
-                http_closed = self._input is None or self._input.closed
-                if tasks_done and empty and pipes_closed and http_closed:
+                source = self._input
+                http_closed = source is None or (
+                    self._input_close is not None
+                    and self._input_close.succeeded
+                    and self._attempt(lambda source=source: source.closed)
+                )
+                if (
+                    tasks_done
+                    and self._stdin_close.succeeded
+                    and empty
+                    and pipes_closed
+                    and http_closed
+                ):
                     break
                 await asyncio.sleep(0.01)
         while self._boundary is not None and not self._attempt(self._boundary.close):
@@ -570,8 +648,10 @@ class TrackDeck:
         if self._slot is not None:
             self._supervisor.released(self._slot)
             self._slot = None
-        if self._spawn_task is None and self.allocation is not None:
-            self.allocation.release()  # retired before a producer/allocation was created
+        if (
+            launch is None or (launch.not_invoked and child is None)
+        ) and self.allocation is not None:
+            self.allocation.release()  # positively no child/input allocation was created
             self.allocation = None
         self._deadline(deadline)
         if self._cleanup_timer is not None:
@@ -589,4 +669,18 @@ class TrackDeck:
             self._cleanup_failure()
 
     async def _spawn(self, boundary: Boundary) -> Process:
-        return await self._supervisor.spawn(self._supervisor.runtime, boundary)
+        launch = self._launch
+        if launch is None:
+            raise TrackError(TrackFailure.CLEANUP)
+        try:
+            # A previously queued start must recheck immediately before handing
+            # control to the factory; production begin() also checks at the API.
+            if not self._supervisor.admitted(self._audio):
+                launch.reject()
+                raise TrackError(TrackFailure.CAPACITY)
+            child = await self._supervisor.spawn(self._supervisor.runtime, boundary, launch)
+            launch.child = child
+            launch.not_invoked = False  # a positive owner always outranks a contradictory flag
+            return child
+        finally:
+            self._bar_uncertain()

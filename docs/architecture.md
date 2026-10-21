@@ -235,8 +235,24 @@ drains, stdin/HTTP closure, all task joins, terminate/kill and actual tree/handl
 release. A missed deadline produces sticky cleanup failure while a supervisor
 owner outlives station replacement and continues best-effort closure. Pending
 launch, descendants or pipe debt retain the child slot until release is verified.
+The retained launch owner constructs its process adapter before creation and
+captures the positively returned raw process directly into it before further
+calls or suspension. Binding/handoff failure therefore cannot discard that
+process. A creation call that fails without a positive owner is uncertain:
+task completion, exception type and an empty unassigned boundary are not proof
+that no child materialized. Full reservations and debt remain; the affected
+supervisor and ledger bar new admission, including queued creation calls.
+Only the exact owner's positive release clears its barrier. A positively
+never-invoked path can refund its reservation only after prepared resources close.
+
 Stdin closure has one shielded wait owner shared by feeding and cleanup; cancelling
 a feeder cannot cancel CPython's shared protocol-close Future.
+Encoded input transfers only when its lazy factory returns after successful
+child binding. Failed-launch cleanup never invokes that factory; an unused
+precreated fixture remains its creator's responsibility. A transferred input
+has one retained shielded close operation, separate from stdin closure and
+composing with the HTTP owner's close task. A failed or cancelled close cannot
+be replaced by a legacy `closed` flag or retried as a new owner to refund debt.
 The separate complete audio lease remains charged until its storage owner proves
 all covered PCM/player/copy/transport/native allocations released; EOF or deque
 pops cannot release it. The later engine must supply that storage proof.

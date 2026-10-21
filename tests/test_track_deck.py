@@ -13,7 +13,7 @@ from sobafm.audio_budget import AudioBytes, AudioLedger
 from sobafm.catalog import CatalogQuery, CatalogTrack
 from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.catalog_interpreter import CatalogPlan
-from sobafm.decoder_process import Boundary, InputCloser
+from sobafm.decoder_process import Boundary, InputCloser, Launch
 from sobafm.native import SourceArchive, VerifiedNativeRuntime
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES
 from sobafm.program import Program
@@ -186,8 +186,11 @@ class Rig:
     def input(self, track: CatalogTrack) -> FakeInput:
         return self.source
 
-    async def spawn(self, runtime: VerifiedNativeRuntime, boundary: Boundary) -> FakeChild:
+    async def spawn(
+        self, runtime: VerifiedNativeRuntime, boundary: Boundary, owner: Launch
+    ) -> FakeChild:
         boundary.prepare()
+        owner.begin()
         if self.gate is not None:
             await self.gate.wait()
         return self.child
@@ -695,8 +698,9 @@ async def test_completed_source_releases_without_cycle_collection(tmp_path: Path
     rig = Rig(tmp_path)
     child, boundary, stream = rig.child, rig.boundary, rig.source
 
-    async def spawn(runtime: VerifiedNativeRuntime, owner: Boundary) -> FakeChild:
-        owner.prepare()
+    async def spawn(runtime: VerifiedNativeRuntime, boundary: Boundary, owner: Launch) -> FakeChild:
+        boundary.prepare()
+        owner.begin()
         return child
 
     # Keep the injected factories independent of the test Rig's source reference,
