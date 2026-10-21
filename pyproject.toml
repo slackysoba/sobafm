@@ -1,7 +1,7 @@
 [project]
 name = "sobafm"
 version = "1.0.0"
-description = "Self-hosted Discord bot that streams AI-generated music into voice channels with Gemini and Lyria RealTime."
+description = "Self-hosted Discord music bot with generated music and a readiness-gated Jamendo catalog mode."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
