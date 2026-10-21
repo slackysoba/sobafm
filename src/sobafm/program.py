@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from sobafm.catalog import CreditRecord
 from sobafm.catalog_interpreter import CatalogPlan
 from sobafm.plan import MusicPlan
 
@@ -36,6 +37,7 @@ class Program:
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
     underruns: int = 0  # frames of silence while it played
+    first_credit: CreditRecord | None = None  # immutable metadata, never an audio source reference
 
     def __post_init__(self) -> None:
         if (self.mode is Mode.CATALOG) != (self.ends_at is None):

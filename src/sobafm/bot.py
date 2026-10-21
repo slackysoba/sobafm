@@ -18,9 +18,11 @@ from discord.types.voice import GuildVoiceState, VoiceServerUpdate
 from google import genai
 
 from sobafm.audio_budget import AudioLedger
-from sobafm.catalog_interpreter import CatalogPlan
+from sobafm.catalog_interpreter import CATALOG_TASK, CatalogPlan
+from sobafm.catalog_playback import CatalogPlayback
 from sobafm.commands import add_commands
 from sobafm.config import Settings
+from sobafm.credits import CreditSnapshot, CreditViews, first_credit, shorten_rendered, summary
 from sobafm.deck import Connect, lyria
 from sobafm.decoder_check import prepare_decoder
 from sobafm.failures import Failure
@@ -28,7 +30,7 @@ from sobafm.interpreter import GEMINI_HTTP, Interpreter, Result
 from sobafm.interpreter import Outcome as Interpreted
 from sobafm.native import VerifiedNativeRuntime
 from sobafm.plan import MusicPlan, one_line
-from sobafm.program import Mode
+from sobafm.program import Mode, Program
 from sobafm.station import Outcome, SessionPool, Station
 from sobafm.status import Statuses
 from sobafm.store import GuildSettings, Store
@@ -74,9 +76,10 @@ PLAY_REPLIES = {
             "Try describing it differently."
         ),
         Outcome.REJECTED: (
-            "Google rejected SobaFM's API key, so it can't interpret music requests. "
-            "Ask whoever runs SobaFM to check its Gemini API key."
+            "Jamendo rejected SobaFM's client id. Ask whoever runs SobaFM to check "
+            "its catalog configuration."
         ),
+        Outcome.EXHAUSTED: "SobaFM's Jamendo quota is used up for now. Try again later.",
         Outcome.UNAVAILABLE: "Catalog music isn't available right now. Try again later.",
         Outcome.NO_MATCH: (
             "No matching catalog music is available for that request. "
@@ -244,6 +247,8 @@ class SobaFM(discord.Client):
         connect: Connect | None = None,
         *,
         interpreter: Interpreter | None = None,
+        catalog_interpreter: Interpreter[CatalogPlan] | None = None,
+        catalog: CatalogPlayback | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         intents = discord.Intents.none()
@@ -260,6 +265,13 @@ class SobaFM(discord.Client):
             settings.gemini_model,
         )
         self.pool = SessionPool(settings.max_sessions)
+        self.catalog_interpreter = catalog_interpreter or self.interpreter.for_task(CATALOG_TASK)
+        self.catalog = catalog or (
+            CatalogPlayback(settings.jamendo_client_id)
+            if settings.jamendo_client_id is not None
+            else None
+        )
+        self.credit_views = CreditViews(clock)
         self.stations: dict[int, Station] = {}
         self.audio_ledgers: dict[int, AudioLedger] = {}
         self.catalog_decoder: VerifiedNativeRuntime | None = None
@@ -287,6 +299,7 @@ class SobaFM(discord.Client):
         """End the voice check, recoveries, pending edits of slow-start answers, requests, and
         stations, before disconnecting."""
         self._closing = True
+        self.credit_views.close()
         self.check_voice.cancel()
         for announcement in self.announcements:
             announcement.cancel()
@@ -298,6 +311,8 @@ class SobaFM(discord.Client):
         await asyncio.gather(*(station.close() for station in self.stations.values()))
         self.stations.clear()
         self.station_owners.clear()
+        if self.catalog is not None:
+            await self.catalog.close()
         await super().close()
 
     def station(self, guild: discord.Guild, volume: float) -> Station:
@@ -318,6 +333,11 @@ class SobaFM(discord.Client):
                 statuses=self.statuses_for(guild),
                 audio=self.audio_ledgers.setdefault(guild.id, AudioLedger()),
             )
+            if self.catalog is not None and self.catalog.ready and station.audio.bounded:
+                engine = self.catalog.engine(guild.id, station.audio, station.wake)
+                if engine.audio is not station.audio or engine.mode is not Mode.CATALOG:
+                    raise ValueError("catalog factory must share the station ledger")
+                station.engines[Mode.CATALOG] = engine
             station.start()
             self.stations[guild.id] = station
             self.station_owners[station] = (guild, voice)
@@ -346,6 +366,7 @@ class SobaFM(discord.Client):
 
     async def close_station(self, guild: discord.Guild, outcome: Outcome = Outcome.STOPPED) -> None:
         self.supersede(guild.id, outcome)
+        self.credit_views.close(guild.id)
         if (station := self.stations.pop(guild.id, None)) is not None:
             self.station_owners.pop(station, None)
             await station.close(outcome)
@@ -373,6 +394,7 @@ class SobaFM(discord.Client):
         if station is not None and stale(self.station_owners.get(station)):
             self.stations.pop(guild.id)
             self.station_owners.pop(station, None)
+            self.credit_views.close(guild.id)
             await station.close(Outcome.DISCONNECTED)
 
     def forget_emptied(self, guild: discord.Guild) -> None:
@@ -461,19 +483,40 @@ class SobaFM(discord.Client):
                     return replies[Outcome.STOPPED]
                 if self.get_guild(member.guild.id) is not member.guild:
                     return replies[Outcome.DISCONNECTED]
-            if mode is Mode.CATALOG:
-                return replies[Outcome.UNAVAILABLE]  # catalog command wiring belongs to #128
+            if mode is Mode.CATALOG and (
+                self.settings.jamendo_client_id is None
+                or self.catalog is None
+                or not self.catalog.ready
+            ):
+                return replies[Outcome.UNAVAILABLE]
             station = self.stations.get(member.guild.id)
             current = station.program.plan if station and station.program else None
-            cross_mode = current is not None and not isinstance(current, MusicPlan)
-            result = await self.interpreter.interpret(
-                request, current if isinstance(current, MusicPlan) else None
-            )
+            if mode is Mode.CATALOG:
+                cross_mode = current is not None and not isinstance(current, CatalogPlan)
+                result = await self.catalog_interpreter.interpret(
+                    request, current if isinstance(current, CatalogPlan) else None
+                )
+            else:
+                cross_mode = current is not None and not isinstance(current, MusicPlan)
+                result = await self.interpreter.interpret(
+                    request, current if isinstance(current, MusicPlan) else None
+                )
             settings = await self.store.settings(member.guild.id)
             # No await from this check to the station, so nothing can end the request unseen.
             if interpreting.done():
                 return replies[interpreting.result()]
             if (plan := result.plan) is None:
+                if result.outcome is Interpreted.UNAVAILABLE:
+                    return {
+                        Failure.REJECTED: (
+                            "Google rejected SobaFM's API key; it can't interpret requests."
+                        ),
+                        Failure.EXHAUSTED: "SobaFM's Gemini API quota is used up. Try again later.",
+                        Failure.UNAVAILABLE: (
+                            "Google's music interpretation is unavailable. Try again later."
+                        ),
+                        None: "SobaFM couldn't interpret the catalog request. Nothing changed.",
+                    }[result.failure]
                 return REFUSALS[result.outcome]
             if (
                 self.get_guild(member.guild.id) is not member.guild
@@ -481,10 +524,34 @@ class SobaFM(discord.Client):
                 or voice is None
             ):  # the interpreting request no longer owns this guild/client
                 return replies[Outcome.DISCONNECTED]
-            ends = discord.utils.utcnow() + timedelta(seconds=settings.duration_seconds)
-            started = self.station(member.guild, settings.volume).play(
-                plan, member.mention, duration_seconds=settings.duration_seconds
+            ends = (
+                discord.utils.utcnow() + timedelta(seconds=settings.duration_seconds)
+                if mode is Mode.GENERATED
+                else None
             )
+            station = self.station(member.guild, settings.volume)
+            started = station.play(
+                plan,
+                member.mention,
+                duration_seconds=settings.duration_seconds if mode is Mode.GENERATED else None,
+            )
+            requested = station.program if mode is Mode.CATALOG else None
+
+            def catalog_answer() -> str:
+                heard = station.heard_source
+                if (
+                    requested is None
+                    or self.stations.get(member.guild.id) is not station
+                    or heard is None
+                    or heard.program is not requested
+                    or requested.first_credit is None
+                ):
+                    return "This catalog request is no longer playing. Use /now for current music."
+                direction = shorten_rendered(
+                    f"Now playing {describe(plan, member.mention, None)}", 1100
+                )
+                return direction + "\n" + first_credit(requested.first_credit)
+
             self.supersede_older(member.guild, interpreting)
             try:
                 outcome = await asyncio.wait_for(asyncio.shield(started), START_TIMEOUT_S)
@@ -496,8 +563,14 @@ class SobaFM(discord.Client):
 
                 started.add_done_callback(settled)
                 if announce is not None:
-                    answer = note(
-                        f"Now playing {describe(plan, member.mention, ends)}", result, cross_mode
+                    answer = (
+                        catalog_answer
+                        if mode is Mode.CATALOG
+                        else note(
+                            f"Now playing {describe(plan, member.mention, ends)}",
+                            result,
+                            cross_mode,
+                        )
                     )
                     self.announce_when_settled(started, answer, announce, mode)
                 playing = True
@@ -510,13 +583,15 @@ class SobaFM(discord.Client):
             if not playing:
                 self.free_cooldown(member.guild, cooldown)
         if outcome is Outcome.PLAYING:
+            if mode is Mode.CATALOG:
+                return note(catalog_answer(), result, cross_mode)
             return note(f"Now playing {describe(plan, member.mention, ends)}", result, cross_mode)
         return replies[outcome]
 
     def announce_when_settled(
         self,
         started: asyncio.Future[Outcome],
-        playing: str,
+        playing: str | Callable[[], str],
         announce: Callable[[str], Awaitable[object]],
         mode: Mode,
     ) -> None:
@@ -525,11 +600,16 @@ class SobaFM(discord.Client):
         async def run() -> None:
             outcome = await asyncio.shield(started)  # cancelling this leaves the program alone
             try:
-                await announce(
-                    playing if outcome is Outcome.PLAYING else PLAY_REPLIES[mode][outcome]
+                answer = (
+                    (playing() if callable(playing) else playing)
+                    if outcome is Outcome.PLAYING
+                    else PLAY_REPLIES[mode][outcome]
                 )
+                await announce(answer)
             except Exception:  # the answer is cosmetic, so a failed edit changes nothing else
-                log.warning("Could not update the answer to a slow start", exc_info=True)
+                log.warning(
+                    "Could not update the answer to a slow start", exc_info=mode is Mode.GENERATED
+                )
 
         task = asyncio.create_task(run(), name="announcement")
         self.announcements.add(task)
@@ -560,7 +640,39 @@ class SobaFM(discord.Client):
                 return "Nothing is playing."
             ends = discord.utils.utcnow() + timedelta(seconds=time_left)
         phase = "Now playing" if program.playing else "Starting"
-        return f"{phase} {describe(program.plan, program.requester, ends)}"
+        reply = f"{phase} {describe(program.plan, program.requester, ends)}"
+        heard = station.heard_source
+        if (
+            heard is not None
+            and isinstance(heard.program, Program)
+            and heard.program is not program
+        ):
+            reply += f"\nStill heard: {summary(heard.title, 160)} ({heard.mode.value})."
+        if program.mode is Mode.CATALOG:
+            while len(reply.encode("utf-16-le")) // 2 > 1900:
+                reply = reply[:-1]
+            if (len(reply) - len(reply.rstrip("\\"))) & 1:
+                reply = reply[:-1]
+        return reply
+
+    def credit_snapshot(self, guild: discord.Guild) -> CreditSnapshot | None:
+        station = self.stations.get(guild.id)
+        owner = self.station_owners.get(station) if station is not None else None
+        voice = cast(discord.VoiceClient | None, guild.voice_client)
+        if (
+            station is None
+            or owner is None
+            or owner[0] is not guild
+            or owner[1] is not voice
+            or self.get_guild(guild.id) is not guild
+            or voice is None
+            or not voice.is_connected()
+        ):
+            return None
+        source = station.heard_source
+        if source is None or source.mode is not Mode.CATALOG or source.credits is None:
+            return None
+        return CreditSnapshot(source.credits, source.number, discord.utils.utcnow())
 
     def stop_problem(self, member: discord.Member) -> str | None:
         """Why `member` cannot stop the music, if they cannot."""
@@ -614,6 +726,15 @@ class SobaFM(discord.Client):
         self.catalog_decoder = await prepare_decoder(
             self.settings.native_runtime_root, self.settings.native_registry
         )
+        if self.catalog is None:
+            log.info("Catalog /play omitted: SOBAFM_JAMENDO_CLIENT_ID is not configured")
+        else:
+            self.catalog.runtime = self.catalog_decoder
+            if not self.catalog.ready:
+                log.info(
+                    "Catalog unavailable: approved runtime, containment/audio qualification "
+                    "and complete source notices are required"
+                )
         await self.store.initialize()
         if self.settings.dev_guild_id is None:
             await self.tree.sync()
@@ -640,6 +761,7 @@ class SobaFM(discord.Client):
             self.start_recovery(guild.id)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
+        self.credit_views.close(guild.id)
         await self.store.forget_channel(guild.id)
         self.statuses.pop(guild.id, None)
 
@@ -1005,7 +1127,9 @@ def listeners(guild: discord.Guild) -> int:
     return count
 
 
-def note(reply: str, interpreted: Result, cross_mode: bool = False) -> str:
+def note(
+    reply: str, interpreted: Result[MusicPlan] | Result[CatalogPlan], cross_mode: bool = False
+) -> str:
     """`reply`, saying why the request was used as typed, if it was (AI-4)."""
     if cross_mode:
         reply += "\nRequests start fresh when switching between catalog and generated music."

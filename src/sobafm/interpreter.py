@@ -196,6 +196,10 @@ class Interpreter[P: BaseModel = MusicPlan]:
         self._task = task if task is not None else cast(Task[P], GENERATED_TASK)
         self._config = self._task.config
 
+    def for_task[Q: BaseModel](self, task: Task[Q]) -> Interpreter[Q]:
+        """Reuse the same SDK client/model with an existing validated task policy."""
+        return Interpreter(self._gemini, self._model, task)
+
     async def interpret(self, request: str, current: P | None) -> Result[P]:
         """Interpret `request`, refining `current` when the request is relative to it.
 

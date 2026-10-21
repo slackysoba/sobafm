@@ -32,6 +32,7 @@ class FixtureTrack(FakeSource):
         super().__init__(program)
         self.track = value
         self.title = value.title
+        self.credits = value.credits
 
 
 @dataclass

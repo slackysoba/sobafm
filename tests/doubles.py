@@ -14,7 +14,7 @@ import discord
 from google.genai import errors, types
 
 from sobafm.audio_budget import AudioBytes, AudioLease, AudioLedger
-from sobafm.catalog import CatalogPage, CatalogQuery, CatalogTrack
+from sobafm.catalog import CatalogPage, CatalogQuery, CatalogTrack, CreditRecord
 from sobafm.lyria_engine import SessionPool
 from sobafm.mixer import Mixer
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, MIME_TYPE
@@ -37,6 +37,7 @@ class FakeSource:
         self.state = State.GENERATING
         self.completed = False
         self.failure: Outcome | None = None
+        self.credits: CreditRecord | None = None
         self.retired = False
         self.hold_cleanup = False
         self._ended = asyncio.Event()

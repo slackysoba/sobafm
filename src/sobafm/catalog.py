@@ -14,7 +14,10 @@ MAX_CREDIT_BYTES = 32 * 1024
 MAX_CREDIT_UNITS = 16_000
 PAGE_UNITS = 1900
 MAX_CREDIT_PAGES = 10
-MARKUP = re.compile(r"[\\*_~|`<\[\]:.\u3002\uff0e\uff61]")
+PAGE_LABEL_UNITS = 200
+MAX_CREDIT_HEADER = 140
+EXPIRED_CREDITS = "Snapshot; use /now again when controls expire."
+MARKUP = re.compile(r"[\\*_~|`<\[\]:.\u3002\uff0e\uff61#>+-]")
 
 
 def _text(value: str) -> str:
@@ -189,7 +192,10 @@ class Notice(Model):
 
 
 def _units(value: str) -> int:
-    return len(value.encode("utf-16-le")) // 2
+    try:
+        return len(value.encode("utf-16-le")) // 2
+    except UnicodeError:
+        raise ValueError("invalid credit text") from None
 
 
 def _escape(value: str) -> str:
@@ -232,33 +238,60 @@ class CreditRecord(Model):
             ),
         )
 
+    def pages(self, header: str) -> tuple[str, ...]:
+        """Complete pages, keeping validated links and escaped text tokens intact."""
+        if _units(header) > MAX_CREDIT_HEADER:
+            raise ValueError("credit header exceeds bound")
+        capacity = PAGE_UNITS - PAGE_LABEL_UNITS
+        bodies: list[str] = []
+        current = ""
+        for block in self.blocks():
+            if "](<" in block:
+                if _units(block) > capacity:
+                    raise ValueError("credit link exceeds page bound")
+                if current and _units(current) + 1 + _units(block) > capacity:
+                    bodies.append(current)
+                    current = ""
+                current += ("\n" if current else "") + block
+                continue
+            remaining = ("\n" if current else "") + block
+            while remaining:
+                available = capacity - _units(current)
+                end, used = 0, 0
+                while end < len(remaining):
+                    stop = end + (2 if remaining[end] == "\\" and end + 1 < len(remaining) else 1)
+                    width = _units(remaining[end:stop])
+                    if used + width > available:
+                        break
+                    used, end = used + width, stop
+                current += remaining[:end]
+                remaining = remaining[end:]
+                if remaining:
+                    bodies.append(current)
+                    current = ""
+        if current:
+            bodies.append(current)
+        if len(bodies) > MAX_CREDIT_PAGES:
+            raise ValueError("credit record exceeds page bound")
+        pages = tuple(
+            f"{header}\nPage {index}/{len(bodies)}\n{body}\n{EXPIRED_CREDITS}"
+            for index, body in enumerate(bodies, 1)
+        )
+        if (
+            any(_units(page) > PAGE_UNITS for page in pages)
+            or sum(_units(page) for page in pages) > MAX_CREDIT_UNITS
+        ):
+            raise ValueError("credit record exceeds rendering bound")
+        return pages
+
     @model_validator(mode="after")
     def complete_bounds(self) -> Self:
         if f"https://www.jamendo.com/track/{self.track_id}" not in self.source_urls:
             raise ValueError("credit sources must include the exact track")
         if len(self.model_dump_json().encode("utf-8")) > MAX_CREDIT_BYTES:
             raise ValueError("credit record exceeds raw bound")
-        blocks = self.blocks()
-        if _units("\n".join(blocks)) > MAX_CREDIT_UNITS:
-            raise ValueError("credit record exceeds rendering bound")
-        # Reserve space for the caller-bound view's song/snapshot/page labels. Text can wrap across
-        # pages; links are whole blocks and must never be split by the eventual view renderer.
-        pages, used = 1, 0
-        for block in blocks:
-            remaining = _units(block) + 1
-            while remaining:
-                available = PAGE_UNITS - 200 - used
-                if available == 0:
-                    pages, used = pages + 1, 0
-                    continue
-                take = min(remaining, available)
-                if "](<" in block and take < remaining:
-                    pages, used = pages + 1, 0
-                    continue
-                used += take
-                remaining -= take
-            if pages > MAX_CREDIT_PAGES:
-                raise ValueError("credit record exceeds page bound")
+        # Include the complete worst-case labels, not just the escaped notice body.
+        self.pages("x" * MAX_CREDIT_HEADER)
         return self
 
 

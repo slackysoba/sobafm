@@ -5,6 +5,7 @@ from collections import deque
 from enum import StrEnum
 from typing import Protocol
 
+from sobafm.catalog import CreditRecord
 from sobafm.program import Mode, Program
 
 _numbers = itertools.count(1)
@@ -22,6 +23,9 @@ class State(StrEnum):
 
 
 class Source(Protocol):
+    @property
+    def credits(self) -> CreditRecord | None: ...
+
     @property
     def frames(self) -> deque[bytes]: ...
 

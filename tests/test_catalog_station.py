@@ -9,6 +9,7 @@ from sobafm.program import Outcome
 from sobafm.station import Station
 from sobafm.status import Statuses
 from tests.doubles import FakePlayer, settle
+from tests.test_catalog import credit, discovered
 from tests.test_catalog_engine import PLAN, FixtureTrack, Rig, rig, track
 
 
@@ -72,12 +73,56 @@ async def test_real_engine_prefetches_one_and_commits_only_the_actual_incoming_r
     assert r.station.heard_source is first
     await r.tick()
     assert r.station.heard_source is second
+    assert r.station.program is not None
+    assert r.station.program.first_credit is first.credits
     assert first.retired
     assert r.selection.history.excludes(second.track)
     await r.select()
     assert len(r.selection.made) == 3
     r.station.stop()
     assert r.station.mixer.read() == SILENCE
+    await r.station.close()
+
+
+async def test_credit_status_follow_accepted_pcm_and_keep_first_reply_snapshot() -> None:
+    first_track = track(1)
+    second_track = track(2)
+    r = playback(rig((first_track,), (second_track,)))
+    statuses: list[str | None] = []
+
+    async def show(channel: int, status: str | None) -> bool:
+        statuses.append(status)
+        return False  # missing optional status permission never changes audio
+
+    r.station.statuses = Statuses(lambda: 10, show, clock=r.selection.clock)
+    started = r.station.play(PLAN, "Member")
+    first = await r.select()
+    first.send_audio(6)
+    await r.tick()
+    assert r.station.program is not None
+    program = r.station.program
+    assert program.first_credit is None
+    assert r.station.heard_source is None
+    r.station.mixer.read()
+    await r.tick()
+    assert started.result() is Outcome.PLAYING
+    assert program.first_credit is first.credits
+    second = await r.select()
+    assert r.station.heard_source is first
+    second.send_audio(6, sample=1234)
+    first.finish()
+    second.finish()
+    await r.tick()
+    for _ in range(299):
+        r.station.mixer.read()
+    r.station.mixer.read()  # actual incoming PCM, not an event-loop prediction
+    assert r.station.heard_source is first
+    await r.tick()
+    assert r.station.heard_source is second
+    assert program.first_credit is first.credits
+    assert second.credits is not None
+    assert f"{second.title} — {second.credits.artist}" in statuses
+    assert program.playing
     await r.station.close()
 
 
@@ -101,4 +146,32 @@ async def test_metadata_failure_restores_the_existing_program_without_a_failed_s
     assert r.station.program is previous
     assert r.station.heard_source is first
     assert all(source.program is not requested for source in r.selection.made)
+    await r.station.close()
+
+
+async def test_status_counts_utf16_without_changing_full_credit() -> None:
+    value = discovered(title="🙂" * 200, artist="🎵" * 200)
+    record = credit(title=value.title, artist=value.artist)
+    r = playback(rig((value.with_credits(record),)))
+    statuses: list[str | None] = []
+
+    async def show(channel: int, status: str | None) -> bool:
+        statuses.append(status)
+        return True
+
+    r.station.statuses = Statuses(lambda: 10, show, clock=r.selection.clock)
+    started = r.station.play(PLAN, "Member")
+    source = await r.select()
+    source.send_audio(6)
+    await r.tick()
+    r.station.mixer.read()
+    await r.tick()
+    assert started.result() is Outcome.PLAYING
+    actual = next(status for status in statuses if status is not None)
+    assert len(actual.encode("utf-16-le")) // 2 <= 500
+    assert actual.startswith(value.title)
+    assert r.station.heard_source is source
+    assert source.credits == record
+    assert source.credits is not None
+    assert source.credits.artist == "🎵" * 200
     await r.station.close()

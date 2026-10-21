@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import aiohttp
 import discord
@@ -178,9 +178,9 @@ async def bot(
     return bot
 
 
-@pytest.fixture(params=["freestyle", "play"])
+@pytest.fixture(params=["freestyle"])
 def command_name(request: pytest.FixtureRequest) -> str:
-    """The generated command and its temporary compatibility alias."""
+    """The generated command; /play now has separate catalog coverage."""
     return cast(str, request.param)
 
 
@@ -251,7 +251,7 @@ def test_commands_are_for_server_managers_in_servers_only(bot: SobaFM, name: str
     assert payload["default_member_permissions"] == discord.Permissions(manage_guild=True).value
 
 
-@pytest.mark.parametrize("name", ["play", "freestyle", "stop"])
+@pytest.mark.parametrize("name", ["freestyle", "stop"])
 def test_music_commands_are_for_every_member_in_servers_only(bot: SobaFM, name: str) -> None:
     command = bot.tree.get_command(name)
     assert command is not None
@@ -286,7 +286,6 @@ def test_generated_command_describes_provider_use_and_bounds_the_request(
     assert {command.name for command in bot.tree.get_commands()} == {
         "join",
         "leave",
-        "play",
         "freestyle",
         "now",
         "stop",
@@ -2479,7 +2478,7 @@ async def test_play_reports_a_rejected_key_once_lyria_rejects_it_too(
 @pytest.mark.parametrize("mode", list(Mode))
 def test_each_cause_has_its_own_reply(mode: Mode) -> None:
     replies = PLAY_REPLIES[mode]
-    assert "API key" in replies[Outcome.REJECTED]
+    assert ("API key" if mode is Mode.GENERATED else "client id") in replies[Outcome.REJECTED]
     assert "quota" in replies[Outcome.EXHAUSTED]
     assert "available" in replies[Outcome.UNAVAILABLE]
     causes = [Outcome.REJECTED, Outcome.EXHAUSTED, Outcome.UNAVAILABLE, Outcome.FAILED]
@@ -3321,7 +3320,7 @@ async def test_generated_commands_share_the_change_cooldown(
     first = make_interaction(member)
     second = make_interaction(member)
     command: Any = bot.tree.get_command(command_name)
-    other: Any = bot.tree.get_command("play" if command_name == "freestyle" else "freestyle")
+    other: Any = bot.tree.get_command("freestyle")
 
     await command.callback(first, request="ambient")
     await other.callback(second, request="piano")
@@ -3334,7 +3333,7 @@ async def test_generated_commands_share_the_change_cooldown(
     second.response.defer.assert_not_awaited()
 
 
-async def test_newer_generated_command_supersedes_the_other_alias(
+async def test_newer_generated_command_supersedes_the_older_request(
     bot: SobaFM, gemini: FakeGemini, monkeypatch: pytest.MonkeyPatch, command_name: str
 ) -> None:
     guild = make_guild()
@@ -3348,7 +3347,7 @@ async def test_newer_generated_command_supersedes_the_other_alias(
     held = gemini.held = asyncio.Event()
     older_interaction = make_interaction(member)
     command: Any = bot.tree.get_command(command_name)
-    other: Any = bot.tree.get_command("play" if command_name == "freestyle" else "freestyle")
+    other: Any = bot.tree.get_command("freestyle")
     older = asyncio.create_task(command.callback(older_interaction, request="jazz"))
     await settle()
     assert len(gemini.calls) == 1
@@ -3539,9 +3538,14 @@ async def test_now_command_replies_privately(bot: SobaFM, monkeypatch: pytest.Mo
 
     await command.callback(interaction)
 
-    interaction.response.send_message.assert_awaited_once_with(
-        "Nothing is playing.", ephemeral=True, suppress_embeds=True
+    interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+    interaction.followup.send.assert_awaited_once_with(
+        "Nothing is playing.",
+        ephemeral=True,
+        suppress_embeds=True,
+        allowed_mentions=ANY,
     )
+    assert interaction.followup.send.call_args.kwargs["allowed_mentions"].to_dict()["parse"] == []
 
 
 async def test_stop_command_replies_privately(bot: SobaFM, monkeypatch: pytest.MonkeyPatch) -> None:
