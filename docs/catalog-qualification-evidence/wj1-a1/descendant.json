@@ -1,0 +1,18 @@
+{
+  "case": "descendant",
+  "status": "pass",
+  "reason": "none",
+  "elapsed_ms": 776.824,
+  "prebind_write_refused": true,
+  "bound": true,
+  "descendant_positive_control": true,
+  "exit_status": 0,
+  "production_failure": null,
+  "cleanup_decision_ms": 12.805,
+  "cleanup_deadline_failed": false,
+  "child_slot_released": true,
+  "pipe_handles_closed": true,
+  "job_handle_closed": true,
+  "complete_audio_lease_still_charged": true,
+  "catalog_ready": false
+}

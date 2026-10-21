@@ -1,0 +1,13 @@
+{
+  "utc": "2026-10-21T07:09:12.6551438Z",
+  "scope": "read-only fixture executable prerequisite, not WJ1 execution",
+  "fixture_executable_sha256": "4942b86a6597e5aee0128daa00050ed79bc21f6e709a78eb19cbfeb0c2f39ac9",
+  "signature_valid": true,
+  "expected_publisher": true,
+  "product_version": "3.14.7",
+  "expected_version": true,
+  "windows_amd64_executable": true,
+  "host_hardware_qualification": false,
+  "fixture_children_started": 0,
+  "catalog_ready": false
+}

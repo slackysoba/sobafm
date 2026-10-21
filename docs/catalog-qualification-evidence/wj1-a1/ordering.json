@@ -1,0 +1,18 @@
+{
+  "case": "ordering",
+  "status": "pass",
+  "reason": "none",
+  "elapsed_ms": 433.202,
+  "prebind_write_refused": true,
+  "bound": true,
+  "descendant_positive_control": null,
+  "exit_status": 0,
+  "production_failure": "output",
+  "cleanup_decision_ms": 3.621,
+  "cleanup_deadline_failed": false,
+  "child_slot_released": true,
+  "pipe_handles_closed": true,
+  "job_handle_closed": true,
+  "complete_audio_lease_still_charged": true,
+  "catalog_ready": false
+}

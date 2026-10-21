@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "issue": 175,
-  "checkpoint": "source-audit-before-native-measurement",
+  "checkpoint": "source-audit-and-wj1-mechanism-observation",
   "base_commit": "4fc157559a1036a4e5e3f20ec0591c8000df3541",
   "base_tree": "6b77282c0579d323c74ece1a7ba82ea090e86443",
   "overall": "incomplete",
@@ -9,10 +9,34 @@
   "shipping_qualified": false,
   "qualified_audio_envelope": null,
   "qualified_catalog_capacity_bytes": null,
-  "new_native_measurements": 0,
+  "new_native_measurements": 3,
   "provider_calls": 0,
   "provider_call_budget": 0,
-  "owned_fixture_bytes_executed": 0,
+  "owned_audio_fixture_bytes_executed": 0,
+  "owned_python_fixture_cases_executed": 3,
+  "windows_mechanism": {
+    "protocol": "WJ1",
+    "attempt_budget_consumed": true,
+    "scope": "owned_python_windows_job_child_and_trackdeck_failure_cleanup_only",
+    "evidence_directory": "catalog-qualification-evidence/wj1-a1",
+    "execution_source_commit": "4fc157559a1036a4e5e3f20ec0591c8000df3541",
+    "retained_source_snapshot_commit": "97c99f53cefc10677d8b5d4fd338ae5bda6a1b2b",
+    "source_snapshot_created_after_execution": true,
+    "all_15_snapshot_byte_hashes_match": true,
+    "fixture_executable_sha256": "4942b86a6597e5aee0128daa00050ed79bc21f6e709a78eb19cbfeb0c2f39ac9",
+    "cases": [
+      {"case": "ordering", "status": "pass", "cleanup_decision_ms": 3.621},
+      {"case": "memory", "status": "pass", "cleanup_decision_ms": 1.244},
+      {"case": "descendant", "status": "pass", "cleanup_decision_ms": 12.805}
+    ],
+    "source_unchanged_during_execution": true,
+    "actual_cleanup_owners_finished": true,
+    "fixture_audio_leases_retained": true,
+    "ffmpeg_qualified": false,
+    "host_hardware_qualified": false,
+    "full_audio_envelope_qualified": false,
+    "complete_cleanup_matrix_qualified": false
+  },
   "platforms": [
     {
       "target": "linux-amd64",

@@ -73,6 +73,17 @@ discard policy, numerical waiver or readiness toggle is selected by this audit.
 
 ## Finite protocol WJ1: owned Windows boundary fixtures
 
+The single reviewed WJ1 batch is now **executed and consumed**. Its fixed-case
+results are below; this section retains the protocol, not authorization to rerun
+it. The original pre-execution protocol and source are preserved byte-for-byte in
+snapshot commit `97c99f53cefc10677d8b5d4fd338ae5bda6a1b2b` (tree
+`7751c4fa952ce6715b261b0373e614975001d381`). That snapshot commit was created
+after execution to preserve the already-reviewed staged tree; it is not a new
+execution identity. The actual execution records base `4fc15755` plus exact file
+hashes. [Source binding](catalog-qualification-evidence/wj1-a1/source-snapshot.json)
+verifies all fifteen executed source/protocol hashes against the snapshot's
+actual Git bytes.
+
 Purpose: measure the production `WindowsJob`, `Child.bind/write`, process-tree and
 pipe-release adapters with new owned Python fixtures on the current native
 Windows x86-64 source host. This is a mechanism check. It cannot qualify FFmpeg,
@@ -143,6 +154,54 @@ Do not let `asyncio.run` tear down a pending owner. If release remains uncertain
 leave that owner active and require attention; never report a final release file.
 A safety failure is not permission to continue with more cases.
 
+### Observed WJ1 result and limits
+
+The [execution receipt](catalog-qualification-evidence/wj1-a1/execution-tool.json)
+records one batch at 07:20:36–07:20:43 UTC on 21 October 2026, exit zero. The
+[identity](catalog-qualification-evidence/wj1-a1/identity.json),
+[runtime preflight](catalog-qualification-evidence/wj1-a1/runtime-preflight.json),
+[independent pre-execution review](catalog-qualification-evidence/wj1-a1/pre-execution-review.md)
+and its [23-file index](catalog-qualification-evidence/wj1-a1/pre-execution-index.json)
+are retained. The author read the full review/index and verified all 23 pins before
+execution. Prior blocked reviews retain their original findings and snapshots.
+The committed JSON records use UTF-8/LF formatting. The
+[projection manifest](catalog-qualification-evidence/wj1-a1/projection-manifest.json)
+binds each actual original and public byte identity and verifies identical parsed
+values. Original local records remain unchanged; formatting does not transfer an
+artifact identity or create a new execution.
+
+| Fixed case | Actual outcome | Observed cleanup decision |
+| --- | --- | ---: |
+| [ordering](catalog-qualification-evidence/wj1-a1/ordering.json) | Pre-bind write refused; assigned input produced expected invalid-PCM `output` failure | 3.621 ms |
+| [memory](catalog-qualification-evidence/wj1-a1/memory.json) | The 144MiB allocation was refused inside the 128MiB Job; helper exited 23 and TrackDeck failed `decoder` | 1.244 ms |
+| [descendant](catalog-qualification-evidence/wj1-a1/descendant.json) | Live post-leader descendant and inherited pipes positively observed; intentional retirement cleaned the owned tree | 12.805 ms |
+
+All three cases observed released child slots and actual pipe/Job handle closure
+while retaining their synthetic complete-audio leases. The
+[final observation](catalog-qualification-evidence/wj1-a1/finished.json) records
+unchanged executed source and finished cleanup owners. These are individual
+observations on the fixed Python cases. They are not a general three-second
+guarantee, an FFmpeg containment/completion result, measured audio headroom,
+clean installation, native hardware/platform coverage or production readiness.
+No audio/provider input was used. The complete native cleanup matrix, repeated
+native cancellation and all other installation rows remain unqualified.
+
+Offline failures are retained separately from this native result. The first
+focused correction round exposed the old final-padding test's 30ms fill
+assumption (281 rather than 300 frames); its deadline now expires only after
+the actual padding wait is reached. A later full offline run retained
+1,721 passes and one failure when 191,996 one-byte fake reads exceeded the
+test helper's five-second guard. The split fixture now uses two frames while
+retaining every split size and exact tail-padding comparison. An attempted
+fractional-duration fixture was rejected by the integer metadata schema in six
+cases; that correction attempt is also preserved. The final fixture uses valid
+whole-second metadata within the unchanged one-second completion allowance.
+No schema, production timing or decoder behavior was changed.
+
+The smaller split fixture was corrected **after** WJ1. The WJ1 observation stays
+bound to its executed snapshot; it is not relabeled as an execution of later
+test/document bytes. No native replay is needed to preserve a historical result.
+
 ## Decoder and complete-audio follow-through
 
 The following is a finite candidate matrix for a later reviewed batch, **not
@@ -189,7 +248,7 @@ If a finite bound or release signal is missing, retain unknown debt and no-go.
 | --- | --- |
 | Linux x86-64 source | Incomplete: no new exact-source native decoder/resource result |
 | Native Linux ARM64 source | Incomplete: no native ARM64 host bound to this protocol |
-| Windows x86-64 source | Incomplete: WJ1 mechanism pilot, if executed, covers only its fixed Python fixtures; decoder/audio/clean installation remain open |
+| Windows x86-64 source | Incomplete: WJ1 passed only its fixed Python mechanism cases; decoder/audio/clean installation and native hardware qualification remain open |
 | Linux x86-64 image | Incomplete: no application qualification with delegated child cgroup and complete accounting |
 | Native Linux ARM64 image | Incomplete: emulated ordinary CI does not qualify this installation |
 

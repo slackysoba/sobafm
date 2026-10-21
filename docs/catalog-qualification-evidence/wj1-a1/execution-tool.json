@@ -1,0 +1,19 @@
+{
+  "started_utc": "2026-10-21T07:20:36.1257304Z",
+  "finished_utc": "2026-10-21T07:20:43.1199962Z",
+  "argv": [
+    "uv",
+    "run",
+    "--no-env-file",
+    "python",
+    "-m",
+    "scripts.qualify_catalog_boundary",
+    "--execute-wj1",
+    "--output",
+    ".local/issue175-qualification-20261021-a1/wj1-execution-a1"
+  ],
+  "exit_code": 0,
+  "native_case_attempt_budget": 3,
+  "provider_calls": 0,
+  "catalog_ready": false
+}

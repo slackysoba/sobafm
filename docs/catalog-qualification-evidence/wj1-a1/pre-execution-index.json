@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "reviewer": "independent /root/review_175_protocol",
+  "stage": "exact-byte static executable review a2",
+  "source_commit": "4fc157559a1036a4e5e3f20ec0591c8000df3541",
+  "source_tree": "6b77282c0579d323c74ece1a7ba82ea090e86443",
+  "new_native_measurements": 0,
+  "provider_calls": 0,
+  "reviewer_test_runs": 0,
+  "files": [
+    {
+      "path": "docs/catalog-qualification.md",
+      "bytes": 18410,
+      "sha256": "bd5bfe0d2ee3b68d024916cbe645ffb2479063d622abf7937593e4d645098393"
+    },
+    {
+      "path": "docs/catalog-qualification-results.json",
+      "bytes": 2224,
+      "sha256": "348beb283d125996ca5d9d6252fb1127933cf3ba5a42457e25402e42053fdb1d"
+    },
+    {
+      "path": "scripts/qualify_catalog_boundary.py",
+      "bytes": 16411,
+      "sha256": "cad70ce80eb7676c2840b73f03b12252591328480b79df28b41e18d797680d38"
+    },
+    {
+      "path": "scripts/catalog_boundary_fixture.py",
+      "bytes": 1422,
+      "sha256": "f09d7e6d7da34a9387575e6b3d3f089ef45f8bd7b3aa0ec01341046af02a6464"
+    },
+    {
+      "path": "tests/test_catalog_boundary_qualification.py",
+      "bytes": 7613,
+      "sha256": "4511fac677649b50854f704e4733183dca9f59b4bd94fc1dfda43dcf89f6e277"
+    },
+    {
+      "path": "tests/test_track_deck.py",
+      "bytes": 20634,
+      "sha256": "dd6a104f1666a93cef40b4e55286a1ae70e6ce2bbe754fbb856eff0436d02359"
+    },
+    {
+      "path": "src/sobafm/decoder_process.py",
+      "bytes": 14082,
+      "sha256": "02b48657b28d94a6c2f3ea0909839889e03fb1aad11c1fcc69377991acd2d7d4"
+    },
+    {
+      "path": "src/sobafm/track_deck.py",
+      "bytes": 24313,
+      "sha256": "1436c0509f9f130d0f3437df0620c5dcd49f43fe9d2a8275490f53ef3b595fd0"
+    },
+    {
+      "path": "src/sobafm/audio_budget.py",
+      "bytes": 3749,
+      "sha256": "6532d955d566922d411c19e8a080eaae0b555ecd8da7af0be86a40e816da1247"
+    },
+    {
+      "path": "src/sobafm/catalog_audio.py",
+      "bytes": 5175,
+      "sha256": "76401dabe95619836ada356f708205560a5ec3a07cf210886a71e735d07fadb8"
+    },
+    {
+      "path": "src/sobafm/catalog.py",
+      "bytes": 12968,
+      "sha256": "7219a32e4195cfe87ab844d83154d6e362f231865fd2356e6f96e498a91393c8"
+    },
+    {
+      "path": "src/sobafm/program.py",
+      "bytes": 2088,
+      "sha256": "50f659b062548448f98871191e4c86a02d7f6c2aa53e7a0765cf2e2eecf4a3a8"
+    },
+    {
+      "path": "src/sobafm/source.py",
+      "bytes": 1517,
+      "sha256": "479f84fe794dc0a2463910d5995e3a14de0b41ccdedf3958882c6767c2d4f4f6"
+    },
+    {
+      "path": "src/sobafm/pcm.py",
+      "bytes": 1769,
+      "sha256": "5913a6fef58eeb67c097702317fccd47aba092540216463d4af489cdccddda8b"
+    },
+    {
+      "path": "src/sobafm/native.py",
+      "bytes": 15408,
+      "sha256": "cbf784a99da124960de8855db1f7d58cb7529d2625101fe65d7b276cda85afdd"
+    },
+    {
+      "path": "src/sobafm/decoder_check.py",
+      "bytes": 10463,
+      "sha256": "b8b6b06b7d7fcfcd75f3fb4215ea5cdf6d2f5837d8d03eebd9fa5beca002a224"
+    },
+    {
+      "path": "src/sobafm/catalog_interpreter.py",
+      "bytes": 4750,
+      "sha256": "c881a0fe69846cf9f015fce0ae6833ff35945706aa3e9bf2e7b15f1d8fa2821b"
+    },
+    {
+      "path": "tests/test_catalog.py",
+      "bytes": 7493,
+      "sha256": "427fdb943eda31b3ea4eb8fbbd4bea03169c001f3f44b2cbecbe0ddd92fc87b2"
+    },
+    {
+      "path": "tests/test_decoder_check.py",
+      "bytes": 12401,
+      "sha256": "1db3f475d86252077c4074427819064d5806aca37a099a7113a1be0c7d0754e4"
+    },
+    {
+      "path": "uv.lock",
+      "bytes": 269598,
+      "sha256": "b180a6d593137f10108a1f670b4bdd8047b5bd7598f3898f20a02b6258e99bbd"
+    },
+    {
+      "path": ".local/issue175-qualification-20261021-a1/wj1-runtime-preflight-a1.json",
+      "bytes": 482,
+      "sha256": "3409f67c21c6e89d0ad86e5bc2974693b30d9f090a7edcd6b9453aceebf82398"
+    },
+    {
+      "path": ".local/issue175-qualification-20261021-a1/runner-offline-a5.log",
+      "bytes": 183,
+      "sha256": "f3c9a1d553714f391b88a4dfacdebeae7e49b5a06abb93bd6fc0d36616265bd9"
+    },
+    {
+      "path": ".local/issue175-qualification-20261021-a1/runner-types-a5.log",
+      "bytes": 38,
+      "sha256": "c584b21ee012de391dc2799d5455db619d3fefbb192ab07ea4ba83fb0d704c14"
+    }
+  ]
+}

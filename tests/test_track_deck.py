@@ -225,13 +225,17 @@ async def test_verified_short_complete_is_ready_then_audibly_drained(tmp_path: P
 async def test_arbitrary_pipe_splits_and_one_verified_final_padding(
     tmp_path: Path, split: int
 ) -> None:
-    raw = bytes(BYTES_PER_SECOND - 4)
+    # Two frames cover every split and final sample without 192,000 scheduled
+    # one-byte reads turning this framing check into a throughput deadline.
+    raw = bytes(2 * FRAME_BYTES - 4)
+    # Catalog durations are whole seconds; this strict short output is within
+    # the existing one-second completion allowance, with both EOFs verified.
     rig = Rig(tmp_path, seconds=1, output=raw)
     rig.child.split = split
     rig.deck.start()
     await settle(rig)
     assert rig.deck.completed
-    assert len(rig.deck.frames) == 50
+    assert len(rig.deck.frames) == 2
     assert all(len(frame) == FRAME_BYTES for frame in rig.deck.frames)
     assert b"".join(rig.deck.frames) == raw + bytes(4)
 

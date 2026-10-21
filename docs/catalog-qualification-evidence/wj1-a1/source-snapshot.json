@@ -1,0 +1,86 @@
+{
+  "actual_git_commit_during_execution": "4fc157559a1036a4e5e3f20ec0591c8000df3541",
+  "source_snapshot_commit": "97c99f53cefc10677d8b5d4fd338ae5bda6a1b2b",
+  "snapshot_commit_created_after_execution": true,
+  "source_snapshot_tree": "7751c4fa952ce6715b261b0373e614975001d381",
+  "meaning": "The later local commit preserves the already-reviewed staged bytes; it is not a new execution identity.",
+  "files": [
+    {
+      "path": "docs/catalog-qualification.md",
+      "sha256": "bd5bfe0d2ee3b68d024916cbe645ffb2479063d622abf7937593e4d645098393",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "scripts/qualify_catalog_boundary.py",
+      "sha256": "cad70ce80eb7676c2840b73f03b12252591328480b79df28b41e18d797680d38",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "scripts/catalog_boundary_fixture.py",
+      "sha256": "f09d7e6d7da34a9387575e6b3d3f089ef45f8bd7b3aa0ec01341046af02a6464",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "src/sobafm/decoder_process.py",
+      "sha256": "02b48657b28d94a6c2f3ea0909839889e03fb1aad11c1fcc69377991acd2d7d4",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "src/sobafm/track_deck.py",
+      "sha256": "1436c0509f9f130d0f3437df0620c5dcd49f43fe9d2a8275490f53ef3b595fd0",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "src/sobafm/audio_budget.py",
+      "sha256": "6532d955d566922d411c19e8a080eaae0b555ecd8da7af0be86a40e816da1247",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "src/sobafm/catalog_audio.py",
+      "sha256": "76401dabe95619836ada356f708205560a5ec3a07cf210886a71e735d07fadb8",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "src/sobafm/catalog.py",
+      "sha256": "7219a32e4195cfe87ab844d83154d6e362f231865fd2356e6f96e498a91393c8",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "src/sobafm/program.py",
+      "sha256": "50f659b062548448f98871191e4c86a02d7f6c2aa53e7a0765cf2e2eecf4a3a8",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "src/sobafm/source.py",
+      "sha256": "479f84fe794dc0a2463910d5995e3a14de0b41ccdedf3958882c6767c2d4f4f6",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "src/sobafm/pcm.py",
+      "sha256": "5913a6fef58eeb67c097702317fccd47aba092540216463d4af489cdccddda8b",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "tests/test_track_deck.py",
+      "sha256": "dd6a104f1666a93cef40b4e55286a1ae70e6ce2bbe754fbb856eff0436d02359",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "tests/test_catalog.py",
+      "sha256": "427fdb943eda31b3ea4eb8fbbd4bea03169c001f3f44b2cbecbe0ddd92fc87b2",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "tests/test_decoder_check.py",
+      "sha256": "1db3f475d86252077c4074427819064d5806aca37a099a7113a1be0c7d0754e4",
+      "matches_executed_bytes": true
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "b180a6d593137f10108a1f670b4bdd8047b5bd7598f3898f20a02b6258e99bbd",
+      "matches_executed_bytes": true
+    }
+  ],
+  "all_15_snapshot_byte_hashes_match": true,
+  "catalog_ready": false
+}
