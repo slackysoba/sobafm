@@ -278,6 +278,27 @@ assembly spike does not qualify complete audio envelopes or prove storage releas
 all source, SDK, transport, player, native and cleanup obligations remain charged
 under the shared accounting contract. Production catalog trust remains empty.
 
+### Bounded Lyria ingress failure
+
+The [maintainer choice on #203](https://github.com/slackysoba/sobafm/issues/203#issuecomment-6315404910)
+is recorded in [ADR-0008](decisions/0008-fail-lyria-producers-at-qualified-ingress-bounds.md).
+Its status is **Accepted on merge of PR #206; Proposed until then**. This
+documentation implements no runtime change. The exceptional target permits
+explicit producer failure before accepting input beyond a complete,
+derived and pre-reserved ingress allowance after pause. Keep already-admitted
+PCM under the existing playout/spare rules and recover through ordinary failure,
+retry and fade handling; do not silently trim frames or discard a ready fallback.
+
+A future implementation must establish a supported transport/configuration seam
+and reserve raw input, TLS/socket/JSON/decode queues, copies and overshoot before
+retention. The locked whole-message SDK receive path and a pause call alone do
+not supply that proof. Preserve admissible paused-session close observation;
+the exceptional terminal path need not await a close hidden behind unadmitted
+backlog. No numerical ingress limit, private SDK/custom transport, production
+implementation or catalog readiness is selected here. The normal constants,
+strict shared byte limits, single original three-second cleanup budget and
+actual-release debt remain unchanged. Unknown obligations stay fail-closed.
+
 ### Station reconcile loop
 
 A station stores desired, heard and retained previous program identity. Its

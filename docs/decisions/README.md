@@ -26,3 +26,4 @@ Each record captures one material decision: its context, the options considered,
 | [0005](0005-release-images-with-github-actions-and-artifact-attestations.md) | Release images with GitHub Actions and artifact attestations | Accepted |
 | [0006](0006-play-catalog-and-generated-music-in-one-station.md) | Play catalog and generated music in one station | Accepted on merge of PR #156; proposed until then |
 | [0007](0007-bound-catalog-audio-decoding.md) | Decode catalog audio through a supervised FFmpeg child | Accepted |
+| [0008](0008-fail-lyria-producers-at-qualified-ingress-bounds.md) | Fail Lyria producers at qualified ingress bounds | Accepted on merge of PR #206; Proposed until then |
