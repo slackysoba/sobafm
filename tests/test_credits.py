@@ -257,36 +257,84 @@ async def test_held_edit_and_acknowledgement_are_both_owned_until_expiry(
 
 
 @pytest.mark.parametrize("path", ["first defer", "busy defer", "rejection"])
-async def test_every_acknowledgement_uses_remaining_original_deadline(path: str) -> None:
-    owner = CreditViews()
+async def test_every_acknowledgement_uses_remaining_original_deadline(
+    path: str, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = CreditViews(clock)
     view = owner.create(1, 2, snapshot())
-    view.deadline = owner.clock() + 0.02
     deadline = view.deadline
+    clock.now = 180.0
+    remaining = 420.0
     call = interaction(caller=3 if path == "rejection" else 2)
-    entered = asyncio.Event()
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+    delivered: list[bool] = []
+    pending: asyncio.Task[Any] | None = None
+    busy_owner = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+    real_timeout = asyncio.timeout
+    captured: list[tuple[asyncio.Timeout, float, float]] = []
+
+    def capture_timeout(delay: float | None) -> asyncio.Timeout:
+        before = loop.time()
+        context = real_timeout(delay)
+        # Keep watchdogs real, and capture only this callback's actual context.
+        if asyncio.current_task() is pending:
+            captured.append((context, before, loop.time()))
+        return context
 
     async def held(*args: object, **kwargs: object) -> None:
         entered.set()
-        await asyncio.Event().wait()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        delivered.append(True)
 
-    if path == "rejection":
-        call.response.send_message.side_effect = held
-        pending = asyncio.create_task(view.interaction_check(call))
-    else:
-        call.response.defer.side_effect = held
+    monkeypatch.setattr(asyncio, "timeout", capture_timeout)
+    response = call.response.send_message if path == "rejection" else call.response.defer
+    response.side_effect = held
+    try:
+        assert deadline == 600.0
+        assert deadline - clock() == remaining
+        assert busy_owner is not None
         if path == "busy defer":
-            view.active = asyncio.current_task()
-        pending = asyncio.create_task(view.next.callback(call))
-    await asyncio.wait_for(entered.wait(), 1)
-    with pytest.raises(TimeoutError):
-        await pending
-    assert view.deadline == deadline
-    assert view.acknowledging is None
-    if path != "busy defer":
-        assert view.active is None
-    view.active = None
-    view.expire()
-    call.edit_original_response.assert_not_awaited()
+            view.active = busy_owner
+        pending = asyncio.create_task(
+            view.interaction_check(call) if path == "rejection" else view.next.callback(call)
+        )
+        async with asyncio.timeout(1):
+            await entered.wait()
+        assert not pending.done()
+        assert len(captured) == 1
+        context, before, after = captured[0]
+        when = context.when()
+        assert when is not None
+        assert before + remaining <= when <= after + remaining
+        assert not context.expired()
+        assert view.active is (
+            pending if path == "first defer" else busy_owner if path == "busy defer" else None
+        )
+        assert view.acknowledging is (None if path == "first defer" else pending)
+        # Expire the real context only after acknowledgement entry and budget checks.
+        context.reschedule(loop.time())
+        with pytest.raises(TimeoutError):
+            await pending
+        assert context.expired()
+        assert cancelled.is_set()
+        assert view.deadline == deadline
+        assert view.acknowledging is None
+        assert view.active is (busy_owner if path == "busy defer" else None)
+        assert not delivered
+        response.assert_awaited_once()
+        call.edit_original_response.assert_not_awaited()
+        call.followup.send.assert_not_awaited()
+    finally:
+        if pending is not None:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        view.active = None
+        owner.close()
 
 
 async def test_expired_callbacks_start_no_new_network_wait_or_metadata_delivery() -> None:
