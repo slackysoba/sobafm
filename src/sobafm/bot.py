@@ -31,7 +31,7 @@ from sobafm.interpreter import Outcome as Interpreted
 from sobafm.native import VerifiedNativeRuntime
 from sobafm.plan import MusicPlan, one_line
 from sobafm.program import Mode, Program
-from sobafm.station import Outcome, SessionPool, Station
+from sobafm.station import Outcome, SessionPool, SkipTarget, Station
 from sobafm.status import Statuses
 from sobafm.store import GuildSettings, Store
 
@@ -86,6 +86,26 @@ PLAY_REPLIES = {
             "Try describing it differently."
         ),
     },
+}
+SKIP_REPLIES = PLAY_REPLIES[Mode.CATALOG] | {
+    Outcome.PLAYING: (
+        "Skipped the catalog track. Use /now for current music and complete private credits."
+    ),
+    Outcome.NO_MATCH: (
+        "No eligible replacement is ready. The current track continues; try /skip again later."
+    ),
+    Outcome.BUSY: (
+        "A skip is already waiting for its first audible frame; no additional skip was queued."
+    ),
+    Outcome.FAILED: (
+        "The replacement failed before this skip completed. Use /now for current music."
+    ),
+    Outcome.UNAVAILABLE: (
+        "The skip couldn't be completed. Use /now for current music and try again later."
+    ),
+    Outcome.REPLACED: (
+        "Music changed before this skip completed. No later track was queued to skip."
+    ),
 }
 REFUSALS = {  # the current music keeps playing
     Interpreted.NOT_MUSIC: (
@@ -406,7 +426,7 @@ class SobaFM(discord.Client):
                     statuses.forget(channel_id)
 
     def supersede(self, guild_id: int, outcome: Outcome) -> bool:
-        """End the server's requests being interpreted with `outcome`, and say if there were any."""
+        """End pending admission/interpretation with `outcome`, and say if there were any."""
         requests = self.interpreting.pop(guild_id, [])
         for request in requests:
             self.request_owners.pop(request, None)
@@ -587,6 +607,105 @@ class SobaFM(discord.Client):
                 return note(catalog_answer(), result, cross_mode)
             return note(f"Now playing {describe(plan, member.mention, ends)}", result, cross_mode)
         return replies[outcome]
+
+    def skip_target(self, guild: discord.Guild) -> SkipTarget | None:
+        station = self.stations.get(guild.id)
+        owner = self.station_owners.get(station) if station is not None else None
+        voice = cast(discord.VoiceClient | None, guild.voice_client)
+        if (
+            station is None
+            or owner is None
+            or owner[0] is not guild
+            or owner[1] is not voice
+            or self.get_guild(guild.id) is not guild
+            or voice is None
+            or not voice.is_connected()
+        ):
+            return None
+        return station.skip_target()
+
+    async def skip(
+        self,
+        member: discord.Member,
+        cooldown: float | None,
+        *,
+        target: SkipTarget | None,
+    ) -> str:
+        """Skip only an existing ready catalog prefetch; never interpret or queue a request."""
+        voice = cast(discord.VoiceClient | None, member.guild.voice_client)
+        admission: asyncio.Future[Outcome] = asyncio.get_running_loop().create_future()
+        self.interpreting[member.guild.id].append(admission)
+        self.request_owners[admission] = (member.guild, voice)
+        station: Station | None = None
+        result: asyncio.Future[Outcome] | None = None
+        try:
+            async with self.voice_locks[member.guild.id]:
+                await self.retire_stale_state(member.guild)
+                if admission.done():
+                    return SKIP_REPLIES[admission.result()]
+                if self._closing or self.is_closed():
+                    return SKIP_REPLIES[Outcome.STOPPED]
+                if target is None:
+                    return (
+                        "/skip applies to playing catalog tracks only; "
+                        "/freestyle has no tracks to skip."
+                    )
+                if (
+                    self.get_guild(member.guild.id) is not member.guild
+                    or voice is None
+                    or member.guild.voice_client is not voice
+                    or not voice.is_connected()
+                ):
+                    return SKIP_REPLIES[Outcome.DISCONNECTED]
+                if member.voice is None or member.voice.channel != voice.channel:
+                    return f"Join {voice.channel.mention} to skip catalog music."
+                station = self.stations.get(member.guild.id)
+                if station is None or station.program is None:
+                    return "No catalog track is playing to skip."
+                if station.program.mode is not Mode.CATALOG:
+                    return (
+                        "/skip applies to catalog tracks only; "
+                        "/freestyle music has no tracks to skip."
+                    )
+                owner = self.station_owners.get(station)
+                if owner is None or owner[0] is not member.guild or owner[1] is not voice:
+                    return SKIP_REPLIES[Outcome.DISCONNECTED]
+                if (
+                    self.settings.jamendo_client_id is None
+                    or self.catalog is None
+                    or not self.catalog.ready
+                ):
+                    return SKIP_REPLIES[Outcome.UNAVAILABLE]
+                if target.station() is not station:
+                    return SKIP_REPLIES[Outcome.REPLACED]
+                result = station.skip(target)
+                if not result.done():
+                    self.supersede_older(member.guild, admission)
+            try:
+                outcome = await asyncio.wait_for(asyncio.shield(result), START_TIMEOUT_S)
+            except TimeoutError:
+                station.cancel_skip(result, Outcome.UNAVAILABLE)
+                outcome = result.result()  # withdrawal preserves a read that already won
+            return SKIP_REPLIES[outcome]
+        finally:
+            withdrawn: Outcome | None = None
+            if (
+                result is not None
+                and (not result.done() or result.cancelled())
+                and station is not None
+            ):
+                withdrawn = station.cancel_skip(result)
+            successful = withdrawn is Outcome.PLAYING or (
+                result is not None
+                and result.done()
+                and not result.cancelled()
+                and result.result() is Outcome.PLAYING
+            )
+            if not successful:
+                self.free_cooldown(member.guild, cooldown)
+            self.request_owners.pop(admission, None)
+            with contextlib.suppress(ValueError):
+                self.interpreting[member.guild.id].remove(admission)
 
     def announce_when_settled(
         self,

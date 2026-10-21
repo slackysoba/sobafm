@@ -7,6 +7,7 @@ A slow start's answer is edited once it plays or doesn't.
 import asyncio
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 import discord
@@ -39,17 +40,21 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
         await interaction.response.defer(ephemeral=True)
         await interaction.followup.send(await bot.leave(interaction.guild), ephemeral=True)
 
-    async def music(interaction: discord.Interaction, request: str, mode: Mode) -> None:
-        if not isinstance(interaction.user, discord.Member):
-            return  # unreachable: the command is guild-only
-        if problem := await bot.admit(interaction.user, request):
-            await interaction.response.send_message(problem, ephemeral=True)
-            return
-        cooldown = bot.cooldowns.get(interaction.user.guild.id)  # the one admit() started
+    async def answer(
+        interaction: discord.Interaction,
+        member: discord.Member,
+        cooldown: float | None,
+        invoke: Callable[[Callable[[str], Awaitable[object]]], Awaitable[str]],
+        *,
+        private: bool = False,
+    ) -> None:
         try:
-            await interaction.response.defer()
+            if private:
+                await interaction.response.defer(ephemeral=True)
+            else:
+                await interaction.response.defer()
         except BaseException:  # expired or cancelled before playback can start
-            bot.free_cooldown(interaction.user.guild, cooldown)
+            bot.free_cooldown(member.guild, cooldown)
             raise
         sent: asyncio.Future[discord.WebhookMessage] = asyncio.get_running_loop().create_future()
 
@@ -57,12 +62,37 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
             # Shielded, so cancelling this at shutdown leaves `sent` for the command to set.
             await (await asyncio.shield(sent)).edit(content=answer)
 
-        reply = await bot.play(interaction.user, request, cooldown, announce, mode=mode)
+        reply = await invoke(announce)
         try:  # titles are model-written, so links get no preview, then or after an edit
-            sent.set_result(await interaction.followup.send(reply, suppress_embeds=True, wait=True))
+            if private:
+                message = await interaction.followup.send(
+                    reply,
+                    ephemeral=True,
+                    suppress_embeds=True,
+                    wait=True,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            else:
+                message = await interaction.followup.send(reply, suppress_embeds=True, wait=True)
+            sent.set_result(message)
         except BaseException:
             sent.cancel()  # nothing to edit
             raise
+
+    async def music(interaction: discord.Interaction, request: str, mode: Mode) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            return  # unreachable: the command is guild-only
+        if problem := await bot.admit(interaction.user, request):
+            await interaction.response.send_message(problem, ephemeral=True)
+            return
+        member = interaction.user
+        cooldown = bot.cooldowns.get(member.guild.id)
+        await answer(
+            interaction,
+            member,
+            cooldown,
+            lambda announce: bot.play(member, request, cooldown, announce, mode=mode),
+        )
 
     def register(name: str, description: str, mode: Mode) -> None:
         @app_commands.guild_only()
@@ -87,6 +117,25 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
             "Play catalog music; requests go to Google and searches to Jamendo",
             Mode.CATALOG,
         )
+
+        @tree.command(description="Skip the current catalog track when its replacement is ready")
+        @app_commands.guild_only()
+        async def skip(interaction: discord.Interaction) -> None:
+            if not isinstance(interaction.user, discord.Member):
+                return
+            target = bot.skip_target(interaction.user.guild)
+            if problem := await bot.admit(interaction.user, "skip"):
+                await interaction.response.send_message(problem, ephemeral=True)
+                return
+            member = interaction.user
+            cooldown = bot.cooldowns.get(member.guild.id)
+            await answer(
+                interaction,
+                member,
+                cooldown,
+                lambda _announce: bot.skip(member, cooldown, target=target),
+                private=True,
+            )
 
     @tree.command(description="Show what is playing")
     @app_commands.guild_only()
@@ -149,7 +198,11 @@ def add_commands(tree: app_commands.CommandTree[SobaFM], bot: SobaFM) -> None:
     ) -> None:
         """Log a failed command and tell the caller, who would otherwise wait indefinitely."""
         command = interaction.command.name if interaction.command else "unknown"
-        log.error("/%s failed", command, exc_info=error if command not in {"play", "now"} else None)
+        log.error(
+            "/%s failed",
+            command,
+            exc_info=error if command not in {"play", "now", "skip"} else None,
+        )
         reply = "Something went wrong. Try again shortly."
         with contextlib.suppress(discord.HTTPException):  # the interaction may have expired
             if interaction.response.is_done():
