@@ -225,13 +225,20 @@ async def test_verified_short_complete_is_ready_then_audibly_drained(tmp_path: P
 async def test_arbitrary_pipe_splits_and_one_verified_final_padding(
     tmp_path: Path, split: int
 ) -> None:
-    raw = bytes(BYTES_PER_SECOND - 4)
+    # Two frames cover every split and final sample without 192,000 scheduled
+    # one-byte reads turning this framing check into a throughput deadline.
+    raw = bytes(2 * FRAME_BYTES - 4)
+    # Catalog durations are whole seconds; this strict short output is within
+    # the existing one-second completion allowance, with both EOFs verified.
     rig = Rig(tmp_path, seconds=1, output=raw)
     rig.child.split = split
     rig.deck.start()
     await settle(rig)
     assert rig.deck.completed
-    assert len(rig.deck.frames) == 50
+    assert rig.source.complete
+    assert all(rig.deck._eof.values())  # pyright: ignore[reportPrivateUsage]
+    assert rig.deck.exit_status == 0
+    assert len(rig.deck.frames) == 2
     assert all(len(frame) == FRAME_BYTES for frame in rig.deck.frames)
     assert b"".join(rig.deck.frames) == raw + bytes(4)
 
@@ -534,13 +541,67 @@ async def test_absolute_deadline_includes_wait_for_final_padding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(tracks, "LIFETIME_SECONDS", 3.03)
     rig = Rig(tmp_path, seconds=6, output=bytes(6 * BYTES_PER_SECOND + 4), frames=300)
+    padding = asyncio.Event()
+    cancelled = asyncio.Event()
+    room = rig.deck._room  # pyright: ignore[reportPrivateUsage] - observe the exact padding wait
+    deadline = asyncio.timeout(None)
+    delays: list[float] = []
+
+    def controlled_timeout(delay: float) -> asyncio.Timeout:
+        assert 0 < delay <= tracks.LIFETIME_SECONDS - tracks.CLEANUP_SECONDS
+        assert not delays  # The producer must enter this one real timeout exactly once.
+        delays.append(delay)
+        return deadline
+
+    async def wait_for_room() -> None:
+        if len(rig.deck.frames) == 300:
+            assert asyncio.current_task() is rig.deck._task  # pyright: ignore[reportPrivateUsage]
+            padding.set()
+        try:
+            await room()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(tracks.asyncio, "timeout", controlled_timeout)
+    monkeypatch.setattr(rig.deck, "_room", wait_for_room)
     rig.deck.start()
-    await settle(rig)
-    assert rig.deck.failure is TrackFailure.DEADLINE
-    assert not rig.deck.completed
-    assert len(rig.deck.frames) == 300  # no extra final frame past retained capacity
+    try:
+        await asyncio.wait_for(padding.wait(), 1)
+        assert len(delays) == 1
+        assert deadline.when() is None
+        assert not deadline.expired()
+        assert rig.deck._raw_bytes == len(rig.child.output)  # pyright: ignore[reportPrivateUsage]
+        assert rig.child.offset == len(rig.child.output)
+        assert rig.source.complete
+        assert all(rig.deck._eof.values())  # pyright: ignore[reportPrivateUsage]
+        assert rig.deck.exit_status == 0
+        assert all(task.done() for task in rig.deck._workers)  # pyright: ignore[reportPrivateUsage]
+        assert rig.deck._backpressure  # pyright: ignore[reportPrivateUsage]
+        assert not rig.deck._space.is_set()  # pyright: ignore[reportPrivateUsage]
+        assert len(rig.deck.frames) == 300
+        assert not rig.deck._verified  # pyright: ignore[reportPrivateUsage]
+        assert not rig.deck.completed
+        assert rig.deck.failure is None
+        # Expire only after reaching final padding: fixture throughput must not
+        # decide whether this test exercises output production or the padding wait.
+        deadline.reschedule(asyncio.get_running_loop().time())
+        await settle(rig)
+        assert deadline.expired()
+        assert cancelled.is_set()
+        assert rig.deck.failure is TrackFailure.DEADLINE
+        assert not rig.deck.completed
+        assert len(rig.deck.frames) == 300  # no extra final frame past retained capacity
+        assert not rig.deck.cleanup_failed
+        assert rig.child.reaped
+        assert rig.child.pipes_closed
+        assert rig.source.closed
+        assert rig.boundary.closed
+        assert rig.slots.count == rig.supervisor.debt_count == 0
+    finally:
+        rig.deck.retire()
+        await settle(rig)
 
 
 async def test_pipe_closure_failure_is_sticky_and_retains_slot(
