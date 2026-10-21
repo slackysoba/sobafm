@@ -6,6 +6,7 @@ import pytest
 
 import sobafm.catalog_audio as audio
 from sobafm.catalog_audio import AudioStream, TrackError
+from tests.http_lifecycle import LifecycleSession
 from tests.test_catalog import credit, discovered
 
 
@@ -32,6 +33,9 @@ class Response:
     def close(self) -> None:
         self.closed = True
 
+    async def wait_for_close(self) -> None:
+        pass
+
 
 class Session:
     def __init__(self, response: Response) -> None:
@@ -40,6 +44,11 @@ class Session:
         self.closed = False
         self.gate: asyncio.Event | None = None
         self.error: Exception | None = None
+        self.lifecycle: LifecycleSession | None = None
+
+    def factory(self, response_class: type[aiohttp.ClientResponse]) -> aiohttp.ClientSession:
+        self.lifecycle = LifecycleSession(response_class, body=b"")
+        return cast(aiohttp.ClientSession, self)
 
     async def get(self, url: str, **kwargs: Any) -> Response:
         self.calls.append(dict(url=url, **kwargs))
@@ -47,16 +56,21 @@ class Session:
             await self.gate.wait()
         if self.error is not None:
             raise self.error
+        if self.lifecycle is not None:
+            await self.lifecycle.get(url)
         return self.response
 
     async def close(self) -> None:
         self.closed = True
+        if self.lifecycle is not None:
+            self.lifecycle.transport.finish()
+            await self.lifecycle.close()
 
 
 def stream(response: Response) -> tuple[AudioStream, Session]:
     session = Session(response)
     track = discovered(duration=1).with_credits(credit())
-    return AudioStream(cast(aiohttp.ClientSession, session), track), session
+    return AudioStream(track, session_factory=session.factory), session
 
 
 async def collect(source: AudioStream) -> bytes:
@@ -189,7 +203,9 @@ async def test_one_shot_is_claimed_before_get_await_and_survives_cancel() -> Non
     with pytest.raises(TrackError, match=r"^transfer$"):
         await collect(source)
     assert len(session.calls) == 1
-    await source.aclose()
+    with pytest.raises(TrackError, match=r"^cleanup$"):
+        await source.aclose()
+    assert not source.closed
 
 
 async def test_consumer_backpressure_does_not_use_network_idle_clock(
@@ -210,5 +226,5 @@ async def test_consumer_backpressure_does_not_use_network_idle_clock(
 def test_uncredited_track_never_triggers_get() -> None:
     session = Session(Response())
     with pytest.raises(TrackError, match=r"^ineligible$"):
-        AudioStream(cast(aiohttp.ClientSession, session), discovered())
+        AudioStream(discovered(), session_factory=session.factory)
     assert not session.calls

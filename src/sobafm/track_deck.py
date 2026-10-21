@@ -19,7 +19,6 @@ from sobafm.catalog_audio import (
     AudioStream,
     TrackError,
     TrackFailure,
-    audio_session,
 )
 from sobafm.decoder_process import Boundary, Child
 from sobafm.native import VerifiedNativeRuntime
@@ -152,7 +151,7 @@ class DecoderSupervisor:
 
 
 def _input(track: CatalogTrack) -> Input:
-    return AudioStream(audio_session(), track)
+    return AudioStream(track)
 
 
 class TrackDeck:
