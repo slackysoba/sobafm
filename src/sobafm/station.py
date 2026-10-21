@@ -24,7 +24,7 @@ from sobafm.lyria_engine import LyriaEngine
 from sobafm.lyria_engine import SessionPool as SessionPool
 from sobafm.mixer import Mixer
 from sobafm.pcm import FRAME_SECONDS
-from sobafm.plan import MusicPlan
+from sobafm.plan import MusicPlan, one_line
 from sobafm.program import Mode
 from sobafm.program import Outcome as Outcome
 from sobafm.program import Program as Program
@@ -303,7 +303,12 @@ class Station:
         if not self._status_held:
             heard = self._program_heard()
             source = self.heard_source
-            self.statuses.show(source.title if heard is not None and source is not None else None)
+            title = source.title if heard is not None and source is not None else None
+            if title is not None and source is not None and source.credits is not None:
+                title = one_line(f"{title} — {source.credits.artist}")
+                while len(title.encode("utf-16-le")) // 2 > 500:
+                    title = title[:-1]
+            self.statuses.show(title)
 
     def _abandoned(self) -> bool:
         """Whether the channel has had no listeners for the whole grace period."""
@@ -354,6 +359,8 @@ class Station:
     def _settle_playing(self, program: Program, source: Source) -> None:
         """Settle `program` as playing, so the program it replaced is no longer heard."""
         self._watch_underruns()
+        if not program.started.done():
+            program.first_credit = source.credits
         program.settle(Outcome.PLAYING)
         self._heard_source = source
         self.engines[program.mode].going_live(source)

@@ -1,6 +1,6 @@
 # Architecture
 
-- **Status:** Approved v1 baseline (#5), reconciled with accepted M5 ADR-0006/ADR-0007 (#119); catalog implementation and qualification remain outstanding.
+- **Status:** Approved v1 baseline (#5), reconciled with accepted M5 ADR-0006/ADR-0007 (#119); catalog qualification remains outstanding.
 - **Requirements:** [requirements.md](requirements.md)
 - **Decisions:** [ADR-0001](decisions/0001-build-on-python-discord-py-and-the-google-gen-ai-sdk.md) · [ADR-0002](decisions/0002-interpret-requests-with-gemini-structured-output.md) · [ADR-0003](decisions/0003-keep-server-state-in-sqlite-and-use-discord-command-permissions.md) · [ADR-0004](decisions/0004-stream-lyria-realtime-through-buffered-decks.md) · [ADR-0005](decisions/0005-release-images-with-github-actions-and-artifact-attestations.md) · [ADR-0006](decisions/0006-play-catalog-and-generated-music-in-one-station.md) · [ADR-0007](decisions/0007-bound-catalog-audio-decoding.md)
 
@@ -14,10 +14,10 @@ settings and command admission. Catalog decoding runs in separately supervised
 FFmpeg children. Generated-to-generated transitions keep v1's crossfades; every
 catalog-involving boundary is successive, without catalog fades or overlap.
 
-The station now implements the source/engine seam and shared allocation ledger;
-production construction installs Lyria only. The bounded TrackDeck and native
-load check are implemented; catalog engine/command/credit wiring and actual
-resource qualification remain open. The
+The station implements the source/engine seam and shared allocation ledger. The
+bounded TrackDeck, native load check, catalog engine and command/credit wiring
+are implemented. Production catalog readiness remains unavailable until actual
+runtime, containment/allocation and source-notice qualifications exist. The
 requirements identify these changes with stable M5 IDs. Accepted historical ADRs
 remain intact; ADR-0006/ADR-0007 record the scoped changes.
 
@@ -86,8 +86,10 @@ flowchart LR
 | --- | --- |
 | `__main__` | Entry point: configuration, logging, signal handling, and a startup watchdog |
 | `config` | Typed settings from the environment and `.env`; secrets held as `SecretStr` |
-| `bot` | The discord.py client: intents, command sync, station registry, mode-aware request context/replies, voice-state events, failed remembered-channel joins and voice recovery; catalog command wiring follows in #128 |
-| `commands` | Slash command handlers: shared generated request admission, deferral and replies with mentions/previews disabled |
+| `bot` | The discord.py client: intents, command sync, station registry, mode-aware request context/replies, source-bound credits, voice-state events, failed remembered-channel joins and voice recovery |
+| `commands` | Slash command handlers: shared request admission, mode routing, deferral and private credit delivery with mentions/previews disabled |
+| `catalog_playback` | Qualified catalog composition, shared server history/metadata gate and source-record identity checks; empty defaults remain unavailable |
+| `credits` | Complete metadata-only private snapshots, caller-bound pagination and bounded view/delivery ownership |
 | `station` | One per server: desired/heard/previous program identity, reconcile loop, listener tracking, transitions, audio ledger and audible-source feedback |
 | `program` | Program state, start outcomes and one-time settlement |
 | `source`, `engine` | Buffered source and per-mode lifecycle protocols, including source-specific completion/handover and audible settlement |
@@ -139,8 +141,14 @@ Each request has distinct identity even when it reuses the same plan object.
 remains a `WeakSet`, with no engine map keyed strongly by source. The operational
 logger remains `sobafm.station`.
 
-Production construction currently installs Lyria only; catalog command and owner
-wiring follows in #128. `CatalogEngine` takes the server owner's shared history,
+Production construction always installs Lyria. `/play` is registered only with a
+configured Jamendo client ID; normal command sync removes it when omitted and
+startup logs a fixed explanation without the ID value. Registration does not
+grant readiness. `CatalogPlayback` creates no engine without the exact verified
+runtime, qualified supervisor/allocation and independently established complete
+source records; neither an absent notice field nor a binary digest supplies that
+evidence. Existing unknown Lyria obligations also refuse catalog admission.
+`CatalogEngine` takes the server owner's shared history,
 audio ledger, catalog client and an unstarted track factory. Offline coordination
 also tests the real engine with `FakeCatalog` and fixture-only PCM producers;
 Lyria behavior tests retain `FakeLyria` sessions. The source protocol exposes
@@ -617,7 +625,9 @@ them. Required credit cannot be shortened like a status summary.
 | Listener access | Guild-only `/now` adds no manager/voice-membership check; operators verify an accessible permitted invocation channel for ordinary listeners; no public fallback |
 
 Update credits and recent history when the connected player accepts an audible
-source, including each track in one program. Pending/failed targets leave heard
+source, including each track in one program. `Program.first_credit` keeps only
+the initial accepted record for a delayed initial reply; `/now` snapshots the
+current accepted source with exact guild/voice ownership. Pending/failed targets leave heard
 credits intact; cancelled/stale/disconnected completions cannot publish the next
 song. Initial replies describe actual accepted audio and its credit but cannot
 serve as a durable later-track updater. Old private pages are labeled snapshots,
@@ -625,7 +635,22 @@ never presented as the current song. Status remains optional even when stale,
 overwritten or unavailable; it neither replaces the private route nor stops
 playback. A known inaccessible/incomplete private route requires correction before
 the deployment can qualify. Actual-source notice ingestion, safe links, pagination
-and desktop/mobile readability remain implementation/client qualification gates.
+and desktop/mobile readability remain qualification gates. `credits` stores only
+rendered metadata and a snapshot time, never an audio Source, Station or token.
+Initial delivery/navigation and one additional busy or rejection acknowledgement
+have explicit cancellation owners and the same absolute ten-minute deadline,
+including time in the library rate limiter. Further callbacks do not enqueue
+edits or acknowledgements. Expired controls start no new request; the page footer
+already directs a fresh `/now`.
+Shutdown/eviction releases those pages and cancels pending delivery without a
+public fallback or application retry. Generated instructions and fallback remain
+unchanged; catalog interpretation failures never use raw-input generated fallback.
+
+The source-integration sequence recorded on #128 (comment 6305298756) leaves
+actual `/play`, track changes, private `/now` and mode-switch verification open
+in #131 after its prerequisites. Source-notice, listener access, mobile readability
+and optional-status qualification remain in #175/#130. Fixture-only tests do not
+enable production readiness or establish any live/resource pass.
 
 No catalog overlap is permitted. If a future rights-backed decision permits it,
 both audible tracks would need full credits until outgoing audio ends; this

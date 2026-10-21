@@ -157,6 +157,10 @@ class Deck:
         return False  # generated sessions have no strict finite-track completion
 
     @property
+    def credits(self) -> None:
+        return None
+
+    @property
     def delivered_preroll(self) -> bool:
         """Whether the session produced the pre-roll's worth of audio, as one that went live did."""
         return self._audio_bytes >= PREROLL_S * BYTES_PER_SECOND
