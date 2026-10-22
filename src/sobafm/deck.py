@@ -14,7 +14,9 @@ from google import genai
 from google.genai import errors, live_music, types
 from websockets.exceptions import InvalidStatus, WebSocketException
 
+from sobafm.audio_budget import PCM_LIMIT
 from sobafm.failures import Failure, as_token, call_failure, close_failure
+from sobafm.owned_pcm import OwnedPCM, PCMCapacityError, PCMOwner
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, FrameSplitter, matches_mime_type
 from sobafm.plan import MusicPlan
 from sobafm.program import Mode, Program
@@ -101,6 +103,7 @@ class Deck:
         connect: Connect,
         plan: MusicPlan,
         *,
+        pcm: PCMOwner,
         clock: Callable[[], float] = time.monotonic,
         program: Program | None = None,
     ) -> None:
@@ -109,7 +112,7 @@ class Deck:
         self.number = next_source_number()
         # Appended on the event loop and popped by the mixer on discord.py's player thread;
         # deque appends and pops are thread-safe.
-        self.frames: deque[bytes] = deque()
+        self.frames: deque[OwnedPCM] = deque()
         self.state = State.CONNECTING
         self.end_reason: EndReason | None = None
         self.detail: str | None = None
@@ -120,7 +123,8 @@ class Deck:
         self._clock = clock
         self._created_at = clock()
         self._session: MusicSession | None = None
-        self._splitter = FrameSplitter()
+        self.pcm = pcm.storage(PCM_LIMIT)
+        self._splitter = FrameSplitter(self.pcm)
         self._audio_bytes = 0
         self._generated_s = 0.0
         self._generating_since: float | None = None
@@ -199,6 +203,17 @@ class Deck:
         if self._task is not None:
             await asyncio.wait({self._task})
 
+    def discard_pcm(self) -> None:
+        """Only the engine's permanent unused-source drop calls this, after producer end."""
+        if self.state is not State.ENDED:
+            raise RuntimeError("producer still owns PCM")
+        while self.frames:
+            frame = self.frames.popleft()
+            receipt = frame.receipt
+            del frame
+            receipt.release()
+        self._splitter.discard()
+
     async def regulate(self) -> None:
         """Pause generation when the buffer is full and resume it as the buffer drains."""
         session = self._session
@@ -232,6 +247,8 @@ class Deck:
                     connecting.reschedule(None)
                     reason = await self._generate(session)
             self._end(reason)
+        except PCMCapacityError as error:
+            self._end(EndReason.FAILED, "PCM capacity exhausted", error)
         except errors.APIError as error:
             # A WebSocket close carries its reason in `details`, which the SDK leaves untyped.
             cause: object = error.message or getattr(error, "details", None)

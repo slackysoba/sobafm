@@ -93,7 +93,6 @@ class Station:
         audio: AudioLedger | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.mixer = Mixer(volume)
         self.program: Program | None = None
         # What played when the program was requested, which resumes if the program can't start
         self._previous: Program | None = None
@@ -109,6 +108,8 @@ class Station:
         self.engines = {engine.mode: engine for engine in engines}
         if len(self.engines) != len(engines) or any(e.audio is not self.audio for e in engines):
             raise ValueError("one engine per mode must share the station audio ledger")
+        self.pcm = self.audio.pcm
+        self.mixer = Mixer(volume, self.pcm)
         self._closed = False
         self._closing: asyncio.Task[None] | None = None
         self._voice = voice
@@ -700,6 +701,8 @@ class Station:
 
         def stopped(error: Exception | None) -> None:  # runs on discord.py's player thread
             try:
+                if error is not None and source is not None:
+                    source.uncertain = True
                 self.mixer.invalidate_handoff(playing)
                 if error is not None:
                     log.warning("Voice player stopped: %s", error)
@@ -714,12 +717,21 @@ class Station:
         self._next_play = self._clock() + PLAYER_RETRY_S
         if player.is_playing():
             player.stop()  # its thread has ended
+        source = self.mixer.player_source()
+        if source is None:
+            return  # prior public cleanup or prepaid staging capacity is still outstanding
         try:
-            player.play(self.mixer, after=stopped, signal_type="music")
+            player.play(source, after=stopped, signal_type="music")
         except discord.ClientException as error:  # not connected yet
+            # The public play contract rejects connection/already-playing before
+            # constructing AudioPlayer. Nothing has read this wrapper.
+            source.uncertain = True  # arbitrary error attributes may still retain audio
+            source.cleanup()
             log.debug("Could not start the voice player: %s", error)
             return
         except discord.DiscordException:  # such as an Opus encoder error, which retries cannot fix
+            source.uncertain = True
+            source.cleanup()
             log.exception("Could not start the voice player; ending the program")
             self._finish(Outcome.FAILED)
             return

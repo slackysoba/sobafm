@@ -22,6 +22,7 @@ from sobafm.catalog_audio import (
 )
 from sobafm.decoder_process import Boundary, Launch, Process, launch
 from sobafm.native import VerifiedNativeRuntime
+from sobafm.owned_pcm import OwnedPCM, PCMCapacityError
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES, FRAME_SECONDS, FrameSplitter
 from sobafm.program import Mode, Program
 from sobafm.source import State, next_source_number
@@ -81,7 +82,8 @@ class Envelope:
 
     No production envelope is supplied here. None refuses admission. In particular,
     neither 128MiB containment nor current deque length supplies native headroom.
-    PCM includes splitter/temporary/player copies beyond the configured deque;
+    PCM includes read/splitter/padding storage and popped input borrows beyond
+    the configured deque; shared Mixer/caller staging uses the same PCM parent.
     other includes HTTP, all three pipe transports and encoded/in-flight copies.
     #175 must qualify each actual runtime/platform envelope before production use.
     """
@@ -203,7 +205,7 @@ class TrackDeck:
         self.program = program
         self.credits = self.track.credits
         self.number = next_source_number()
-        self.frames: deque[bytes] = deque()
+        self.frames: deque[OwnedPCM] = deque()
         self.state = State.CONNECTING
         self.end_reason: EndReason | None = None
         self.failure: TrackFailure | None = None
@@ -214,7 +216,9 @@ class TrackDeck:
         self._input_factory, self._clock = input_factory, clock
         self._created = clock()
         self._started_at = self._created
-        self._splitter = FrameSplitter()
+        envelope = supervisor.envelope.allocation
+        self.pcm = audio.pcm.storage(envelope.pcm if envelope is not None else 0)
+        self._splitter = FrameSplitter(self.pcm)
         self._raw_bytes = 0
         self._encoded_bytes = 0
         self._stderr_bytes = 0
@@ -290,7 +294,12 @@ class TrackDeck:
         if (
             not self._supervisor.admitted(self._audio)
             or envelope is None
-            or (lease := self._audio.reserve(envelope)) is None
+            or (
+                lease := self._audio.reserve(
+                    AudioBytes(other=envelope.other, native=envelope.native)
+                )
+            )
+            is None
         ):
             self.failure, self.end_reason, self.state = (
                 TrackFailure.CAPACITY,
@@ -342,6 +351,16 @@ class TrackDeck:
         if len(self.frames) < self._supervisor.envelope.buffer_frames:
             self._space.set()
 
+    def discard_pcm(self) -> None:
+        if self.state is not State.ENDED:
+            raise RuntimeError("producer still owns PCM")
+        while self.frames:
+            frame = self.frames.popleft()
+            receipt = frame.receipt
+            del frame
+            receipt.release()
+        self._splitter.discard()
+
     async def _room(self) -> None:
         while len(self.frames) >= self._supervisor.envelope.buffer_frames:
             self._backpressure = True
@@ -372,9 +391,14 @@ class TrackDeck:
 
     async def _output(self, child: Process) -> None:
         while True:
+            receipt = self.pcm.reserve(FRAME_BYTES)  # before the backend may allocate its result
             async with self._locks[1]:
+                # If this await fails/cancels its receipt stays debt. Other known
+                # storage can still release, and cleanup can fund a separate read.
                 chunk = await child.read(1, FRAME_BYTES)
             if not chunk:
+                del chunk
+                receipt.release()
                 self._eof[1] = True
                 return
             self._last_output = self._clock()
@@ -389,6 +413,9 @@ class TrackDeck:
                     # must still reach EOF when the retained deque is full.
                     await self._room()
                     self.frames.append(frame)
+                    del frame  # the queue, not the next suspended read, owns this frame
+            del chunk
+            receipt.release()
 
     async def _diagnostics(self, child: Process) -> None:
         while True:
@@ -467,11 +494,18 @@ class TrackDeck:
                     if self._raw_bytes + padded > MAX_SAMPLES * 4:
                         raise TrackError(TrackFailure.OUTPUT)
                     await self._room()
-                    with closing(self._splitter.split(bytes(padded))) as frames:
+                    padding = self.pcm.silence(padded)
+                    with closing(self._splitter.split(padding.data)) as frames:
                         self.frames.extend(frames)
+                    receipt = padding.receipt
+                    del padding
+                    receipt.release()
                 self._verified = True
         except asyncio.CancelledError:
             self._retired = True
+        except PCMCapacityError as error:
+            self.failure = TrackFailure.CAPACITY
+            error.__traceback__ = error.__context__ = error.__cause__ = None
         except TrackError as error:
             self.failure = error.category
             error.__traceback__ = error.__context__ = error.__cause__ = None
@@ -535,7 +569,17 @@ class TrackDeck:
 
     async def _discard(self, child: Process, pipe: int) -> None:
         async with self._locks[pipe]:
-            while await child.read(pipe, FRAME_BYTES):  # noqa: ASYNC110 - yield bounded drain work fairly
+            if self._eof[pipe]:
+                return
+            while True:
+                receipt = self.pcm.reserve(FRAME_BYTES) if pipe == 1 else None
+                chunk = await child.read(pipe, FRAME_BYTES)
+                more = bool(chunk)
+                del chunk
+                if receipt is not None:
+                    receipt.release()
+                if not more:
+                    break
                 await asyncio.sleep(0)
             self._eof[pipe] = True
 

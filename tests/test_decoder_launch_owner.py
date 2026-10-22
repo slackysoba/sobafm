@@ -142,7 +142,8 @@ async def test_positive_pre_call_rejection_requires_boundary_close(
     assert close_calls > 0
     assert rig.boundary.closed
     assert rig.slots.count == rig.supervisor.debt_count == 0
-    assert rig.audio.reserved.total == 0
+    assert rig.audio.reserved.pcm == 34_560_000
+    assert rig.audio.reserved.other == rig.audio.reserved.native == 0
     assert rig.deck.cleanup_failed is held_close
     assert not rig.source.closed
     assert not rig.child.writes
@@ -344,7 +345,8 @@ async def test_production_prepare_failure_has_positive_pre_call_proof(
     assert rig.boundary.prepared
     assert rig.boundary.closed
     assert rig.slots.count == rig.supervisor.debt_count == 0
-    assert rig.audio.reserved.total == 0
+    assert rig.audio.reserved.pcm == 34_560_000
+    assert rig.audio.reserved.other == rig.audio.reserved.native == 0
     assert not rig.source.closed  # no factory transfer, still creator owned
     await rig.source.aclose()
 

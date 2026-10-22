@@ -104,6 +104,7 @@ flowchart LR
 | `decoder_check` | Off-loop approved-supply verification and small owned-fixture codec load check; no catalog qualification |
 | `mixer` | The `discord.AudioSource`: buffered sources, generated fades/crossfades, successive catalog boundaries and shared volume; no I/O or decoding |
 | `pcm` | PCM format constants, the silence frame, and the chunk-to-frame splitter |
+| `owned_pcm` | Shared PCM backings/receipts and the public player-cleanup staging boundary |
 | `plan` | `MusicPlan` and its mapping to Lyria prompts and the full generation config |
 | `interpreter` | Shared Gemini call mechanics with mode-specific validated output, instruction, refusal and fallback policies |
 | `failures` | The failures of Gemini and Lyria RealTime a requester can act on, a rejected API key, an exhausted quota, or an outage, and which parts of Google's errors are safe to log |
@@ -471,17 +472,53 @@ until admission is closed, every child has explicitly released, and its owner
 explicitly releases the parent. Zero children alone refund nothing; an open or
 borrowed parent refuses release. Flat leases keep their existing behavior.
 There is no transfer, replacement adoption or unknown-owner exemption. This
-primitive selects no production capacity and is not wired into generated PCM
-growth yet: producer temporaries, ended queues, splitter and mixer/player handoff
-still need explicit storage ownership before a runtime PCM guard can be claimed.
+primitive now supplies one retained server PCM owner, admitted for the existing
+`PCM_LIMIT` before the Lyria unknown obligation is created. Replacement stations
+reuse that same parent and outstanding children. The server ledger keeps the
+parent charged; station shutdown cannot close it or mint a successor.
+The owner's first child persistently charges the immutable `SILENCE` backing,
+once across player epochs and replacement stations. Player cleanup never refunds
+this static storage; the four transient staging frames are a separate charge.
+
+`OwnedPCM` couples immutable backing bytes to a receipt. Source queues transfer
+that ownership to Mixer reads; aliases share one backing lease with idempotent
+acknowledgements, and new copies reserve separate children before allocation. `FrameSplitter` incrementally
+prepays carry growth and frame construction, retaining old carry through the
+last concatenation use. Deck capacity refusal fails only that producer with a
+fixed local resource category, preserving admitted frames and ordinary spare,
+pause, retry and fade rules. TrackDeck prepays bounded output/drain reads and
+padding. Its declared PCM maximum includes popped borrows, while its ordinary
+flat admission still reserves other/native allocations without charging PCM
+twice. Missing qualification, unknown debt and supervisor/slot gates still refuse
+catalog work. No production decoder envelope is selected.
+
+Retirement preserves queues. Only existing permanent unused-source drop and
+detached shutdown paths explicitly discard remaining queue/carry storage;
+in-flight reader receipts remain charged. Mixer always constructs separate output
+storage, including unity gain, and posts receipt-only acknowledgements after
+dropping its input locals. Receipt operations run on the event loop. Before a
+player starts, four frame payloads are prepaid for the three possible mixing
+copies and the supported caller's previous returned frame. A real AudioSource
+wrapper detaches its delegate at successful public `cleanup()` before scheduling
+the exact epoch's loop acknowledgement. Stop/after, GC, failed cleanup, a closed
+loop and stale callbacks cannot recycle staging. Unknown errors retain staging
+and borrowed-input debt; recovery first funds fresh scratch on the loop. This
+needs no whole-thread join and never refunds source queues or external storage.
+
+This guard covers owned Python PCM payload/read/carry/padding/queue/borrow and
+Mixer/caller staging storage. Python object bookkeeping, SDK response allocation,
+audioop/native internals, Opus/crypto and transport allocations remain separate
+unqualified obligations. It is not a complete resident-audio or readiness proof.
 
 There is still no qualified hard Lyria receive/copy/transport envelope. Its engine
 therefore records an explicit unknown obligation, blocking catalog
 admission even when current queues are empty. That debt remains after producer
 cleanup and across replacement stations: player stop/callback alone does not
 prove that the encoder, transports and returned PCM copies released storage. No
-qualified release signal is available yet. Generated production and spare
-retention retain their existing behavior. This fail-closed gate implements the
+qualified complete release signal is available yet. Normal generated production
+and spare retention retain their existing behavior; exceptional owned-PCM
+exhaustion follows ADR-0008's explicit producer-failure policy. This fail-closed
+gate implements the
 accepted unresolved-bound policy, not measured NFR-3 compliance or available
 decoder headroom. #125/#127/#175 must supply enforced and qualified producer,
 transport/native and reachable-growth bounds before catalog readiness. Synthetic

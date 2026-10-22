@@ -307,13 +307,17 @@ class CatalogEngine:
         return None
 
     def drop_ended(self, program: Program | None, mixer: Mixer) -> None:
-        self._sources = [
+        kept = [
             source
             for source in self._sources
             if mixer.uses(source)
             or source.state is not State.ENDED
             or (source.program is program and source not in self._retired and source.ready)
         ]
+        dropped = [source for source in self._sources if source not in kept]
+        self._sources = kept
+        for source in dropped:
+            source.discard_pcm()
 
     def retire(self, program: Program | None, mixer: Mixer) -> None:
         for source in self._sources:
@@ -365,4 +369,6 @@ class CatalogEngine:
             source.retire()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         await asyncio.gather(*(source.wait_ended() for source in self._sources))
+        for source in self._sources:
+            source.discard_pcm()
         self._sources.clear()

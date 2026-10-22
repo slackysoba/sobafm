@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from sobafm.catalog import CreditRecord
+from sobafm.owned_pcm import OwnedPCM
 from sobafm.program import Mode, Program
 
 _numbers = itertools.count(1)
@@ -27,7 +28,7 @@ class Source(Protocol):
     def credits(self) -> CreditRecord | None: ...
 
     @property
-    def frames(self) -> deque[bytes]: ...
+    def frames(self) -> deque[OwnedPCM]: ...
 
     @property
     def number(self) -> int: ...
@@ -63,6 +64,10 @@ class Source(Protocol):
     def start(self) -> None: ...
 
     def retire(self) -> None: ...
+
+    def discard_pcm(self) -> None:
+        """Drop unused retained storage, independently of producer retirement."""
+        ...
 
     async def wait_ended(self) -> None: ...
 

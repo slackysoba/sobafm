@@ -10,9 +10,8 @@ from sobafm.catalog_engine import CatalogEngine, History
 from sobafm.catalog_interpreter import CatalogPlan
 from sobafm.failures import Failure
 from sobafm.jamendo import CatalogError
-from sobafm.mixer import Mixer
 from sobafm.program import Outcome, Program
-from tests.doubles import FakeCatalog, FakeClock, FakeSource, settle
+from tests.doubles import FakeCatalog, FakeClock, FakeSource, pcm_mixer, settle
 from tests.test_catalog import credit, discovered
 
 PLAN = CatalogPlan(title="quiet piano", query=CatalogQuery(tags=("piano",)))
@@ -124,7 +123,7 @@ async def test_failed_candidates_share_three_attempts_and_backoff() -> None:
         assert r.engine.ended_failures(program) == [failed]
         outcome = r.engine.count_failure(failed, program, True)
         assert r.history.excludes(failed.track)
-        r.engine.drop_ended(program, Mixer(1))
+        r.engine.drop_ended(program, pcm_mixer(1))
         if index == 2:
             assert outcome is Outcome.UNAVAILABLE
             break
@@ -184,7 +183,7 @@ async def test_superseded_unheard_failure_still_excludes_id_without_charging_new
     assert r.engine.ended_failures(new) == []
     assert r.history.excludes(bad)
     assert r.engine.count_failure(failed, new, True) is None
-    r.engine.drop_ended(new, Mixer(1))
+    r.engine.drop_ended(new, pcm_mixer(1))
     await r.generate(new)
     assert r.made[-1].track.id == good.id
     assert r.engine.terminal(new, True) is None
@@ -236,7 +235,7 @@ async def test_dropping_and_closing_sources_never_refunds_complete_audio_lease()
     assert lease is not None
     r.made[0].finish(Outcome.FAILED)
     r.engine.ended_failures(program)
-    r.engine.drop_ended(None, Mixer(1))
+    r.engine.drop_ended(None, pcm_mixer(1))
     assert not r.engine.sources
     await r.engine.close()
     assert r.audio.reserved == size

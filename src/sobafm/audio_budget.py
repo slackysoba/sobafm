@@ -6,6 +6,10 @@ transport overshoot) before starting, and releases only after actual cleanup.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sobafm.owned_pcm import PCMOwner
 
 PCM_LIMIT = 34_560_000
 PARENT_LIMIT = 38_000_000
@@ -130,6 +134,23 @@ class AudioLedger:
 
     def __init__(self) -> None:
         self._leases: set[AudioLease] = set()
+        self._pcm: PCMOwner | None = None
+
+    @property
+    def pcm(self) -> PCMOwner:
+        """The server's retained PCM owner, established before unknown producer work.
+
+        Replacement stations reuse this parent and its outstanding children. It is
+        deliberately not closed/refunded by a station or producer shutdown.
+        """
+        from sobafm.owned_pcm import PCMCapacityError, PCMOwner
+
+        if self._pcm is None:
+            capacity = self.reserve_pcm_capacity(PCM_LIMIT)
+            if capacity is None:
+                raise PCMCapacityError
+            self._pcm = PCMOwner(capacity)
+        return self._pcm
 
     @property
     def reserved(self) -> AudioBytes:

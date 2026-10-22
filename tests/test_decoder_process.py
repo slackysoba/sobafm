@@ -25,6 +25,7 @@ from sobafm.decoder_process import (
     command,
 )
 from sobafm.native import SourceArchive, VerifiedNativeRuntime
+from sobafm.pcm import FRAME_BYTES, SILENCE
 from sobafm.track_deck import TrackDeck
 from tests.test_decoder_check import Process, Writer
 from tests.test_track_deck import Rig
@@ -444,7 +445,9 @@ async def test_post_assignment_drift_retains_slot_and_audio_until_actual_cleanup
     api: API, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(tracks, "CLEANUP_SECONDS", 0.01)
-    rig = Rig(tmp_path)
+    # Use only this fixture's declared source PCM: a full runtime PCM parent
+    # plus8MiB correctly refuses at the unchanged40M ordinary gate first.
+    rig = Rig(tmp_path, pcm_bytes=(400 + 8) * FRAME_BYTES + len(SILENCE))
     limit = 8 * 1024**2  # fake admission only; no production/native qualification
     allocation = rig.supervisor.envelope.allocation
     assert allocation is not None

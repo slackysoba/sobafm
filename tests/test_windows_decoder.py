@@ -619,7 +619,10 @@ async def test_proven_pre_call_failure_closes_preparation_before_any_refund(
     assert "create" not in rig.api.events
     assert "job-close" in rig.job.events
     assert deck.slots.count == deck.supervisor.debt_count == 0
-    assert deck.audio.reserved.total == 0  # positive no-invocation + all setup closed
+    assert deck.audio.reserved.pcm == 34_560_000
+    assert (
+        deck.audio.reserved.other == deck.audio.reserved.native == 0
+    )  # no invocation; setup closed
     assert not deck.source.closed
     await deck.source.aclose()
 

@@ -142,6 +142,8 @@ async def test_a_stop_during_the_fade_in_waits_for_it_before_fading_out(rig: Rig
 
 async def test_a_late_callback_from_a_stopped_player_is_ignored(rig: Rig) -> None:
     await start_playing(rig)
+    after = player_after(rig.player)
+    rig.player.defer_cleanup = True
     rig.station.stop()
     await rig.tick()
     rig.listen(FADE_OUT_S)
@@ -153,8 +155,11 @@ async def test_a_late_callback_from_a_stopped_player_is_ignored(rig: Rig) -> Non
     await rig.tick()
     await rig.feed(-1, 10)
     await rig.tick(PLAYER_RETRY_S)
+    assert rig.player.plays == 1  # stop/after alone cannot recycle caller staging
+    rig.player.end_stopped_threads()
+    await rig.tick(PLAYER_RETRY_S)
     assert rig.player.plays == 2
-    rig.player.end_stopped_threads()  # the stopped player's `after` arrives only now
+    call_player_after(after, None)  # a late duplicate old epoch cannot stop its successor
     await rig.tick(PLAYER_RETRY_S)
 
     assert rig.player.plays == 2  # the new player is still tracked, so none is restarted
@@ -282,6 +287,8 @@ async def test_reported_player_error_releases_frames_while_the_error_is_retained
     assert caplog.messages == ["Voice player stopped: owned player error"]
     assert error.__traceback__ is error.__context__ is error.__cause__ is None
     assert all(frame() is None for frame in frames)  # no gc.collect; error stays retained
+    assert rig.player.source is not None
+    rig.player.source.cleanup()  # after is followed by the player's public cleanup
     await rig.tick(PLAYER_RETRY_S)
     assert rig.player.plays == 2
 
@@ -306,6 +313,9 @@ async def test_player_callback_preserves_current_stale_none_and_retry_behavior(
         assert rig.player.plays == 2
     error = player_error_graph("nested")[0] if reported_error else None
     call_player_after(after, error)
+    if not stale:
+        assert rig.player.source is not None
+        rig.player.source.cleanup()
     await rig.tick(0)
     assert caplog.messages == (
         ["Voice player stopped: owned player error"] if reported_error else []
@@ -966,6 +976,7 @@ async def test_clears_the_status_once_back_in_the_channel(rig: Rig) -> None:
 
 def later_station(rig: Rig) -> Station:
     """Another station in the rig's server, as after a closed one, sharing its statuses."""
+    rig.player.end_thread()  # these status fixtures model the old public caller finishing
     station = Station(
         lambda: rig.voice[0] if rig.voice else None,
         lambda: rig.listeners[0],
@@ -1420,7 +1431,8 @@ async def test_cross_mode_replacement_is_successive_without_fades(rig: Rig, outg
     assert rig.station.heard_source is new
     assert rig.station.mixer.live is new
     assert not rig.station.mixer.switching
-    assert len(old.frames) == old_frames
+    assert old_frames > 0
+    assert not old.frames  # the permanently dropped source now explicitly releases its queue
     assert rig.station.mixer.read() == (2000).to_bytes(2, "little", signed=True) * 1920
     assert old.retired
 
@@ -1686,7 +1698,7 @@ async def test_close_keeps_capacity_through_repeated_caller_cancellation(rig: Ri
     assert rig.station.play(CATALOG, "late").result() is Outcome.STOPPED
     source.release_cleanup()
     await rig.station.close()
-    assert rig.station.audio.reserved == AudioBytes()
+    assert rig.station.audio.reserved == AudioBytes(pcm=34_560_000)
     await replacement.close()
 
 
@@ -1808,7 +1820,9 @@ async def test_failed_pcm_construction_does_not_deliver_or_settle_an_armed_start
 ) -> None:
     started, _, incoming = await request(rig, Mode.CATALOG)
     incoming.send_audio(6, sample=2000)
-    incoming.frames[0] = b"x"  # deliberate fixture corruption before non-unit scaling
+    incoming.frames[0] = incoming.pcm.copy(
+        memoryview(b"x")
+    )  # deliberate fixture corruption before non-unit scaling
     rig.station.mixer.set_volume(0.5)
     await rig.tick()
     assert rig.station.mixer.read() == SILENCE
