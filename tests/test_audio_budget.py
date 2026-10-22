@@ -1,10 +1,18 @@
 """Allocation admission and cleanup debt, independent of provider/native qualification."""
 
 import asyncio
+from collections import deque
 
 import pytest
 
-from sobafm.audio_budget import PARENT_LIMIT, PCM_LIMIT, TOTAL_LIMIT, AudioBytes, AudioLedger
+from sobafm.audio_budget import (
+    PARENT_LIMIT,
+    PCM_LIMIT,
+    TOTAL_LIMIT,
+    AudioBytes,
+    AudioLease,
+    AudioLedger,
+)
 
 
 @pytest.mark.parametrize("size", [AudioBytes(pcm=PCM_LIMIT), AudioBytes(other=PARENT_LIMIT)])
@@ -114,3 +122,207 @@ def test_unknown_obligations_block_catalog_even_with_empty_queues() -> None:
 def test_byte_bounds_must_be_nonnegative_integers(value: int | float) -> None:
     with pytest.raises(ValueError, match="integer"):
         AudioBytes(pcm=value)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize("value", [-1, 0, 0.5, True])
+def test_pcm_capacity_and_children_require_positive_plain_integers(value: int | float) -> None:
+    ledger = AudioLedger()
+    capacity = ledger.reserve_pcm_capacity(4)
+    assert capacity is not None
+    with pytest.raises(ValueError, match="positive integer"):
+        ledger.reserve_pcm_capacity(value)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ValueError, match="positive integer"):
+        capacity.reserve_pcm(value)  # pyright: ignore[reportArgumentType]
+    assert ledger.reserved == AudioBytes(pcm=4)
+
+
+@pytest.mark.parametrize(
+    "existing",
+    [
+        AudioBytes(pcm=PCM_LIMIT - 1),
+        AudioBytes(other=PARENT_LIMIT - 1),
+        AudioBytes(native=TOTAL_LIMIT - 2),
+    ],
+)
+def test_pcm_capacity_minting_keeps_each_existing_numeric_gate(existing: AudioBytes) -> None:
+    ledger = AudioLedger()
+    assert ledger.reserve(existing) is not None
+    assert ledger.reserve_pcm_capacity(2) is None
+    assert ledger.reserved == existing
+    assert ledger.reserve_pcm_capacity(1) is not None
+    assert ledger.reserved == existing + AudioBytes(pcm=1)
+
+
+def test_retained_unknown_owner_prevents_replacement_capacity_minting() -> None:
+    ledger = AudioLedger()
+    old_owner = ledger.unbounded()
+    replacement_ledger = ledger
+    assert replacement_ledger.reserve_pcm_capacity(4) is None
+    assert replacement_ledger.reserve(AudioBytes(pcm=4)) is None
+    assert not ledger.bounded
+    old_owner.release()
+    assert replacement_ledger.reserve_pcm_capacity(4) is not None
+
+
+def test_later_unknown_work_cannot_expand_or_replace_precharged_capacity() -> None:
+    ledger = AudioLedger()
+    capacity = ledger.reserve_pcm_capacity(4)
+    assert capacity is not None
+    unknown = ledger.unbounded()
+    assert not ledger.bounded
+    assert ledger.reserve_pcm_capacity(1) is None
+    assert ledger.reserve(AudioBytes(pcm=1)) is None
+    child = capacity.reserve_pcm(4)
+    assert child is not None
+    assert child.size == AudioBytes(pcm=4)
+    assert capacity.reserve_pcm(1) is None
+    assert ledger.reserved == AudioBytes(pcm=4)
+    capacity.close_pcm_admission()
+    child.release()
+    assert ledger.reserved == AudioBytes(pcm=4)
+    assert capacity.reserve_pcm(4) is None
+    assert ledger.reserve_pcm_capacity(4) is None
+    capacity.release()
+    assert ledger.reserved == AudioBytes()
+    assert not ledger.bounded
+    assert ledger.reserve_pcm_capacity(4) is None
+    unknown.release()
+    assert ledger.reserve_pcm_capacity(4) is not None
+
+
+def test_child_overflow_refuses_allocation_and_explicit_release_reuses_same_capacity() -> None:
+    ledger = AudioLedger()
+    capacity = ledger.reserve_pcm_capacity(4)
+    assert capacity is not None
+    allocations: list[bytes] = []
+
+    def retain(size: int) -> AudioLease | None:
+        child = capacity.reserve_pcm(size)
+        if child is not None:
+            allocations.append(bytes(range(size)))
+        return child
+
+    first = retain(4)
+    assert first is not None
+    assert retain(1) is None
+    assert len(allocations) == 1
+    allocations.clear()
+    first.release()
+    replacement = retain(4)
+    assert replacement is not None
+    first.release()  # a stale acknowledgement cannot refund the replacement
+    assert retain(1) is None
+    assert len(allocations) == 1
+    assert ledger.reserved == AudioBytes(pcm=4)
+
+
+def test_independent_pcm_owners_cannot_spend_each_others_capacity() -> None:
+    ledger = AudioLedger()
+    left = ledger.reserve_pcm_capacity(3)
+    right = ledger.reserve_pcm_capacity(5)
+    assert left is not None
+    assert right is not None
+    assert left.reserve_pcm(4) is None
+    first = left.reserve_pcm(3)
+    second = right.reserve_pcm(5)
+    assert first is not None
+    assert second is not None
+    assert ledger.reserved == AudioBytes(pcm=8)
+    first.release()
+    assert right.reserve_pcm(1) is None
+    assert left.reserve_pcm(3) is not None
+    assert ledger.reserved == AudioBytes(pcm=8)
+
+
+def test_flat_unknown_and_child_leases_cannot_issue_pcm_children() -> None:
+    ledger = AudioLedger()
+    capacity = ledger.reserve_pcm_capacity(4)
+    flat = ledger.reserve(AudioBytes(pcm=1))
+    assert capacity is not None
+    assert flat is not None
+    child = capacity.reserve_pcm(1)
+    assert child is not None
+    unknown = ledger.unbounded()
+    for lease in (flat, unknown, child):
+        with pytest.raises(RuntimeError, match="not a PCM capacity"):
+            lease.reserve_pcm(1)
+        with pytest.raises(RuntimeError, match="not a PCM capacity"):
+            lease.close_pcm_admission()
+    assert ledger.reserved == AudioBytes(pcm=5)
+
+
+def test_parent_release_requires_permanent_closure_and_explicit_child_release() -> None:
+    ledger = AudioLedger()
+    capacity = ledger.reserve_pcm_capacity(4)
+    assert capacity is not None
+    with pytest.raises(RuntimeError, match="admission is open"):
+        capacity.release()
+    child = capacity.reserve_pcm(4)
+    assert child is not None
+    capacity.close_pcm_admission()
+    capacity.close_pcm_admission()
+    assert capacity.reserve_pcm(1) is None
+    assert child.size == AudioBytes(pcm=4)
+    with pytest.raises(RuntimeError, match="children remain"):
+        capacity.release()
+    assert ledger.reserved == AudioBytes(pcm=4)
+    child.release()
+    child.release()
+    assert ledger.reserved == AudioBytes(pcm=4)  # zero children is not parent release
+    assert capacity.reserve_pcm(1) is None
+    capacity.release()
+    capacity.release()
+    capacity.close_pcm_admission()
+    assert capacity.reserve_pcm(1) is None
+    assert ledger.reserved == AudioBytes()
+
+
+async def test_held_mixer_receipt_survives_cancellation_timeout_and_replacement() -> None:
+    ledger = AudioLedger()
+    capacity = ledger.reserve_pcm_capacity(4)
+    assert capacity is not None
+    child = capacity.reserve_pcm(4)
+    assert child is not None
+    queued = deque([bytes(range(4))])
+    held = [queued.popleft()]
+    capacity.close_pcm_admission()  # producer ended; its already-admitted frame remains owned
+    unknown_debt = ledger.unbounded()
+    storage_released = asyncio.Event()
+
+    async def cleanup_owner() -> None:
+        await storage_released.wait()
+        held.clear()
+        child.release()
+
+    cleanup = asyncio.create_task(cleanup_owner())
+
+    async def wait_cleanup() -> None:
+        await asyncio.shield(cleanup)
+
+    for _ in range(2):
+        waiter = asyncio.create_task(wait_cleanup())
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.001):
+            await asyncio.shield(cleanup)
+    assert not queued
+    assert held
+    assert not cleanup.done()
+    assert ledger.reserved == AudioBytes(pcm=4)
+    replacement_ledger = ledger
+    assert replacement_ledger.reserve_pcm_capacity(4) is None
+    with pytest.raises(RuntimeError, match="children remain"):
+        capacity.release()
+    storage_released.set()
+    await cleanup
+    assert not held
+    assert ledger.reserved == AudioBytes(pcm=4)
+    capacity.release()
+    assert ledger.reserved == AudioBytes()
+    assert not ledger.bounded
+    assert replacement_ledger.reserve_pcm_capacity(4) is None
+    unknown_debt.release()
+    assert replacement_ledger.reserve_pcm_capacity(4) is not None

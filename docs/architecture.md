@@ -461,6 +461,20 @@ lease. Only verified release by its owner does. `SobaFM.audio_ledgers` retains t
 same server ledger across replacement stations; engine cleanup never clears
 unrelated leases or outstanding debt.
 
+`reserve_pcm_capacity(n)` admits a positive PCM-only owner through that same
+ordinary gate, before unqualified work starts. Its one-level `reserve_pcm(n)`
+children borrow only from the parent's precharged maximum; they do not add a
+second ledger charge or spend another owner's capacity. Closing child admission
+is permanent and preserves existing children. A child's explicit storage-release
+acknowledgement returns capacity only to its parent. The parent remains charged
+until admission is closed, every child has explicitly released, and its owner
+explicitly releases the parent. Zero children alone refund nothing; an open or
+borrowed parent refuses release. Flat leases keep their existing behavior.
+There is no transfer, replacement adoption or unknown-owner exemption. This
+primitive selects no production capacity and is not wired into generated PCM
+growth yet: producer temporaries, ended queues, splitter and mixer/player handoff
+still need explicit storage ownership before a runtime PCM guard can be claimed.
+
 There is still no qualified hard Lyria receive/copy/transport envelope. Its engine
 therefore records an explicit unknown obligation, blocking catalog
 admission even when current queues are empty. That debt remains after producer

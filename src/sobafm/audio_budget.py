@@ -51,14 +51,73 @@ class AudioLease:
     def __init__(self, ledger: AudioLedger, size: AudioBytes | None) -> None:
         self._ledger = ledger
         self._size = size
+        self._released = False
+        self._pcm_children: set[AudioLease] | None = None
+        self._pcm_available = 0
+        self._pcm_closed = False
+        self._pcm_parent: AudioLease | None = None
 
     @property
     def size(self) -> AudioBytes | None:
         return self._size
 
+    def reserve_pcm(self, pcm_bytes: int) -> AudioLease | None:
+        """Borrow from this owner's precharged PCM capacity, without a new ledger charge."""
+        _positive_pcm_bytes(pcm_bytes)
+        children = self._pcm_children
+        if children is None:
+            raise RuntimeError("lease is not a PCM capacity")
+        if self._released or self._pcm_closed or pcm_bytes > self._pcm_available:
+            return None
+        child = AudioLease(self._ledger, AudioBytes(pcm=pcm_bytes))
+        child._pcm_parent = self
+        children.add(child)
+        self._pcm_available -= pcm_bytes
+        return child
+
+    def close_pcm_admission(self) -> None:
+        """Permanently stop new children; existing storage and charges remain owned."""
+        if self._pcm_children is None:
+            raise RuntimeError("lease is not a PCM capacity")
+        self._pcm_closed = True
+
     def release(self) -> None:
         """Refund after the owner verifies all resources covered by this lease are gone."""
-        self._ledger._release(self)  # pyright: ignore[reportPrivateUsage]
+        if self._released:
+            return
+        if self._pcm_children is not None and (not self._pcm_closed or self._pcm_children):
+            raise RuntimeError("PCM capacity admission is open or children remain")
+        parent = self._pcm_parent
+        if parent is None:
+            self._ledger._release(self)  # pyright: ignore[reportPrivateUsage]
+        else:
+            children, size = parent._pcm_children, self._size
+            if children is None or self not in children or size is None:
+                raise RuntimeError("PCM child ownership is unavailable")
+            children.remove(self)
+            parent._pcm_available += size.pcm
+            self._pcm_parent = None
+        self._released = True
+
+    def _enable_pcm_capacity(self) -> None:
+        size = self._size
+        if (
+            self._released
+            or self._pcm_children is not None
+            or self._pcm_parent is not None
+            or size is None
+            or size.pcm <= 0
+            or size.other
+            or size.native
+        ):
+            raise RuntimeError("lease cannot become a PCM capacity")
+        self._pcm_children = set()
+        self._pcm_available = size.pcm
+
+
+def _positive_pcm_bytes(pcm_bytes: int) -> None:
+    if type(pcm_bytes) is not int or pcm_bytes <= 0:
+        raise ValueError("PCM reservations require positive integer byte bounds")
 
 
 class AudioLedger:
@@ -101,6 +160,18 @@ class AudioLedger:
             return None
         lease = AudioLease(self, size)
         self._leases.add(lease)
+        return lease
+
+    def reserve_pcm_capacity(self, pcm_bytes: int) -> AudioLease | None:
+        """Admit a fixed PCM owner before unknown work, using ordinary admission checks.
+
+        Children can spend only this already-charged maximum. This supplies no
+        exemption for unknown obligations and selects no runtime capacity size.
+        """
+        _positive_pcm_bytes(pcm_bytes)
+        lease = self.reserve(AudioBytes(pcm=pcm_bytes))
+        if lease is not None:
+            lease._enable_pcm_capacity()  # pyright: ignore[reportPrivateUsage]
         return lease
 
     def unbounded(self) -> AudioLease:
