@@ -9,6 +9,7 @@ from typing import cast
 import discord
 import pytest
 
+import sobafm.mixer as mixing
 from sobafm.audio_budget import PCM_LIMIT, TOTAL_LIMIT, AudioBytes, AudioLedger
 from sobafm.deck import Deck, EndReason
 from sobafm.mixer import Mixer
@@ -25,7 +26,8 @@ from tests.test_track_deck import settle as settle_track
 
 
 def owner(size: int) -> PCMOwner:
-    lease = AudioLedger().reserve_pcm_capacity(size)
+    # Tiny source/staging allowances still fund the owner's separate static backing.
+    lease = AudioLedger().reserve_pcm_capacity(size + len(SILENCE))
     assert lease is not None
     return PCMOwner(lease)
 
@@ -43,7 +45,7 @@ def test_one_parent_precedes_unknown_work_and_survives_replacement() -> None:
     receipt = paid.receipt
     del paid
     receipt.release()
-    child = pcm.capacity.reserve_pcm(PCM_LIMIT)
+    child = pcm.capacity.reserve_pcm(PCM_LIMIT - len(SILENCE))
     assert child is not None
     assert audio.pcm.capacity.reserve_pcm(1) is None
     child.release()
@@ -98,6 +100,123 @@ async def test_full_runtime_pcm_and_large_native_refuse_before_fake_producer(
     assert not rig.child.writes
     assert rig.slots.count == 0
     assert rig.audio.reserved == AudioBytes(pcm=PCM_LIMIT)
+
+
+def test_insufficient_static_funding_refuses_owner_before_pcm_growth() -> None:
+    lease = AudioLedger().reserve_pcm_capacity(len(SILENCE) - 1)
+    assert lease is not None
+    with pytest.raises(PCMCapacityError):
+        PCMOwner(lease)
+
+
+async def test_static_charge_survives_cleanup_and_station_replacement_once() -> None:
+    audio = AudioLedger()
+    lyria = FakeLyria()
+
+    async def show(channel: int, status: str | None) -> bool:
+        return True
+
+    stations = [
+        Station(
+            lambda: None,
+            lambda: 0,
+            lyria.connect,
+            SessionPool(4),
+            audio=audio,
+            volume=1,
+            statuses=Statuses(lambda: None, show),
+        )
+        for _ in range(2)
+    ]
+    assert stations[0].pcm is stations[1].pcm is audio.pcm
+    for station in stations:
+        wrapper = station.mixer.player_source()
+        assert wrapper is not None
+        wrapper.cleanup()
+        await asyncio.sleep(0)
+        # One static frame remains unavailable; replacement/cleanup cannot fund
+        # another static charge or refund the original backing.
+        assert audio.pcm.capacity.reserve_pcm(PCM_LIMIT - len(SILENCE) + 1) is None
+        remaining = audio.pcm.capacity.reserve_pcm(PCM_LIMIT - len(SILENCE))
+        assert remaining is not None
+        remaining.release()
+        await station.close()
+    assert not audio.bounded
+    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT)
+
+
+async def test_eight_frame_parent_refuses_staging_before_unpaid_crossfade_growth() -> None:
+    lease = AudioLedger().reserve_pcm_capacity(8 * FRAME_BYTES)
+    assert lease is not None
+    pcm = PCMOwner(lease)
+    storage = pcm.storage(4 * FRAME_BYTES)
+    frames = deque(storage.silence(FRAME_BYTES) for _ in range(4))
+    admitted = [frame.data for frame in frames]
+    mixer = Mixer(1, pcm)
+    assert mixer.player_source() is None  # static1 + source4 leaves only3 for required4 staging
+    assert mixer.read() is SILENCE
+    assert [frame.data for frame in frames] == admitted
+    del admitted
+    drain_pcm(frames)
+
+
+async def test_actual_crossfade_peak_includes_persistent_silence_and_fits_funded_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capacity = 9 * FRAME_BYTES
+    lease = AudioLedger().reserve_pcm_capacity(capacity)
+    assert lease is not None
+    pcm = PCMOwner(lease)
+    storage = pcm.storage(4 * FRAME_BYTES)
+
+    class Source:
+        def __init__(self) -> None:
+            self.frames = deque(storage.silence(FRAME_BYTES) for _ in range(2))
+
+    left, right = Source(), Source()
+    inputs: list[bytes] = []
+    prior: bytes | None = None
+    observed: list[int] = []
+
+    def scaled(frame: bytes, _width: int, _gain: float) -> bytes:
+        inputs.append(frame)
+        return memoryview(frame).tobytes()
+
+    def added(first: bytes, second: bytes, _width: int) -> bytes:
+        result = memoryview(first).tobytes()
+        if prior is not None:
+            sources = inputs + [frame.data for source in (left, right) for frame in source.frames]
+            live = [*sources, first, second, result, prior, SILENCE]
+            assert len(sources) == 4
+            assert len({id(data) for data in live}) == 9
+            assert all(len(data) == FRAME_BYTES for data in live)
+            assert pcm.capacity.reserve_pcm(1) is None
+            observed.append(sum(map(len, live)))
+        return result
+
+    monkeypatch.setattr(mixing.audioop, "mul", scaled)
+    monkeypatch.setattr(mixing.audioop, "add", added)
+    mixer = Mixer(1, pcm)
+    wrapper = mixer.player_source()
+    assert wrapper is not None
+    mixer.switch_to(left, 0)
+    mixer.switch_to(right, 0.04)
+    prior = wrapper.read()
+    inputs.clear()
+    await asyncio.sleep(0)
+    left.frames.append(storage.silence(FRAME_BYTES))
+    right.frames.append(storage.silence(FRAME_BYTES))
+    current = wrapper.read()
+    assert observed == [capacity]
+    inputs.clear()
+    prior = None
+    del current
+    await asyncio.sleep(0)
+    drain_pcm(left.frames)
+    drain_pcm(right.frames)
+    wrapper.cleanup()
+    await asyncio.sleep(0)
+    assert pcm.capacity.reserve_pcm(capacity - len(SILENCE) + 1) is None
 
 
 def test_aliases_share_one_backing_but_finish_independently() -> None:
@@ -230,7 +349,7 @@ async def test_explicit_drop_does_not_refund_a_popped_reader() -> None:
 
 async def test_catalog_reserves_before_bounded_backend_read(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    held = rig.audio.pcm.capacity.reserve_pcm(PCM_LIMIT - FRAME_BYTES + 1)
+    held = rig.audio.pcm.capacity.reserve_pcm(PCM_LIMIT - len(SILENCE) - FRAME_BYTES + 1)
     assert held is not None
     with pytest.raises(PCMCapacityError):
         await rig.deck._output(rig.child)  # pyright: ignore[reportPrivateUsage]
@@ -243,7 +362,7 @@ async def test_catalog_padding_prepaid_and_pcm_not_charged_twice(
     tmp_path: Path, remaining: int
 ) -> None:
     rig = Rig(tmp_path, seconds=1, output=bytes(FRAME_BYTES - 4), frames=100)
-    held = rig.audio.pcm.capacity.reserve_pcm(PCM_LIMIT - remaining)
+    held = rig.audio.pcm.capacity.reserve_pcm(PCM_LIMIT - len(SILENCE) - remaining)
     assert held is not None
     rig.deck.start()
     await settle_track(rig)

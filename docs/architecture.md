@@ -476,6 +476,9 @@ primitive now supplies one retained server PCM owner, admitted for the existing
 `PCM_LIMIT` before the Lyria unknown obligation is created. Replacement stations
 reuse that same parent and outstanding children. The server ledger keeps the
 parent charged; station shutdown cannot close it or mint a successor.
+The owner's first child persistently charges the immutable `SILENCE` backing,
+once across player epochs and replacement stations. Player cleanup never refunds
+this static storage; the four transient staging frames are a separate charge.
 
 `OwnedPCM` couples immutable backing bytes to a receipt. Source queues transfer
 that ownership to Mixer reads; aliases share one backing lease with idempotent

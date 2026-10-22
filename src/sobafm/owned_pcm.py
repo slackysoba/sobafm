@@ -107,7 +107,12 @@ class PCMOwner:
     """One server's parent and exact public-cleanup player epoch, retained by its ledger."""
 
     def __init__(self, capacity: AudioLease) -> None:
+        from sobafm.pcm import SILENCE
+
         self.capacity = capacity
+        # This immutable global backing outlives every player. Keep its child
+        # separate from transient mixing/caller scratch, once per server owner.
+        self._silence = self.storage(len(SILENCE)).reserve(len(SILENCE))
         self._epoch: object | None = None
         self._active: QuiescentPCMSource | None = None
 
