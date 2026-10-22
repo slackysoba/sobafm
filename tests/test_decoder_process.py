@@ -615,3 +615,22 @@ async def test_reaped_leader_never_signals_reused_process_group() -> None:
     child.terminate()
     boundary.terminate.assert_not_called()
     boundary.kill.assert_called_once_with()
+
+
+@pytest.mark.parametrize("drift", [None, "process", "job", "flags", "membership"])
+def test_creation_time_membership_uses_captured_handle_without_reassignment(
+    api: API, drift: str | None
+) -> None:
+    job = WindowsJob(commit_limit=8 * 1024**2)
+    job.prepare()
+    api.drift = drift
+    api.member = drift != "membership"
+    if drift is None:
+        job.verify_process(321)
+    else:
+        with pytest.raises(TrackError, match="capacity"):
+            job.verify_process(321)
+    api.IsProcessInJob.assert_called_once()
+    assert api.IsProcessInJob.call_args.args[:2] == (321, job.creation_handle)
+    api.OpenProcess.assert_not_called()
+    api.AssignProcessToJobObject.assert_not_called()

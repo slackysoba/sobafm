@@ -93,8 +93,12 @@ class Launch:
     def __init__(self, admitted: Callable[[], bool]) -> None:
         self._admitted = admitted
         self.invoked = self.not_invoked = False
+        # A backend may already own setup resources while creation itself is
+        # unresolved. That still bars replacement admission after a failed wait.
+        self.unresolved = False
         self.child: Process | None = None
         self.pending: Child | None = None
+        self.preparation: Process | None = None
 
     def reject(self) -> None:
         if self.invoked:
@@ -117,6 +121,10 @@ class Launch:
         if self.pending is not None and self.pending.captured:
             return self.pending
         return None
+
+    @property
+    def cleanup_owner(self) -> Process | None:
+        return self.owned if self.owned is not None else self.preparation
 
 
 class LinuxCgroup:
@@ -303,6 +311,22 @@ class WindowsJob:
         ):
             raise TrackError(TrackFailure.CAPACITY)
 
+    @property
+    def creation_handle(self) -> int:
+        if self._handle is None:
+            raise TrackError(TrackFailure.CAPACITY)
+        return self._handle
+
+    def verify_process(self, process: int) -> None:
+        """Verify creation-time membership using the still-owned process handle."""
+        member = wintypes.BOOL()
+        if (
+            not self._api.IsProcessInJob(process, self.creation_handle, ctypes.byref(member))
+            or not member.value
+        ):
+            raise TrackError(TrackFailure.CAPACITY)
+        self._verify_limits()
+
     def bind(self, pid: int) -> None:
         api, job = self._api, self._handle
         if job is None:
@@ -486,3 +510,11 @@ class Child:
 
     def close_pipes(self) -> bool:
         return close_pipes(self.process)
+
+
+async def launch(runtime: VerifiedNativeRuntime, boundary: Boundary, owner: Launch) -> Process:
+    if isinstance(boundary, WindowsJob):
+        from sobafm.windows_decoder import WindowsProcess
+
+        return await WindowsProcess.launch(runtime, boundary, owner)
+    return await Child.launch(runtime, boundary, owner)
