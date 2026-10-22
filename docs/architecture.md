@@ -220,6 +220,19 @@ ordering relies on that fixed executable's no-helper startup; #175 must qualify
 it and inherited containment on every supported installation. A process group or
 a whole-container limit is not a substitute for containment.
 
+Windows profiles can provide a positive integer `WindowsJob(commit_limit=...)`
+no greater than the unchanged 128 MiB default. Both process and Job commit limits
+and kill-on-close are read back during preparation and again after verified
+assignment, before input is allowed. This is control plumbing, not a qualified
+profile or an audio allowance. A future profile must reserve the entire enforced
+ceiling per concurrently owned child, plus independently bounded attributable
+startup and outside-commit audio backing; it cannot subtract a measured baseline.
+Committed memory is not resident audio, and runtime/code pages are not audio by
+definition. Assignment does not examine earlier memory operations, so untouched
+stdin alone does not close that startup gap. These qualifications remain in
+[#175](https://github.com/slackysoba/sobafm/issues/175); no lower production ceiling
+or catalog readiness is selected here.
+
 The frame deque never exceeds its admitted capacity. Admission also requires
 space for six seconds, or all duration-valid shorter output including the
 one-second duration allowance. This prevents an unready source from blocking

@@ -241,7 +241,10 @@ class _Accounting(ctypes.Structure):
 class WindowsJob:
     """Private Job handle with enforced memory limits, membership and tree queries."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, commit_limit: int = CHILD_MEMORY) -> None:
+        if type(commit_limit) is not int or not 0 < commit_limit <= CHILD_MEMORY:
+            raise ValueError("invalid child commit limit")
+        self._commit_limit = commit_limit
         self._handle: int | None = None
         self._api: Any = None  # typed at each explicit Win32 FFI boundary below
 
@@ -280,16 +283,23 @@ class WindowsJob:
         self._handle = int(handle)
         limits = _Limits()
         limits.basic.flags = 0x100 | 0x200 | 0x2000  # process/job memory, kill-on-close
-        limits.process_memory = limits.job_memory = CHILD_MEMORY
+        limits.process_memory = limits.job_memory = self._commit_limit
         if not api.SetInformationJobObject(handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
             raise TrackError(TrackFailure.CAPACITY)
+        self._verify_limits()
+
+    def _verify_limits(self) -> None:
         actual = _Limits()
-        if not api.QueryInformationJobObject(
-            handle, 9, ctypes.byref(actual), ctypes.sizeof(actual), None
-        ) or (
-            actual.basic.flags != limits.basic.flags
-            or actual.process_memory != CHILD_MEMORY
-            or actual.job_memory != CHILD_MEMORY
+        if (
+            self._handle is None
+            or not self._api.QueryInformationJobObject(
+                self._handle, 9, ctypes.byref(actual), ctypes.sizeof(actual), None
+            )
+            or (
+                actual.basic.flags != 0x100 | 0x200 | 0x2000
+                or actual.process_memory != self._commit_limit
+                or actual.job_memory != self._commit_limit
+            )
         ):
             raise TrackError(TrackFailure.CAPACITY)
 
@@ -308,6 +318,7 @@ class WindowsJob:
                 or not member.value
             ):
                 raise TrackError(TrackFailure.CAPACITY)
+            self._verify_limits()
         finally:
             api.CloseHandle(process)
 

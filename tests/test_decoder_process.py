@@ -2,6 +2,7 @@ import asyncio
 import ctypes
 import io
 import sys
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -11,6 +12,7 @@ import pytest
 
 import sobafm.decoder_check as checks
 import sobafm.decoder_process as processes
+import sobafm.track_deck as tracks
 from sobafm.catalog_audio import TrackError
 from sobafm.decoder_process import (
     CHILD_MEMORY,
@@ -22,7 +24,9 @@ from sobafm.decoder_process import (
     command,
 )
 from sobafm.native import SourceArchive, VerifiedNativeRuntime
+from sobafm.track_deck import TrackDeck
 from tests.test_decoder_check import Process, Writer
+from tests.test_track_deck import Rig
 
 
 @pytest.fixture
@@ -265,6 +269,7 @@ class API:
         self.active = 0
         self.member = True
         self.corrupt_limit = False
+        self.drift: str | None = None
         self.CreateJobObjectW = MagicMock(return_value=100)
         self.SetInformationJobObject = MagicMock(side_effect=self.set_limits)
         self.QueryInformationJobObject = MagicMock(side_effect=self.query)
@@ -284,6 +289,12 @@ class API:
             ctypes.memmove(value, self.limits, size)
             if self.corrupt_limit:
                 value._obj.job_memory = 0
+            if self.drift == "process":
+                value._obj.process_memory += 4096
+            elif self.drift == "job":
+                value._obj.job_memory += 4096
+            elif self.drift == "flags":
+                value._obj.basic.flags ^= 0x2000
         else:
             assert kind == 1
             value._obj.active = self.active
@@ -297,7 +308,9 @@ class API:
 @pytest.fixture
 def api(monkeypatch: pytest.MonkeyPatch) -> API:
     api = API()
-    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(
+        processes, "os", SimpleNamespace(name="nt", environ={"SYSTEMROOT": "C:/Windows"})
+    )
 
     def library(*args: Any, **kwargs: Any) -> API:
         return api
@@ -326,17 +339,52 @@ def test_job_limits_membership_and_tree_queries_are_exact(api: API) -> None:
     assert api.CloseHandle.call_args_list[-1].args == (100,)
 
 
-@pytest.mark.parametrize("failure", ["limit", "assignment", "membership", "query", "open"])
+@pytest.mark.parametrize("limit", [1, 8 * 1024**2, CHILD_MEMORY])
+def test_explicit_job_commit_limit_is_set_and_read_back_before_and_after_bind(
+    api: API, limit: int
+) -> None:
+    # These are API mock values, not selected production profiles or native runs.
+    job = WindowsJob(commit_limit=limit)
+    job.prepare()
+    job.bind(123)
+    limits = processes._Limits.from_buffer_copy(api.limits)  # pyright: ignore[reportPrivateUsage]
+    assert limits.process_memory == limits.job_memory == limit
+    assert limits.basic.flags == 0x100 | 0x200 | 0x2000
+    assert [call.args[1] for call in api.QueryInformationJobObject.call_args_list] == [9, 9]
+    api.IsProcessInJob.assert_called_once()
+
+
+@pytest.mark.parametrize("limit", [True, False, 0, -1, CHILD_MEMORY + 1, 1.0, "4096", None])
+def test_invalid_job_commit_limit_fails_before_os_calls(api: API, limit: object) -> None:
+    with pytest.raises(ValueError, match="child commit limit"):
+        WindowsJob(commit_limit=cast(int, limit))
+    for function in vars(api).values():
+        if isinstance(function, MagicMock):
+            function.assert_not_called()
+
+
+def test_job_commit_limit_is_keyword_only(api: API) -> None:
+    with pytest.raises(TypeError):
+        WindowsJob(4096)  # pyright: ignore[reportCallIssue] - invalid public call shape
+    api.CreateJobObjectW.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["set", "limit", "assignment", "membership", "query", "open"])
 def test_job_policy_or_query_failure_never_grants_binding(api: API, failure: str) -> None:
     job = WindowsJob()
-    if failure == "limit":
+    if failure == "set":
+        api.SetInformationJobObject.return_value = 0
+        api.SetInformationJobObject.side_effect = None
+    elif failure == "limit":
         api.corrupt_limit = True
     elif failure == "query":
         api.QueryInformationJobObject.return_value = 0
         api.QueryInformationJobObject.side_effect = None
-    if failure in ("limit", "query"):
+    if failure in ("set", "limit", "query"):
         with pytest.raises(TrackError, match="capacity"):
             job.prepare()
+        job.kill()
+        api.TerminateJobObject.assert_called_once_with(100, 1)
         return
     job.prepare()
     if failure == "assignment":
@@ -347,6 +395,86 @@ def test_job_policy_or_query_failure_never_grants_binding(api: API, failure: str
         api.OpenProcess.return_value = 0
     with pytest.raises(TrackError, match="capacity"):
         job.bind(123)
+
+
+@pytest.mark.parametrize("stage", ["prepare", "bind"])
+@pytest.mark.parametrize("failure", ["process", "job", "flags", "query"])
+async def test_limit_drift_blocks_input_and_preserves_owned_cleanup(
+    api: API, stage: str, failure: str
+) -> None:
+    job = WindowsJob(commit_limit=8 * 1024**2)
+    if stage == "bind":
+        job.prepare()
+    if failure == "query":
+        api.QueryInformationJobObject.return_value = 0
+        api.QueryInformationJobObject.side_effect = None
+    else:
+        api.drift = failure
+    raw = Process()
+    raw.pid = 123  # pyright: ignore[reportAttributeAccessIssue] - synthetic subprocess
+    child = Child(cast(asyncio.subprocess.Process, raw), job)
+    operation = job.prepare if stage == "prepare" else child.bind
+    with pytest.raises(TrackError, match="capacity"):
+        operation()
+    assert not child.bound
+    with pytest.raises(TrackError, match="capacity"):
+        await child.write(b"must not reach stdin")
+    assert not raw.stdin.blocks
+    if stage == "bind":
+        api.CloseHandle.assert_called_once_with(200)
+    child.terminate()
+    child.kill()
+    assert api.TerminateJobObject.call_count == 2
+    assert raw.terminated == raw.killed == 1
+    await child.close_input()
+
+
+async def test_post_assignment_drift_retains_slot_and_audio_until_actual_cleanup(
+    api: API, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tracks, "CLEANUP_SECONDS", 0.01)
+    rig = Rig(tmp_path)
+    limit = 8 * 1024**2  # fake admission only; no production/native qualification
+    allocation = rig.supervisor.envelope.allocation
+    assert allocation is not None
+    rig.supervisor.envelope = replace(
+        rig.supervisor.envelope, allocation=replace(allocation, native=limit)
+    )
+    job = WindowsJob(commit_limit=limit)
+    raw = Process()
+    raw.pid = 123  # pyright: ignore[reportAttributeAccessIssue] - synthetic subprocess
+
+    async def create(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        # Prepare succeeded, but a post-assignment read-back must now reject drift.
+        api.drift = "job"
+        api.active = 1
+        return cast(asyncio.subprocess.Process, raw)
+
+    monkeypatch.setattr(processes.asyncio, "create_subprocess_exec", create)
+    rig.supervisor.boundary = lambda: job
+    rig.supervisor.spawn = Child.launch
+    rig.deck = TrackDeck(
+        rig.track, rig.deck.program, rig.audio, rig.supervisor, input_factory=rig.input
+    )
+    rig.deck.start()
+    await rig.deck.wait_ended()
+    assert rig.deck.cleanup_failed
+    assert raw.returncode == 0
+    assert not raw.stdin.blocks
+    assert not rig.source.closed  # the input factory was never reached
+    reserved = rig.audio.reserved
+    assert reserved.native == limit
+    assert rig.slots.count == rig.supervisor.debt_count == 1
+    assert not job.empty()
+    api.CloseHandle.assert_called_once_with(200)  # only the temporary process handle
+    api.active = 0  # the owned fake tree has now actually emptied
+    await asyncio.gather(*tuple(rig.supervisor.cleanups))
+    assert job.empty()
+    assert api.CloseHandle.call_args_list[-1].args == (100,)
+    assert rig.slots.count == rig.supervisor.debt_count == 0
+    assert rig.deck.cleanup_failed  # later closure cannot erase the missed verdict
+    assert rig.audio.reserved == reserved  # child release is not audio-storage proof
+    await rig.source.aclose()  # its creator closes the never-transferred fixture
 
 
 class KernelPath:
