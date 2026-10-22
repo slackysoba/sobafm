@@ -34,11 +34,12 @@ from sobafm.deck import (
     RESUME_BELOW_S,
     Deck,
     EndReason,
+    LyriaMessageError,
     MusicSession,
     State,
 )
 from sobafm.failures import Failure
-from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS
+from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES, FRAME_SECONDS, MIME_TYPE
 from sobafm.plan import MusicPlan
 from tests.doubles import FakeClock, FakeLyria, FakeSession, serve, settle
 
@@ -91,6 +92,108 @@ async def test_buffers_audio_as_whole_frames(lyria: FakeLyria, clock: FakeClock)
 
     assert [len(frame) for frame in deck.frames] == [FRAME_BYTES] * 3
     assert b"".join(deck.frames) == audio[: FRAME_BYTES * 3]
+
+
+class TransientSession(FakeSession):
+    """Yield updates without retaining them in the fake iterator's locals."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.updates: asyncio.Queue[types.LiveMusicServerMessage] = asyncio.Queue()
+        self.waiting: asyncio.Queue[None] = asyncio.Queue()
+        self.retained: types.LiveMusicServerMessage | None = None
+
+    async def receive(self) -> AsyncGenerator[types.LiveMusicServerMessage]:
+        while True:
+            self.waiting.put_nowait(None)
+            yield await self.updates.get()
+
+
+@pytest.fixture
+async def transient_deck(clock: FakeClock) -> AsyncGenerator[tuple[Deck, TransientSession]]:
+    session = TransientSession()
+
+    @contextlib.asynccontextmanager
+    async def connect() -> AsyncGenerator[MusicSession]:
+        yield session
+
+    deck = Deck(connect, MusicPlan.from_request("ambient"), clock=clock)
+    deck.start()
+    await asyncio.wait_for(session.waiting.get(), 1)
+    try:
+        yield deck, session
+    finally:
+        deck.retire()
+        await ended(deck)
+
+
+def enqueue_tracked_audio(
+    session: TransientSession, audio: bytes, *, retain: bool, mime_type: str = MIME_TYPE
+) -> tuple[weakref.ReferenceType[object], ...]:
+    metadata = types.LiveMusicSourceMetadata(
+        music_generation_config=types.LiveMusicGenerationConfig(bpm=90)
+    )
+    chunk = types.AudioChunk(data=audio, mime_type=mime_type, source_metadata=metadata)
+    content = types.LiveMusicServerContent(audio_chunks=[chunk])
+    message = types.LiveMusicServerMessage(server_content=content)
+    session.updates.put_nowait(message)
+    if retain:
+        session.retained = message  # an independent SDK owner, deliberately outside Deck
+    return tuple(weakref.ref(node) for node in (message, content, chunk, metadata))
+
+
+@pytest.mark.parametrize("metadata_only", [False, True], ids=["empty", "metadata-only"])
+@pytest.mark.parametrize("retain", [False, True], ids=["deck-only", "sdk-owner"])
+async def test_releases_processed_response_before_awaiting_another_update(
+    transient_deck: tuple[Deck, TransientSession],
+    clock: FakeClock,
+    metadata_only: bool,
+    retain: bool,
+) -> None:
+    deck, session = transient_deck
+    audio = bytes(i % 251 for i in range(FRAME_BYTES * 2))
+    refs = enqueue_tracked_audio(session, audio, retain=retain)
+    await asyncio.wait_for(session.waiting.get(), 1)  # audio processed; next receive pending
+    assert all((ref() is not None) == retain for ref in refs)
+
+    # A filtered-prompt update after audio is metadata only and must remain ignored.
+    session.updates.put_nowait(
+        types.LiveMusicServerMessage(
+            filtered_prompt=types.LiveMusicFilteredPrompt(filtered_reason="PROHIBITED_CONTENT")
+        )
+        if metadata_only
+        else types.LiveMusicServerMessage()
+    )
+    await asyncio.wait_for(session.waiting.get(), 1)
+    assert all((ref() is not None) == retain for ref in refs)
+    session.retained = None  # releasing an independent owner needs no further Deck activity
+    assert all(ref() is None for ref in refs)
+
+    assert list(deck.frames) == [audio[:FRAME_BYTES], audio[FRAME_BYTES:]]
+    assert deck.state is State.GENERATING
+    assert deck.detail is None
+    clock.now = 10
+    assert deck.rate == pytest.approx(len(audio) / BYTES_PER_SECOND / 10)
+
+
+async def test_escaping_processing_traceback_independently_retains_response(
+    lyria: FakeLyria, clock: FakeClock
+) -> None:
+    session = TransientSession()
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), clock=clock)
+    refs = enqueue_tracked_audio(session, bytes(FRAME_BYTES), retain=False, mime_type="invalid")
+    caught: LyriaMessageError | None = None
+    try:
+        await deck._receive(session)  # pyright: ignore[reportPrivateUsage]
+    except LyriaMessageError as error:
+        caught = error
+
+    assert caught is not None
+    assert str(caught) == "unexpected audio format"
+    assert not deck.frames
+    assert all(ref() is not None for ref in refs)
+    caught.__traceback__ = None  # as the production `_end` does after recording the failure
+    assert all(ref() is None for ref in refs)
 
 
 async def test_generated_eof_leaves_partial_frame_unpadded(
