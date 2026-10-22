@@ -20,7 +20,7 @@ from sobafm.catalog_audio import (
     TrackError,
     TrackFailure,
 )
-from sobafm.decoder_process import Boundary, Child, Launch, Process
+from sobafm.decoder_process import Boundary, Launch, Process, launch
 from sobafm.native import VerifiedNativeRuntime
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES, FRAME_SECONDS, FrameSplitter
 from sobafm.program import Mode, Program
@@ -149,9 +149,7 @@ class DecoderSupervisor:
         *,
         envelope: Envelope | None = None,
         slots: Slots = _PROCESS_SLOTS,
-        spawn: Callable[
-            [VerifiedNativeRuntime, Boundary, Launch], Awaitable[Process]
-        ] = Child.launch,
+        spawn: Callable[[VerifiedNativeRuntime, Boundary, Launch], Awaitable[Process]] = launch,
     ) -> None:
         self.runtime, self.boundary = runtime, boundary
         self.envelope = envelope if envelope is not None else Envelope()
@@ -530,7 +528,7 @@ class TrackDeck:
         if (
             self._slot is not None
             and launch is not None
-            and launch.owned is None
+            and (launch.owned is None or launch.unresolved)
             and not launch.not_invoked
         ):
             self._supervisor.uncertain(self._slot)
@@ -566,7 +564,7 @@ class TrackDeck:
         for task in self._workers:
             task.cancel()
         if self._spawn_task is not None:
-            while not self._spawn_task.done() and (launch is None or launch.owned is None):
+            while not self._spawn_task.done() and (launch is None or launch.cleanup_owner is None):
                 self._deadline(deadline)
                 await asyncio.sleep(0.01)
             if self._spawn_task.done() and not self._spawn_task.cancelled():
@@ -577,10 +575,10 @@ class TrackDeck:
         if launch is not None:
             # Task completion/exception and an empty unassigned boundary are not
             # negative creation certificates. Keep the owner and full charges.
-            while launch.owned is None and not launch.not_invoked:
+            while launch.cleanup_owner is None and not launch.not_invoked:
                 self._cleanup_failure()
                 await asyncio.sleep(0.01)
-            self._child = launch.owned
+            self._child = launch.cleanup_owner
         child = self._child
         cleanup: list[asyncio.Task[object]] = []
         if child is not None:
@@ -649,7 +647,7 @@ class TrackDeck:
             self._supervisor.released(self._slot)
             self._slot = None
         if (
-            launch is None or (launch.not_invoked and child is None)
+            launch is None or (launch.not_invoked and launch.owned is None)
         ) and self.allocation is not None:
             self.allocation.release()  # positively no child/input allocation was created
             self.allocation = None

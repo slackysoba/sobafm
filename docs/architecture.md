@@ -214,11 +214,20 @@ actual bytes before each 16KiB decoder write/drain, rejects advertised or actual
 The supervisor reserves a complete explicit `AudioBytes` envelope and one child
 slot before starting. It requires an absolute supply-verified executable, fixed
 forced-MP3/pipe-only arguments, minimum environment and verified pre-input cgroup
-or Job limits. The trusted minimal executable starts with an untouched input pipe;
-no feeder becomes reachable before membership and limit readback succeed. This
-ordering relies on that fixed executable's no-helper startup; #175 must qualify
-it and inherited containment on every supported installation. A process group or
-a whole-container limit is not a substitute for containment.
+or Job limits. No feeder becomes reachable before membership and limit readback
+succeed. Linux retains its session/cgroup binding sequence and its fixed
+executable's no-helper startup premise. Windows creates the child with a
+`STARTUPINFOEX` Job list before its initial thread runs, plus an explicit whitelist
+of its three inherited stdio endpoints. While suspended, the backend checks the
+captured process handle's membership and configured limits, then resumes exactly
+once before allowing input. Parent endpoints use overlapped handles adopted by
+the public Proactor pipe APIs. Creation and the exact-handle process wait run off
+the event loop; cancellation cannot abandon their retained workers or close a
+handle still being waited on. Partial setup/adoption and uncertain creation keep
+their native argument storage, handles, cleanup debt and admission barrier.
+Only positively closed endpoints and completed owned waits can settle that child
+ownership. #175 must qualify actual platform behavior; a process group or
+whole-container limit is not a substitute for containment.
 
 Windows profiles can provide a positive integer `WindowsJob(commit_limit=...)`
 no greater than the unchanged 128 MiB default. Both process and Job commit limits
@@ -228,8 +237,10 @@ profile or an audio allowance. A future profile must reserve the entire enforced
 ceiling per concurrently owned child, plus independently bounded attributable
 startup and outside-commit audio backing; it cannot subtract a measured baseline.
 Committed memory is not resident audio, and runtime/code pages are not audio by
-definition. Assignment does not examine earlier memory operations, so untouched
-stdin alone does not close that startup gap. These qualifications remain in
+definition. Creation-time assignment covers the child's initial-thread work with
+the configured Job controls; untouched stdin alone did not provide that guarantee.
+It does not prove that every attributable audio allocation is private commit or
+close the complete audio accounting requirement. These qualifications remain in
 [#175](https://github.com/slackysoba/sobafm/issues/175); no lower production ceiling
 or catalog readiness is selected here.
 
