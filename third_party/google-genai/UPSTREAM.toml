@@ -1,0 +1,37 @@
+status = "proposal-only"
+name = "google-genai"
+version = "2.26.0"
+derived_version = "2.26.0+sobafm.1"
+source_url = "https://files.pythonhosted.org/packages/17/1e/3d86140c56384ca865ee6f2f8edfb5fc74770b2227681c6865408b797b1d/google_genai-2.26.0.tar.gz"
+source_sha256 = "77bb207d535fc84934b42f95db35267df40fea7244b824e91daf2e7940358db3"
+source_bytes = 705690
+patch = "google-genai-2.26.0-bounded-receive.patch"
+reviewed_patch_sha256 = "9b9455d08e7869ff53a8656ab8cbcc6ef89e6afd5cd7ca8ce99fbfe392ee852a"
+reviewed_patch_bytes = 22967
+patch_sha256 = "bddf04295e8925cd3877f350d23b09c14d680f87f0cd94827c3787f1138d3a18"
+patch_bytes = 22979
+patch_encoding = "Six single-space context lines become explicit empty delete/add pairs; hunk counts and resulting source bytes are unchanged."
+upstream_purl = "pkg:pypi/google-genai@2.26.0"
+derived_purl = "pkg:pypi/google-genai@2.26.0%2Bsobafm.1"
+upstream_license = "Apache-2.0"
+additions_license = "MIT"
+upstream_notice_present = false
+build_backend = "setuptools.build_meta:__legacy__"
+source_date_epoch = 1792688400
+sdk_paths = [
+    "google/genai/live_music.py",
+    "google/genai/_bounded_receive.py",
+    "google/genai/json_shape_preflight.py",
+]
+metadata_paths = [
+    "google/genai/version.py",
+    "pyproject.toml",
+    "MANIFEST.in",
+    "LICENSE.sobafm",
+    "NOTICE",
+]
+
+[reviewed_sources]
+"google/genai/live_music.py" = "ba1455d8aa94369508254ed25b23cc2369d5751dcb99b3426999d14ca906257d"
+"google/genai/_bounded_receive.py" = "648bb14e995cec24a69012ee6ef051e54caeb67820e1774cf8acef7f44107399"
+"google/genai/json_shape_preflight.py" = "295163e901f9e9aee4faf6f288ee89e935aeff2027ebf8afd5c6b6ecc1ad8747"

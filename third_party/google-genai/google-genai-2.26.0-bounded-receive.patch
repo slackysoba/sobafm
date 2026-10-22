@@ -1,0 +1,615 @@
+diff --git a/google/genai/_bounded_receive.py b/google/genai/_bounded_receive.py
+new file mode 100644
+--- /dev/null
++++ b/google/genai/_bounded_receive.py
+@@ -0,0 +1,274 @@
++"""Uninstalled bounded receive seam for google-genai 2.26.0 / websockets 16.1.1.
++
++No SDK, WebSocket, provider, socket, TLS, or native operation is imported here.
++The caller supplies one already-reserved bytearray and owns connection closure.
++"""
++
++from __future__ import annotations
++
++import json
++from collections.abc import AsyncIterator, Callable, Mapping
++from dataclasses import dataclass
++from typing import Any, Literal, Protocol
++
++if __package__:
++    from .json_shape_preflight import ShapeLimits, preflight_json_shape
++else:
++    from json_shape_preflight import ShapeLimits, preflight_json_shape
++
++
++class StreamingConnection(Protocol):
++    def recv_streaming(self, decode: Literal[False]) -> AsyncIterator[bytes]: ...
++
++
++class LegacyConnection(Protocol):
++    async def recv(self, *, decode: bool = True) -> Any: ...
++
++
++class ReceiveUnavailableError(RuntimeError):
++    """This receive owner cannot start or reuse a streaming message."""
++
++
++class AssemblyLimitError(RuntimeError):
++    """A fixed byte, fragment, or empty-fragment allowance was exceeded."""
++
++
++class State:
++    NEW = "new"
++    RECEIVING = "receiving"
++    COMPLETE = "complete"
++    UNUSABLE = "unusable"
++
++
++@dataclass(frozen=True)
++class BoundedReceiveOptions:
++    """Caller-reserved storage and explicit finite receive limits.
++
++    `max_size` and `max_queue` are forwarded to websockets.connect only when
++    this optional configuration is present. `max_size` is at most the reserved
++    byte allowance. Optional shape limits add a lexical preflight before JSON
++    copies; their byte cap cannot exceed `max_bytes`. The caller retains the
++    bytearray for the connection owner through preflight and parsing.
++    """
++
++    storage: bytearray
++    max_bytes: int
++    max_fragments: int
++    max_empty_fragments: int
++    max_size: int
++    max_queue: int
++    shape_limits: ShapeLimits | None = None
++
++    def __post_init__(self) -> None:
++        if type(self.storage) is not bytearray:
++            raise ValueError("caller_bytearray_required")
++        if type(self.max_bytes) is not int or not 0 < self.max_bytes <= len(self.storage):
++            raise ValueError("invalid_byte_allowance")
++        if type(self.max_fragments) is not int or self.max_fragments < 1:
++            raise ValueError("positive_fragment_allowance_required")
++        if (
++            type(self.max_empty_fragments) is not int
++            or not 0 <= self.max_empty_fragments <= self.max_fragments
++        ):
++            raise ValueError("invalid_empty_fragment_allowance")
++        if type(self.max_size) is not int or not 0 < self.max_size <= self.max_bytes:
++            raise ValueError("finite_websocket_message_limit_required")
++        if type(self.max_queue) is not int or self.max_queue < 1:
++            raise ValueError("finite_websocket_queue_limit_required")
++        if self.shape_limits is not None:
++            if type(self.shape_limits) is not ShapeLimits:
++                raise ValueError("invalid_json_shape_limits")
++            if self.shape_limits.max_bytes > self.max_bytes:
++                raise ValueError("shape_byte_limit_exceeds_receive_allowance")
++
++
++class BoundedReassembly:
++    """One message copied into reserved storage, with one-shot failure semantics."""
++
++    def __init__(
++        self,
++        connection: StreamingConnection,
++        options: BoundedReceiveOptions,
++    ) -> None:
++        self.connection = connection
++        self.buffer = options.storage
++        self._view = memoryview(self.buffer)[: options.max_bytes]
++        self._max_fragments = options.max_fragments
++        self._max_empty_fragments = options.max_empty_fragments
++        self._stream: AsyncIterator[bytes] | None = None
++        self.state = State.NEW
++        self.used = self.fragments_seen = self.empty_fragments_seen = 0
++
++    async def receive(self) -> int:
++        if self.state is not State.NEW:
++            raise ReceiveUnavailableError("one_shot_message_only")
++        self.state = State.RECEIVING
++        try:
++            self._stream = self.connection.recv_streaming(decode=False)
++            async for fragment in self._stream:
++                self.fragments_seen += 1
++                if self.fragments_seen > self._max_fragments:
++                    raise AssemblyLimitError("fragment_allowance")
++                if type(fragment) is not bytes:
++                    raise TypeError("recv_streaming_bytes_required")
++                size = len(fragment)
++                if size == 0:
++                    self.empty_fragments_seen += 1
++                    if self.empty_fragments_seen > self._max_empty_fragments:
++                        raise AssemblyLimitError("empty_fragment_allowance")
++                if size > len(self._view) - self.used:
++                    raise AssemblyLimitError("byte_capacity")
++                end = self.used + size
++                self._view[self.used : end] = fragment
++                self.used = end
++        except BaseException:
++            self.state = State.UNUSABLE
++            raise
++        self.state = State.COMPLETE
++        return self.used
++
++
++class BoundedReceiveSession:
++    """Serial reusable-on-success reader; any incomplete or failed message poisons it."""
++
++    def __init__(self, connection: StreamingConnection, options: BoundedReceiveOptions) -> None:
++        self.connection = connection
++        self.options = options
++        self.owner: BoundedReassembly | None = None
++        self.unusable = False
++        self._busy = False
++
++    def poison(self) -> None:
++        self.unusable = True
++
++    def _begin(self) -> None:
++        if self.unusable or self._busy:
++            raise ReceiveUnavailableError("connection_receive_unusable_or_in_flight")
++        self._busy = True
++
++    async def _collect(self) -> int:
++        stream_method = getattr(self.connection, "recv_streaming", None)
++        if not callable(stream_method):
++            raise ReceiveUnavailableError("public_recv_streaming_unavailable")
++        owner = BoundedReassembly(self.connection, self.options)
++        self.owner = owner
++        return await owner.receive()
++
++    async def discard_message(self) -> int:
++        """Drain the connection prelude without building a fragment list or text copy."""
++        self._begin()
++        try:
++            return await self._collect()
++        except BaseException:
++            self.poison()
++            raise
++        finally:
++            self._busy = False
++
++    async def receive_json(self) -> Any:
++        """Assemble and parse one message; copies are explicit and failure poisons reuse."""
++        self._begin()
++        try:
++            used = await self._collect()
++            if used == 0:
++                return {}
++            if self.options.shape_limits is not None:
++                preflight_json_shape(
++                    self.options.storage,
++                    used=used,
++                    limits=self.options.shape_limits,
++                )
++
++            # recv_streaming yields bytes. The reserved buffer is borrowed by
++            # memoryview; this explicit bytes copy and UTF-8 text copy are the
++            # JSON input allocations, and are released before the next receive.
++            payload = bytes(memoryview(self.options.storage)[:used])
++            try:
++                try:
++                    text = payload.decode("utf-8")
++                except UnicodeDecodeError as error:
++                    # Both .object and args[1] retain the entire copied input.
++                    error.object = b""
++                    error.args = (
++                        error.encoding,
++                        b"",
++                        error.start,
++                        error.end,
++                        error.reason,
++                    )
++                    error.__traceback__ = None
++                    raise ValueError("Invalid UTF-8 bounded response") from None
++            finally:
++                del payload
++            try:
++                try:
++                    response = json.loads(text)
++                except json.decoder.JSONDecodeError as error:
++                    # JSONDecodeError.doc retains the whole input string. Clear
++                    # it before raising a bounded diagnostic with no raw payload.
++                    error.doc = ""
++                    error.__traceback__ = None
++                    raise ValueError("Failed to parse bounded response") from None
++            finally:
++                del text
++            return response
++        except BaseException:
++            self.poison()
++            raise
++        finally:
++            self._busy = False
++
++
++async def receive_json_compat(
++    connection: LegacyConnection,
++    bounded: BoundedReceiveSession | None,
++) -> Any:
++    """Use streaming only when opted in; preserve the SDK's legacy recv path otherwise."""
++    if bounded is not None:
++        return await bounded.receive_json()
++
++    try:
++        raw_response = await connection.recv(decode=False)
++    except TypeError:
++        raw_response = await connection.recv()
++    if raw_response:
++        try:
++            return json.loads(raw_response)
++        except json.decoder.JSONDecodeError:
++            raise ValueError(f"Failed to parse response: {raw_response!r}")
++    return {}
++
++
++def websocket_connect_kwargs(
++    headers: Mapping[str, str],
++    *,
++    compression: Literal["deflate"] | None = "deflate",
++    bounded_receive: BoundedReceiveOptions | None = None,
++    legacy_header_name: bool = False,
++) -> dict[str, Any]:
++    """Only opt-in bounded connections override WebSocket's finite queue/message knobs."""
++    kwargs: dict[str, Any] = {
++        "extra_headers" if legacy_header_name else "additional_headers": dict(headers),
++        "compression": compression,
++    }
++    if bounded_receive is not None:
++        kwargs["max_size"] = bounded_receive.max_size
++        kwargs["max_queue"] = bounded_receive.max_queue
++    return kwargs
++
++
++def connect_with_header_fallback(
++    connect: Callable[..., Any],
++    uri: str,
++    kwargs: dict[str, Any],
++) -> Any:
++    """Mirror the SDK's current additional_headers to extra_headers fallback."""
++    try:
++        return connect(uri, **kwargs)
++    except TypeError:
++        if "additional_headers" not in kwargs:
++            raise
++        legacy_kwargs = dict(kwargs)
++        legacy_kwargs["extra_headers"] = legacy_kwargs.pop("additional_headers")
++        return connect(uri, **legacy_kwargs)
++
+diff --git a/google/genai/json_shape_preflight.py b/google/genai/json_shape_preflight.py
+new file mode 100644
+--- /dev/null
++++ b/google/genai/json_shape_preflight.py
+@@ -0,0 +1,147 @@
++"""Uninstalled constant-state shape guard before stock JSON parsing.
++
++This is deliberately not a syntax validator. It scans UTF-8 bytes in place,
++counts lexical shape, and only rejects. json.loads still validates the input.
++The caller owns the input and must prevent mutation/reuse until parsing ends.
++"""
++
++from __future__ import annotations
++
++import sys
++from dataclasses import dataclass
++
++
++class JSONShapeError(ValueError):
++    """A fixed diagnostic with no provider text in its arguments."""
++
++
++@dataclass(frozen=True, slots=True)
++class ShapeLimits:
++    max_bytes: int
++    max_units: int
++    max_depth: int
++    max_scalar_bytes: int
++
++    def __post_init__(self) -> None:
++        for value in (self.max_bytes, self.max_units, self.max_depth, self.max_scalar_bytes):
++            if type(value) is not int:
++                raise ValueError("integer_shape_limit_required")
++        if (
++            not 1 <= self.max_bytes <= sys.maxsize
++            or not 1 <= self.max_units <= self.max_bytes
++            or not 1 <= self.max_scalar_bytes <= self.max_bytes
++        ):
++            raise ValueError("invalid_shape_limit")
++        if not 0 <= self.max_depth <= self.max_units:
++            raise ValueError("invalid_shape_depth_limit")
++
++
++@dataclass(frozen=True, slots=True)
++class ShapeStats:
++    used_bytes: int
++    units: int
++    objects: int
++    arrays: int
++    colons: int
++    commas: int
++    strings: int
++    scalar_runs: int
++    maximum_depth: int
++
++
++def preflight_json_shape(
++    data: bytes | bytearray | memoryview,
++    *,
++    used: int,
++    limits: ShapeLimits,
++) -> ShapeStats:
++    """Reject excessive lexical shape without copying or building a graph.
++
++    Each outside-string punctuation byte ({}[]:,), string opening quote, or
++    scalar-run start spends one shared unit. A scalar run is a maximal span
++    outside strings excluding JSON whitespace, punctuation, and quotes. Runs
++    have a separate byte limit. Container kinds are not matched by this guard;
++    the stock parser owns that syntax check.
++    """
++    if type(used) is not int or not 0 <= used <= limits.max_bytes:
++        raise JSONShapeError("invalid_shape_byte_count")
++    if not isinstance(data, (bytes, bytearray, memoryview)):
++        raise TypeError("byte_storage_required")
++
++    # A new view object borrows the existing storage and is released here;
++    # a supplied caller memoryview remains usable. No cast or slice copies.
++    view = memoryview(data)
++    try:
++        if view.ndim != 1 or view.itemsize != 1 or view.format != "B" or not view.c_contiguous:
++            raise JSONShapeError("contiguous_unsigned_bytes_required")
++        if used > len(view):
++            raise JSONShapeError("shape_storage_shorter_than_used")
++
++        units = objects = arrays = colons = commas = strings = scalar_runs = 0
++        depth = maximum_depth = scalar_length = 0
++        in_string = escaped = False
++        index = 0
++        while index < used:
++            byte = view[index]
++            index += 1
++            if in_string:
++                if escaped:
++                    escaped = False
++                elif byte == 0x5C:  # backslash
++                    escaped = True
++                elif byte == 0x22:  # quote
++                    in_string = False
++                continue
++
++            if byte == 0x22:
++                in_string = True
++                escaped = False
++                scalar_length = 0
++                strings += 1
++                units += 1
++            elif byte == 0x7B or byte == 0x5B:  # { [
++                scalar_length = 0
++                units += 1
++                if byte == 0x7B:
++                    objects += 1
++                else:
++                    arrays += 1
++                depth += 1
++                if depth > limits.max_depth:
++                    raise JSONShapeError("json_shape_depth")
++                maximum_depth = max(maximum_depth, depth)
++            elif byte == 0x7D or byte == 0x5D:  # } ]
++                scalar_length = 0
++                units += 1
++                if depth == 0:
++                    raise JSONShapeError("json_shape_unmatched_close")
++                depth -= 1
++            elif byte == 0x3A or byte == 0x2C:  # : ,
++                scalar_length = 0
++                units += 1
++                if byte == 0x3A:
++                    colons += 1
++                else:
++                    commas += 1
++            elif byte == 0x20 or byte == 0x09 or byte == 0x0A or byte == 0x0D:
++                scalar_length = 0
++            else:
++                if scalar_length == 0:
++                    scalar_runs += 1
++                    units += 1
++                scalar_length += 1
++                if scalar_length > limits.max_scalar_bytes:
++                    raise JSONShapeError("json_shape_scalar_run")
++
++            if units > limits.max_units:
++                raise JSONShapeError("json_shape_units")
++
++        if in_string:
++            raise JSONShapeError("json_shape_unterminated_string")
++        if depth:
++            raise JSONShapeError("json_shape_unclosed_container")
++        return ShapeStats(
++            used, units, objects, arrays, colons, commas, strings, scalar_runs, maximum_depth
++        )
++    finally:
++        view.release()
+diff --git a/google/genai/live_music.py b/google/genai/live_music.py
+--- a/google/genai/live_music.py
++++ b/google/genai/live_music.py
+@@ -18,7 +18,7 @@
+ import contextlib
+ import json
+ import logging
+-from typing import AsyncIterator
++from typing import AsyncIterator, Literal
+ import websockets
+-
++
+ from . import _api_module
+@@ -28,6 +28,14 @@
+ from . import errors
+ from . import types
+ from ._api_client import BaseApiClient
++from ._bounded_receive import (
++  BoundedReceiveOptions,
++  BoundedReceiveSession,
++  ShapeLimits,
++  connect_with_header_fallback,
++  receive_json_compat,
++  websocket_connect_kwargs,
++)
+ from ._common import set_value_by_path as setv
+-
++
+ ConnectionClosed = websockets.ConnectionClosed
+@@ -45,9 +53,15 @@
+ class AsyncMusicSession:
+   """[Experimental] AsyncMusicSession."""
+-
++
+-  def __init__(self, api_client: BaseApiClient, websocket: ClientConnection):
++  def __init__(
++      self,
++      api_client: BaseApiClient,
++      websocket: ClientConnection,
++      bounded_receiver: BoundedReceiveSession | None = None,
++  ):
+     self._api_client = api_client
+     self._ws = websocket
++    self._bounded_receiver = bounded_receiver
+-
++
+   async def set_weighted_prompts(
+       self, prompts: list[types.WeightedPrompt]
+@@ -122,10 +136,10 @@
+   async def _receive(self) -> types.LiveMusicServerMessage:
+     parameter_model = types.LiveMusicServerMessage()
+     try:
+-      raw_response = await self._ws.recv(decode=False)
+-    except TypeError:
+-      raw_response = await self._ws.recv()  # type: ignore[assignment]
++      response = await receive_json_compat(self._ws, self._bounded_receiver)
+     except ConnectionClosed as e:
++      if self._bounded_receiver is not None:
++        self._bounded_receiver.poison()
+       if e.rcvd:
+         code = e.rcvd.code
+         reason = e.rcvd.reason
+@@ -133,24 +147,26 @@
+         code = 1006
+         reason = websockets.frames.CLOSE_CODE_EXPLANATIONS.get(code, 'Abnormal closure.')
+       errors.APIError.raise_error(code, reason, None)
+-    if raw_response:
+-      try:
+-        response = json.loads(raw_response)
+-      except json.decoder.JSONDecodeError:
+-        raise ValueError(f'Failed to parse response: {raw_response!r}')
+-    else:
+-      response = {}
+-
+-    if self._api_client.vertexai:
+-      raise NotImplementedError('Live music generation is not supported in Vertex AI.')
+-    else:
+-      response_dict = response
+-    if not response_dict and response:
+-      # Error handling.
+-      errors.APIError.raise_error(response.get('code'), response, None)
+-    return types.LiveMusicServerMessage._from_response(
+-        response=response_dict, kwargs=parameter_model.model_dump()
+-    )
++    except BaseException:
++      if self._bounded_receiver is not None:
++        self._bounded_receiver.poison()
++      raise
++
++    try:
++      if self._api_client.vertexai:
++        raise NotImplementedError('Live music generation is not supported in Vertex AI.')
++      else:
++        response_dict = response
++      if not response_dict and response:
++        # Error handling.
++        errors.APIError.raise_error(response.get('code'), response, None)
++      return types.LiveMusicServerMessage._from_response(
++          response=response_dict, kwargs=parameter_model.model_dump()
++      )
++    except BaseException:
++      if self._bounded_receiver is not None:
++        self._bounded_receiver.poison()
++      raise
+-
++
+   async def close(self) -> None:
+     """Closes the bi-directional stream and terminates the session."""
+@@ -167,8 +183,22 @@
+       'Realtime music generation is experimental and may change in future versions.'
+   )
+   @contextlib.asynccontextmanager
+-  async def connect(self, *, model: str) -> AsyncIterator[AsyncMusicSession]:
+-    """[Experimental] Connect to the live music server."""
++  async def connect(
++      self,
++      *,
++      model: str,
++      compression: Literal['deflate'] | None = 'deflate',
++      bounded_receive: BoundedReceiveOptions | None = None,
++  ) -> AsyncIterator[AsyncMusicSession]:
++    """[Experimental] Connect to the live music server.
++
++    Args:
++      model: The model to use for the live music session.
++      compression: WebSocket compression setting. Use None to disable
++        per-message deflate. Defaults to 'deflate'.
++      bounded_receive: Optional caller-reserved receive storage and finite
++        message/queue limits. Omit to retain the existing receive path.
++    """
+     base_url = self._api_client._websocket_base_url()
+     if isinstance(base_url, bytes):
+       base_url = base_url.decode('utf-8')
+@@ -195,16 +225,37 @@
+     else:
+       raise NotImplementedError('Live music generation is not supported in Vertex AI.')
+-
++
+-    try:
+-      async with connect(uri, additional_headers=headers) as ws:
++    connect_kwargs = websocket_connect_kwargs(
++        headers, compression=compression, bounded_receive=bounded_receive
++    )
++    if bounded_receive is None:
++      try:
++        async with connect(uri, **connect_kwargs) as ws:
++          await ws.send(request)
++          logger.info(await ws.recv(decode=False))
++          yield AsyncMusicSession(api_client=self._api_client, websocket=ws)
++      except TypeError:
++        # Preserve the existing older websockets header and receive fallback.
++        legacy_kwargs = websocket_connect_kwargs(
++            headers,
++            compression=compression,
++            legacy_header_name=True,
++        )
++        async with connect(uri, **legacy_kwargs) as ws:
++          await ws.send(request)
++          logger.info(await ws.recv())
++          yield AsyncMusicSession(api_client=self._api_client, websocket=ws)
++    else:
++      # Restrict TypeError fallback to connect() construction. Once a bounded
++      # stream begins, never reconnect or reuse its partially consumed owner.
++      connect_context = connect_with_header_fallback(connect, uri, connect_kwargs)
++      async with connect_context as ws:
+         await ws.send(request)
+-        logger.info(await ws.recv(decode=False))
+-
+-        yield AsyncMusicSession(api_client=self._api_client, websocket=ws)
+-    except TypeError:
+-      # Try with the older websockets API
+-      async with connect(uri, extra_headers=headers) as ws:
+-        await ws.send(request)
+-        logger.info(await ws.recv())
+-
+-        yield AsyncMusicSession(api_client=self._api_client, websocket=ws)
++        bounded_receiver = BoundedReceiveSession(ws, bounded_receive)
++        await bounded_receiver.discard_message()
++        logger.info('Live music handshake response received')
++        yield AsyncMusicSession(
++            api_client=self._api_client,
++            websocket=ws,
++            bounded_receiver=bounded_receiver,
++        )
