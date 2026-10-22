@@ -2,6 +2,7 @@
 
 import asyncio
 import ctypes
+import subprocess
 import threading
 from collections.abc import AsyncGenerator, Callable, Sequence
 from pathlib import Path
@@ -14,7 +15,7 @@ import pytest
 import sobafm.track_deck as tracks
 import sobafm.windows_decoder as windows
 from sobafm.catalog_audio import TrackError, TrackFailure
-from sobafm.decoder_process import Launch, WindowsJob, launch
+from sobafm.decoder_process import Launch, WindowsJob, command, launch
 from sobafm.native import VerifiedNativeRuntime
 from tests.test_decoder_process import runtime as runtime
 from tests.test_track_deck import Rig as DeckRig
@@ -68,6 +69,7 @@ class API:
         self.wait_entered = threading.Event()
         self.wait_calls = 0
         self.storage: windows.CreationStorage | None = None
+        self.command_line: str | None = None
 
     def pipe(self, endpoints: list[windows.Handle], index: int) -> None:
         self.events.append(f"pipe{index}")
@@ -87,6 +89,7 @@ class API:
 
     def create(self, storage: windows.CreationStorage, info: windows.ProcessInfo) -> bool:
         self.events.append("create")
+        self.command_line = storage.command.value
         assert storage is self.storage
         assert list(storage.jobs) == [90]
         assert list(storage.inherited) == [11, 13, 15]
@@ -262,10 +265,15 @@ def test_native_layout_and_owned_mutable_storage() -> None:
 async def test_windows_dispatch_verifies_suspended_then_allows_input(
     rig: Rig, runtime: VerifiedNativeRuntime
 ) -> None:
+    runtime = runtime.model_copy(
+        update={"executable": runtime.executable.with_name("never executed.exe")}
+    )
     child = await launch(runtime, rig.job, rig.owner)
     assert child is rig.child()
     assert rig.api.storage is not None
-    assert rig.api.storage.command.value.startswith(str(runtime.executable))
+    assert rig.api.storage.application == str(runtime.executable)
+    assert rig.api.command_line == subprocess.list2cmdline(command(runtime.executable))
+    assert rig.api.storage.command.value == rig.api.command_line
     assert rig.api.events[:5] == ["pipe0", "pipe1", "pipe2", "attributes", "create"]
     assert rig.api.closed == [11, 13, 15]
     with pytest.raises(TrackError, match="capacity"):

@@ -16,6 +16,7 @@ import sobafm.track_deck as tracks
 from sobafm.catalog_audio import TrackError
 from sobafm.decoder_process import (
     CHILD_MEMORY,
+    PIPE_BLOCK_SIZE,
     Child,
     Launch,
     LinuxCgroup,
@@ -51,6 +52,15 @@ def test_argv_is_forced_mp3_first_audio_only_pipe_output(tmp_path: Path) -> None
     assert not any("://" in value for value in argv)
 
 
+def test_blocksize_is_scoped_once_per_pipe_endpoint(tmp_path: Path) -> None:
+    assert PIPE_BLOCK_SIZE == 16_384
+    argv = command(tmp_path / "reviewed decoder")
+    input_index = argv.index("-i")
+    assert argv.count("-blocksize") == 2
+    assert argv[input_index - 2 : input_index] == ("-blocksize", "16384")
+    assert argv[-3:-1] == ("-blocksize", "16384")
+
+
 async def test_child_launch_claims_boundary_before_spawn_and_bind_before_write(
     runtime: VerifiedNativeRuntime,
     monkeypatch: pytest.MonkeyPatch,
@@ -62,6 +72,7 @@ async def test_child_launch_claims_boundary_before_spawn_and_bind_before_write(
     async def spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
         boundary.prepare.assert_called_once_with()
         boundary.bind.assert_not_called()
+        assert args == command(runtime.executable)
         assert kwargs["stdin"] == asyncio.subprocess.PIPE
         assert kwargs["limit"] == 16384
         return cast(asyncio.subprocess.Process, process)

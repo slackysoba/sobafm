@@ -17,6 +17,7 @@ from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.native import VerifiedNativeRuntime
 
 CHILD_MEMORY = 128 * 1024**2
+PIPE_BLOCK_SIZE = 16 * 1024  # FFmpeg protocol operation size, not pipe capacity
 PIPE_LIMIT = 16 * 1024  # flow control only; readiness needs a qualified overshoot envelope
 
 
@@ -35,6 +36,8 @@ def command(executable: Path) -> tuple[str, ...]:
         "mp3",
         "-protocol_whitelist",
         "pipe",
+        "-blocksize",
+        str(PIPE_BLOCK_SIZE),
         "-i",
         "pipe:0",
         "-map",
@@ -50,6 +53,8 @@ def command(executable: Path) -> tuple[str, ...]:
         "pcm_s16le",
         "-f",
         "s16le",
+        "-blocksize",
+        str(PIPE_BLOCK_SIZE),
         "pipe:1",
     )
 

@@ -547,6 +547,13 @@ first audio stream and 48 kHz stereo `pcm_s16le` output;
 disable other streams and decoder network access. No whole-track PCM result,
 temporary audio file or `communicate()` output accumulation is allowed.
 
+The fixed invocation sets FFmpeg's public [pipe `blocksize`](https://ffmpeg.org/ffmpeg-protocols.html#pipe)
+to 16,384 bytes separately for `pipe:0` input and `pipe:1` output. This caps each
+protocol I/O operation, not pipe capacity, kernel memory, stderr, total pending
+I/O or the parent's OS read requests and coalesced writes. Completed unread data,
+quota growth and pending-I/O bookkeeping still require a qualified envelope;
+unknown transport obligations continue to refuse admission.
+
 | Boundary | Selected limit/enforcement |
 | --- | --- |
 | Encoded input | At most 16 MiB cumulative, counted before writes regardless of Content-Length; retained queue at most 256 KiB per child; writes at most 16 KiB followed by drain |
