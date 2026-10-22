@@ -433,16 +433,15 @@ allocation count once; copies count separately. Reserve allocations and qualifie
 in-flight growth before retention. Admission must allow for reachable future Lyria
 growth while catalog audio can remain retained, rather than today's queue lengths.
 
-Aggregate retained PCM is at most 34,560,000 bytes and parent audio at most
-48,000,000 bytes. Under the footprint revision in proposed ADR-0009, each
-qualified profile specifies explicit finite parent and audited native audio
-reservations whose combined total stays strictly below
+Aggregate retained PCM is at most 34,560,000 bytes. Under the footprint revision
+in proposed ADR-0009, each qualified profile specifies explicit finite parent and
+audited native audio reservations whose combined total stays strictly below
 70,000,000 decimal bytes. Parent audio includes PCM and other parent storage;
-the split must cover all native audio before a larger parent reservation can be
-admitted. The previous fixed 38,000,000-byte parent split is replaced by that
-qualification requirement. The child process's 128 MiB containment limit remains
-a separate resource boundary, never an audio allowance or NFR-3 proof. Unknown
-native or transport bounds refuse catalog readiness.
+the permitted parent reservation follows the native obligations still charged.
+The previous fixed 38,000,000-byte parent split is replaced by that qualified
+split, with no independent parent partition. The child process's 128 MiB
+containment limit remains a separate resource boundary, never an audio allowance
+or NFR-3 proof. Unknown native or transport bounds refuse catalog readiness.
 
 Source allocation leases and cleanup debt outlive caller cancellation and station
 replacement. Refund only after owned tasks, transports, process trees and retained
@@ -454,9 +453,11 @@ fallback may substitute for accounting. If a feasible envelope cannot be proven,
 keep catalog unavailable and record a reviewed revision. The selected ceilings
 remain unqualified for actual provider/native storage.
 
-`AudioLedger` enforces the 48,000,000-byte parent and strict 70,000,000-byte total
-engineering ceilings, alongside the unchanged PCM ceiling. These admission
-guards do not qualify a numerical native/transport envelope or production profile.
+`AudioLedger` enforces the strict 70,000,000-byte combined total alongside the
+unchanged PCM ceiling. Its retained `PARENT_LIMIT = TOTAL_LIMIT - 1` is only the
+derived integer bound; native reservations consume the same total allowance.
+These admission guards do not qualify a numerical native/transport envelope or
+production profile.
 Its immutable `AudioBytes` envelopes cover PCM, other parent audio and audited
 native audio.
 Owners reserve a complete reachable allocation before production, including

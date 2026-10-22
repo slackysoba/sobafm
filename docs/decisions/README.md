@@ -31,4 +31,6 @@ Each record captures one material decision: its context, the options considered,
 
 ADR-0009 proposes superseding only the 40,000,000-byte total and fixed
 38,000,000-byte parent clauses in ADR-0004/0006/0007/0008. Their accepted source
-remains intact, and their other provisions remain in force.
+remains intact, and their other provisions remain in force. The proposed
+qualified parent/native split shares the strict total without an independent
+fixed parent partition.

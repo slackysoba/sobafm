@@ -36,14 +36,33 @@ def test_native_reservation_reduces_parent_headroom() -> None:
     assert ledger.reserve(AudioBytes(other=PARENT_LIMIT - 1)) is not None
 
 
-def test_larger_parent_ceiling_includes_pcm_without_raising_its_limit() -> None:
+def test_parent_bound_follows_the_strict_total_without_raising_pcm() -> None:
     ledger = AudioLedger()
-    parent = ledger.reserve(AudioBytes(pcm=34_560_000, other=13_440_000))
+    parent = ledger.reserve(AudioBytes(pcm=34_560_000, other=35_439_999))
     assert parent is not None
-    assert ledger.reserved.parent == 48_000_000
+    assert ledger.reserved.parent == 69_999_999
+    assert PARENT_LIMIT == TOTAL_LIMIT - 1
     assert ledger.reserve(AudioBytes(other=1)) is None
     parent.release()
     assert ledger.reserve(AudioBytes(pcm=34_560_001)) is None
+
+
+def test_parent_allowance_follows_still_charged_native_reservations() -> None:
+    ledger = AudioLedger()
+    parent = ledger.reserve(AudioBytes(pcm=34_560_000, other=15_440_000))
+    outside = ledger.reserve(AudioBytes(native=4 * 1024 * 1024))
+    assert parent is not None
+    assert outside is not None
+    assert ledger.reserved.parent == 50_000_000
+    assert ledger.reserved.total == 54_194_304
+    # Hypothetical complete reservations verify admission, not profile qualification.
+    equality = TOTAL_LIMIT - ledger.reserved.total
+    assert ledger.reserve(AudioBytes(native=equality)) is None
+    first_child = ledger.reserve(AudioBytes(native=8 * 1024 * 1024))
+    assert first_child is not None
+    assert ledger.reserved.total == 62_582_912
+    assert ledger.reserve(AudioBytes(native=8 * 1024 * 1024)) is None
+    assert ledger.reserved.total == 62_582_912
 
 
 def test_two_child_overlap_and_retained_lease_fit_only_after_actual_release() -> None:
@@ -72,15 +91,15 @@ def test_two_child_overlap_and_retained_lease_fit_only_after_actual_release() ->
 
 def test_total_boundary_and_unknown_debt_remain_effective_with_larger_caps() -> None:
     ledger = AudioLedger()
-    parent = ledger.reserve(AudioBytes(other=48_000_000))
-    native = ledger.reserve(AudioBytes(native=21_999_999))
+    parent = ledger.reserve(AudioBytes(other=50_000_000))
+    native = ledger.reserve(AudioBytes(native=19_999_999))
     assert parent is not None
     assert native is not None
     assert ledger.reserved.total == 69_999_999
     assert ledger.reserve(AudioBytes(native=1)) is None
     unknown = ledger.unbounded()
     native.release()
-    assert ledger.reserved.parent == 48_000_000
+    assert ledger.reserved.parent == 50_000_000
     assert ledger.reserve(AudioBytes(native=1)) is None
     unknown.release()
     assert ledger.reserve(AudioBytes(native=1)) is not None

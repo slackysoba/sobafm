@@ -33,8 +33,8 @@ not prevent use of the authorized total increase.
    bounded-input failure policy, pre-input native containment, the original single
    three-second cleanup deadline and debt until actual release.
 4. Preserve supported-platform, rights, source/notices, operational and shipping
-   gates. Confine runtime changes to the existing ledger's 48,000,000-byte parent
-   and 70,000,000-byte total ceilings. Keep the decoder's 128 MiB default,
+   gates. Confine runtime changes to the existing ledger's 70,000,000-byte total
+   and derived integer parent bound. Keep the decoder's 128 MiB default,
    dependencies, production trust and qualified envelopes unchanged.
 
 ## Options considered
@@ -47,13 +47,14 @@ not prevent use of the authorized total increase.
 
 ## Decision
 
-Select the strict **70,000,000-byte total**, apply a **48,000,000-byte parent
-engineering ceiling**, and replace the old fixed parent split with a qualified
-parent/native reservation split within those ceilings. Here 70 MB means
-70,000,000 decimal bytes; equality is ineligible. The invariants are:
+Select the strict **70,000,000-byte total** and replace the old fixed parent split
+with a qualified parent/native reservation split within that total. There is no
+independent fixed parent partition. Here 70 MB means 70,000,000 decimal bytes;
+equality is ineligible. The invariants are:
 
 - Aggregate PCM remains at most 34,560,000 bytes.
-- Parent audio is at most 48,000,000 bytes, inclusive.
+- The permitted parent reservation follows the native obligations still charged
+  through the strict combined-total check.
 - Each profile identifies finite maximum parent and audited native audio
   reservations, including their simultaneous reachable growth. Parent audio
   includes PCM and other parent storage. Their combined total is strictly below
@@ -70,14 +71,18 @@ Process RSS, total process/Job commit, producer counts and nominal PCM arithmeti
 do not establish that attributable-audio bound. The child containment boundary
 remains separate from the audited native audio reservation.
 
-The existing `AudioLedger` changes only its parent and total constants to these
-ceilings; its inclusive PCM/parent comparisons, strict total comparison and
-lease/unknown-debt behavior remain intact. Synthetic overlap arithmetic can fit
-a 48,000,000-byte parent reservation, two whole 8 MiB child reservations and a
-provisional 4 MiB outside pool: 68,971,520 bytes combined. This demonstrates
-admission arithmetic only; the outside classification and complete native,
-transport and player envelope remain unqualified. Production trust and the
-decoder's 128 MiB default are unchanged. A qualified production profile still
+The existing `AudioLedger` changes its total constant and derives its retained
+`PARENT_LIMIT` as `TOTAL_LIMIT - 1`, the largest integer below the strict total.
+Its PCM/parent comparisons, strict combined-total comparison and lease/unknown-debt
+behavior remain intact. The derived parent bound imposes no separate partition:
+every still-charged native reservation reduces the parent allowance.
+
+Hypothetical arithmetic admits a 50,000,000-byte parent reservation with a
+provisional 4 MiB native/outside reservation: 54,194,304 bytes combined. One
+additional 8 MiB child fits; a second would exceed the total and is refused.
+This demonstrates admission arithmetic only; the outside classification and
+complete native, transport and player envelope remain unqualified. Production
+trust and the decoder's 128 MiB default are unchanged. A qualified production profile still
 requires scoped implementation/review and applicable
 [#175 qualification](https://github.com/slackysoba/sobafm/issues/175). Unknown or
 infeasible obligations continue to block catalog admission. No ready spare is
@@ -92,7 +97,7 @@ footprint provisions are superseded; every other provision remains in force:
 | Accepted provision | Scoped replacement |
 | --- | --- |
 | [ADR-0004 requirements item 4](0004-stream-lyria-realtime-through-buffered-decks.md#requirements) | Replace its 40 MB audio-footprint ceiling with strict 70,000,000 bytes. Preserve bounded Lyria usage and all playback constants. |
-| [ADR-0006 requirements item 5](0006-play-catalog-and-generated-music-in-one-station.md#requirements), [combined budget gate](0006-play-catalog-and-generated-music-in-one-station.md#combined-budget-and-qualification-gate), [criteria reconciliation](0006-play-catalog-and-generated-music-in-one-station.md#explicit-reconciliation-of-original-crossfade-criteria) and [qualification table](0006-play-catalog-and-generated-music-in-one-station.md#acceptance-and-subsequent-qualification) | Replace only the 40 MB/40,000,000-byte total and 38,000,000-byte fixed parent sublimit. Keep PCM, accounting, retained-source, cleanup and qualification rules. |
+| [ADR-0006 requirements item 5](0006-play-catalog-and-generated-music-in-one-station.md#requirements), [combined budget gate](0006-play-catalog-and-generated-music-in-one-station.md#combined-budget-and-qualification-gate), [criteria reconciliation](0006-play-catalog-and-generated-music-in-one-station.md#explicit-reconciliation-of-original-crossfade-criteria) and [qualification table](0006-play-catalog-and-generated-music-in-one-station.md#acceptance-and-subsequent-qualification) | Replace only the 40 MB/40,000,000-byte total and 38,000,000-byte fixed parent sublimit with the qualified split against the strict 70,000,000-byte total. Keep PCM, accounting, retained-source, cleanup and qualification rules. |
 | [ADR-0007 guardrails and accounting](0007-bound-catalog-audio-decoding.md#engineering-guardrails-and-readiness-gates) | Replace only the 38,000,000-byte parent ceiling and 40,000,000-byte combined audio ceiling with the qualified split and strict 70,000,000-byte total. Keep decoder/input/queue/time/containment/source obligations. |
 | [ADR-0008 requirements item 3](0008-fail-lyria-producers-at-qualified-ingress-bounds.md#requirements) | Replace only its fixed parent and total audio ceilings. Keep PCM, complete ingress accounting, explicit failure policy, supported interfaces, diagnostics and actual-release rules. |
 
@@ -118,7 +123,7 @@ failed/incomplete observations retain their original scope. [#130](https://githu
 clean-machine BOTH-mode guidance, [#131](https://github.com/slackysoba/sobafm/issues/131)
 live/endurance/latency and [#132](https://github.com/slackysoba/sobafm/issues/132)
 shipping remain required, alongside legal/source/notices and native supply gates.
-The two ledger ceiling changes supply no transport, dependency, readiness or shipping pass.
+The ledger ceiling revision supplies no transport, dependency, readiness or shipping pass.
 
 ## Revisit triggers
 

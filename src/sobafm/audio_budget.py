@@ -8,8 +8,8 @@ transport overshoot) before starting, and releases only after actual cleanup.
 from dataclasses import dataclass
 
 PCM_LIMIT = 34_560_000
-PARENT_LIMIT = 48_000_000
 TOTAL_LIMIT = 70_000_000  # strict: equality is ineligible
+PARENT_LIMIT = TOTAL_LIMIT - 1  # derived integer bound, not a separate partition
 
 
 @dataclass(frozen=True)
