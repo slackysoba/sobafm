@@ -1,8 +1,8 @@
 # Architecture
 
-- **Status:** Approved v1 baseline (#5), reconciled with accepted M5 ADR-0006/ADR-0007 (#119); catalog qualification remains outstanding.
+- **Status:** Approved v1 baseline (#5), reconciled with accepted M5 ADR-0006/ADR-0007 (#119); ADR-0009's footprint revision is Proposed and catalog qualification remains outstanding.
 - **Requirements:** [requirements.md](requirements.md)
-- **Decisions:** [ADR-0001](decisions/0001-build-on-python-discord-py-and-the-google-gen-ai-sdk.md) · [ADR-0002](decisions/0002-interpret-requests-with-gemini-structured-output.md) · [ADR-0003](decisions/0003-keep-server-state-in-sqlite-and-use-discord-command-permissions.md) · [ADR-0004](decisions/0004-stream-lyria-realtime-through-buffered-decks.md) · [ADR-0005](decisions/0005-release-images-with-github-actions-and-artifact-attestations.md) · [ADR-0006](decisions/0006-play-catalog-and-generated-music-in-one-station.md) · [ADR-0007](decisions/0007-bound-catalog-audio-decoding.md)
+- **Decisions:** [ADR-0001](decisions/0001-build-on-python-discord-py-and-the-google-gen-ai-sdk.md) · [ADR-0002](decisions/0002-interpret-requests-with-gemini-structured-output.md) · [ADR-0003](decisions/0003-keep-server-state-in-sqlite-and-use-discord-command-permissions.md) · [ADR-0004](decisions/0004-stream-lyria-realtime-through-buffered-decks.md) · [ADR-0005](decisions/0005-release-images-with-github-actions-and-artifact-attestations.md) · [ADR-0006](decisions/0006-play-catalog-and-generated-music-in-one-station.md) · [ADR-0007](decisions/0007-bound-catalog-audio-decoding.md) · [ADR-0009](decisions/0009-raise-the-per-server-audio-footprint-ceiling-to-70-mb.md)
 
 ## Summary
 
@@ -433,12 +433,16 @@ allocation count once; copies count separately. Reserve allocations and qualifie
 in-flight growth before retention. Admission must allow for reachable future Lyria
 growth while catalog audio can remain retained, rather than today's queue lengths.
 
-Aggregate retained PCM is at most 34,560,000 bytes; parent audio is at most
-38,000,000 bytes. Parent audio plus audited native audio reservations must stay
-strictly below 40,000,000 bytes. Lower the parent/PCM allocation if native storage
-needs more room. The child process's 128 MiB containment limit is a separate
-resource boundary, never an audio allowance or NFR-3 proof. Unknown native or
-transport bounds refuse catalog readiness.
+Aggregate retained PCM is at most 34,560,000 bytes and parent audio at most
+48,000,000 bytes. Under the footprint revision in proposed ADR-0009, each
+qualified profile specifies explicit finite parent and audited native audio
+reservations whose combined total stays strictly below
+70,000,000 decimal bytes. Parent audio includes PCM and other parent storage;
+the split must cover all native audio before a larger parent reservation can be
+admitted. The previous fixed 38,000,000-byte parent split is replaced by that
+qualification requirement. The child process's 128 MiB containment limit remains
+a separate resource boundary, never an audio allowance or NFR-3 proof. Unknown
+native or transport bounds refuse catalog readiness.
 
 Source allocation leases and cleanup debt outlive caller cancellation and station
 replacement. Refund only after owned tasks, transports, process trees and retained
@@ -450,8 +454,11 @@ fallback may substitute for accounting. If a feasible envelope cannot be proven,
 keep catalog unavailable and record a reviewed revision. The selected ceilings
 remain unqualified for actual provider/native storage.
 
-`AudioLedger` implements these shared admission ceilings with immutable
-`AudioBytes` envelopes for PCM, other parent audio and audited native audio.
+`AudioLedger` enforces the 48,000,000-byte parent and strict 70,000,000-byte total
+engineering ceilings, alongside the unchanged PCM ceiling. These admission
+guards do not qualify a numerical native/transport envelope or production profile.
+Its immutable `AudioBytes` envelopes cover PCM, other parent audio and audited
+native audio.
 Owners reserve a complete reachable allocation before production, including
 future growth, assembler/transport overshoot and separate copies. Aliases share
 the same lease. A fixed envelope also covers a frame popped by the player and
