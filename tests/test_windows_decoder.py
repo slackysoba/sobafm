@@ -505,10 +505,12 @@ def test_real_ffi_call_arguments_keep_native_arrays_and_explicit_stdio(
     endpoints: list[windows.Handle] = []
     for index in (0, 1, 2):
         api.pipe(endpoints, index)
-    assert [p[1] for p in created_parents] == [0x40080002, 0x40080001, 0x40080001]
+    # The public Proactor writer must be able to issue its EOF/peer-close read;
+    # a write-only stdin parent cannot support that operation.
+    assert [p[1] for p in created_parents] == [0x40080003, 0x40080001, 0x40080001]
     assert all(p[7] is None for p in created_parents)  # parent not inheritable
     assert all(p[2:4] == (8, 1) for p in created_parents)  # byte/local, one instance
-    assert [p[1] for p in created_children] == [0x80000000, 0x40000000, 0x40000000]
+    assert [p[1] for p in created_children] == [0xC0000000, 0x40000000, 0x40000000]
     assert all(p[5] == 0 for p in created_children)  # synchronous child stdio
     api.attributes(storage, [endpoint.fileno() for endpoint in endpoints[1::2]])
     info = windows.ProcessInfo()

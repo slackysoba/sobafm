@@ -22,6 +22,9 @@ HANDLE = ctypes.c_void_p
 JOB_LIST = 0x0002000D
 HANDLE_LIST = 0x00020002
 CREATION_FLAGS = 0x00080000 | 0x00000004 | 0x00000400
+# Windows-only ctypes entries are absent from Linux stubs. The fixed-width ABI
+# declarations remain typed; only the lazy native function boundary is dynamic.
+_windows_ctypes: Any = ctypes
 
 
 class SecurityAttributes(ctypes.Structure):
@@ -144,7 +147,7 @@ class Kernel32:
     """The only DLL boundary; construction and creation run in an owned worker."""
 
     def __init__(self) -> None:
-        self.api: Any = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.api: Any = _windows_ctypes.WinDLL("kernel32", use_last_error=True)
         pointer = ctypes.c_void_p
         for name, args, result in (
             (
@@ -200,7 +203,9 @@ class Kernel32:
         endpoints.append(parent_owner)
         parent_owner.value = self.api.CreateNamedPipeW(
             name,
-            (2 if writing else 1) | 0x40000000 | 0x80000,
+            # Proactor's write transport also reads for the peer-close probe.
+            # Match asyncio's duplex stdin while outputs stay read-only here.
+            (3 if writing else 1) | 0x40000000 | 0x80000,
             8,
             1,
             PIPE_LIMIT,
@@ -216,7 +221,7 @@ class Kernel32:
         endpoints.append(child_owner)
         child_owner.value = self.api.CreateFileW(
             name,
-            0x80000000 if writing else 0x40000000,
+            0xC0000000 if writing else 0x40000000,
             0,
             ctypes.byref(security),
             3,
@@ -238,7 +243,7 @@ class Kernel32:
         if not self.api.ConnectNamedPipe(
             parent_owner.fileno(), ctypes.byref(parent_owner.overlapped)
         ):
-            error = ctypes.get_last_error()
+            error: int = _windows_ctypes.get_last_error()
             if error != 535:
                 # Unexpected pending I/O must retain its endpoint, event and
                 # native OVERLAPPED; closing a handle is not completion proof.
@@ -251,7 +256,7 @@ class Kernel32:
         size = ctypes.c_size_t()
         if self.api.InitializeProcThreadAttributeList(None, 2, 0, ctypes.byref(size)):
             raise TrackError(TrackFailure.CAPACITY)
-        if ctypes.get_last_error() != 122 or not 0 < size.value <= 65536:
+        if _windows_ctypes.get_last_error() != 122 or not 0 < size.value <= 65536:
             raise TrackError(TrackFailure.CAPACITY)
         storage.attributes = ctypes.create_string_buffer(size.value)
         storage.initialize_invoked = True
