@@ -1,5 +1,6 @@
 """The audio source discord.py plays: the live deck, crossfades, fades, and volume (ADR-0004)."""
 
+import asyncio
 import logging
 import math
 import threading
@@ -12,7 +13,8 @@ from typing import Protocol, override
 import audioop
 import discord
 
-from sobafm.pcm import FRAME_SECONDS, SAMPLE_WIDTH, SILENCE
+from sobafm.owned_pcm import OwnedPCM, PCMOwner, PCMReceipt, QuiescentPCMSource
+from sobafm.pcm import FRAME_BYTES, FRAME_SECONDS, SAMPLE_WIDTH, SILENCE
 from sobafm.source import Source
 
 log = logging.getLogger(__name__)
@@ -25,7 +27,7 @@ class FrameSource(Protocol):
     """Anything that buffers frames for the mixer, such as a deck."""
 
     @property
-    def frames(self) -> deque[bytes]: ...
+    def frames(self) -> deque[OwnedPCM]: ...
 
 
 @dataclass(frozen=True)
@@ -46,7 +48,12 @@ class Mixer(discord.AudioSource):
     stops on its own. Fades are counted in frames, so they pause intact while voice reconnects.
     """
 
-    def __init__(self, volume: float) -> None:
+    def __init__(
+        self, volume: float, pcm: PCMOwner, loop: asyncio.AbstractEventLoop | None = None
+    ) -> None:
+        self._pcm, self._loop = pcm, loop
+        self._player: QuiescentPCMSource | None = None
+        self._blocked = False
         self._lock = threading.Lock()  # held for one read's pops and mixing, or a setter
         self._live: FrameSource | None = None
         self._incoming: FrameSource | None = None
@@ -65,6 +72,36 @@ class Mixer(discord.AudioSource):
         self.underruns = 0  # reads with a playing source but no frame from it
         self.played = 0  # reads that returned audio
         self.errors = 0  # reads that failed; they play silence too
+
+    def player_source(self) -> QuiescentPCMSource | None:
+        """Prepay three mixing copies plus the supported caller's previous returned frame."""
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+        source = self._pcm.wrap(self, self._loop, 4 * FRAME_BYTES)
+        if source is not None:
+            with self._lock:
+                self._player = source
+                self._blocked = False
+        return source
+
+    @override
+    def cleanup(self) -> None:
+        with self._lock:
+            self._player = None
+
+    @override
+    def __del__(self) -> None:
+        pass  # only the exact public wrapper cleanup acknowledges its player epoch
+
+    @staticmethod
+    def _released(receipts: tuple[PCMReceipt, ...]) -> None:
+        for receipt in receipts:
+            receipt.release()
+
+    def _recover(self, player: QuiescentPCMSource) -> None:
+        with self._lock:
+            if self._player is player and player.renew_staging(4 * FRAME_BYTES):
+                self._blocked = False
 
     @property
     def live(self) -> FrameSource | None:
@@ -188,13 +225,21 @@ class Mixer(discord.AudioSource):
     def read(self) -> bytes:
         wake: Callable[[], None] | None = None
         failure: Exception | None = None
+        recovery: QuiescentPCMSource | None = None
+        borrowed: list[OwnedPCM] = []
         frame = SILENCE
+        loop = self._loop
         with self._lock:
+            if self._player is None or self._blocked or loop is None:
+                return frame
             previous_delivery = self._delivered
             try:
-                frame = self._next_frame()
+                frame = self._next_frame(borrowed)
             except Exception as error:  # noqa: BLE001 - an exception would stop discord.py's player
                 self.errors += 1
+                self._blocked = True  # another read cannot reuse potentially retained scratch
+                self._player.uncertain = True
+                recovery = self._player
                 if self._switch_frames:  # a failing source must not hold a switch open
                     self._live, self._incoming, self._switch_frames = self._incoming, None, 0
                 failure = error
@@ -202,6 +247,16 @@ class Mixer(discord.AudioSource):
                 self._failing = False
                 if self._delivered is not None and self._delivered is not previous_delivery:
                     wake = self._wake
+        if failure is None:
+            receipts = tuple(owned.receipt for owned in borrowed)
+            borrowed.clear()  # callback owns receipts only, after _next_frame's aliases have gone
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._released, receipts)
+        elif recovery is not None:
+            # The exception/log owner may retain all borrowed PCM and working
+            # copies. Recovery spends new prepaid scratch on the loop instead.
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._recover, recovery)
         if wake is not None:
             with suppress(RuntimeError):  # the owning event loop may have closed
                 wake()  # only a bounded loop wakeup, after successful PCM return construction
@@ -213,7 +268,7 @@ class Mixer(discord.AudioSource):
         del failure  # its traceback holds this frame, which would hold it in a cycle
         return SILENCE
 
-    def _next_frame(self) -> bytes:
+    def _next_frame(self, borrowed: list[OwnedPCM]) -> bytes:
         handoff = self._armed
         selected: Source | None = None
         if handoff is not None:
@@ -252,7 +307,11 @@ class Mixer(discord.AudioSource):
             if self._switch_position >= self._switch_frames:
                 self._live, self._incoming, self._switch_frames = self._incoming, None, 0
         playing = [(s, gain) for s, gain in sources if s is not None]
-        frames = [(f, gain) for s, gain in playing if (f := _pop(s)) is not None]
+        frames: list[tuple[bytes, float]] = []
+        for source, gain in playing:
+            if (owned := _pop(source)) is not None:
+                borrowed.append(owned)
+                frames.append((owned.data, gain))
         if not frames:
             if playing:
                 self.underruns += 1
@@ -267,7 +326,7 @@ class Mixer(discord.AudioSource):
         return mixed
 
 
-def _pop(source: FrameSource) -> bytes | None:
+def _pop(source: FrameSource) -> OwnedPCM | None:
     try:
         return source.frames.popleft()
     except IndexError:
@@ -275,4 +334,6 @@ def _pop(source: FrameSource) -> bytes | None:
 
 
 def _scaled(frame: bytes, gain: float) -> bytes:
-    return frame if gain == 1.0 else audioop.mul(frame, SAMPLE_WIDTH, gain)
+    # Even unity gain returns new staging storage: the source receipt can then
+    # finish independently of the caller retaining this output through its send.
+    return memoryview(frame).tobytes() if gain == 1.0 else audioop.mul(frame, SAMPLE_WIDTH, gain)

@@ -378,6 +378,7 @@ async def test_catalog_factory_cannot_bypass_unknown_retained_audio(bot: SobaFM)
     channel = make_channel(guild)
     in_voice(channel, channel)
     ledger = AudioLedger()
+    _ = ledger.pcm  # the real server admits its persistent parent before unknown work
     debt = ledger.unbounded()
     bot.audio_ledgers[guild.id] = ledger
     station = bot.station(guild, 1)

@@ -5,20 +5,24 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from sobafm.audio_budget import AudioLedger
 from sobafm.mixer import Mixer
+from sobafm.owned_pcm import OwnedPCM
 from sobafm.pcm import FRAME_BYTES, SILENCE
+from tests.doubles import pcm_mixer
 
 LEVEL = 10_000  # sample value of the test frames
 
 
 @dataclass
 class Source:
-    frames: deque[bytes] = field(default_factory=deque[bytes])
+    frames: deque[OwnedPCM] = field(default_factory=deque[OwnedPCM])
 
 
 def source(count: int, level: int = LEVEL) -> Source:
     frame = level.to_bytes(2, "little", signed=True) * (FRAME_BYTES // 2)
-    return Source(deque([frame] * count))
+    storage = AudioLedger().pcm.storage(12_000_000)
+    return Source(deque(storage.copy(memoryview(frame)) for _ in range(count)))
 
 
 def level_of(frame: bytes) -> int:
@@ -27,7 +31,7 @@ def level_of(frame: bytes) -> int:
 
 
 def playing(live: Source, volume: float = 1.0) -> Mixer:
-    mixer = Mixer(volume)
+    mixer = pcm_mixer(volume)
     mixer.switch_to(live, 0)
     return mixer
 
@@ -38,7 +42,7 @@ def angles(frames: int) -> list[float]:
 
 
 def test_plays_silence_without_a_source() -> None:
-    mixer = Mixer(1.0)
+    mixer = pcm_mixer(1.0)
 
     assert mixer.read() == SILENCE
     assert mixer.underruns == 0
@@ -63,7 +67,7 @@ def test_plays_silence_and_counts_an_underrun_when_the_live_source_is_empty() ->
 
 
 def test_fades_in_along_the_equal_power_curve_at_the_volume() -> None:
-    mixer = Mixer(0.5)
+    mixer = pcm_mixer(0.5)
     new = source(10)
 
     mixer.switch_to(new, 0.1)
@@ -177,7 +181,7 @@ def test_a_new_target_during_a_switch_fades_from_the_incoming_source() -> None:
 
 
 def test_fading_out_silence_is_instant() -> None:
-    mixer = Mixer(1.0)
+    mixer = pcm_mixer(1.0)
 
     mixer.switch_to(None, 3.0)
 
@@ -204,7 +208,7 @@ def test_switching_a_dry_source_to_itself_changes_nothing() -> None:
 
 
 def test_counts_an_underrun_while_fading_in_an_empty_source() -> None:
-    mixer = Mixer(1.0)
+    mixer = pcm_mixer(1.0)
     mixer.switch_to(source(0), 0.1)
 
     assert mixer.read() == SILENCE
@@ -258,7 +262,7 @@ class Flaky:
         self._frames = source(count).frames
 
     @property
-    def frames(self) -> deque[bytes]:
+    def frames(self) -> deque[OwnedPCM]:
         if self.broken:
             raise RuntimeError("broken source")
         return self._frames
@@ -268,7 +272,7 @@ def test_never_raises_and_logs_each_run_of_failures_once(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     flaky = Flaky(10)
-    mixer = Mixer(1.0)
+    mixer = pcm_mixer(1.0)
     mixer.switch_to(flaky, 0)
 
     with caplog.at_level(logging.ERROR, logger="sobafm.mixer"):

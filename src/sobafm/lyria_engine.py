@@ -75,6 +75,7 @@ class LyriaEngine:
     ) -> None:
         self.decks: list[Deck] = []
         self.audio = audio if audio is not None else AudioLedger()
+        self.pcm = self.audio.pcm  # ordinary full-capacity admission precedes unknown work
         # No hard receive/copy/transport envelope has been qualified for Lyria.
         # Keep catalog unavailable rather than changing Lyria's generation rules.
         self._audio_obligation = self.audio.unbounded()
@@ -115,6 +116,8 @@ class LyriaEngine:
         for deck in self.decks:
             deck.retire()
         await asyncio.gather(*(deck.wait_ended() for deck in self.decks))
+        for deck in self.decks:
+            deck.discard_pcm()
         self.decks.clear()
         self._pool.release(self)
         # Player.stop()/after and producer exit do not prove that the voice
@@ -137,7 +140,9 @@ class LyriaEngine:
             return
         sessions = sum(deck.state is not State.ENDED for deck in self.decks)
         for _ in range(SESSIONS_PER_STATION - sessions):
-            deck = Deck(self._connect, program.plan, clock=self._clock, program=program)
+            deck = Deck(
+                self._connect, program.plan, pcm=self.pcm, clock=self._clock, program=program
+            )
             deck.start()
             self.decks.append(deck)
 
@@ -186,7 +191,10 @@ class LyriaEngine:
         spare = None
         if all(deck.state is State.ENDED for deck in ready):
             spare = max(ready, key=lambda deck: deck.buffered_seconds, default=None)
-        self.decks = [deck for deck in self.decks if deck not in ended or deck is spare]
+        for deck in ended:
+            if deck is not spare:
+                self.decks.remove(deck)
+                deck.discard_pcm()
 
     def count_failure(
         self, source: Source, program: Program | None, connected: bool

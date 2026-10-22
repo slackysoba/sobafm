@@ -3,6 +3,8 @@
 from collections.abc import Generator
 from email.message import Message
 
+from sobafm.owned_pcm import OwnedPCM, PCMCapacityError, PCMStorage
+
 SAMPLE_RATE = 48_000
 CHANNELS = 2
 SAMPLE_WIDTH = 2  # bytes per sample
@@ -49,11 +51,22 @@ class FrameSplitter:
     remainder survives exhaustion; caller-retained frames have separate storage.
     """
 
-    def __init__(self) -> None:
-        self._pending = b""
+    def __init__(self, storage: PCMStorage) -> None:
+        self._storage = storage
+        self._pending: OwnedPCM | None = None
         self._splitting = False
 
-    def split(self, chunk: bytes) -> Generator[bytes]:
+    def discard(self) -> None:
+        """Explicitly drop unused carry after its source is detached and the iterator closed."""
+        if self._splitting:
+            raise RuntimeError("close the frame iterator before discarding carry")
+        pending, self._pending = self._pending, None
+        if pending is not None:
+            receipt = pending.receipt
+            del pending
+            receipt.release()
+
+    def split(self, chunk: bytes) -> Generator[OwnedPCM]:
         if self._splitting:
             raise RuntimeError("consume or close the previous frame iterator first")
         self._splitting = True
@@ -61,18 +74,36 @@ class FrameSplitter:
             with memoryview(chunk) as data:
                 offset = 0
                 if self._pending:
-                    needed = FRAME_BYTES - len(self._pending)
+                    needed = FRAME_BYTES - len(self._pending.data)
                     if len(data) < needed:
-                        self._pending += data.tobytes()
+                        if data:
+                            pending = self._storage.join(self._pending.data, data)
+                            old, self._pending = self._pending, pending
+                            receipt = old.receipt
+                            del old, pending
+                            receipt.release()
                         return
-                    frame = self._pending + data[:needed].tobytes()
-                    self._pending = b""
+                    frame = self._storage.join(self._pending.data, data[:needed])
+                    old, self._pending = self._pending, None
+                    receipt = old.receipt
+                    del old
+                    receipt.release()
                     offset = needed
                     yield frame
                     del frame
                 while len(data) - offset >= FRAME_BYTES:
-                    yield data[offset : offset + FRAME_BYTES].tobytes()
+                    frame = self._storage.copy(data[offset : offset + FRAME_BYTES])
+                    yield frame
+                    del frame
                     offset += FRAME_BYTES
-                self._pending = data[offset:].tobytes()
+                if offset < len(data):
+                    self._pending = self._storage.copy(data[offset:])
+        except PCMCapacityError, GeneratorExit:
+            raise
+        except BaseException:
+            # Escaping errors can retain admitted backings. Closing the iterator
+            # merely drops its unread input and is handled separately above.
+            self._storage.uncertain = True
+            raise
         finally:
             self._splitting = False

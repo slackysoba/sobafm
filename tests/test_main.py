@@ -234,6 +234,7 @@ def test_ignores_the_sdks_warnings_that_quote_what_it_receives(option: str | Non
 UNKNOWN_VALUES_FROM_LYRIA = """
 import asyncio, base64, contextlib, json, types
 from google.genai import live_music
+from sobafm.audio_budget import AudioLedger
 from sobafm.deck import Deck
 from sobafm.plan import MusicPlan
 
@@ -263,7 +264,7 @@ async def connect():
 
 
 async def run():
-    deck = Deck(connect, MusicPlan.from_request("ambient"))
+    deck = Deck(connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm)
     deck.start()
     for _ in range(200):
         await asyncio.sleep(0.01)

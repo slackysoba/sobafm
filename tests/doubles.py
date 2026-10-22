@@ -8,7 +8,8 @@ import weakref
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from types import SimpleNamespace
+from typing import Any, Literal, cast
 
 import discord
 from google.genai import errors, types
@@ -17,10 +18,49 @@ from sobafm.audio_budget import AudioBytes, AudioLease, AudioLedger
 from sobafm.catalog import CatalogPage, CatalogQuery, CatalogTrack, CreditRecord
 from sobafm.lyria_engine import SessionPool
 from sobafm.mixer import Mixer
+from sobafm.owned_pcm import OwnedPCM, PCMOwner
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_SECONDS, MIME_TYPE
 from sobafm.plan import MusicPlan
 from sobafm.program import Mode, Outcome, Program
 from sobafm.source import Source, State
+
+
+def pcm_mixer(volume: float) -> Mixer:
+    """Owned synchronous unit fixture; async tests use their real loop's acknowledgement queue."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+
+        def acknowledge(callback: Callable[..., object], *args: object) -> None:
+            callback(*args)
+
+        loop = cast(asyncio.AbstractEventLoop, SimpleNamespace(call_soon_threadsafe=acknowledge))
+    mixer = Mixer(volume, AudioLedger().pcm, loop)
+    assert mixer.player_source() is not None
+    return mixer
+
+
+def drain_pcm(frames: deque[OwnedPCM]) -> None:
+    """A fixture sink that drops each owned backing before acknowledging it on the loop."""
+    while frames:
+        frame = frames.popleft()
+        receipt = frame.receipt
+        del frame
+        receipt.release()
+
+
+class PCMFixtureLedger(AudioLedger):
+    """Explicit synthetic capacity for tiny-envelope fixtures; uses ordinary admission."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__()
+        capacity = self.reserve_pcm_capacity(size)
+        assert capacity is not None
+        self._fixture_pcm = PCMOwner(capacity)
+
+    @property
+    def pcm(self) -> PCMOwner:
+        return self._fixture_pcm
 
 
 class FakeSource:
@@ -28,12 +68,13 @@ class FakeSource:
 
     _numbers = itertools.count(1)
 
-    def __init__(self, program: Program) -> None:
+    def __init__(self, program: Program, pcm: PCMOwner | None = None) -> None:
         self.program = program
         self.mode = program.mode
         self.title = program.plan.title
         self.number = next(self._numbers)
-        self.frames: deque[bytes] = deque()
+        self.frames: deque[OwnedPCM] = deque()
+        self.pcm = (pcm if pcm is not None else AudioLedger().pcm).storage(12_000_000)
         self.state = State.GENERATING
         self.completed = False
         self.failure: Outcome | None = None
@@ -59,7 +100,15 @@ class FakeSource:
 
     def send_audio(self, seconds: float, *, sample: int = 0) -> None:
         frame = sample.to_bytes(2, "little", signed=True) * 1920
-        self.frames.extend(frame for _ in range(round(seconds / FRAME_SECONDS)))
+        for _ in range(round(seconds / FRAME_SECONDS)):
+            self.frames.append(self.pcm.copy(memoryview(frame)))
+
+    def discard_pcm(self) -> None:
+        while self.frames:
+            frame = self.frames.popleft()
+            receipt = frame.receipt
+            del frame
+            receipt.release()
 
     def finish(self, failure: Outcome | None = None) -> None:
         self.completed = failure is None
@@ -92,6 +141,7 @@ class FakeEngine:
     def __init__(self, mode: Mode, audio: AudioLedger, pool: SessionPool | None = None) -> None:
         self.mode = mode
         self.audio = audio
+        self.pcm = audio.pcm
         self.pool = pool
         self.sources: list[FakeSource] = []
         self.live_numbers: list[int] = []
@@ -103,7 +153,7 @@ class FakeEngine:
         if self.pool is not None and self.mode is Mode.GENERATED and not self.pool.reserve(self):
             return False
         if self._lease is None:
-            self._lease = self.audio.reserve(AudioBytes(pcm=12_000_000, other=512_000))
+            self._lease = self.audio.reserve(AudioBytes(other=512_000))
         return self._lease is not None
 
     def release_if_ended(self, retained: Sequence[Program]) -> None:
@@ -117,7 +167,7 @@ class FakeEngine:
 
     def generate(self, program: Program) -> None:
         for _ in range(2 - sum(s.state is not State.ENDED for s in self.sources)):
-            self.sources.append(FakeSource(program))
+            self.sources.append(FakeSource(program, self.pcm))
 
     def ended_failures(self, program: Program | None) -> list[FakeSource]:
         ended = [s for s in self.sources if s.state is State.ENDED and s not in self._seen]
@@ -141,13 +191,17 @@ class FakeEngine:
         return None
 
     def drop_ended(self, program: Program | None, mixer: Mixer) -> None:
-        self.sources = [
+        kept = [
             source
             for source in self.sources
             if source.state is not State.ENDED
             or mixer.uses(source)
             or (source.program is program and source.ready and source.failure is None)
         ]
+        for source in self.sources:
+            if source not in kept:
+                source.discard_pcm()
+        self.sources = kept
 
     def retire(self, program: Program | None, mixer: Mixer) -> None:
         for source in self.sources:
@@ -175,6 +229,8 @@ class FakeEngine:
         for source in self.sources:
             source.retire()
         await asyncio.gather(*(s.wait_ended() for s in self.sources))
+        for source in self.sources:
+            source.discard_pcm()
         self.sources.clear()
         if self.pool is not None:
             self.pool.release(self)
@@ -359,8 +415,8 @@ class FakePlayer:
     """Stands in for discord.py's voice client, with its checks on `play()`.
 
     As in discord.py, `is_playing()` stays true when the player thread ends on its own, and a
-    stopped thread calls `after` only once it notices, which a voice reconnect can delay:
-    `end_stopped_threads()` lets it.
+    stopped thread calls `after`, then public cleanup. Tests can hold that whole
+    finalization with `defer_cleanup` and finish it with `end_stopped_threads()`.
     """
 
     def __init__(self) -> None:
@@ -370,8 +426,9 @@ class FakePlayer:
         self.failure: Exception | None = None  # raised by play(), such as OpusNotLoaded
         self.plays = 0
         self.source: discord.AudioSource | None = None
+        self.defer_cleanup = False
         self._after: Callable[[Exception | None], Any] | None = None
-        self._stopped: list[Callable[[Exception | None], Any]] = []  # threads still ending
+        self._stopped: list[tuple[Callable[[Exception | None], Any], discord.AudioSource]] = []
 
     def is_connected(self) -> bool:
         return self.connected
@@ -400,8 +457,11 @@ class FakePlayer:
     def stop(self) -> None:
         self.playing = self.running = False
         if self._after is not None:
-            self._stopped.append(self._after)
+            assert self.source is not None
+            self._stopped.append((self._after, self.source))
             self._after = None
+        if not self.defer_cleanup:
+            self.end_stopped_threads()
 
     def end_thread(self) -> None:
         """End the running player thread on its own, as when it gives up on a reconnect."""
@@ -409,10 +469,13 @@ class FakePlayer:
         if (after := self._after) is not None:
             self._after = None
             _call_from_thread(after)
+            if self.source is not None:
+                self.source.cleanup()
 
     def end_stopped_threads(self) -> None:
-        for after in self._stopped:
+        for after, source in self._stopped:
             _call_from_thread(after)
+            source.cleanup()
         self._stopped.clear()
 
 

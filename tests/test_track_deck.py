@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 
 import sobafm.track_deck as tracks
-from sobafm.audio_budget import AudioBytes, AudioLedger
+from sobafm.audio_budget import PCM_LIMIT, AudioBytes, AudioLedger
 from sobafm.catalog import CatalogQuery, CatalogTrack
 from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.catalog_interpreter import CatalogPlan
@@ -19,6 +19,7 @@ from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES
 from sobafm.program import Program
 from sobafm.source import Source, State
 from sobafm.track_deck import DecoderSupervisor, EndReason, Envelope, Slots, TrackDeck
+from tests.doubles import PCMFixtureLedger, drain_pcm
 from tests.test_catalog import credit, discovered
 from tests.test_decoder_check import Writer
 
@@ -148,14 +149,20 @@ class SharedCloseChild(FakeChild):
 
 class Rig:
     def __init__(
-        self, tmp: Path, *, seconds: int = 2, output: bytes | None = None, frames: int = 400
+        self,
+        tmp: Path,
+        *,
+        seconds: int = 2,
+        output: bytes | None = None,
+        frames: int = 400,
+        pcm_bytes: int = PCM_LIMIT,
     ) -> None:
         self.boundary = FakeBoundary()
         self.child = FakeChild(
             self.boundary, bytes(seconds * BYTES_PER_SECOND) if output is None else output
         )
         self.source = FakeInput()
-        self.audio, self.slots = AudioLedger(), Slots()
+        self.audio, self.slots = PCMFixtureLedger(pcm_bytes), Slots()
         self.gate: asyncio.Event | None = None
         runtime = VerifiedNativeRuntime(
             executable=tmp / "not-executed.exe",
@@ -218,7 +225,7 @@ async def test_verified_short_complete_is_ready_then_audibly_drained(tmp_path: P
     assert rig.slots.count == 0
     assert rig.deck.credits == rig.track.credits
     before = rig.audio.reserved
-    source.frames.clear()
+    drain_pcm(source.frames)
     assert rig.deck.drained
     assert rig.audio.reserved == before
     assert before.total > 0  # PCM/mixer copy lease is not a process-slot refund.
@@ -242,8 +249,8 @@ async def test_arbitrary_pipe_splits_and_one_verified_final_padding(
     assert all(rig.deck._eof.values())  # pyright: ignore[reportPrivateUsage]
     assert rig.deck.exit_status == 0
     assert len(rig.deck.frames) == 2
-    assert all(len(frame) == FRAME_BYTES for frame in rig.deck.frames)
-    assert b"".join(rig.deck.frames) == raw + bytes(4)
+    assert all(len(frame.data) == FRAME_BYTES for frame in rig.deck.frames)
+    assert b"".join(frame.data for frame in rig.deck.frames) == raw + bytes(4)
 
 
 @pytest.mark.parametrize(
@@ -310,7 +317,7 @@ async def test_retirement_before_task_start_cannot_lose_reserved_slot(tmp_path: 
     await settle(rig)
     assert rig.deck.end_reason is EndReason.RETIRED
     assert rig.slots.count == 0
-    assert rig.audio.reserved.total == 0
+    assert rig.audio.reserved == AudioBytes(pcm=34_560_000)
     assert not rig.boundary.prepared
 
 
@@ -324,7 +331,7 @@ async def test_retired_unstarted_source_cannot_be_started_by_stale_owner(tmp_pat
     assert not rig.boundary.prepared
     assert not rig.child.writes
     assert rig.slots.count == 0
-    assert rig.audio.reserved.total == 0
+    assert rig.audio.reserved == AudioBytes(pcm=34_560_000)
 
 
 async def test_pending_spawn_debt_survives_deadline_and_later_releases(
@@ -462,7 +469,7 @@ async def test_backpressure_preserves_cap_until_owner_consumes(tmp_path: Path) -
     assert len(rig.deck.frames) == 300
     assert rig.deck.ready
     assert not rig.deck.completed
-    rig.deck.frames.clear()
+    drain_pcm(rig.deck.frames)
     await rig.deck.regulate()
     await settle(rig)
     assert rig.deck.completed
@@ -488,11 +495,11 @@ async def test_tail_only_read_reaches_eof_before_waiting_for_final_padding(
     assert len(rig.deck.frames) == 300
     assert not rig.deck.completed
     assert rig.deck._raw_bytes == len(raw)  # pyright: ignore[reportPrivateUsage]
-    rig.deck.frames.clear()
+    drain_pcm(rig.deck.frames)
     await rig.deck.regulate()
     await settle(rig)
     assert rig.deck.completed
-    assert list(rig.deck.frames) == [b"a" * 4 + bytes(FRAME_BYTES - 4)]
+    assert [frame.data for frame in rig.deck.frames] == [b"a" * 4 + bytes(FRAME_BYTES - 4)]
 
 
 @pytest.mark.parametrize("split", [FRAME_BYTES - 1, FRAME_BYTES])
@@ -520,7 +527,7 @@ async def test_cancellation_while_waiting_for_room_closes_frame_iterator(
     assert len(rig.deck.frames) == 300
     # A suspended iterator would reject this: cancellation must close it, and
     # the unqueued frame/unread suffix must not contaminate later consumption.
-    assert list(splitter.split(b"new" + bytes(FRAME_BYTES - 3))) == [
+    assert [frame.data for frame in splitter.split(b"new" + bytes(FRAME_BYTES - 3))] == [
         b"new" + bytes(FRAME_BYTES - 3)
     ]
 
@@ -654,7 +661,7 @@ async def test_infeasible_preroll_capacity_is_rejected_before_allocation(tmp_pat
     assert rig.deck.failure is TrackFailure.CAPACITY
     assert not rig.boundary.prepared
     assert rig.slots.count == 0
-    assert rig.audio.reserved.total == 0
+    assert rig.audio.reserved == AudioBytes(pcm=34_560_000)
 
 
 @pytest.mark.parametrize("extra", [0, 4])
