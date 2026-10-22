@@ -309,19 +309,30 @@ class Deck:
                 message = None
             if message is None:  # raised outside the handler, so the SDK's error isn't attached
                 raise LyriaMessageError("unreadable message")
-            if message.filtered_prompt is not None and self._audio_bytes == 0:
-                reason = message.filtered_prompt.filtered_reason
-                log.debug("Deck %d: Lyria filtered the prompt: %s", self.number, reason)
-                self.detail = as_token(reason)  # free text could quote the request
-                return EndReason.FILTERED
-            content = message.server_content
-            for chunk in (content.audio_chunks or []) if content else []:
-                if chunk.mime_type is not None and not matches_mime_type(chunk.mime_type):
-                    raise LyriaMessageError("unexpected audio format")
-                data = chunk.data or b""
-                self._audio_bytes += len(data)
-                with closing(self._splitter.split(data)) as frames:
-                    self.frames.extend(frames)
+            end_reason = self._process_message(message)
+            del message  # the SDK iterator may retain it, but Deck need not while awaiting input
+            if end_reason is not None:
+                return end_reason
+
+    def _process_message(self, message: types.LiveMusicServerMessage) -> EndReason | None:
+        """Process one update without suspending its content/chunk/data locals at an await.
+
+        An escaping exception can still own this frame until its traceback is cleared by `_end`.
+        """
+        if message.filtered_prompt is not None and self._audio_bytes == 0:
+            reason = message.filtered_prompt.filtered_reason
+            log.debug("Deck %d: Lyria filtered the prompt: %s", self.number, reason)
+            self.detail = as_token(reason)  # free text could quote the request
+            return EndReason.FILTERED
+        content = message.server_content
+        for chunk in (content.audio_chunks or []) if content else []:
+            if chunk.mime_type is not None and not matches_mime_type(chunk.mime_type):
+                raise LyriaMessageError("unexpected audio format")
+            data = chunk.data or b""
+            self._audio_bytes += len(data)
+            with closing(self._splitter.split(data)) as frames:
+                self.frames.extend(frames)
+        return None
 
     def _set_generating(self, generating: bool) -> None:
         """Start or stop the clock behind `rate`."""
