@@ -1,0 +1,123 @@
+diff --git a/google/genai/_bounded_receive.py b/google/genai/_bounded_receive.py
+--- a/google/genai/_bounded_receive.py
++++ b/google/genai/_bounded_receive.py
+@@ -49,6 +49,9 @@
+     byte allowance. Optional shape limits add a lexical preflight before JSON
+     copies; their byte cap cannot exceed `max_bytes`. The caller retains the
+     bytearray for the connection owner through preflight and parsing.
++    Optional input_storage is a distinct, exclusively borrowed 4096-byte
++    BufferedProtocol backing, plus a separately prepaid prefix-copy allowance.
++    It remains owned through actual connection/context closure.
+     """
+-
++
+     storage: bytearray
+@@ -58,8 +61,15 @@
+     max_size: int
+     max_queue: int
+     shape_limits: ShapeLimits | None = None
++    input_storage: bytearray | None = None
+-
++
+     def __post_init__(self) -> None:
++        if self.input_storage is not None and (
++            type(self.input_storage) is not bytearray
++            or len(self.input_storage) != 4096
++            or self.input_storage is self.storage
++        ):
++            raise ValueError("distinct_4096_byte_input_storage_required")
+         if type(self.storage) is not bytearray:
+             raise ValueError("caller_bytearray_required")
+         if type(self.max_bytes) is not int or not 0 < self.max_bytes <= len(self.storage):
+diff --git a/google/genai/live_music.py b/google/genai/live_music.py
+--- a/google/genai/live_music.py
++++ b/google/genai/live_music.py
+@@ -36,6 +36,7 @@
+   receive_json_compat,
+   websocket_connect_kwargs,
+ )
++from ._buffered_input import buffered_connection_factory
+ from ._common import set_value_by_path as setv
+-
++
+ ConnectionClosed = websockets.ConnectionClosed
+@@ -228,6 +229,10 @@
+     connect_kwargs = websocket_connect_kwargs(
+         headers, compression=compression, bounded_receive=bounded_receive
+     )
++    if bounded_receive is not None and bounded_receive.input_storage is not None:
++      connect_kwargs['create_connection'] = buffered_connection_factory(
++          bounded_receive.input_storage
++      )
+     if bounded_receive is None:
+       try:
+         async with connect(uri, **connect_kwargs) as ws:
+diff --git a/google/genai/_buffered_input.py b/google/genai/_buffered_input.py
+new file mode 100644
+--- /dev/null
++++ b/google/genai/_buffered_input.py
+@@ -0,0 +1,64 @@
++"""A fixed caller-funded input adapter using the standard buffered protocol path."""
++
++from __future__ import annotations
++
++import asyncio
++from collections.abc import Callable
++from typing import Any
++
++from websockets.asyncio.client import ClientConnection
++
++from ._bounded_receive import ReceiveUnavailableError
++
++INPUT_BATCH_BYTES = 4096
++
++
++class BufferedClientConnection(ClientConnection, asyncio.BufferedProtocol):
++    """Keep WebSockets' parser and flow control; bound each new plaintext batch.
++
++    The caller owns the backing exclusively through actual context closure and
++    prepays a separate INPUT_BATCH_BYTES allowance for the immutable prefix copy.
++    Neither a callback error nor connection_lost refunds that ownership.
++    """
++
++    def __init__(self, *args: Any, input_storage: bytearray, **kwargs: Any) -> None:
++        if type(input_storage) is not bytearray or len(input_storage) != INPUT_BATCH_BYTES:
++            raise ValueError("4096_byte_input_storage_required")
++        self._input_view = memoryview(input_storage)
++        super().__init__(*args, **kwargs)
++
++    def get_buffer(self, sizehint: int) -> memoryview:
++        # The transport's hint cannot enlarge the caller's prepaid backing.
++        return self._input_view
++
++    def buffer_updated(self, nbytes: int) -> None:
++        if type(nbytes) is not int or not 0 <= nbytes <= INPUT_BATCH_BYTES:
++            raise ValueError("invalid_buffered_input_prefix")
++        # This exact bounded copy avoids exporting a mutable buffer to the parser.
++        # The ordinary parser retains its own copies; the view remains an alias.
++        data = bytes(self._input_view[:nbytes])
++        try:
++            super().data_received(data)
++        finally:
++            del data
++
++    def data_received(self, data: bytes) -> None:
++        # A copied-read transport has already bypassed the intended TLS batching.
++        # Refuse it without invoking the parser or allocating another input copy.
++        raise ReceiveUnavailableError("buffered_input_transport_required")
++
++
++def buffered_connection_factory(storage: bytearray) -> Callable[..., ClientConnection]:
++    """One public connect factory claim, including failed/redirected attempts."""
++    if type(storage) is not bytearray or len(storage) != INPUT_BATCH_BYTES:
++        raise ValueError("4096_byte_input_storage_required")
++    claimed = False
++
++    def create_connection(*args: Any, **kwargs: Any) -> ClientConnection:
++        nonlocal claimed
++        if claimed:
++            raise ReceiveUnavailableError("buffered_input_owner_already_claimed")
++        claimed = True
++        return BufferedClientConnection(*args, input_storage=storage, **kwargs)
++
++    return create_connection
