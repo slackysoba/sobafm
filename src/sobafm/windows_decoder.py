@@ -12,7 +12,15 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sobafm.catalog_audio import TrackError, TrackFailure
-from sobafm.decoder_process import PIPE_LIMIT, InputCloser, Launch, WindowsJob, command, environment
+from sobafm.decoder_process import (
+    PIPE_LIMIT,
+    FailurePhase,
+    InputCloser,
+    Launch,
+    WindowsJob,
+    command,
+    environment,
+)
 from sobafm.native import VerifiedNativeRuntime
 from sobafm.native_calls import GuardedAPI
 
@@ -386,6 +394,7 @@ class WindowsProcess:
         self.thread_handle: Handle | None = None
         self.creation: asyncio.Task[None] | None = None
         self.adoption: asyncio.Task[None] | None = None
+        self.adoption_phase: FailurePhase = "adopt-pipes"
         self.waiter: asyncio.Task[int] | None = None
         self.stop = threading.Event()
         self.known_absent = True  # no invocation yet; changed before the FFI call
@@ -419,7 +428,11 @@ class WindowsProcess:
         if child.failed:
             raise TrackError(TrackFailure.CAPACITY)
         child.adoption = asyncio.create_task(child._adopt())
-        await asyncio.shield(child.adoption)
+        try:
+            await asyncio.shield(child.adoption)
+        except BaseException as error:
+            owner.record_failure(child.adoption_phase, error)
+            raise
         return child
 
     def _capture(self) -> None:
@@ -440,13 +453,17 @@ class WindowsProcess:
             self.owner.unresolved = False
 
     def _create(self, argv: Sequence[str], env: Mapping[str, str]) -> None:
+        phase: FailurePhase = "native-setup"
         try:
             self.api = Kernel32()
             if self.boundary.operation_guard is not None:
                 self.api.api = GuardedAPI(self.api.api, self.boundary.operation_guard)
+            phase = "job-setup"
             self.boundary.prepare()
             for index in (0, 1, 2):
+                phase = ("pipe-stdin", "pipe-stdout", "pipe-stderr")[index]
                 self.api.pipe(self.endpoints, index)
+            phase = "attributes"
             self.storage = CreationStorage(argv, env, self.boundary.creation_handle)
             self.api.attributes(self.storage, [self.endpoints[i].fileno() for i in (1, 3, 5)])
             if self.stop.is_set():
@@ -454,15 +471,19 @@ class WindowsProcess:
             self.owner.begin()
             self.owner.unresolved = True
             self.known_absent = False
+            phase = "create-process"
             returned = self.api.create(self.storage, self.info)
+            phase = "capture"
             self._capture()  # before disposal, endpoint closes, adoption or await
             if not returned:
+                phase = "create-process"
                 # A documented FALSE return with an empty output is a positive
                 # no-process result. An exception is deliberately not equivalent.
                 self.known_absent = not self.info.process and not self.info.thread
                 if self.known_absent:
                     self.owner.unresolved = False
                 raise TrackError(TrackFailure.CAPACITY)
+            phase = "capture"
             if (
                 self.process_handle is None
                 or self.thread_handle is None
@@ -471,6 +492,9 @@ class WindowsProcess:
             ):
                 raise TrackError(TrackFailure.CAPACITY)
         except BaseException as error:  # noqa: BLE001 - retain native state on every worker outcome
+            self.owner.record_failure(
+                self.boundary.setup_phase if phase == "job-setup" else phase, error
+            )
             self.failed = True
             self._capture()
             if not self.owner.invoked:
@@ -482,6 +506,7 @@ class WindowsProcess:
                 try:
                     self.api.dispose(self.storage)
                 except BaseException as error:  # noqa: BLE001 - failed disposal remains a cleanup obligation
+                    self.owner.record_failure("dispose-attributes", error)
                     self.failed = True
                     error.__traceback__ = error.__context__ = error.__cause__ = None
             # Only the creating worker touches these parent copies of child stdio.
@@ -489,12 +514,14 @@ class WindowsProcess:
                 try:
                     endpoint.close()
                 except BaseException as error:  # noqa: BLE001 - failed closes remain owned
+                    self.owner.record_failure("close-child-endpoints", error)
                     self.failed = True
                     error.__traceback__ = error.__context__ = error.__cause__ = None
 
     async def _adopt(self) -> None:
         loop = asyncio.get_running_loop()
         for index in (0, 1, 2):
+            self.adoption_phase = ("adopt-stdin", "adopt-stdout", "adopt-stderr")[index]
             if self.stop.is_set():
                 raise TrackError(TrackFailure.CAPACITY)
             reader = asyncio.StreamReader(limit=PIPE_LIMIT)
@@ -526,9 +553,16 @@ class WindowsProcess:
             or len(self.transports) != 3
         ):
             raise TrackError(TrackFailure.CAPACITY)
-        self.boundary.verify_process(self.process_handle.fileno())
-        self.api.resume(self.thread_handle.fileno())
-        self.thread_handle.close()
+        phase: FailurePhase = "verify-job"
+        try:
+            self.boundary.verify_process(self.process_handle.fileno())
+            phase = "resume"
+            self.api.resume(self.thread_handle.fileno())
+            phase = "close-thread"
+            self.thread_handle.close()
+        except BaseException as error:
+            self.owner.record_failure(phase, error)
+            raise
         self.bound = True
 
     def _charge(self) -> None:

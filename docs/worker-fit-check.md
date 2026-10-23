@@ -73,3 +73,28 @@ All non-success outcomes stop this one case and preserve its evidence. There is
 no fallback, alternate cap, version change, automatic retry or follow-on study
 within this control. The orchestrator records the concrete outcome, distinguishing
 infeasibility supported by attributable evidence from an inconclusive run.
+
+## Consumed a2 result and source-only diagnostic correction
+
+The separately cleared a2 run returned `launch-or-io-failed`, a null exit code,
+actual storage release and `cap_cause_proven: false`. The original generic catch
+does not identify which setup or I/O boundary failed. Retained evidence therefore
+does not establish a concrete source fault or show that a larger budget would
+help. The active 70 MB ceiling is unchanged; conditional authority up to 100 MB
+does not apply without that evidence.
+
+The schema-2 diagnostic control adds only the first fixed `failure_phase` and
+`error_category`, plus a bounded `win32_error` integer if already present on a
+caught OSError. It performs no additional native query and records no raw error,
+exception name, diagnostic stream or audio. Setup distinguishes Job creation,
+limit setting/readback, each pipe, attributes, process creation/capture and pipe
+adoption; subsequent failures distinguish bind/resume, request write/close, reads
+and the existing waiter. Later cleanup errors do not replace the first fault.
+An exit code returned by an already owned waiter survives an unrelated I/O
+failure; a known-absent setup sentinel is not presented as a child exit.
+
+This is a distinct diagnostic control identity, not permission to rerun a2.
+All prior consumed receipts and results remain immutable. Any subsequent native
+run requires independent review of its exact source/manifest and separate root
+clearance. No cap attribution, production readiness or broader worker integration
+follows from this source-only correction.

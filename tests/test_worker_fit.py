@@ -2,6 +2,8 @@
 
 import asyncio
 import io
+import json
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -164,6 +166,9 @@ async def test_output_overflow_is_not_a_memory_limit_finding() -> None:
     assert result.status == "launch-or-io-failed"
     assert not result.cap_cause_proven
     assert child.released
+    assert result.failure_phase == "stdout-read"
+    assert result.error_category == "validation"
+    assert result.exit_code == 0  # existing waiter survives the aggregate read failure
 
 
 async def test_finite_close_attempts_park_without_retry_or_owner_loss(
@@ -313,3 +318,44 @@ async def test_cancel_before_work_starts_still_has_independent_retirement() -> N
     await asyncio.wait_for(owner.join(), 1)
     assert owner.released
     assert child.released
+
+
+def test_first_diagnostic_is_fixed_and_does_not_retain_raw_exception() -> None:
+    launch = Launch(lambda: True)
+    error = OSError("owned secret-like text must not survive")
+    error.winerror = 5  # pyright: ignore[reportAttributeAccessIssue] - Windows-only metadata on an owned fake
+    launch.record_failure("write-request", error)
+    launch.record_failure("close-input", RuntimeError("secondary raw detail"))
+    assert launch.failure is not None
+    assert launch.failure.phase == "write-request"
+    assert launch.failure.category == "os"
+    assert launch.failure.win32_error == 5
+    assert "secret" not in json.dumps(asdict(launch.failure))
+    assert "secondary" not in json.dumps(asdict(launch.failure))
+
+
+@pytest.mark.parametrize("code", [-1, 2**32, "raw"])
+def test_diagnostic_rejects_unbounded_or_non_numeric_winerror(code: object) -> None:
+    launch = Launch(lambda: True)
+    error = OSError("owned fake")
+    error.winerror = code  # pyright: ignore[reportAttributeAccessIssue] - reject malformed exception metadata
+    launch.record_failure("launch", error)
+    assert launch.failure is not None
+    assert launch.failure.win32_error is None
+
+
+async def test_write_failure_keeps_phase_and_already_owned_retirement_exit() -> None:
+    class BrokenWrite(Child):
+        async def write(self, chunk: bytes) -> None:
+            raise BrokenPipeError("owned fake text")
+
+    child = BrokenWrite(b"", 23)
+    owner = check(child)
+    result = await asyncio.wait_for(asyncio.shield(owner.decision), 1)
+    await owner.join()
+    assert result.status == "launch-or-io-failed"
+    assert result.failure_phase == "write-request"
+    assert result.error_category == "os"
+    assert result.exit_code == 23
+    assert result.storage_released
+    assert not result.cap_cause_proven

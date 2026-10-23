@@ -11,7 +11,15 @@ from pathlib import Path
 from typing import Literal
 
 from sobafm.audio_worker import BOOTED, FRAME_SIZE, IMPORTED, REQUEST
-from sobafm.decoder_process import Launch, Process, StorageOwner, WindowsJob
+from sobafm.decoder_process import (
+    ErrorCategory,
+    FailurePhase,
+    Launch,
+    Process,
+    StorageOwner,
+    WindowsJob,
+)
+from sobafm.native_calls import BudgetExhaustedError as BudgetExhaustedError
 from sobafm.windows_decoder import WindowsProcess
 
 # Optimistically ignore every outside charge. Success cannot qualify this value.
@@ -33,10 +41,6 @@ Status = Literal[
     "cleanup-failed",
 ]
 Spawn = Callable[[tuple[str, ...], WindowsJob, Launch], Awaitable[Process]]
-
-
-class BudgetExhaustedError(RuntimeError):
-    pass
 
 
 class ControlBudget:
@@ -73,6 +77,9 @@ class Result:
     exit_code: int | None
     storage_released: bool
     cap_cause_proven: bool = False
+    failure_phase: FailurePhase | None = None
+    error_category: ErrorCategory | None = None
+    win32_error: int | None = None
 
 
 def command(python: Path) -> tuple[str, ...]:
@@ -114,6 +121,16 @@ class FitCheck:
         self.retirement = asyncio.create_task(self._retire())
 
     async def _read(self, child: Process, pipe: int, limit: int) -> bytes:
+        try:
+            return await self._bounded_read(child, pipe, limit)
+        except BaseException as error:
+            # Owner-requested cancellation during retirement is not the useful
+            # path's first failure and must not replace its actual diagnostic.
+            if not isinstance(error, asyncio.CancelledError):
+                self.launch.record_failure("stdout-read" if pipe == 1 else "stderr-read", error)
+            raise
+
+    async def _bounded_read(self, child: Process, pipe: int, limit: int) -> bytes:
         result = bytearray()
         while True:
             size = min(4096, limit + 1 - len(result))
@@ -126,12 +143,27 @@ class FitCheck:
                 raise ValueError("fixed output exceeded")
         return bytes(result)
 
+    async def _wait(self, child: Process) -> int:
+        try:
+            code = await child.wait()
+            if self.launch.owned is not None:
+                # Retain the existing waiter's result even when another I/O task
+                # failed first. A known-absent setup sentinel is not a child exit.
+                self.exit_code = code
+            return code
+        except BaseException as error:
+            if not isinstance(error, asyncio.CancelledError):
+                self.launch.record_failure("wait-exit", error)
+            raise
+
     async def _run(self) -> Status:
         status: Status = "launch-or-io-failed"
+        phase: FailurePhase = "launch"
         try:
             async with asyncio.timeout(RUN_SECONDS):
                 child = await asyncio.shield(self.spawn)
                 self.launch.child = child
+                phase = "bind"
                 self.budget.charge()
                 child.bind()
                 output = asyncio.create_task(self._read(child, 1, OUTPUT_LIMIT))
@@ -139,12 +171,15 @@ class FitCheck:
                 errors = asyncio.create_task(self._read(child, 2, 4096))
                 self.workers.append(errors)
                 self.budget.charge()
-                wait = asyncio.create_task(child.wait())
+                wait = asyncio.create_task(self._wait(child))
                 self.workers.append(wait)
+                phase = "write-request"
                 self.budget.charge()
                 await child.write(REQUEST)
+                phase = "close-input"
                 self.budget.charge()
                 await child.close_input()
+                phase = "io-join"
                 await asyncio.gather(*self.workers)
                 self.exit_code = wait.result()
                 payload = output.result()
@@ -156,9 +191,11 @@ class FitCheck:
                     status = "bootstrap-failed"
                 else:
                     status = "exit-inconclusive"
-        except TimeoutError:
+        except TimeoutError as error:
+            self.launch.record_failure(phase, error)
             status = "run-timeout"
         except (Exception, asyncio.CancelledError) as error:  # noqa: BLE001 - fixed outcome
+            self.launch.record_failure(phase, error)
             error.__traceback__ = error.__context__ = error.__cause__ = None
         return status
 
@@ -173,7 +210,18 @@ class FitCheck:
             error.__traceback__ = error.__context__ = error.__cause__ = None
             await self._park_owned()
         if not self.decision.done():
-            self.decision.set_result(Result(status, self.exit_code, self.released))
+            self.decision.set_result(self._result(status, self.released))
+
+    def _result(self, status: Status, released: bool) -> Result:
+        diagnostic = self.launch.failure
+        return Result(
+            status,
+            self.exit_code,
+            released,
+            failure_phase=diagnostic.phase if diagnostic is not None else None,
+            error_category=diagnostic.category if diagnostic is not None else None,
+            win32_error=diagnostic.win32_error if diagnostic is not None else None,
+        )
 
     async def join(self) -> None:
         await retained_wait(self.retirement)
@@ -185,11 +233,11 @@ class FitCheck:
 
     def _late(self) -> None:
         if not self.decision.done():
-            self.decision.set_result(Result("cleanup-timeout", self.exit_code, False))
+            self.decision.set_result(self._result("cleanup-timeout", False))
 
     def _cleanup_failed(self) -> None:
         if not self.decision.done():
-            self.decision.set_result(Result("cleanup-failed", self.exit_code, False))
+            self.decision.set_result(self._result("cleanup-failed", False))
 
     async def _discard(self, child: Process, pipe: int) -> None:
         while True:
@@ -223,7 +271,7 @@ class FitCheck:
                 close_input = asyncio.create_task(child.close_input())
                 self.cleaning.append(close_input)
                 self.budget.charge()
-                wait = asyncio.create_task(child.wait())
+                wait = asyncio.create_task(self._wait(child))
                 self.cleaning.append(wait)
                 self.cleaning.extend(
                     [

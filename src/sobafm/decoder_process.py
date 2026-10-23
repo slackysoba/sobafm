@@ -7,15 +7,17 @@ import io
 import os
 import signal
 import sys
+import threading
 import uuid
 from collections.abc import Callable
 from ctypes import wintypes
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.native import VerifiedNativeRuntime
-from sobafm.native_calls import GuardedAPI
+from sobafm.native_calls import BudgetExhaustedError, GuardedAPI
 
 CHILD_MEMORY = 128 * 1024**2
 PIPE_BLOCK_SIZE = 16 * 1024  # FFmpeg protocol operation size, not pipe capacity
@@ -99,6 +101,87 @@ class StorageOwner(Protocol):
     async def release_storage(self) -> None: ...
 
 
+type FailurePhase = Literal[
+    "native-setup",
+    "job-setup",
+    "job-create",
+    "job-limits",
+    "job-verify",
+    "pipe-stdin",
+    "pipe-stdout",
+    "pipe-stderr",
+    "attributes",
+    "create-process",
+    "capture",
+    "dispose-attributes",
+    "close-child-endpoints",
+    "adopt-pipes",
+    "launch",
+    "bind",
+    "adopt-stdin",
+    "adopt-stdout",
+    "adopt-stderr",
+    "verify-job",
+    "resume",
+    "close-thread",
+    "write-request",
+    "close-input",
+    "stdout-read",
+    "stderr-read",
+    "wait-exit",
+    "io-join",
+]
+type ErrorCategory = Literal[
+    "control-budget",
+    "memory",
+    "timeout",
+    "cancelled",
+    "os",
+    "capacity",
+    "cleanup",
+    "track-other",
+    "validation",
+    "runtime",
+    "attribute",
+    "type",
+    "other",
+]
+
+
+@dataclass(frozen=True)
+class FailureDiagnostic:
+    phase: FailurePhase
+    category: ErrorCategory
+    win32_error: int | None
+
+
+def error_category(error: BaseException) -> ErrorCategory:
+    """A closed vocabulary; never retain exception names, text, args or traces."""
+    if isinstance(error, BudgetExhaustedError):
+        return "control-budget"
+    if isinstance(error, MemoryError):
+        return "memory"
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, asyncio.CancelledError):
+        return "cancelled"
+    if isinstance(error, OSError):
+        return "os"
+    if isinstance(error, TrackError):
+        if error.category == TrackFailure.CAPACITY:
+            return "capacity"
+        return "cleanup" if error.category == TrackFailure.CLEANUP else "track-other"
+    if isinstance(error, ValueError):
+        return "validation"
+    if isinstance(error, RuntimeError):
+        return "runtime"
+    if isinstance(error, AttributeError):
+        return "attribute"
+    if isinstance(error, TypeError):
+        return "type"
+    return "other"
+
+
 class Launch:
     """Retained positive handoff, not a universal negative-creation certificate.
 
@@ -116,6 +199,17 @@ class Launch:
         self.child: Process | None = None
         self.pending: Child | None = None
         self.preparation: Process | None = None
+        self.failure: FailureDiagnostic | None = None
+        self._failure_lock = threading.Lock()
+
+    def record_failure(self, phase: FailurePhase, error: BaseException) -> None:
+        # Creation runs on its retained thread; cleanup must not replace the
+        # first observed fault with a later, less informative close failure.
+        with self._failure_lock:
+            if self.failure is None:
+                code = getattr(error, "winerror", None) if isinstance(error, OSError) else None
+                code = code if type(code) is int and 0 <= code <= 0xFFFFFFFF else None
+                self.failure = FailureDiagnostic(phase, error_category(error), code)
 
     def reject(self) -> None:
         if self.invoked:
@@ -276,6 +370,7 @@ class WindowsJob:
             raise ValueError("invalid child commit limit")
         self._commit_limit = commit_limit
         self.operation_guard = operation_guard
+        self.setup_phase: FailurePhase = "job-setup"
         self._handle: int | None = None
         self._api: Any = None  # typed at each explicit Win32 FFI boundary below
 
@@ -310,6 +405,7 @@ class WindowsJob:
         if self.operation_guard is not None:
             api = GuardedAPI(api, self.operation_guard)
         self._api = api
+        self.setup_phase = "job-create"
         handle = api.CreateJobObjectW(None, None)
         if not handle:
             raise TrackError(TrackFailure.CAPACITY)
@@ -317,8 +413,10 @@ class WindowsJob:
         limits = _Limits()
         limits.basic.flags = 0x100 | 0x200 | 0x2000  # process/job memory, kill-on-close
         limits.process_memory = limits.job_memory = self._commit_limit
+        self.setup_phase = "job-limits"
         if not api.SetInformationJobObject(handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
             raise TrackError(TrackFailure.CAPACITY)
+        self.setup_phase = "job-verify"
         self._verify_limits()
 
     def _verify_limits(self) -> None:

@@ -42,8 +42,8 @@ def digest(path: Path) -> str:
 def identity() -> dict[str, object]:
     python = Path(sys.executable).resolve()
     return {
-        "schema": 1,
-        "case": "242-worker-bootstrap-one",
+        "schema": 2,
+        "case": "242-worker-bootstrap-diagnostic",
         "cap": MAXIMUM_CANDIDATE,
         "python": str(python),
         "python_sha256": digest(python),
@@ -110,7 +110,7 @@ def main() -> None:
     # Exclusive creation consumes this exact case even if launch fails. The file
     # is evidence, not permission: review and root clearance remain external.
     with manifest.with_suffix(".consumed").open("x", encoding="utf-8") as stream:
-        stream.write("242-worker-bootstrap-one\n")
+        stream.write("242-worker-bootstrap-diagnostic\n")
     asyncio.run(execute(Path(sys.executable).resolve(), manifest.with_suffix(".result.json")))
 
 

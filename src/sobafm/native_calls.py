@@ -4,6 +4,10 @@ from collections.abc import Callable
 from typing import Any
 
 
+class BudgetExhaustedError(RuntimeError):
+    pass
+
+
 class GuardedAPI:
     """Charge before forwarding, including calls made by fallback/close helpers."""
 

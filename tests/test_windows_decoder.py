@@ -18,6 +18,8 @@ from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.decoder_process import Launch, WindowsJob, command, launch
 from sobafm.native import VerifiedNativeRuntime
 from sobafm.windows_decoder import Kernel32
+from tests import test_decoder_process as process_tests
+from tests.test_decoder_process import api as api
 from tests.test_decoder_process import runtime as runtime
 from tests.test_track_deck import Rig as DeckRig
 
@@ -366,6 +368,19 @@ async def test_partial_setup_or_capture_failure_retains_cleanup_owner(
     assert rig.owner.cleanup_owner is child
     assert child.process_handle is not None if failure == "capture" else child.known_absent
     assert not rig.owner.unresolved
+    assert rig.owner.failure is not None
+    assert (
+        rig.owner.failure.phase
+        == {
+            "pipe0": "pipe-stdin",
+            "pipe1": "pipe-stdout",
+            "pipe2": "pipe-stderr",
+            "attributes": "attributes",
+            "create-false": "create-process",
+            "capture": "create-process",
+        }[failure]
+    )
+    assert rig.owner.failure.category == ("capacity" if failure == "create-false" else "os")
     await rig.release()
     assert all(endpoint.closed for endpoint in child.endpoints)
 
@@ -383,6 +398,15 @@ async def test_bind_failure_never_feeds_input(
     with pytest.raises(TrackError):
         await child.write(b"never")
     assert not rig.transports[0].blocks
+    assert rig.owner.failure is not None
+    assert (
+        rig.owner.failure.phase
+        == {
+            "resume": "resume",
+            "close102": "close-thread",
+            "verify": "verify-job",
+        }[failure]
+    )
     await rig.release()
 
 
@@ -396,8 +420,40 @@ async def test_partial_adoption_keeps_endpoint_and_callback_owner(
     child = rig.child()
     assert child.process_handle is not None
     assert not child.bound
+    assert rig.owner.failure is not None
+    assert rig.owner.failure.phase == ("adopt-stdin", "adopt-stdout", "adopt-stderr")[index]
+    assert rig.owner.failure.category == "os"
     await rig.release()
     assert all(p.lost for p in child.protocols.values())
+
+
+@pytest.mark.parametrize("phase", ["job-create", "job-limits", "job-verify"])
+async def test_wrapped_job_setup_keeps_specific_failure_phase(
+    rig: Rig,
+    api: process_tests.API,
+    runtime: VerifiedNativeRuntime,
+    phase: str,
+) -> None:
+    function = {
+        "job-create": api.CreateJobObjectW,
+        "job-limits": api.SetInformationJobObject,
+        "job-verify": api.QueryInformationJobObject,
+    }[phase]
+    function.side_effect = None
+    function.return_value = 0
+    boundary = WindowsJob()
+    with pytest.raises(TrackError, match="capacity"):
+        await windows.WindowsProcess.launch(runtime, boundary, rig.owner)
+    assert rig.owner.failure is not None
+    assert rig.owner.failure.phase == phase
+    assert rig.owner.failure.category == "capacity"
+    # Restore only the owned fake query to retire the intentionally failed setup.
+    api.QueryInformationJobObject.side_effect = api.query
+    child = rig.child()
+    assert await child.wait() == -1
+    await child.close_input()
+    await child.release_storage()
+    boundary.close()
 
 
 async def test_creation_caller_cancel_does_not_abandon_worker(
