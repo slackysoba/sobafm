@@ -325,7 +325,10 @@ async def test_cancel_before_work_starts_still_has_independent_retirement() -> N
 def test_comparison_identity_has_one_fixed_cap_and_unchanged_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(runner, "digest", lambda path: "a" * 64)
+    def fake_digest(path: Path) -> str:
+        return "a" * 64
+
+    monkeypatch.setattr(runner, "digest", fake_digest)
     monkeypatch.setattr(runner.importlib.metadata, "distributions", lambda: ())
     identity = runner.identity()
     assert identity["schema"] == 4
