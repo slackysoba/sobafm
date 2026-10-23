@@ -159,6 +159,13 @@ uv run sobafm
 
 The process runs until you stop it with Ctrl+C. Run it under a service manager such as systemd, or a Windows service wrapper, to keep it running across restarts and reboots.
 
+Current development source also contains the
+[Proposed ADR-0010](decisions/0010-maintain-a-pinned-bounded-genai-distribution.md)
+and [SDK source/package materials](../third_party/google-genai/README.md) for
+maintainer review. Application dependencies and the lockfile still select the
+stock SDK; operators need no candidate-package installation. The isolated derived
+candidate is unpublished and supplies no production readiness or memory profile.
+
 ### Check that it started
 
 The log should show SobaFM logging in and a line starting `Connected as`. Slash commands registered globally can take a while to appear in Discord the first time. When they do, type `/` in your server and look for SobaFM's commands.
