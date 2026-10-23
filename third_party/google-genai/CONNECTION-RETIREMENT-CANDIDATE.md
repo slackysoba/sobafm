@@ -2,8 +2,12 @@
 
 Prepared for #240 on 2026-10-23 from application base
 `4e429180923cc0a1afd1648f28e551a3c15810f5` with signed CPython 3.14.7
-and the existing hash-pinned build requirements. No dependency activation,
-release tag or publication is included.
+and the existing hash-pinned build requirements. The exact artifacts were
+[published on 23 October 2026](https://github.com/slackysoba/sobafm/releases/tag/sdk-google-genai-2.26.0-sobafm.3)
+from reviewed commit `3fd0f06ce99a8c444ad4b90e2231962dd2655978`, following
+[explicit maintainer approval](https://github.com/slackysoba/sobafm/issues/240#issuecomment-6365097319).
+The application now pins that wheel and SHA-256. Published preparation material
+bytes, including the historical candidate status, remain unchanged.
 
 ## Immutable candidate
 
@@ -33,10 +37,13 @@ unsupported teardown retaining backing/debt. Strict checking of the changed SDK
 adapter and receiver reported zero errors. Test logs are retained under
 `C:/dev/sobafm/.local/issue240-author-20261023-a1`.
 
-Application verification uses a fresh locked sync to restore published `.2`;
-normal distribution tests continue to assert that active identity. The additional
+Preparation verification restored published `.2` after isolated candidate tests.
+Activation verification uses a fresh locked sync to install published `.3`;
+normal distribution tests assert its version, public URL, metadata and source
+hashes. The actual installed SDK/Deck checks also run against that public wheel. The additional
 repository regression checks the new patch pin and preserved published build
 materials. The final PR records ordinary hook, Windows/Linux type and complete
-offline results. Publication/adoption must use these exact reviewed artifacts and
-receive separate clearance; this record does not grant readiness or a memory
-profile.
+offline results. The normal Security scan binds the derived `.3` identity to
+official `google-genai==2.26.0` using the existing explicit upstream input and
+verified Apache-2.0/MIT metadata. No vulnerability waiver or license policy change
+is made. This record does not grant readiness or a memory profile.

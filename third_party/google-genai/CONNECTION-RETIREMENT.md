@@ -1,7 +1,6 @@
-# Terminal connection retirement candidate
+# Terminal connection retirement
 
-Issue #240 prepares `2.26.0+sobafm.3`; the active dependency remains published
-`sobafm.2` until separate publication and adoption. This candidate supplies the
+Issue #240 adopts the published `2.26.0+sobafm.3` wheel. It supplies the
 storage acknowledgement already required by `Deck._close_owned`; no application
 private graph mutation or new cleanup deadline is needed.
 
@@ -35,6 +34,6 @@ weakrefs must disappear without forced garbage collection. No socket, TLS engine
 provider, authentication or native decoder is constructed. The check requires
 the SobaFM checkout; the existing default SDK checks run in the same suite.
 
-This candidate supplies no aggregate physical memory bound, profile selection,
-readiness or publication claim. Final artifact identities and local verification
+This component supplies no aggregate physical memory bound, profile selection
+or readiness claim. Final artifact identities and local verification
 are recorded in `CONNECTION-RETIREMENT-CANDIDATE.md`.
