@@ -39,15 +39,84 @@ def test_refuses_overflow_and_equality_at_the_strict_total(size: AudioBytes) -> 
 
 def test_native_reservation_reduces_parent_headroom() -> None:
     ledger = AudioLedger()
-    assert ledger.reserve(AudioBytes(native=3_000_000)) is not None
-    assert ledger.reserve(AudioBytes(other=37_000_000)) is None
-    assert ledger.reserve(AudioBytes(other=36_999_999)) is not None
+    assert ledger.reserve(AudioBytes(native=TOTAL_LIMIT - PARENT_LIMIT)) is not None
+    assert ledger.reserve(AudioBytes(other=PARENT_LIMIT)) is None
+    assert ledger.reserve(AudioBytes(other=PARENT_LIMIT - 1)) is not None
+
+
+def test_parent_bound_follows_the_strict_total_without_raising_pcm() -> None:
+    ledger = AudioLedger()
+    parent = ledger.reserve(AudioBytes(pcm=34_560_000, other=35_439_999))
+    assert parent is not None
+    assert ledger.reserved.parent == 69_999_999
+    assert PARENT_LIMIT == TOTAL_LIMIT - 1
+    assert ledger.reserve(AudioBytes(other=1)) is None
+    parent.release()
+    assert ledger.reserve(AudioBytes(pcm=34_560_001)) is None
+
+
+def test_parent_allowance_follows_still_charged_native_reservations() -> None:
+    ledger = AudioLedger()
+    parent = ledger.reserve(AudioBytes(pcm=34_560_000, other=15_440_000))
+    outside = ledger.reserve(AudioBytes(native=4 * 1024 * 1024))
+    assert parent is not None
+    assert outside is not None
+    assert ledger.reserved.parent == 50_000_000
+    assert ledger.reserved.total == 54_194_304
+    # Hypothetical complete reservations verify admission, not profile qualification.
+    equality = TOTAL_LIMIT - ledger.reserved.total
+    assert ledger.reserve(AudioBytes(native=equality)) is None
+    first_child = ledger.reserve(AudioBytes(native=8 * 1024 * 1024))
+    assert first_child is not None
+    assert ledger.reserved.total == 62_582_912
+    assert ledger.reserve(AudioBytes(native=8 * 1024 * 1024)) is None
+    assert ledger.reserved.total == 62_582_912
+
+
+def test_two_child_overlap_and_retained_lease_fit_only_after_actual_release() -> None:
+    ledger = AudioLedger()
+    parent = ledger.reserve(AudioBytes(pcm=34_560_000, other=13_440_000))
+    first = ledger.reserve(AudioBytes(native=8 * 1024 * 1024))
+    second = ledger.reserve(AudioBytes(native=8 * 1024 * 1024))
+    outside = ledger.reserve(AudioBytes(native=4 * 1024 * 1024))
+    assert parent is not None
+    assert first is not None
+    assert second is not None
+    assert outside is not None
+    # Synthetic whole reservations test arithmetic, not a qualified native or
+    # outside-storage classification/profile. Both closing and incoming count.
+    assert ledger.reserved.total == 68_971_520
+    live = closing = first
+    assert live is closing
+    replacement_station_ledger = ledger
+    assert replacement_station_ledger.reserve(AudioBytes(native=8 * 1024 * 1024)) is None
+    assert ledger.reserved.total == 68_971_520
+    closing.release()
+    assert ledger.reserved.native == 12 * 1024 * 1024
+    assert replacement_station_ledger.reserve(AudioBytes(native=8 * 1024 * 1024)) is not None
+    assert ledger.reserved.total == 68_971_520
+
+
+def test_total_boundary_and_unknown_debt_remain_effective_with_larger_caps() -> None:
+    ledger = AudioLedger()
+    parent = ledger.reserve(AudioBytes(other=50_000_000))
+    native = ledger.reserve(AudioBytes(native=19_999_999))
+    assert parent is not None
+    assert native is not None
+    assert ledger.reserved.total == 69_999_999
+    assert ledger.reserve(AudioBytes(native=1)) is None
+    unknown = ledger.unbounded()
+    native.release()
+    assert ledger.reserved.parent == 50_000_000
+    assert ledger.reserve(AudioBytes(native=1)) is None
+    unknown.release()
+    assert ledger.reserve(AudioBytes(native=1)) is not None
 
 
 def test_future_growth_and_each_transport_copy_are_reserved_before_admission() -> None:
     ledger = AudioLedger()
     # A synthetic full Lyria envelope includes future replacements, rather than
-    # subtracting today's 8/60/2/2-second payload from a nominal 40 MB.
+    # subtracting today's 8/60/2/2-second payload from the total allowance.
     growth = ledger.reserve(AudioBytes(pcm=30_000_000, other=1_000_000))
     assert growth is not None
     catalog = ledger.reserve(

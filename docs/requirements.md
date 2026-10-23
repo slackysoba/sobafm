@@ -1,6 +1,6 @@
 # Requirements
 
-- **Status:** Approved v1 baseline (#5), with M5 targets from accepted ADR-0006 and ADR-0007 (#119).
+- **Status:** Approved v1 baseline (#5), with M5 targets from accepted ADR-0006 and ADR-0007 (#119); the audio-footprint revision is proposed in ADR-0009 (#218).
 - **Related:** [Architecture](architecture.md) · [Roadmap](roadmap.md) · [Decisions](decisions/README.md)
 
 Each requirement has a stable ID and a delivery milestone. M1–M4 describe the v1
@@ -77,9 +77,10 @@ has the conditional status **Accepted on merge of PR #206; Proposed until then**
 It records the target: a producer may fail before admitting
 input beyond a complete, derived reservation after pause, preserving every
 already-admitted PCM frame under existing playout and retention rules. Normal
-540/60/45/6-second behavior, spares, retries, fades, NFR-3/NFR-6 ceilings and
-NFR-8 cleanup/debt remain unchanged. This is not silent frame dropping or a
-numerical allowance. Supported transport/configuration and complete allocation
+540/60/45/6-second behavior, spares, retries, fades and NFR-8 cleanup/debt remain
+unchanged. ADR-0009 separately revises only the total audio ceiling and fixed
+parent split; the PCM ceiling remains unchanged. This is not silent frame
+dropping or a numerical allowance. Supported transport/configuration and complete allocation
 and release proof remain prerequisites; no implementation or readiness grant
 follows from the policy choice. Accepted ADRs remain intact, with the exact
 exceptional clauses identified in the proposed record.
@@ -129,12 +130,20 @@ Settings are stored per server and persist across restarts. _(M3)_
 
 - **NFR-1 Latency.** Generated playback retains the 15-second median from request to audible music, now through `/freestyle`, with historical evidence/limits preserved. _(M3; M5)_
 - **NFR-2 Endurance.** A program plays for 60 minutes with at most 2 seconds of total underrun under normal service conditions. _(M2)_
-- **NFR-3 Footprint.** All attributable resident audio storage for a playing server stays strictly below 40,000,000 bytes, including every retained source, encoded input, PCM/native/transport buffers, copies, overshoot and cleanup debt across mode changes. Process RSS, producer counts and nominal buffer arithmetic do not prove this bound. _(M2; M5)_
+- **NFR-3 Footprint.** All attributable resident audio storage for a playing server stays strictly below 70,000,000 decimal bytes, including every retained source, encoded input, PCM/native/transport/player buffers, copies, overshoot and cleanup debt across mode changes. Process RSS, producer counts and nominal buffer arithmetic do not prove this bound. _(M2; M5)_
 - **NFR-4 Platforms.** SobaFM runs on Linux x86-64, native Linux ARM64 and Windows x86-64, from source and the applicable container images, without a compiler on the operator's machine. Emulation is not native qualification. _(M4; M5)_
 - **NFR-5 Catalog latency.** Under normal service conditions, admitted `/play` requests reach their first audible catalog frame within a median of 15 seconds; measure admitted `/skip` separately to the first audible replacement frame against the same median. Access/cooldown rejections are not admitted requests; report admitted failures/timeouts separately. These new targets are unmeasured and require #131 verification, distinct from metadata, first-PCM and slow-start deadlines. _(M5)_
-- **NFR-6 Audio admission.** Enforce one leased station byte ledger: aggregate PCM at most 34,560,000 bytes; parent audio at most 38,000,000 bytes; parent plus audited native audio strictly below NFR-3. Reserve allocations/copies/in-flight overshoot and reachable future Lyria growth before catalog admission. Aliases count once and copies separately. Preserve Lyria generation/spare rules; no fixed retained-source count or guaranteed decoder headroom is inferred. Unqualified or infeasible bounds keep catalog unavailable pending reviewed resolution. _(M5)_
+- **NFR-6 Audio admission.** Enforce one leased station byte ledger: aggregate PCM at most 34,560,000 bytes; explicit finite qualified parent and audited native audio reservations whose combined total stays strictly below NFR-3. The permitted parent reservation follows the native obligations still charged, with no independent fixed parent partition. Reserve allocations/copies/in-flight overshoot and reachable future Lyria growth before catalog admission. Aliases count once and copies separately. Preserve Lyria generation/spare rules; no fixed retained-source count or guaranteed decoder headroom is inferred. Unqualified or infeasible bounds keep catalog unavailable pending reviewed resolution. _(M5)_
 - **NFR-7 Decoder bounds.** Catalog producers obey the [decoder guardrails](architecture.md#decoder-guardrails): incremental MP3 input, hard byte/sample/queue/time limits, at most two children per server/four per process, and 128 MiB child containment established before untrusted input. HTTP, decoding, pipe I/O, waiting and cleanup never block the mixer; native decoding stays off the event loop. _(M5)_
 - **NFR-8 Cleanup.** One cleanup owner has a single monotonic three-second total budget for feed cancellation, stdin closure, all task joins, concurrent bounded pipe drain/closure and process-tree terminate/kill/reap. Repeated cancellation cannot interrupt it or reset the deadline. Unfinished cleanup is failure and retains its leases/debt/child slot across station replacement until actual release, blocking reuse of that capacity. _(M5)_
+
+[ADR-0009](decisions/0009-raise-the-per-server-audio-footprint-ceiling-to-70-mb.md)
+records the authorized NFR-3/NFR-6 revision and its exact supersession scope;
+it remains Proposed until its decision pull request is accepted and merged.
+The ledger applies the strict 70,000,000-byte combined total and unchanged PCM
+ceiling without an independent parent partition. These caps select no qualified
+native/transport envelope or production profile and establish no allocation/release
+or readiness pass.
 
 ## Responsible use
 

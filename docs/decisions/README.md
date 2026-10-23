@@ -27,3 +27,10 @@ Each record captures one material decision: its context, the options considered,
 | [0006](0006-play-catalog-and-generated-music-in-one-station.md) | Play catalog and generated music in one station | Accepted on merge of PR #156; proposed until then |
 | [0007](0007-bound-catalog-audio-decoding.md) | Decode catalog audio through a supervised FFmpeg child | Accepted |
 | [0008](0008-fail-lyria-producers-at-qualified-ingress-bounds.md) | Fail Lyria producers at qualified ingress bounds | Accepted on merge of PR #206; Proposed until then |
+| [0009](0009-raise-the-per-server-audio-footprint-ceiling-to-70-mb.md) | Raise the per-server audio footprint ceiling to 70 MB | Proposed until its decision pull request is accepted and merged |
+
+ADR-0009 proposes superseding only the 40,000,000-byte total and fixed
+38,000,000-byte parent clauses in ADR-0004/0006/0007/0008. Their accepted source
+remains intact, and their other provisions remain in force. The proposed
+qualified parent/native split shares the strict total without an independent
+fixed parent partition.

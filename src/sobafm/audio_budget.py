@@ -12,8 +12,8 @@ if TYPE_CHECKING:
     from sobafm.owned_pcm import PCMOwner
 
 PCM_LIMIT = 34_560_000
-PARENT_LIMIT = 38_000_000
-TOTAL_LIMIT = 40_000_000  # strict: equality is ineligible
+TOTAL_LIMIT = 70_000_000  # strict: equality is ineligible
+PARENT_LIMIT = TOTAL_LIMIT - 1  # derived integer bound, not a separate partition
 
 
 @dataclass(frozen=True)
