@@ -358,6 +358,7 @@ class Deck:
             max_size=LYRIA_RECEIVE_BYTES,
             max_queue=1,
             shape_limits=ShapeLimits(LYRIA_RECEIVE_BYTES, 1024, 16, 64),
+            input_storage=backing.input_storage,
         )
         async with asyncio.timeout(CONNECT_TIMEOUT_S) as connecting:
             self._context = self._connect(options)

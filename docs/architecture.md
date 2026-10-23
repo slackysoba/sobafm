@@ -346,17 +346,18 @@ catalog readiness is selected by these component settings. The normal constants,
 strict shared byte limits, single original three-second cleanup budget and
 actual-release debt remain unchanged. Unknown obligations stay fail-closed.
 
-The [buffered-input SDK candidate](../third_party/google-genai/BUFFERED-INPUT.md)
-prepares #236's earlier input batch bound through WebSockets' public connection
+The [published buffered-input SDK component](../third_party/google-genai/BUFFERED-CANDIDATE.md)
+enforces #236's earlier input batch bound through WebSockets' public connection
 factory and asyncio.BufferedProtocol. Each exclusive backing owner prepays
 another 4,096-byte fixed input buffer and a separate 4,096-byte immutable prefix
 copy allowance, before allocation. The same setup/iterator/context owner retains
 both buffers through actual quiescence; duplicate allocation or borrow refuses.
-The candidate limits new parser input to 4,096 bytes per callback, bounding
+The active SDK options pass that owner's exact input backing to the public
+connection factory. It limits new parser input to 4,096 bytes per callback, bounding
 nonempty audio Frame owners before the existing later collector guard. Large
-frames/messages can span callbacks. Its publication, exact dependency and new
-argument activation remain pending in #236; the application still uses the
-published sobafm.1 path. These prepared capacities supply no complete physical
+frames/messages can span callbacks. The application pins the published
+`2.26.0+sobafm.2` wheel and its SHA-256; the original sobafm.1 materials remain
+unchanged. These component capacities supply no complete physical
 transport/native/player envelope, production profile or readiness grant.
 
 ### Station reconcile loop

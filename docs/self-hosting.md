@@ -160,23 +160,28 @@ uv run sobafm
 The process runs until you stop it with Ctrl+C. Run it under a service manager such as systemd, or a Windows service wrapper, to keep it running across restarts and reboots.
 
 Development source pins SobaFM's
-[Google Gen AI 2.26.0+sobafm.1 component](https://github.com/slackysoba/sobafm/releases/tag/sdk-google-genai-2.26.0-sobafm.1).
+[Google Gen AI 2.26.0+sobafm.2 component](https://github.com/slackysoba/sobafm/releases/tag/sdk-google-genai-2.26.0-sobafm.2).
 `uv sync --locked` installs its verified wheel; no separate SDK installation is
 needed. The release includes the
-[complete patched SDK source](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.1/google_genai-2.26.0%2Bsobafm.1.tar.gz)
-and [build manifest](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.1/google-genai-2.26.0%2Bsobafm.1.manifest.json).
-The [source/package materials](../third_party/google-genai/README.md) record the
+[complete patched SDK source](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.2/google_genai-2.26.0%2Bsobafm.2.tar.gz)
+and [build manifest](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.2/google-genai-2.26.0%2Bsobafm.2.manifest.json).
+The [source/package materials](../third_party/google-genai/BUFFERED-CANDIDATE.md) record the
 recipe, Apache-2.0/MIT licenses and modification notices. This downstream
 distribution follows accepted
 [ADR-0010](decisions/0010-maintain-a-pinned-bounded-genai-distribution.md).
-Connection defaults are unchanged and bounded receive remains inactive; this
-dependency pin supplies no production memory profile or readiness result.
+SDK callers omitting bounded options keep the default connection path. SobaFM
+uses bounded receive, disabled message compression and its prepaid 4,096-byte
+buffered input route. These component limits supply no complete production memory
+profile or readiness result.
 
 The normal required Security scan checks the complete `uv.lock` and the pinned
 upstream `google-genai==2.26.0` identity in
 [a scan-only requirements input](../.github/genai-upstream/requirements.txt);
 this input is never installed. Tests bind it to the adopted artifact's
-[upstream provenance](../third_party/google-genai/UPSTREAM.toml). An exact-version
+[upstream provenance](../third_party/google-genai/UPSTREAM.toml) and
+[buffered extension](../third_party/google-genai/BUFFERED-INPUT.toml). The preserved
+manifest's nested upstream derived identity describes the sobafm.1 base; its
+extension/top-level version and the active wheel identify sobafm.2. An exact-version
 [license metadata override](../osv-scanner.toml) supplies the verified Apache-2.0
 and MIT licenses for the derived release, preserving vulnerability checks and
 the existing allowed-license policy. `--no-resolve` keeps the supplement limited

@@ -1,10 +1,20 @@
-# Buffered input candidate verification
+# Buffered input publication and verification
 
-This records #236's unpublished, task-local **google-genai 2.26.0+sobafm.2**
-candidate, prepared from the retained authenticated upstream source. The original
-sobafm.1 materials and release remain unchanged. The application dependency,
-lockfile and active connector still select sobafm.1; publication and exact
-activation remain a coordinating-root step in this same issue/PR.
+This records #236's **google-genai 2.26.0+sobafm.2** component, prepared from the
+retained authenticated upstream source and
+[published on 23 October 2026](https://github.com/slackysoba/sobafm/releases/tag/sdk-google-genai-2.26.0-sobafm.2)
+after direct maintainer approval. The SDK tag identifies reviewed preparation
+commit `300f7b0837f31b85d2da4658464eafdf43154e09`; subsequent application activation
+is in the same PR #237. All four public assets were anonymously verified at their
+exact hashes. The application now pins that wheel and passes its exclusive,
+prepaid 4,096-byte input backing. Original sobafm.1 materials/releases and the
+published sobafm.2 build materials remain unchanged.
+
+The manifest and bundled recipe guides preserve their build-time candidate status;
+they are historical preparation records. The manifest's nested
+`upstream.derived_purl` identifies the sobafm.1 base. Its extension and top-level
+version identify the adopted `pkg:pypi/google-genai@2.26.0%2Bsobafm.2` component;
+the upstream advisory identity remains `pkg:pypi/google-genai@2.26.0`.
 
 ## Actual artifacts
 
@@ -45,4 +55,4 @@ a hash cycle.
 
 No provider, authentication, socket/TLS/voice, native API, child process or audio
 playback experiment occurred. These component checks establish no complete
-physical audio envelope, profile activation, catalog readiness or #130 pass.
+physical audio envelope, qualified production profile, catalog readiness or #130 pass.

@@ -63,12 +63,57 @@ async def test_real_connector_requires_and_forwards_public_bounded_options(
         return client
 
     monkeypatch.setattr(genai, "Client", owned_client)
-    options = BoundedReceiveOptions(bytearray(128), 128, 4, 0, 128, 1, ShapeLimits(128, 64, 8, 16))
+    options = BoundedReceiveOptions(
+        bytearray(128),
+        128,
+        4,
+        0,
+        128,
+        1,
+        ShapeLimits(128, 64, 8, 16),
+        input_storage=bytearray(LYRIA_INPUT_BATCH_BYTES),
+    )
     async with lyria("owned-fake-key")(options):
         pass
     assert seen == [
         {"model": "models/lyria-realtime-exp", "compression": None, "bounded_receive": options}
     ]
+
+
+async def test_each_connection_receives_its_own_prepaid_input_pair() -> None:
+    seen: list[BoundedReceiveOptions] = []
+
+    @contextlib.asynccontextmanager
+    async def connect(options: BoundedReceiveOptions) -> AsyncGenerator[MusicSession]:
+        seen.append(options)
+        yield FakeSession()
+
+    audio = AudioLedger()
+    storage = audio.lyria_receive
+    assert storage is not None
+    decks = [make_deck(connect, audio) for _ in range(2)]
+    for deck in decks:
+        deck.start()
+    try:
+        await settle()
+        assert len(seen) == 2
+        for index, options in enumerate(seen):
+            backing = storage.backings[index]
+            assert options.storage is backing.storage
+            assert options.input_storage is backing.input_storage
+            assert backing.owner is decks[index]
+            assert len(backing.input_storage) == LYRIA_INPUT_BATCH_BYTES
+            assert options.max_bytes == options.max_size == LYRIA_RECEIVE_BYTES
+            assert options.max_queue == 1
+            assert options.max_fragments == 64
+            assert options.max_empty_fragments == 8
+        assert seen[0].input_storage is not seen[1].input_storage
+        assert audio.reserved.other == 2 * LYRIA_RECEIVE_RESERVATION_BYTES
+    finally:
+        for deck in decks:
+            deck.retire()
+        for deck in decks:
+            await deck.wait_ended()
 
 
 def test_payload_allocation_is_prepaid_and_replacement_reuses_only_paid_storage(
@@ -467,6 +512,7 @@ async def test_installed_bounded_path_fails_safely_and_preserves_admitted_pcm(
     assert connection.calls[0]["compression"] is None
     assert connection.calls[0]["max_size"] == LYRIA_RECEIVE_BYTES
     assert connection.calls[0]["max_queue"] == 1
+    assert callable(connection.calls[0]["create_connection"])
     assert [frame.data for frame in deck.frames] == [audio]
     assert all(record.exc_info is None for record in caplog.records)
     assert "owned-secret" not in caplog.text
@@ -503,11 +549,14 @@ async def test_partial_receive_cancellation_waits_for_context_close_before_reuse
     assert storage is not None
     assert not deck.quiescent
     assert storage.backings[0].owner is deck
+    held_input = storage.backings[0].input_storage
+    assert callable(connection.calls[0]["create_connection"])
     assert connection.closes == 1
     connection.close_release.set()
     await deck.wait_ended()
     assert deck.quiescent
     assert storage.backings[0].owner is None
+    assert storage.backings[0].input_storage is held_input
     assert connection.streams == 2
     assert connection.legacy == 0
 

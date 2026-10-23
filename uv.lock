@@ -579,8 +579,8 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "2.26.0+sobafm.1"
-source = { url = "https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.1/google_genai-2.26.0%2Bsobafm.1-py3-none-any.whl" }
+version = "2.26.0+sobafm.2"
+source = { url = "https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.2/google_genai-2.26.0%2Bsobafm.2-py3-none-any.whl" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -594,7 +594,7 @@ dependencies = [
     { name = "websockets" },
 ]
 wheels = [
-    { url = "https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.1/google_genai-2.26.0%2Bsobafm.1-py3-none-any.whl", hash = "sha256:95d2a9077f3c4730f846faa1e572fb52bf511333d4ab03bfd1f518c85af3bf03" },
+    { url = "https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.2/google_genai-2.26.0%2Bsobafm.2-py3-none-any.whl", hash = "sha256:740778147861c841590b08a6f77d412c30a6672ef44f7ac9f75ba0bd28d8aabf" },
 ]
 
 [package.metadata]
@@ -1224,7 +1224,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "audioop-lts", specifier = ">=0.2.2" },
     { name = "discord-py", extras = ["voice"], specifier = ">=2.7.1" },
-    { name = "google-genai", url = "https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.1/google_genai-2.26.0%2Bsobafm.1-py3-none-any.whl" },
+    { name = "google-genai", url = "https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.2/google_genai-2.26.0%2Bsobafm.2-py3-none-any.whl" },
     { name = "pydantic", specifier = ">=2.13.5" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "websockets", specifier = ">=16.1.1" },
