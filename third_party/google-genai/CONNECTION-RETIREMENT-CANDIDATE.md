@@ -11,19 +11,20 @@ Version: `2.26.0+sobafm.3`.
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `google_genai-2.26.0+sobafm.3-py3-none-any.whl` | 1177346 | `c6b2d5ab8eef97c7cafc9e3da66ba84551af763c569107c398d26cdb368e2876` |
-| `google_genai-2.26.0+sobafm.3.tar.gz` | 766252 | `9cef1a90a400ce54566ea0cf0f9a29a67ff426be3c3fac35401f485d81e69fe5` |
+| `google_genai-2.26.0+sobafm.3-py3-none-any.whl` | 1177347 | `ce3a2bef488dbd3c13906c287fea8fa5920a2b1a8709af090fadccb752916126` |
+| `google_genai-2.26.0+sobafm.3.tar.gz` | 766049 | `bbb1e50a4e9c4389206605cbe250a60786a7190d8c3f07c4037564865cdd7cbb` |
 
-Retained output: `C:/dev/sobafm/.local/g240-a5`, including `candidate.json`,
+Retained output: `C:/dev/sobafm/.local/g240-a6`, including `candidate.json`,
 `prepared.json`, `backend.log`, complete source and both distributions.
+The new notice names `.3`; earlier candidate artifacts and evidence are retained.
 The recipe verified exact upstream/base/extension source, packaged SDK bytes,
 notices, wheel/source archive correspondence and bundled build materials.
 `CONNECTION-RETIREMENT.toml` pins the changed source and patch.
 
 ## Installed verification
 
-The final wheel is byte-identical to the installed `g240-a4` wheel tested in the
-owned SobaFM environment. All 20 actual SDK and Deck fake-I/O checks passed:
+The corrected `g240-a6` wheel was installed and tested in the owned SobaFM
+environment. All 20 actual SDK and Deck fake-I/O checks passed:
 10 existing compatibility checks and 10 candidate identity/retirement checks.
 The new checks include successive reuse without forced GC, queued audio,
 partial-stream/parser failure, receive/setup failure and cancellation, repeated
