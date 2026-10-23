@@ -216,3 +216,17 @@ def test_normal_security_scan_covers_lock_and_explicit_upstream_identity() -> No
         "--all-packages",
         "--no-resolve",
     ]
+
+
+def test_retirement_candidate_is_pinned_without_activating_unpublished_bytes() -> None:
+    candidate = tomllib.loads((MATERIALS / "CONNECTION-RETIREMENT.toml").read_text())
+    assert candidate["status"] == "unpublished-connection-retirement-candidate"
+    assert candidate["derived_version"] == "2.26.0+sobafm.3"
+    assert (
+        hashlib.sha256((MATERIALS / candidate["patch"]).read_bytes()).hexdigest()
+        == candidate["patch_sha256"]
+    )
+    published = tomllib.loads((MATERIALS / "PUBLISHED-BUFFERED-INPUTS.toml").read_text())
+    for name, expected in published["sha256"].items():
+        assert hashlib.sha256((MATERIALS / name).read_bytes()).hexdigest() == expected
+    assert SDK_VERSION == "2.26.0+sobafm.2"

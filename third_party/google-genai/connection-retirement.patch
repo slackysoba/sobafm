@@ -1,0 +1,285 @@
+--- a/google/genai/live_music.py
++++ b/google/genai/live_music.py
+@@ -229,10 +229,10 @@
+     connect_kwargs = websocket_connect_kwargs(
+         headers, compression=compression, bounded_receive=bounded_receive
+     )
++    input_owner = None
+     if bounded_receive is not None and bounded_receive.input_storage is not None:
+-      connect_kwargs['create_connection'] = buffered_connection_factory(
+-          bounded_receive.input_storage
+-      )
++      input_owner = buffered_connection_factory(bounded_receive.input_storage)
++      connect_kwargs['create_connection'] = input_owner
+     if bounded_receive is None:
+       try:
+         async with connect(uri, **connect_kwargs) as ws:
+@@ -254,13 +254,18 @@
+       # Restrict TypeError fallback to connect() construction. Once a bounded
+       # stream begins, never reconnect or reuse its partially consumed owner.
+       connect_context = connect_with_header_fallback(connect, uri, connect_kwargs)
+-      async with connect_context as ws:
+-        await ws.send(request)
+-        bounded_receiver = BoundedReceiveSession(ws, bounded_receive)
+-        await bounded_receiver.discard_message()
+-        logger.info('Live music handshake response received')
+-        yield AsyncMusicSession(
+-            api_client=self._api_client,
+-            websocket=ws,
+-            bounded_receiver=bounded_receiver,
+-        )
++      bounded_receiver = None
++      try:
++        async with connect_context as ws:
++          await ws.send(request)
++          bounded_receiver = BoundedReceiveSession(ws, bounded_receive)
++          await bounded_receiver.discard_message()
++          logger.info('Live music handshake response received')
++          yield AsyncMusicSession(
++              api_client=self._api_client,
++              websocket=ws,
++              bounded_receiver=bounded_receiver,
++          )
++      finally:
++        if input_owner is not None:
++          await input_owner.retire(bounded_receiver)
+--- a/google/genai/_bounded_receive.py
++++ b/google/genai/_bounded_receive.py
+@@ -7,7 +7,7 @@
+ from __future__ import annotations
+-
++
+ import json
+-from collections.abc import AsyncIterator, Callable, Mapping
++from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+ from dataclasses import dataclass
+ from typing import Any, Literal, Protocol
+-
++
+@@ -147,6 +147,22 @@
+         self.owner: BoundedReassembly | None = None
+         self.unusable = False
+         self._busy = False
++
++    async def retire_storage(self) -> None:
++        """End a poisoned streaming iterator only after its caller has joined."""
++        if self._busy:
++            raise ReceiveUnavailableError("bounded_receive_still_busy")
++        self.poison()
++        owner = self.owner
++        if owner is not None:
++            stream = owner._stream
++            if stream is not None:
++                if not isinstance(stream, AsyncGenerator):
++                    raise ReceiveUnavailableError("unclosable_streaming_iterator")
++                await stream.aclose()
++                owner._stream = None
++            owner._view.release()
++            self.owner = None
+-
++
+     def poison(self) -> None:
+         self.unusable = True
+--- a/google/genai/_buffered_input.py
++++ b/google/genai/_buffered_input.py
+@@ -1,41 +1,41 @@
+-"""A fixed caller-funded input adapter using the standard buffered protocol path."""
+-
++"""A caller-funded input adapter and terminal owner for the pinned WebSockets path."""
+ from __future__ import annotations
+-
++
+ import asyncio
+-from collections.abc import Callable
++from collections.abc import AsyncIterator
+ from typing import Any
++from importlib.metadata import version as installed_version
+-
++
+ from websockets.asyncio.client import ClientConnection
++from websockets.protocol import CLOSED
+-
++
+-from ._bounded_receive import ReceiveUnavailableError
++from ._bounded_receive import BoundedReceiveSession, ReceiveUnavailableError
+-
++
+ INPUT_BATCH_BYTES = 4096
+-
++
+-
++
++def _detach(error: BaseException | None) -> None:
++    if error is not None:
++        error.__traceback__ = error.__context__ = error.__cause__ = None
++
++
+ class BufferedClientConnection(ClientConnection, asyncio.BufferedProtocol):
+-    """Keep WebSockets' parser and flow control; bound each new plaintext batch.
+-
+-    The caller owns the backing exclusively through actual context closure and
+-    prepays a separate INPUT_BATCH_BYTES allowance for the immutable prefix copy.
+-    Neither a callback error nor connection_lost refunds that ownership.
+-    """
++    """Bound input batches and retire the pinned library's terminal audio roots."""
+-
++
+     def __init__(self, *args: Any, input_storage: bytearray, **kwargs: Any) -> None:
+         if type(input_storage) is not bytearray or len(input_storage) != INPUT_BATCH_BYTES:
+             raise ValueError("4096_byte_input_storage_required")
+         self._input_view = memoryview(input_storage)
++        self._receive_users = 0
++        self._storage_retired = False
+         super().__init__(*args, **kwargs)
+-
++
+     def get_buffer(self, sizehint: int) -> memoryview:
+-        # The transport's hint cannot enlarge the caller's prepaid backing.
+         return self._input_view
+-
++
+     def buffer_updated(self, nbytes: int) -> None:
+         if type(nbytes) is not int or not 0 <= nbytes <= INPUT_BATCH_BYTES:
+             raise ValueError("invalid_buffered_input_prefix")
+-        # This exact bounded copy avoids exporting a mutable buffer to the parser.
+-        # The ordinary parser retains its own copies; the view remains an alias.
+         data = bytes(self._input_view[:nbytes])
+         try:
+             super().data_received(data)
+@@ -43,22 +43,118 @@
+             del data
+-
++
+     def data_received(self, data: bytes) -> None:
+-        # A copied-read transport has already bypassed the intended TLS batching.
+-        # Refuse it without invoking the parser or allocating another input copy.
+         raise ReceiveUnavailableError("buffered_input_transport_required")
+-
++
++    async def close(self, code: int = 1000, reason: str = "") -> None:
++        if not self._storage_retired:
++            await super().close(code, reason)
+-
++
+-def buffered_connection_factory(storage: bytearray) -> Callable[..., ClientConnection]:
+-    """One public connect factory claim, including failed/redirected attempts."""
+-    if type(storage) is not bytearray or len(storage) != INPUT_BATCH_BYTES:
+-        raise ValueError("4096_byte_input_storage_required")
+-    claimed = False
++    async def recv(self, decode: bool | None = None) -> Any:
++        if self._storage_retired:
++            raise ReceiveUnavailableError("connection_storage_retired")
++        self._receive_users += 1
++        try:
++            return await super().recv(decode)
++        finally:
++            self._receive_users -= 1
+-
++
+-    def create_connection(*args: Any, **kwargs: Any) -> ClientConnection:
+-        nonlocal claimed
+-        if claimed:
++    async def recv_streaming(self, decode: bool | None = None) -> AsyncIterator[Any]:
++        if self._storage_retired:
++            raise ReceiveUnavailableError("connection_storage_retired")
++        self._receive_users += 1
++        stream = super().recv_streaming(decode)
++        try:
++            async for fragment in stream:
++                yield fragment
++        finally:
++            await stream.aclose()
++            self._receive_users -= 1
++
++    async def retire_storage(self) -> None:
++        if self._storage_retired:
++            return
++        await self.wait_closed()
++        if installed_version("websockets") != "16.1.1":
++            raise ReceiveUnavailableError("unsupported_connection_retirement_version")
++        if self.state is not CLOSED or self._receive_users:
++            raise ReceiveUnavailableError("connection_storage_still_borrowed")
++        task = self.keepalive_task
++        if task is not None:
++            await asyncio.gather(task, return_exceptions=True)
++            try:
++                task.result()
++            except BaseException as error:
++                _detach(error)
++        self.keepalive_task = None
++        # WebSockets 16.1.1 closes the assembler but preserves its queue; a
++        # poisoned partial stream cannot be drained through a new public recv.
++        # All borrowers have joined, and connection_lost bars further input.
++        self.protocol.parser.close()
++        self.recv_messages.frames.queue.clear()
++        self.protocol.reader.discard()
++        self.protocol.events.clear()
++        self.protocol.writes.clear()
++        _detach(self.protocol.parser_exc)
++        _detach(self.recv_exc)
++        self.protocol.parser_exc = self.recv_exc = None
++        _detach(self.protocol.handshake_exc)
++        self.protocol.handshake_exc = None
++        self.request = self.response = None
++        # Closed SSLProtocol retains buffered callback methods. Drop the reverse
++        # transport roots as well, including assembler bound flow callbacks.
++        self.recv_messages.pause = self.recv_messages.resume = lambda: None
++        del self.transport
++        # The library's LoggerAdapter owns a reverse connection reference.
++        # Break this cycle after parser teardown; don't depend on cyclic GC.
++        self.protocol.logger.extra.pop("websocket", None)
++        self._input_view.release()
++        self._storage_retired = True
++
++
++class BufferedConnectionOwner:
++    """One factory claim and one cancellation-safe terminal storage operation."""
++
++    def __init__(self, storage: bytearray) -> None:
++        if type(storage) is not bytearray or len(storage) != INPUT_BATCH_BYTES:
++            raise ValueError("4096_byte_input_storage_required")
++        self.storage = storage
++        self.claimed = False
++        self.connection: BufferedClientConnection | None = None
++        self._retirement: asyncio.Task[None] | None = None
++
++    def __call__(self, *args: Any, **kwargs: Any) -> ClientConnection:
++        if self.claimed:
+             raise ReceiveUnavailableError("buffered_input_owner_already_claimed")
+-        claimed = True
+-        return BufferedClientConnection(*args, input_storage=storage, **kwargs)
++        self.claimed = True
++        self.connection = BufferedClientConnection(*args, input_storage=self.storage, **kwargs)
++        return self.connection
+-
++
+-    return create_connection
++    async def _retire(self, receiver: BoundedReceiveSession | None) -> None:
++        connection = self.connection
++        if connection is None:
++            if self.claimed:
++                raise ReceiveUnavailableError("connection_construction_uncertain")
++            return  # no factory invocation, hence no connection input owner
++        await connection.wait_closed()
++        if receiver is not None:
++            await receiver.retire_storage()
++        await connection.retire_storage()
++        self.connection = None
++
++    async def retire(self, receiver: BoundedReceiveSession | None) -> None:
++        if self._retirement is None:
++            self._retirement = asyncio.create_task(self._retire(receiver))
++        task = self._retirement
++        cancelled = False
++        while not task.done():
++            try:
++                await asyncio.shield(task)
++            except asyncio.CancelledError:
++                cancelled = True
++        task.result()
++        if cancelled:
++            raise asyncio.CancelledError
++
++
++def buffered_connection_factory(storage: bytearray) -> BufferedConnectionOwner:
++    return BufferedConnectionOwner(storage)

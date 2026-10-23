@@ -1,0 +1,13 @@
+status = "unpublished-connection-retirement-candidate"
+base_derived_version = "2.26.0+sobafm.1"
+derived_version = "2.26.0+sobafm.3"
+base_patch_sha256 = "bddf04295e8925cd3877f350d23b09c14d680f87f0cd94827c3787f1138d3a18"
+patch = "connection-retirement.patch"
+notice = "NOTICE.connection-retirement"
+patch_sha256 = "232f10f026a7b90c246180776d60eddbcc7c51b598314f0cf51ff11bfc716460"
+
+[candidate_sources]
+"google/genai/live_music.py" = "b36f155b715ef4aebd0819cb0ee2c7ed10b26cd66a553d1f37b67205b0cc6ac3"
+"google/genai/_bounded_receive.py" = "eadf0ceac6f4f5f39aed5e2a9c75ac7895063607428a0d3ce01c9d14a7cf3d5a"
+"google/genai/json_shape_preflight.py" = "295163e901f9e9aee4faf6f288ee89e935aeff2027ebf8afd5c6b6ecc1ad8747"
+"google/genai/_buffered_input.py" = "bd04db7d0ff647ea48cf10ca00a73f0bf03ffc229cb4bb796337ccbfe14ad892"
