@@ -114,12 +114,13 @@ class CatalogEngine:
     def __init__(
         self,
         catalog: Catalog,
-        create: Callable[[CatalogTrack, Program], TrackSource],
+        create: Callable[[CatalogTrack, Program], TrackSource | None],
         *,
         audio: AudioLedger,
         history: History,
         wake: Callable[[], None],
         clock: Callable[[], float] = time.monotonic,
+        cancel_admission_wait: Callable[[], None] | None = None,
     ) -> None:
         self.audio, self.history = audio, history
         self._catalog, self._create, self._wake, self._clock = catalog, create, wake, clock
@@ -129,6 +130,7 @@ class CatalogEngine:
         self._retired: weakref.WeakSet[TrackSource] = weakref.WeakSet()
         self._tasks: dict[asyncio.Task[None], Selection] = {}
         self._closed = False
+        self._cancel_admission_wait = cancel_admission_wait
 
     @property
     def mode(self) -> Mode:
@@ -246,11 +248,11 @@ class CatalogEngine:
             state.candidates.extend(page.tracks)
             state.exhausted = page.exhausted
         while state.candidates and state.attempted < MAX_CANDIDATES:
-            track = state.candidates.popleft()
+            track = state.candidates[0]
             if track.id in state.seen:
+                state.candidates.popleft()
                 continue
-            state.seen.add(track.id)
-            if len(state.seen) > 60:
+            if len(state.seen) >= 60:
                 state.outcome = Outcome.FAILED
                 return
             if (
@@ -258,9 +260,15 @@ class CatalogEngine:
                 or self.history.excludes(track)
                 or any(source.track.id == track.id for source in self._sources)
             ):
+                state.candidates.popleft()
+                state.seen.add(track.id)
                 continue
-            state.attempted += 1
             source = self._create(track, program)
+            if source is None:
+                return  # temporary admission refusal keeps this exact candidate and budget
+            state.candidates.popleft()
+            state.seen.add(track.id)
+            state.attempted += 1
             self._sources.append(source)
             source.start()
             return
@@ -363,6 +371,8 @@ class CatalogEngine:
 
     async def close(self) -> None:
         self._closed = True
+        if self._cancel_admission_wait is not None:
+            self._cancel_admission_wait()
         for state in self._owned_states():
             self._end_cycle(state)
         for source in self._sources:

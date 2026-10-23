@@ -313,3 +313,37 @@ async def test_load_owner_survives_weak_program_loss_and_is_cancelled_joined_on_
     cycle.release.set()
     await closing
     assert not made
+
+
+async def test_temporary_admission_keeps_exact_candidate_and_all_attempt_history() -> None:
+    value = track(1)
+    r = rig((value, track(2)))
+    program = Program(PLAN, "Member", None)
+    admitted = False
+    offered: list[CatalogTrack] = []
+
+    def create(value: CatalogTrack, owner: Program) -> FixtureTrack | None:
+        offered.append(value)
+        if not admitted:
+            return None
+        source = FixtureTrack(value, owner)
+        r.made.append(source)
+        return source
+
+    r.engine._create = create  # pyright: ignore[reportPrivateUsage]
+    await r.generate(program)
+    state = r.engine._states[program]  # pyright: ignore[reportPrivateUsage]
+    for _ in range(5):
+        r.engine.generate(program)
+        assert state.candidates[0] is offered[0]
+        assert state.attempted == state.failures == state.retry_at == 0
+        assert not state.seen
+        assert not r.history.excludes(value)
+    assert not r.made
+    admitted = True
+    r.engine.generate(program)
+    assert len(r.made) == 1
+    assert r.made[0].track is offered[0]
+    assert state.attempted == 1
+    assert state.seen == {value.id}
+    await r.engine.close()

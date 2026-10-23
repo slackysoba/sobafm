@@ -7,6 +7,7 @@ from typing import cast
 import aiohttp
 import pytest
 from aiohttp.client_proto import ResponseHandler
+from aiohttp.http import RawResponseMessage
 
 import sobafm.catalog_audio as audio
 import sobafm.track_deck as tracks
@@ -22,6 +23,50 @@ from tests.test_track_deck import Rig
 async def wait_session_close(http: LifecycleSession) -> None:
     async with asyncio.timeout(1):
         await http.closed_event.wait()
+
+
+async def test_storage_retirement_requires_generator_join_and_clears_terminal_roots() -> None:
+    rig = HTTPRig(body=b"owned audio")
+    iterator = rig.source.chunks()
+    assert await anext(iterator) == b"owned audio"
+    rig.source.close()
+    await wait_session_close(rig.http)
+    rig.http.transport.finish()
+    await rig.source.aclose()
+    with pytest.raises(TrackError, match="cleanup"):
+        await rig.source.release_storage()
+    assert rig.source._responses  # pyright: ignore[reportPrivateUsage]
+    await iterator.aclose()
+    await rig.source.release_storage()
+    await rig.source.release_storage()
+    assert rig.source.closed
+    assert not rig.source._responses  # pyright: ignore[reportPrivateUsage]
+    assert not rig.source._protocols  # pyright: ignore[reportPrivateUsage]
+    assert rig.source._session is None  # pyright: ignore[reportPrivateUsage]
+    assert rig.source._close_task is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_storage_retirement_drains_terminal_protocol_payload_cycle_without_gc() -> None:
+    rig = HTTPRig()
+    await collect(rig.source)
+    await wait_session_close(rig.http)
+    rig.http.transport.finish()
+    await rig.source.aclose()
+
+    class ObservablePayload(aiohttp.StreamReader):
+        pass
+
+    payload = ObservablePayload(rig.http.protocol, 16384, loop=asyncio.get_running_loop())
+    payload.feed_data(b"owned extra queued audio")
+    reference = weakref.ref(payload)
+    # Metadata is never inspected during terminal drain. This payload deliberately
+    # points back to the queue's protocol, exposing a cycle if retirement skips it.
+    rig.http.protocol.feed_data((cast(RawResponseMessage, None), payload))
+    del payload
+    assert reference() is not None
+    await rig.source.release_storage()
+    assert len(rig.http.protocol) == 0
+    assert reference() is None
 
 
 def close_owner(source: AudioStream) -> asyncio.Task[None]:
@@ -439,5 +484,7 @@ async def test_original_three_second_deadline_and_http_debt_survive_replacement(
     assert rig.deck.failure is TrackFailure.CLEANUP
     assert rig.deck.end_reason is EndReason.FAILED
     assert not rig.deck.completed
-    assert rig.audio.reserved == held_reservation  # Closure cannot refund audio storage.
+    assert rig.audio.reserved.pcm == held_reservation.pcm
+    assert rig.audio.reserved.other == rig.audio.reserved.native == 0
+    assert rig.deck.allocation is None  # joined terminal storage, independently of playable PCM
     rig.slots.release(other_slot)

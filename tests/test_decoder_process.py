@@ -485,7 +485,7 @@ async def test_post_assignment_drift_retains_slot_and_audio_until_actual_cleanup
     await asyncio.gather(*tuple(rig.supervisor.cleanups))
     assert job.empty()
     assert api.CloseHandle.call_args_list[-1].args == (100,)
-    assert rig.slots.count == rig.supervisor.debt_count == 0
+    assert rig.slots.count == rig.supervisor.debt_count == 1
     assert rig.deck.cleanup_failed  # later closure cannot erase the missed verdict
     assert rig.audio.reserved == reserved  # child release is not audio-storage proof
     await rig.source.aclose()  # its creator closes the never-transferred fixture

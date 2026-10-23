@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -7,7 +8,7 @@ from pydantic import SecretStr
 from sobafm.audio_budget import AudioLedger
 from sobafm.catalog import CatalogPage, CatalogQuery
 from sobafm.catalog_playback import CatalogPlayback, QualifiedCatalog
-from sobafm.track_deck import Envelope
+from sobafm.track_deck import Envelope, TrackDeck
 from tests.doubles import FakeCatalog
 from tests.test_catalog import credit, discovered
 from tests.test_track_deck import Rig
@@ -98,4 +99,35 @@ async def test_qualified_owner_reuses_history_gate_and_exact_server_ledger(
     await c.close()
     await owner.close()
     session.close.assert_awaited_once()
+
+
+async def test_real_factory_defers_then_transfers_admission_and_wakes_existing_station(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = Rig(tmp_path)
+    owner = CatalogPlayback(
+        SecretStr("fixture-client"), supervisor=fixture.supervisor, credits={"42": credit()}
+    )
+    owner.runtime = fixture.supervisor.runtime
+    monkeypatch.setattr("sobafm.catalog_playback.aiohttp.ClientSession", AsyncMock)
+    wake = asyncio.Event()
+    engine = owner.engine(1, fixture.audio, wake.set)
+    assert fixture.deck.admit()
+    occupied = fixture.slots.acquire(fixture.audio)
+    assert occupied is not None
+    paid = fixture.audio.reserved
+    create = engine._create  # pyright: ignore[reportPrivateUsage] - exercise actual composition
+    assert create(fixture.track, fixture.deck.program) is None
+    assert fixture.audio.reserved == paid
+    assert not wake.is_set()
+    fixture.deck.retire()
+    await asyncio.wait_for(wake.wait(), 1)
+    replacement = create(fixture.track, fixture.deck.program)
+    assert isinstance(replacement, TrackDeck)
+    assert replacement.allocation is not None
+    assert fixture.slots.count == 2
+    replacement.retire()
+    fixture.slots.release(occupied)
+    await engine.close()
+    await owner.close()
     assert owner.http is None

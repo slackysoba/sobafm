@@ -506,6 +506,28 @@ flat admission still reserves other/native allocations without charging PCM
 twice. Missing qualification, unknown debt and supervisor/slot gates still refuse
 catalog work. No production decoder envelope is selected.
 
+Catalog selection obtains its complete non-PCM allocation and child slot in one
+synchronous supervisor transaction before committing a candidate attempt. Temporary
+capacity refusal keeps that candidate at the front, with attempt, seen, failure,
+heard-history and retry budgets unchanged. Actual capacity release wakes the
+existing station path; closing an engine removes its pending wake registration.
+The ordinary child caps and generated session/spare rules remain unchanged.
+
+Catalog resource closure and storage retirement are distinct phases under the
+same original three-second deadline. Only after both producer and cleanup tasks
+are terminal can the retained supervisor retire their result/exception graphs,
+Launch aliases and bound close methods. The Windows owner requires completed
+setup/native waits, closed handles, lost pipe protocols and drained readers before
+detaching its pipe storage. The pinned HTTP owner requires successful original
+closure observations and a joined input generator, drains terminal queued protocol
+payloads and detaches response/session roots. Only successful storage teardown
+refunds the complete non-PCM lease and admission together. Unsupported storage
+acknowledgement (including the generic subprocess backend), failures and pending
+teardown keep both charged across replacement. Late actual release cannot change
+the original failed verdict. Playable PCM and its receipts remain independent;
+none of these lifecycle acknowledgements qualifies a numerical native/transport
+envelope or enables catalog readiness.
+
 Retirement preserves queues. Only existing permanent unused-source drop and
 detached shutdown paths explicitly discard remaining queue/carry storage;
 in-flight reader receipts remain charged. Mixer always constructs separate output

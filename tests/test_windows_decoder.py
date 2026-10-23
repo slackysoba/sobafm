@@ -316,6 +316,29 @@ async def test_windows_dispatch_verifies_suspended_then_allows_input(
     assert len(rig.api.closed) == 8
 
 
+async def test_storage_retirement_refuses_undrained_reader_then_detaches_owned_graph(
+    rig: Rig, runtime: VerifiedNativeRuntime
+) -> None:
+    child = await windows.WindowsProcess.launch(runtime, rig.job, rig.owner)
+    child.bind()
+    child.readers[1].feed_data(b"retained PCM")
+    await rig.release()
+    with pytest.raises(TrackError, match="cleanup"):
+        await child.release_storage()
+    assert child.readers
+    assert child.transports
+    assert child.protocols
+    assert await child.read(1, 32) == b"retained PCM"
+    await child.release_storage()
+    await child.release_storage()
+    assert not child.readers
+    assert not child.transports
+    assert not child.protocols
+    assert child.writer is child.closer is child.storage is None
+    assert child.creation is child.adoption is child.waiter is None
+    assert all(transport.protocol.transport is None for transport in rig.transports)
+
+
 @pytest.mark.parametrize(
     "failure", ["pipe0", "pipe1", "pipe2", "attributes", "create-false", "capture"]
 )
@@ -757,7 +780,7 @@ async def test_void_attribute_disposal_exception_keeps_storage_and_debt(
     assert rig.owner.owned is child  # deliberate unresolved storage, no fake release
 
 
-async def test_late_creation_keeps_trackdeck_debt_then_releases_only_child_slot(
+async def test_late_creation_retires_storage_and_slot_without_changing_failed_verdict(
     rig: Rig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(tracks, "CLEANUP_SECONDS", 0.01)
@@ -779,7 +802,8 @@ async def test_late_creation_keeps_trackdeck_debt_then_releases_only_child_slot(
     async with asyncio.timeout(2):
         await asyncio.gather(*tuple(deck.supervisor.cleanups))
     assert deck.slots.count == deck.supervisor.debt_count == 0
-    assert deck.audio.reserved == reserved
+    assert deck.audio.reserved.pcm == reserved.pcm
+    assert deck.audio.reserved.other == deck.audio.reserved.native == 0
     assert deck.deck.cleanup_failed  # the original verdict never resets
     assert "job-close" in rig.job.events
     await deck.source.aclose()

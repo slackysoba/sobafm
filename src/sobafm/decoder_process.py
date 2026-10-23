@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Callable
 from ctypes import wintypes
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.native import VerifiedNativeRuntime
@@ -85,6 +85,17 @@ class Process(Protocol):
     def kill(self) -> None: ...
     def empty(self) -> bool: ...
     def close_pipes(self) -> bool: ...
+
+
+@runtime_checkable
+class StorageOwner(Protocol):
+    """Terminal teardown of covered storage after all borrowers have joined.
+
+    Completion acknowledges release; absence, failure or a pending operation keeps
+    the reservation. Resource closure alone does not implement this contract.
+    """
+
+    async def release_storage(self) -> None: ...
 
 
 class Launch:
