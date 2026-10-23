@@ -148,11 +148,40 @@ type ErrorCategory = Literal[
 ]
 
 
+type PipeStage = Literal[
+    "server-create",
+    "client-open",
+    "event-create",
+    "connect",
+    "event-close",
+    "info-query",
+    "info-validate",
+]
+
+
+@dataclass(frozen=True)
+class PipeDiagnostic:
+    stage: PipeStage
+    win32_error: int | None = None
+    flags: int | None = None
+    outgoing: int | None = None
+    incoming: int | None = None
+    instances: int | None = None
+
+    def __post_init__(self) -> None:
+        # Only DWORD-sized integers can cross the diagnostic boundary.
+        for name in ("win32_error", "flags", "outgoing", "incoming", "instances"):
+            value = getattr(self, name)
+            if type(value) is not int or not 0 <= value <= 0xFFFFFFFF:
+                object.__setattr__(self, name, None)
+
+
 @dataclass(frozen=True)
 class FailureDiagnostic:
     phase: FailurePhase
     category: ErrorCategory
     win32_error: int | None
+    pipe: PipeDiagnostic | None = None
 
 
 def error_category(error: BaseException) -> ErrorCategory:
@@ -202,14 +231,16 @@ class Launch:
         self.failure: FailureDiagnostic | None = None
         self._failure_lock = threading.Lock()
 
-    def record_failure(self, phase: FailurePhase, error: BaseException) -> None:
+    def record_failure(
+        self, phase: FailurePhase, error: BaseException, *, pipe: PipeDiagnostic | None = None
+    ) -> None:
         # Creation runs on its retained thread; cleanup must not replace the
         # first observed fault with a later, less informative close failure.
         with self._failure_lock:
             if self.failure is None:
                 code = getattr(error, "winerror", None) if isinstance(error, OSError) else None
                 code = code if type(code) is int and 0 <= code <= 0xFFFFFFFF else None
-                self.failure = FailureDiagnostic(phase, error_category(error), code)
+                self.failure = FailureDiagnostic(phase, error_category(error), code, pipe)
 
     def reject(self) -> None:
         if self.invoked:

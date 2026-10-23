@@ -17,6 +17,7 @@ from sobafm.decoder_process import (
     FailurePhase,
     InputCloser,
     Launch,
+    PipeDiagnostic,
     WindowsJob,
     command,
     environment,
@@ -212,6 +213,7 @@ class Kernel32:
         writing = index == 0
         parent_owner = Handle(self, None)
         endpoints.append(parent_owner)
+        self.pipe_diagnostic = PipeDiagnostic("server-create")
         parent_owner.value = self.api.CreateNamedPipeW(
             name,
             # Proactor's write transport also reads for the peer-close probe.
@@ -225,11 +227,13 @@ class Kernel32:
             None,
         )
         if parent_owner.value in (None, 0, ctypes.c_void_p(-1).value):
+            self.pipe_diagnostic = PipeDiagnostic("server-create", _windows_ctypes.get_last_error())
             parent_owner.closed = True  # documented invalid-handle result
             raise TrackError(TrackFailure.CAPACITY)
         security = SecurityAttributes(ctypes.sizeof(SecurityAttributes), None, 1)
         child_owner = Handle(self, None)
         endpoints.append(child_owner)
+        self.pipe_diagnostic = PipeDiagnostic("client-open")
         child_owner.value = self.api.CreateFileW(
             name,
             0xC0000000 if writing else 0x40000000,
@@ -240,41 +244,57 @@ class Kernel32:
             None,
         )
         if child_owner.value in (None, 0, ctypes.c_void_p(-1).value):
+            self.pipe_diagnostic = PipeDiagnostic("client-open", _windows_ctypes.get_last_error())
             child_owner.closed = True
             raise TrackError(TrackFailure.CAPACITY)
         # The just-opened client already connected to this single instance.
         parent_owner.overlapped = Overlapped()
         parent_owner.connect_event = Handle(self, None)
+        self.pipe_diagnostic = PipeDiagnostic("event-create")
         parent_owner.connect_event.value = self.api.CreateEventW(None, True, False, None)
         if not parent_owner.connect_event.value:
+            self.pipe_diagnostic = PipeDiagnostic("event-create", _windows_ctypes.get_last_error())
             parent_owner.connect_event.closed = True
             raise TrackError(TrackFailure.CAPACITY)
         parent_owner.overlapped.event = parent_owner.connect_event.fileno()
         parent_owner.uncertain = True
+        self.pipe_diagnostic = PipeDiagnostic("connect")
         if not self.api.ConnectNamedPipe(
             parent_owner.fileno(), ctypes.byref(parent_owner.overlapped)
         ):
             error: int = _windows_ctypes.get_last_error()
             if error != 535:
+                self.pipe_diagnostic = PipeDiagnostic("connect", error)
                 # Unexpected pending I/O must retain its endpoint, event and
                 # native OVERLAPPED; closing a handle is not completion proof.
                 parent_owner.uncertain = error == 997
                 raise TrackError(TrackFailure.CAPACITY)
         parent_owner.uncertain = False
+        self.pipe_diagnostic = PipeDiagnostic("event-close")
         parent_owner.connect_event.close()
         # Retain every native output before querying the rounded base quotas.
         # Zero in an active direction permits allocation as needed, not a bound.
         information = parent_owner.pipe_info = (DWORD(), DWORD(), DWORD(), DWORD())
         flags, outgoing, incoming, instances = information
+        self.pipe_diagnostic = PipeDiagnostic("info-query")
+        if not self.api.GetNamedPipeInfo(
+            parent_owner.fileno(),
+            ctypes.byref(flags),
+            ctypes.byref(outgoing),
+            ctypes.byref(incoming),
+            ctypes.byref(instances),
+        ):
+            self.pipe_diagnostic = PipeDiagnostic("info-query", _windows_ctypes.get_last_error())
+            raise TrackError(TrackFailure.CAPACITY)
+        self.pipe_diagnostic = PipeDiagnostic(
+            "info-validate",
+            flags=flags.value,
+            outgoing=outgoing.value,
+            incoming=incoming.value,
+            instances=instances.value,
+        )
         if (
-            not self.api.GetNamedPipeInfo(
-                parent_owner.fileno(),
-                ctypes.byref(flags),
-                ctypes.byref(outgoing),
-                ctypes.byref(incoming),
-                ctypes.byref(instances),
-            )
-            or flags.value != 1  # byte-type, server end
+            flags.value != 1  # byte-type, server end
             or instances.value != 1
             or not 0 < incoming.value <= PIPE_LIMIT
             or outgoing.value > PIPE_LIMIT
@@ -355,7 +375,11 @@ class Kernel32:
             raise TrackError(TrackFailure.CLEANUP)
 
     def close(self, handle: int) -> bool:
-        return bool(self.api.CloseHandle(handle))
+        closed = bool(self.api.CloseHandle(handle))
+        diagnostic = getattr(self, "pipe_diagnostic", None)
+        if not closed and diagnostic is not None and diagnostic.stage == "event-close":
+            self.pipe_diagnostic = PipeDiagnostic("event-close", _windows_ctypes.get_last_error())
+        return closed
 
 
 class PipeProtocol(asyncio.StreamReaderProtocol):
@@ -493,7 +517,11 @@ class WindowsProcess:
                 raise TrackError(TrackFailure.CAPACITY)
         except BaseException as error:  # noqa: BLE001 - retain native state on every worker outcome
             self.owner.record_failure(
-                self.boundary.setup_phase if phase == "job-setup" else phase, error
+                self.boundary.setup_phase if phase == "job-setup" else phase,
+                error,
+                pipe=getattr(self.api, "pipe_diagnostic", None)
+                if phase in ("pipe-stdin", "pipe-stdout", "pipe-stderr")
+                else None,
             )
             self.failed = True
             self._capture()

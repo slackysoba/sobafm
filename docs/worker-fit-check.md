@@ -114,3 +114,20 @@ a tighter returned limit preserves the ceiling. No page size, rounding direction
 extra query or larger allowance is assumed. The correction does not establish the
 actual a3 failure cause. Its distinct manifest requires fresh independent review
 and separate execution clearance; a2 and a3 remain consumed.
+
+## Pipe-stage diagnostic correction
+
+The separately cleared a4 run passed Job verification and stopped at
+`pipe-stdin` / `capacity`, before target creation. It did not establish which pipe
+operation or readback predicate failed, or show insufficient worker memory.
+A4 remains consumed. The schema-3 control adds a fixed `pipe` record to the first
+failure, covering stdin, stdout and stderr: `server-create`, `client-open`,
+`event-create`, `connect`, `event-close`, `info-query` or `info-validate`.
+Failed calls can include a bounded Win32 error from ctypes' existing thread-local
+last-error copy; no additional native query is performed. Successful existing
+pipe-info queries can include the four numeric flags, outgoing/incoming quotas
+and instance count. Failed queries do not publish partial output fields.
+Only unsigned 32-bit integer diagnostics survive validation. No handles, names,
+raw errors or streams enter the result. All call counts, guards, quota predicates,
+ownership and cleanup remain unchanged. This distinct manifest requires its own
+independent review and separate root clearance; it permits no replay of a4.

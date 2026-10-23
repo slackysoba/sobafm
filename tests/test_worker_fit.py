@@ -5,13 +5,14 @@ import io
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from scripts import check_worker_fit as runner
 from sobafm import audio_worker, worker_fit
-from sobafm.decoder_process import Launch, WindowsJob
+from sobafm.decoder_process import Launch, PipeDiagnostic, WindowsJob
 from sobafm.native_calls import GuardedAPI
 from sobafm.windows_decoder import Handle, Kernel32, WindowsProcess
 
@@ -342,6 +343,34 @@ def test_diagnostic_rejects_unbounded_or_non_numeric_winerror(code: object) -> N
     launch.record_failure("launch", error)
     assert launch.failure is not None
     assert launch.failure.win32_error is None
+
+
+@pytest.mark.parametrize("value", [True, -1, 2**32, "raw", 1.5, None])
+def test_pipe_diagnostic_sanitizes_every_numeric_field(value: Any) -> None:
+    diagnostic = PipeDiagnostic("info-validate", value, value, value, value, value)
+    assert asdict(diagnostic) == {
+        "stage": "info-validate",
+        "win32_error": None,
+        "flags": None,
+        "outgoing": None,
+        "incoming": None,
+        "instances": None,
+    }
+
+
+async def test_first_pipe_diagnostic_reaches_result_without_cleanup_overwrite() -> None:
+    owner = check(Child(b""))
+    diagnostic = PipeDiagnostic(
+        "info-validate", flags=1, outgoing=16385, incoming=16384, instances=1
+    )
+    owner.launch.record_failure("pipe-stdin", RuntimeError("private"), pipe=diagnostic)
+    owner.launch.record_failure("pipe-stderr", OSError("later"), pipe=PipeDiagnostic("connect", 5))
+    result = await asyncio.wait_for(asyncio.shield(owner.decision), 1)
+    await owner.join()
+    assert result.pipe is diagnostic
+    assert result.failure_phase == "pipe-stdin"
+    assert "private" not in json.dumps(asdict(result))
+    assert "later" not in json.dumps(asdict(result))
 
 
 async def test_write_failure_keeps_phase_and_already_owned_retirement_exit() -> None:

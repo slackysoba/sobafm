@@ -24,6 +24,86 @@ from tests.test_decoder_process import runtime as runtime
 from tests.test_track_deck import Rig as DeckRig
 
 
+@pytest.mark.parametrize("index", [0, 1, 2])
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "server-create",
+        "client-open",
+        "event-create",
+        "connect",
+        "event-close",
+        "info-query",
+        "info-validate",
+    ],
+)
+def test_pipe_failure_substages_use_only_existing_calls(
+    pipe_api: Kernel32, monkeypatch: pytest.MonkeyPatch, index: int, stage: str
+) -> None:
+    cached = MagicMock(return_value=5)
+    monkeypatch.setattr(windows._windows_ctypes, "get_last_error", cached, raising=False)  # pyright: ignore[reportPrivateUsage]
+    functions = {
+        "server-create": "CreateNamedPipeW",
+        "client-open": "CreateFileW",
+        "event-create": "CreateEventW",
+        "connect": "ConnectNamedPipe",
+        "event-close": "CloseHandle",
+        "info-query": "GetNamedPipeInfo",
+    }
+    if stage != "info-validate":
+        function = getattr(pipe_api.api, functions[stage])
+        function.side_effect = None
+        function.return_value = 0
+    else:
+
+        def information(handle: int, *outputs: Any) -> int:
+            for output, value in zip(outputs, (1, 16385, 16384, 1), strict=True):
+                output._obj.value = value
+            return 1
+
+        pipe_api.api.GetNamedPipeInfo.side_effect = information
+    endpoints: list[windows.Handle] = []
+    with pytest.raises(TrackError):
+        pipe_api.pipe(endpoints, index)
+    diagnostic = pipe_api.pipe_diagnostic
+    assert diagnostic.stage == stage
+    assert diagnostic.win32_error == (None if stage == "info-validate" else 5)
+    assert cached.call_count == int(stage != "info-validate")
+    assert diagnostic.outgoing == (16385 if stage == "info-validate" else None)
+    order = [
+        "CreateNamedPipeW",
+        "CreateFileW",
+        "CreateEventW",
+        "ConnectNamedPipe",
+        "CloseHandle",
+        "GetNamedPipeInfo",
+    ]
+    last = order.index(functions[stage]) if stage != "info-validate" else 5
+    assert [getattr(pipe_api.api, name).call_count for name in order] == [
+        int(i <= last) for i in range(6)
+    ]
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_pipe_substage_survives_actual_create_catch_and_later_cleanup(
+    pipe_api: Kernel32, monkeypatch: pytest.MonkeyPatch, index: int
+) -> None:
+    monkeypatch.setattr(windows, "Kernel32", lambda: pipe_api)
+    monkeypatch.setattr(windows._windows_ctypes, "get_last_error", lambda: 5, raising=False)  # pyright: ignore[reportPrivateUsage]
+    pipe_api.api.CreateNamedPipeW.side_effect = [10 + i * 2 for i in range(index)] + [0]
+    owner = Launch(lambda: True)
+    child = windows.WindowsProcess(Job(), owner)
+    child._create(["owned-fake"], {})  # pyright: ignore[reportPrivateUsage]
+    assert owner.failure is not None
+    assert owner.failure.phase == ("pipe-stdin", "pipe-stdout", "pipe-stderr")[index]
+    assert owner.failure.pipe is not None
+    assert owner.failure.pipe.stage == "server-create"
+    assert owner.failure.pipe.win32_error == 5
+    first = owner.failure
+    owner.record_failure("close-child-endpoints", RuntimeError("not retained"))
+    assert owner.failure is first
+
+
 class Job(WindowsJob):
     def __init__(self) -> None:
         super().__init__(commit_limit=8 * 1024**2)  # invented test profile only
@@ -243,9 +323,10 @@ async def rig(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[Rig]:
 
 
 @pytest.fixture
-def pipe_api() -> Kernel32:
+def pipe_api(monkeypatch: pytest.MonkeyPatch) -> Kernel32:
     """Real pipe ownership/control flow, with only the Win32 calls replaced."""
     api = object.__new__(Kernel32)
+    monkeypatch.setattr(windows._windows_ctypes, "get_last_error", lambda: 0, raising=False)  # pyright: ignore[reportPrivateUsage]
 
     def information(handle: int, *outputs: Any) -> int:
         index = api.api.GetNamedPipeInfo.call_count - 1
@@ -730,6 +811,11 @@ def test_pipe_base_readback_refuses_and_keeps_partial_owners(
     assert len(endpoints) == 2
     assert endpoints[0].pipe_info is not None
     assert tuple(value.value for value in endpoints[0].pipe_info) == values
+    diagnostic = pipe_api.pipe_diagnostic
+    assert diagnostic.stage == ("info-validate" if succeeds else "info-query")
+    assert (diagnostic.flags, diagnostic.outgoing, diagnostic.incoming, diagnostic.instances) == (
+        values if succeeds else (None, None, None, None)
+    )
     pipe_api.api.GetNamedPipeInfo.assert_called_once()
     assert not any(endpoint.released for endpoint in endpoints)
     for endpoint in endpoints:

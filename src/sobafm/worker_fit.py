@@ -15,6 +15,7 @@ from sobafm.decoder_process import (
     ErrorCategory,
     FailurePhase,
     Launch,
+    PipeDiagnostic,
     Process,
     StorageOwner,
     WindowsJob,
@@ -80,6 +81,7 @@ class Result:
     failure_phase: FailurePhase | None = None
     error_category: ErrorCategory | None = None
     win32_error: int | None = None
+    pipe: PipeDiagnostic | None = None
 
 
 def command(python: Path) -> tuple[str, ...]:
@@ -221,6 +223,7 @@ class FitCheck:
             failure_phase=diagnostic.phase if diagnostic is not None else None,
             error_category=diagnostic.category if diagnostic is not None else None,
             win32_error=diagnostic.win32_error if diagnostic is not None else None,
+            pipe=diagnostic.pipe if diagnostic is not None else None,
         )
 
     async def join(self) -> None:
