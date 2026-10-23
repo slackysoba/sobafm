@@ -331,6 +331,61 @@ def api(monkeypatch: pytest.MonkeyPatch) -> API:
     return api
 
 
+@pytest.mark.parametrize("after_membership", [False, True])
+@pytest.mark.parametrize(
+    ("process_delta", "job_delta", "flags", "query_ok", "accepted"),
+    [
+        (0, 0, 0x2300, True, True),
+        (-1, -1, 0x2300, True, True),
+        (-1, 0, 0x2300, True, True),
+        (0, -1, 0x2300, True, True),
+        (-35_439_999, 0, 0x2300, True, False),
+        (0, -35_439_999, 0x2300, True, False),
+        (1, 0, 0x2300, True, False),
+        (0, 1, 0x2300, True, False),
+        (0, 0, 0x2000, True, False),
+        (0, 0, 0x2B00, True, False),
+        (0, 0, 0x2300, False, False),
+    ],
+)
+def test_job_readback_enforces_ceiling_at_both_verification_points(
+    api: API,
+    after_membership: bool,
+    process_delta: int,
+    job_delta: int,
+    flags: int,
+    query_ok: bool,
+    accepted: bool,
+) -> None:
+    cap = 35_439_999
+    job = WindowsJob(commit_limit=cap)
+    if after_membership:
+        job.prepare()
+
+    def query(handle: int, kind: int, value: Any, size: int, returned: Any) -> int:
+        assert kind == 9
+        value._obj.process_memory = cap + process_delta
+        value._obj.job_memory = cap + job_delta
+        value._obj.basic.flags = flags
+        return int(query_ok)
+
+    api.QueryInformationJobObject.side_effect = query
+
+    def verify() -> None:
+        if after_membership:
+            job.verify_process(321)
+        else:
+            job.prepare()
+
+    if accepted:
+        verify()
+    else:
+        with pytest.raises(TrackError, match="capacity"):
+            verify()
+    assert api.IsProcessInJob.call_count == int(after_membership)
+    assert api.QueryInformationJobObject.call_count == 1 + int(after_membership)
+
+
 def test_job_limits_membership_and_tree_queries_are_exact(api: API) -> None:
     job = WindowsJob()
     job.prepare()

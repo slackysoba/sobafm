@@ -428,8 +428,8 @@ class WindowsJob:
             )
             or (
                 actual.basic.flags != 0x100 | 0x200 | 0x2000
-                or actual.process_memory != self._commit_limit
-                or actual.job_memory != self._commit_limit
+                or not 0 < actual.process_memory <= self._commit_limit
+                or not 0 < actual.job_memory <= self._commit_limit
             )
         ):
             raise TrackError(TrackFailure.CAPACITY)

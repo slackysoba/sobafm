@@ -98,3 +98,19 @@ All prior consumed receipts and results remain immutable. Any subsequent native
 run requires independent review of its exact source/manifest and separate root
 clearance. No cap attribution, production readiness or broader worker integration
 follows from this source-only correction.
+
+## Ceiling readback correction
+
+The consumed a3 run stopped at `job-verify` with category `capacity`, before
+pipe or process creation. It did not capture the returned limits or query result;
+it establishes neither a rounding cause nor cap-caused allocation failure.
+
+Both initial setup and pre-resume membership verification accept each returned
+memory limit only when it is positive and no greater than the requested ceiling.
+The successful query, exact limit flags and actual Job membership remain required.
+This follows the [current-limit query contract](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-queryinformationjobobject)
+and [committed-memory limit definitions](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_extended_limit_information):
+a tighter returned limit preserves the ceiling. No page size, rounding direction,
+extra query or larger allowance is assumed. The correction does not establish the
+actual a3 failure cause. Its distinct manifest requires fresh independent review
+and separate execution clearance; a2 and a3 remain consumed.
