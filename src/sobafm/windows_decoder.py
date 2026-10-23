@@ -396,6 +396,7 @@ class WindowsProcess:
         self.protocols: dict[int, PipeProtocol] = {}
         self.writer: asyncio.StreamWriter | None = None
         self.closer: InputCloser | None = None
+        self._storage_released = False
 
     @classmethod
     async def launch(
@@ -624,3 +625,29 @@ class WindowsProcess:
             )
             and (self.storage is None or self.storage.disposed)
         )
+
+    async def release_storage(self) -> None:
+        """Retire terminal pipe backings after setup, I/O and native waits joined."""
+        if self._storage_released:
+            return
+        if not self.close_pipes() or any(not reader.at_eof() for reader in self.readers.values()):
+            raise TrackError(TrackFailure.CLEANUP)
+        for task in (self.creation, self.adoption, self.waiter):
+            if task is not None:
+                if not task.done() or task.cancelled():
+                    raise TrackError(TrackFailure.CLEANUP)
+                if (error := task.exception()) is not None:
+                    error.__traceback__ = error.__context__ = error.__cause__ = None
+        for protocol in self.protocols.values():
+            # StreamReaderProtocol.connection_lost already detaches its reader,
+            # writer and transport. Drop our additional capture only after loss.
+            protocol.transport = None
+        self.readers.clear()
+        self.protocols.clear()
+        self.transports.clear()
+        self.writer = self.closer = None
+        self.creation = self.adoption = self.waiter = None
+        self.storage = None
+        self.endpoints.clear()
+        self.process_handle = self.thread_handle = None
+        self._storage_released = True

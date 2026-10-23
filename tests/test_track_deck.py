@@ -68,6 +68,10 @@ class FakeInput:
     async def aclose(self) -> None:
         self.closed = True
 
+    async def release_storage(self) -> None:
+        assert self.closed
+        self.blocks.clear()
+
 
 class FakeChild:
     def __init__(self, boundary: FakeBoundary, output: bytes) -> None:
@@ -133,6 +137,13 @@ class FakeChild:
             raise OSError("untrusted diagnostic")
         self.pipes_closed = True
         return True
+
+    async def release_storage(self) -> None:
+        assert self.empty()
+        assert self.pipes_closed
+        assert self.input_closed.is_set()
+        self.output = b""
+        self.writes.clear()
 
 
 class SharedCloseChild(FakeChild):
@@ -733,3 +744,151 @@ async def test_completed_source_releases_without_cycle_collection(tmp_path: Path
     finally:
         if enabled:
             gc.enable()
+
+
+async def test_storage_retirement_waits_for_producer_frame_and_spawn_result(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    held, release = asyncio.Event(), asyncio.Event()
+
+    class HeldProducer(TrackDeck):
+        async def _run(self) -> None:
+            await super()._run()
+            child = self._child
+            held.set()
+            await release.wait()
+            assert child is rig.child
+
+    rig.deck = HeldProducer(
+        rig.track, rig.deck.program, rig.audio, rig.supervisor, input_factory=rig.input
+    )
+    rig.deck.start()
+    await held.wait()
+    assert rig.deck._cleanup_task is not None  # pyright: ignore[reportPrivateUsage]
+    assert rig.deck._cleanup_task.done()  # pyright: ignore[reportPrivateUsage]
+    spawn = rig.deck._spawn_task  # pyright: ignore[reportPrivateUsage]
+    assert spawn is not None
+    assert spawn.result() is rig.child
+    assert rig.deck.allocation is not None
+    assert rig.slots.count == rig.supervisor.debt_count == 1
+    assert rig.child.output
+    assert rig.source.blocks
+    release.set()
+    await settle(rig)
+    assert rig.deck.allocation is None
+    assert not rig.child.output
+    assert not rig.source.blocks
+    assert rig.deck.ready
+    assert rig.deck.frames
+    assert rig.audio.reserved.pcm > 0
+    assert rig.audio.reserved.other == rig.audio.reserved.native == 0
+    replacement = TrackDeck(
+        rig.track, rig.deck.program, rig.audio, rig.supervisor, input_factory=rig.input
+    )
+    assert replacement.admit()
+    assert replacement.allocation is not None
+    replacement.retire()  # rollback positively unstarted admission, preserving old PCM
+    assert rig.slots.count == 0
+    assert rig.deck.frames
+
+
+async def test_storage_acknowledgement_outlives_deadline_and_repeated_waiter_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tracks, "CLEANUP_SECONDS", 0.02)
+    rig = Rig(tmp_path)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class HeldStorage(FakeInput):
+        async def release_storage(self) -> None:
+            entered.set()
+            await release.wait()
+            await super().release_storage()
+
+    rig.source = HeldStorage()
+    rig.deck.start()
+    await entered.wait()
+    paid = rig.audio.reserved
+    waiter = asyncio.create_task(rig.deck.wait_ended())
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    await rig.deck.wait_ended()
+    assert rig.deck.cleanup_failed
+    assert rig.deck.failure is TrackFailure.CLEANUP
+    assert rig.audio.reserved == paid
+    assert rig.slots.count == rig.supervisor.debt_count == 1
+    assert rig.source.blocks
+    release.set()
+    await asyncio.gather(*tuple(rig.supervisor.cleanups))
+    assert rig.slots.count == rig.supervisor.debt_count == 0
+    assert rig.deck.failure is TrackFailure.CLEANUP
+    assert rig.deck.end_reason is EndReason.FAILED
+    assert rig.audio.reserved.pcm == paid.pcm
+    assert rig.audio.reserved.other == rig.audio.reserved.native == 0
+
+
+async def test_failed_storage_acknowledgement_keeps_complete_debt(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+
+    class FailedStorage(FakeInput):
+        async def release_storage(self) -> None:
+            raise RuntimeError("owned release failed")
+
+    rig.source = FailedStorage()
+    rig.deck.start()
+    paid = rig.audio.reserved
+    await settle(rig)
+    assert rig.deck.cleanup_failed
+    assert rig.deck.allocation is not None
+    assert rig.audio.reserved == paid
+    assert rig.slots.count == rig.supervisor.debt_count == 1
+    assert rig.source.blocks
+    assert rig.child.output
+
+
+async def test_closed_input_without_storage_contract_cannot_refund_admission(
+    tmp_path: Path,
+) -> None:
+    rig = Rig(tmp_path)
+
+    class ClosedOnly:
+        complete = True
+        closed = False
+
+        async def chunks(self) -> AsyncGenerator[bytes]:
+            yield b"owned compressed fixture"
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    source = ClosedOnly()
+
+    def closed_input(track: CatalogTrack) -> ClosedOnly:
+        return source
+
+    rig.deck._input_factory = closed_input  # pyright: ignore[reportPrivateUsage]
+    rig.deck.start()
+    paid = rig.audio.reserved
+    await settle(rig)
+    assert source.closed
+    assert rig.deck.cleanup_failed
+    assert rig.audio.reserved == paid
+    assert rig.slots.count == rig.supervisor.debt_count == 1
+
+
+async def test_admission_reserves_once_and_unstarted_retirement_wakes_waiter(
+    tmp_path: Path,
+) -> None:
+    rig = Rig(tmp_path)
+    assert rig.deck.admit()
+    paid, lease = rig.audio.reserved, rig.deck.allocation
+    assert rig.deck.admit()
+    assert rig.audio.reserved == paid
+    assert rig.deck.allocation is lease
+    wake = asyncio.Event()
+    rig.slots.wait(wake.set)
+    rig.deck.retire()
+    await asyncio.wait_for(wake.wait(), 1)
+    assert rig.slots.count == rig.supervisor.debt_count == 0
+    assert not rig.child.bound

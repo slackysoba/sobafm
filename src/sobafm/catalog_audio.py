@@ -84,6 +84,7 @@ class AudioStream:
             raise TrackError(TrackFailure.INELIGIBLE)
         self._responses: list[aiohttp.ClientResponse] = []
         self._observations: list[asyncio.Future[object]] = []
+        self._protocols: list[ResponseHandler] = []
         self._unknown_closure = False
         self._starts = 0
         self._close_task: asyncio.Task[None] | None = None
@@ -99,10 +100,12 @@ class AudioStream:
                 owner._observe(self, connection)
                 return await super().start(connection)
 
-        self._session = session_factory(ObservedResponse)
+        self._session: aiohttp.ClientSession | None = session_factory(ObservedResponse)
         self.received = 0
         self.complete = False
         self._started = False
+        self._borrowed = False
+        self._storage_released = False
 
     def _observe(self, response: aiohttp.ClientResponse, connection: Connection) -> None:
         """Observe only the locked aiohttp 3.14.4 internal lifecycle signal.
@@ -127,6 +130,7 @@ class AudioStream:
                 return
             future = cast(asyncio.Future[object], observation)
             self._observations.append(future)
+            self._protocols.append(protocol)
             future.add_done_callback(_retrieve_close_error)
         except Exception as error:  # noqa: BLE001 - unknown library shape cannot prove release
             _detach(error)
@@ -149,9 +153,13 @@ class AudioStream:
         if self._started or self._close_task is not None:
             raise TrackError(TrackFailure.TRANSFER)
         self._started = True
+        self._borrowed = True
         try:
+            session = self._session
+            if session is None:
+                raise TrackError(TrackFailure.CLEANUP)
             async with asyncio.timeout(IDLE_SECONDS):
-                response = await self._session.get(
+                response = await session.get(
                     self._track.audio.get_secret_value(),
                     allow_redirects=False,
                     auto_decompress=False,
@@ -202,8 +210,11 @@ class AudioStream:
             raise TrackError(TrackFailure.TRANSFER) from None
         finally:
             self.close()
+            self._borrowed = False
 
     def close(self) -> None:
+        if self._storage_released:
+            return
         if self._close_task is None:
             success = True
             for response in self._responses:
@@ -216,7 +227,10 @@ class AudioStream:
             self._close_task.add_done_callback(_retrieve_close_error)
 
     async def _close(self, success: bool) -> None:
-        success &= await _finish_close(self._session.close())
+        session = self._session
+        if session is None:
+            raise TrackError(TrackFailure.CLEANUP)
+        success &= await _finish_close(session.close())
         for response in self._responses:
             success &= await _finish_close(response.wait_for_close())
         # Even unexpected additional observations remain owned. Never cancel a
@@ -227,11 +241,15 @@ class AudioStream:
             raise TrackError(TrackFailure.CLEANUP)
 
     async def aclose(self) -> None:
+        if self._storage_released:
+            return
         self.close()
         await asyncio.shield(cast(asyncio.Task[None], self._close_task))
 
     @property
     def closed(self) -> bool:
+        if self._storage_released:
+            return True
         task = self._close_task
         return (
             task is not None
@@ -240,6 +258,39 @@ class AudioStream:
             and task.exception() is None
             and self._observed_closed()
         )
+
+    async def release_storage(self) -> None:
+        """Detach terminal response/session storage after the generator has joined.
+
+        The pinned response protocol's closed observation runs after transport
+        loss, parser teardown and timeout cancellation. The producer's join is
+        separately required: its generator may otherwise still hold response/data.
+        """
+        if self._storage_released:
+            return
+        if self._borrowed or not self.closed:
+            raise TrackError(TrackFailure.CLEANUP)
+        for protocol in self._protocols:
+            # A closed HTTP parser can still have queued response/payload pairs.
+            # Drain only already queued entries through its existing DataQueue
+            # API; no read can wait or resume network input after terminal loss.
+            while len(protocol):
+                _, payload = await protocol.read()
+                if (error := payload.exception()) is not None:
+                    _detach(error)
+                payload.set_exception(TrackError(TrackFailure.CLEANUP))
+            protocol.close()  # the pinned adapter clears its terminal exception root
+        for response in self._responses:
+            if (error := response.content.exception()) is not None:
+                _detach(error)
+        self._responses.clear()
+        self._observations.clear()
+        self._protocols.clear()
+        self._close_task = None
+        self._session = None
+        # ClientSession.close detaches its connector; response close detaches its
+        # connection/session, and protocol loss removes payload/parser owners.
+        self._storage_released = True
 
 
 def _detach(error: BaseException) -> None:

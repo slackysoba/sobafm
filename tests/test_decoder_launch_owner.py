@@ -185,7 +185,8 @@ async def test_raw_process_captured_before_further_handoff_or_bind_failure(
     assert raw.terminated > 0
     assert all(pipe.closed for pipe in raw._transport.pipes)  # pyright: ignore[reportPrivateUsage]
     assert rig.boundary.closed
-    assert rig.slots.count == rig.supervisor.debt_count == 0
+    assert rig.slots.count == rig.supervisor.debt_count == 1
+    assert rig.deck.failure is TrackFailure.CLEANUP
     assert rig.audio.reserved.total > 0  # positive process/pipe storage is not refunded
     assert not raw.stdin.blocks
     assert not rig.source.closed
@@ -410,7 +411,8 @@ async def test_positive_process_cleanup_does_not_wait_for_factory_handoff(
     assert rig.deck.failure is TrackFailure.CLEANUP
     handoff.set()
     await asyncio.gather(*tuple(rig.supervisor.cleanups))
-    assert rig.slots.count == rig.supervisor.debt_count == 0
+    assert rig.slots.count == rig.supervisor.debt_count == 1
+    assert rig.deck.failure is TrackFailure.CLEANUP
     assert rig.audio.reserved.total > 0
     assert rig.deck.failure is TrackFailure.CLEANUP
     assert not rig.source.closed

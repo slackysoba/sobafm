@@ -17,6 +17,7 @@ from sobafm.catalog_engine import CatalogEngine, History
 from sobafm.config import ApiKey
 from sobafm.jamendo import JamendoCatalog, MetadataGate
 from sobafm.native import VerifiedNativeRuntime
+from sobafm.program import Program
 from sobafm.track_deck import DecoderSupervisor, TrackDeck
 
 
@@ -101,12 +102,22 @@ class CatalogPlayback:
             self.http = aiohttp.ClientSession(trust_env=False)
         catalog = QualifiedCatalog(JamendoCatalog(self.client_id, self.http, self.gate), credits)
         history = self.histories.setdefault(guild, History())
+
+        def create(track: CatalogTrack, program: Program) -> TrackDeck | None:
+            source = TrackDeck(track, program, audio, supervisor)
+            if not source.admit():
+                supervisor.slots.wait(wake)
+                return None
+            supervisor.slots.cancel_wait(wake)
+            return source
+
         return CatalogEngine(
             catalog,
-            lambda track, program: TrackDeck(track, program, audio, supervisor),
+            create,
             audio=audio,
             history=history,
             wake=wake,
+            cancel_admission_wait=lambda: supervisor.slots.cancel_wait(wake),
         )
 
     async def close(self) -> None:

@@ -371,8 +371,8 @@ async def test_catalog_padding_prepaid_and_pcm_not_charged_twice(
     rig.deck.start()
     await settle_track(rig)
     assert rig.audio.reserved.pcm == PCM_LIMIT
-    assert rig.audio.reserved.other > 0
-    assert rig.audio.reserved.native > 0
+    assert rig.audio.reserved.other == 0
+    assert rig.audio.reserved.native == 0
     if remaining == 2 * FRAME_BYTES:
         assert rig.deck.completed
         assert [frame.data for frame in rig.deck.frames] == [bytes(FRAME_BYTES)]

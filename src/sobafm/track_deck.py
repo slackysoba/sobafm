@@ -20,7 +20,7 @@ from sobafm.catalog_audio import (
     TrackError,
     TrackFailure,
 )
-from sobafm.decoder_process import Boundary, Launch, Process, launch
+from sobafm.decoder_process import Boundary, Launch, Process, StorageOwner, launch
 from sobafm.native import VerifiedNativeRuntime
 from sobafm.owned_pcm import OwnedPCM, PCMCapacityError
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES, FRAME_SECONDS, FrameSplitter
@@ -107,6 +107,13 @@ class Slots:
     def __init__(self) -> None:
         self._owners: dict[object, AudioLedger] = {}
         self._uncertain: set[object] = set()
+        self._waiters: set[Callable[[], None]] = set()
+
+    def wait(self, wake: Callable[[], None]) -> None:
+        self._waiters.add(wake)
+
+    def cancel_wait(self, wake: Callable[[], None]) -> None:
+        self._waiters.discard(wake)
 
     def blocked(self, ledger: AudioLedger) -> bool:
         return any(self._owners[token] is ledger for token in self._uncertain)
@@ -128,6 +135,9 @@ class Slots:
     def release(self, token: object) -> None:
         self._uncertain.discard(token)
         self._owners.pop(token, None)
+        waiters, self._waiters = self._waiters, set()
+        for wake in waiters:
+            asyncio.get_running_loop().call_soon(wake)
 
     @property
     def count(self) -> int:
@@ -162,6 +172,20 @@ class DecoderSupervisor:
 
     def admitted(self, ledger: AudioLedger) -> bool:
         return not self._uncertain and not self.slots.blocked(ledger)
+
+    def reserve(self, ledger: AudioLedger) -> tuple[AudioLease, object] | None:
+        """Acquire the complete allocation and slot in one event-loop transaction."""
+        envelope = self.envelope.allocation
+        if not self.admitted(ledger) or envelope is None:
+            return None
+        lease = ledger.reserve(AudioBytes(other=envelope.other, native=envelope.native))
+        if lease is None:
+            return None
+        slot = self.slots.acquire(ledger)
+        if slot is None:
+            lease.release()  # no work or resource construction has begun
+            return None
+        return lease, slot
 
     def uncertain(self, token: object) -> None:
         self._uncertain.add(token)
@@ -243,6 +267,10 @@ class TrackDeck:
         self._cleanup_at: float | None = None
         self._cleanup_result: asyncio.Future[bool] | None = None
         self._cleanup_timer: asyncio.TimerHandle | None = None
+        self._resources_done: asyncio.Future[bool] | None = None
+        self._resources_released = False
+        self._storage_retirement: asyncio.Task[None] | None = None
+        self._summary_logged = False
 
     @property
     def mode(self) -> Mode:
@@ -277,9 +305,12 @@ class TrackDeck:
         """Not an encoder-storage release proof or an automatic lease refund."""
         return self.completed and not self.frames
 
-    def start(self) -> None:
+    def admit(self) -> bool:
+        """Reserve before selection commits an attempt; False is temporary deferral."""
+        if self.allocation is not None:
+            return True
         if self._retired or self._task is not None or self.end_reason is not None:
-            return
+            return False
         # Until six seconds, nothing may consume this source. A smaller buffer
         # must hold every duration-valid short output (including the one-second allowance).
         needed = min(300, math.ceil((self.track.duration + 1) / FRAME_SECONDS))
@@ -289,44 +320,42 @@ class TrackDeck:
                 EndReason.FAILED,
                 State.ENDED,
             )
+            return True  # permanent configuration failure, not capacity contention
+        admission = self._supervisor.reserve(self._audio)
+        if admission is None:
+            return False
+        self.allocation, self._slot = admission
+        self._supervisor.register(self._slot, self)
+        return True
+
+    def start(self) -> None:
+        if self._retired or self._task is not None or self.end_reason is not None:
             return
-        envelope = self._supervisor.envelope.allocation
-        if (
-            not self._supervisor.admitted(self._audio)
-            or envelope is None
-            or (
-                lease := self._audio.reserve(
-                    AudioBytes(other=envelope.other, native=envelope.native)
-                )
-            )
-            is None
-        ):
+        if not self.admit():
             self.failure, self.end_reason, self.state = (
                 TrackFailure.CAPACITY,
                 EndReason.FAILED,
                 State.ENDED,
             )
             return
-        slot = self._supervisor.slots.acquire(self._audio)
-        if slot is None:
-            lease.release()  # no allocation/producer was created
-            self.failure, self.end_reason, self.state = (
-                TrackFailure.CAPACITY,
-                EndReason.FAILED,
-                State.ENDED,
-            )
+        if self.end_reason is not None:
             return
-        self.allocation, self._slot = lease, slot
-        self._supervisor.register(slot, self)
         self._cleanup_result = asyncio.get_running_loop().create_future()
+        self._resources_done = asyncio.get_running_loop().create_future()
         self._started_at = self._clock()
         self._task = asyncio.create_task(self._run(), name=f"track {self.number}")
+        self._task.add_done_callback(self._terminal)
 
     def retire(self) -> None:
         if self._retired:
             return
         self._retired = True
         if self._task is None:
+            if self.allocation is not None and self._slot is not None:
+                self.allocation.release()  # admitted but positively never started
+                self.allocation = None
+                self._supervisor.released(self._slot)
+                self._slot = None
             if self.end_reason is None:
                 self.end_reason = EndReason.RETIRED
             self.state = State.ENDED
@@ -338,14 +367,15 @@ class TrackDeck:
             self._task.cancel()
 
     async def wait_ended(self) -> None:
-        if self._task is not None:
+        task = self._task
+        if task is not None:
             try:
-                await asyncio.shield(self._task)
+                await asyncio.shield(task)
             except asyncio.CancelledError:
-                if not self._task.cancelled():
+                if not task.cancelled():
                     raise
-            if self._cleanup_result is not None:
-                await asyncio.shield(self._cleanup_result)
+        if self._cleanup_result is not None:
+            await asyncio.shield(self._cleanup_result)
 
     async def regulate(self) -> None:
         if len(self.frames) < self._supervisor.envelope.buffer_frames:
@@ -516,27 +546,34 @@ class TrackDeck:
             error.__traceback__ = error.__context__ = error.__cause__ = None
         finally:
             self._begin_cleanup()
-            result = self._cleanup_result
+            result = self._resources_done
             if result is not None and not await asyncio.shield(result):
                 self.failure = TrackFailure.CLEANUP
             if not self._verified and not self._retired and self.failure is None:
                 self.failure = TrackFailure.DECODER
-            self.end_reason = (
-                EndReason.FAILED
-                if self.failure
-                else (EndReason.RETIRED if self._retired else EndReason.FINISHED)
-            )
-            if self.exit_status is not None:
-                log.info("Track %d decoder exit status %d", self.number, self.exit_status)
-            log.info(
-                "Deck %d %s%s after %.0f s: %.0f s of audio%s",
-                self.number,
-                self.end_reason,
-                f" ({self.failure})" if self.failure else "",
-                self._clock() - self._created,
-                self._raw_bytes / BYTES_PER_SECOND,
-                "",
-            )
+            if self.cleanup_failed:
+                self._finish()
+
+    def _finish(self) -> None:
+        self.end_reason = (
+            EndReason.FAILED
+            if self.failure
+            else (EndReason.RETIRED if self._retired else EndReason.FINISHED)
+        )
+        if self._summary_logged:
+            return
+        self._summary_logged = True
+        if self.exit_status is not None:
+            log.info("Track %d decoder exit status %d", self.number, self.exit_status)
+        log.info(
+            "Deck %d %s%s after %.0f s: %.0f s of audio%s",
+            self.number,
+            self.end_reason,
+            f" ({self.failure})" if self.failure else "",
+            self._clock() - self._created,
+            self._raw_bytes / BYTES_PER_SECOND,
+            "",
+        )
 
     def _begin_cleanup(self) -> None:
         if self._cleanup_task is None:
@@ -548,6 +585,7 @@ class TrackDeck:
                 self._cleanup(), name=f"track {self.number} cleanup"
             )
             self._supervisor.retain(task)
+            task.add_done_callback(self._terminal)
 
     def _cleanup_failure(self) -> None:
         self.cleanup_failed = True
@@ -556,6 +594,67 @@ class TrackDeck:
         decision = self._cleanup_result
         if decision is not None and not decision.done():
             decision.set_result(False)
+        resources = self._resources_done
+        if resources is not None and not resources.done():
+            resources.set_result(False)
+
+    def _terminal(self, task: asyncio.Task[None]) -> None:
+        unstarted_cancel = task is self._task and self._retired and self._launch is None
+        if (task.cancelled() and not unstarted_cancel) or (
+            not task.cancelled() and task.exception() is not None
+        ):
+            if not task.cancelled() and (error := task.exception()) is not None:
+                error.__traceback__ = error.__context__ = error.__cause__ = None
+            self._cleanup_failure()
+            return
+        if (
+            self._storage_retirement is None
+            and self._resources_released
+            and self._task is not None
+            and self._task.done()
+            and self._cleanup_task is not None
+            and self._cleanup_task.done()
+        ):
+            self._storage_retirement = asyncio.create_task(self._retire_storage())
+            self._supervisor.retain(self._storage_retirement)
+
+    async def _retire_storage(self) -> None:
+        """Both coroutine frames are gone; now retire their terminal owned graphs."""
+        try:
+            for owner in (self._input, self._child):
+                if owner is not None:
+                    if not isinstance(owner, StorageOwner):
+                        self._cleanup_failure()
+                        return
+                    await owner.release_storage()
+            launch = self._launch
+            if launch is not None:
+                launch.child = launch.pending = launch.preparation = None
+            self._workers.clear()
+            self._spawn_task = None
+            self._input_close = self._stdin_close = None
+            self._input = self._child = self._boundary = self._launch = None
+            self._task = self._cleanup_task = None
+            # No task result, Launch alias or bound close method retains the graph.
+            # PCM queues, carry and in-flight receipts have independent ownership.
+            if self.allocation is not None:
+                self.allocation.release()
+                self.allocation = None
+            if self._slot is not None:
+                slot, self._slot = self._slot, None
+                self._supervisor.released(slot)
+            started = self._cleanup_at if self._cleanup_at is not None else self._clock()
+            self._deadline(started + CLEANUP_SECONDS)
+            if self._cleanup_timer is not None:
+                self._cleanup_timer.cancel()
+            decision = self._cleanup_result
+            if decision is not None and not decision.done():
+                decision.set_result(not self.cleanup_failed)
+        except BaseException as error:  # noqa: BLE001 - failed acknowledgement retains debt
+            error.__traceback__ = error.__context__ = error.__cause__ = None
+            self._cleanup_failure()
+        finally:
+            self._finish()
 
     def _bar_uncertain(self) -> None:
         launch = self._launch
@@ -603,7 +702,6 @@ class TrackDeck:
         deadline = (
             self._cleanup_at if self._cleanup_at is not None else self._clock()
         ) + CLEANUP_SECONDS
-        decision = self._cleanup_result
         launch = self._launch
         for task in self._workers:
             task.cancel()
@@ -687,22 +785,14 @@ class TrackDeck:
         while self._boundary is not None and not self._attempt(self._boundary.close):
             self._deadline(deadline)
             await asyncio.sleep(0.01)
-        if self._slot is not None:
-            self._supervisor.released(self._slot)
-            self._slot = None
-        if (
-            launch is None or (launch.not_invoked and launch.owned is None)
-        ) and self.allocation is not None:
-            self.allocation.release()  # positively no child/input allocation was created
-            self.allocation = None
+        self._resources_released = True
         self._deadline(deadline)
-        if self._cleanup_timer is not None:
-            self._cleanup_timer.cancel()
         self.state = State.ENDED
         if self._retired and self.end_reason is None:
             self.end_reason = EndReason.RETIRED
-        if decision is not None and not decision.done():
-            decision.set_result(not self.cleanup_failed)
+        resources = self._resources_done
+        if resources is not None and not resources.done():
+            resources.set_result(not self.cleanup_failed)
         # PCM remains charged: deque pops/producer cleanup do not prove release
         # of mixer/encoder copies. Its owner needs that separate storage proof.
 
