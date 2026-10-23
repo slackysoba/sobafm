@@ -159,12 +159,33 @@ uv run sobafm
 
 The process runs until you stop it with Ctrl+C. Run it under a service manager such as systemd, or a Windows service wrapper, to keep it running across restarts and reboots.
 
-Current development source also contains the
-[Proposed ADR-0010](decisions/0010-maintain-a-pinned-bounded-genai-distribution.md)
-and [SDK source/package materials](../third_party/google-genai/README.md) for
-maintainer review. Application dependencies and the lockfile still select the
-stock SDK; operators need no candidate-package installation. The isolated derived
-candidate is unpublished and supplies no production readiness or memory profile.
+Development source pins SobaFM's
+[Google Gen AI 2.26.0+sobafm.1 component](https://github.com/slackysoba/sobafm/releases/tag/sdk-google-genai-2.26.0-sobafm.1).
+`uv sync --locked` installs its verified wheel; no separate SDK installation is
+needed. The release includes the
+[complete patched SDK source](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.1/google_genai-2.26.0%2Bsobafm.1.tar.gz)
+and [build manifest](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.1/google-genai-2.26.0%2Bsobafm.1.manifest.json).
+The [source/package materials](../third_party/google-genai/README.md) record the
+recipe, Apache-2.0/MIT licenses and modification notices. This downstream
+distribution follows accepted
+[ADR-0010](decisions/0010-maintain-a-pinned-bounded-genai-distribution.md).
+Connection defaults are unchanged and bounded receive remains inactive; this
+dependency pin supplies no production memory profile or readiness result.
+
+The normal required Security scan checks the complete `uv.lock` and the pinned
+upstream `google-genai==2.26.0` identity in
+[a scan-only requirements input](../.github/genai-upstream/requirements.txt);
+this input is never installed. Tests bind it to the adopted artifact's
+[upstream provenance](../third_party/google-genai/UPSTREAM.toml). An exact-version
+[license metadata override](../osv-scanner.toml) supplies the verified Apache-2.0
+and MIT licenses for the derived release, preserving vulnerability checks and
+the existing allowed-license policy. `--no-resolve` keeps the supplement limited
+to the explicit upstream identity; all actual direct and transitive dependencies
+are already in `uv.lock` and remain scanned. The same scan emits JSON for all
+packages so the complete lock and both SDK identities can be verified.
+GitHub dependency review remains enabled,
+but its graph omits this direct-URL replacement; its success alone does not
+establish SDK coverage. Upstream advisory matching does not audit the local patch.
 
 ### Check that it started
 

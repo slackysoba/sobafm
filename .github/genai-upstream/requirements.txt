@@ -1,0 +1,2 @@
+# Advisory scan input only; never installed. Bound to third_party/google-genai/UPSTREAM.toml.
+google-genai==2.26.0

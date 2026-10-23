@@ -48,3 +48,12 @@ name = "sobafm"
 ecosystem = "PyPI"
 license.override = ["MIT"]
 reason = "This project; see LICENSE."
+
+# The direct-release version is not published on PyPI. Supply its verified license
+# metadata, without ignoring its vulnerabilities or changing allowed licenses.
+[[PackageOverrides]]
+name = "google-genai"
+version = "2.26.0+sobafm.1"
+ecosystem = "PyPI"
+license.override = ["Apache-2.0", "MIT"]
+reason = "Exact derived distribution; third_party/google-genai/UPSTREAM.toml, LICENSE and LICENSE.sobafm record the upstream Apache-2.0 and MIT additions."
