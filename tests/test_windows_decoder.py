@@ -57,7 +57,7 @@ def test_pipe_failure_substages_use_only_existing_calls(
     else:
 
         def information(handle: int, *outputs: Any) -> int:
-            for output, value in zip(outputs, (1, 16385, 16384, 1), strict=True):
+            for output, value in zip(outputs, (9, 16385, 16384, 1), strict=True):
                 output._obj.value = value
             return 1
 
@@ -331,7 +331,7 @@ def pipe_api(monkeypatch: pytest.MonkeyPatch) -> Kernel32:
     def information(handle: int, *outputs: Any) -> int:
         index = api.api.GetNamedPipeInfo.call_count - 1
         assert handle == 10 + index * 2
-        values = (1, windows.PIPE_LIMIT if index == 0 else 0, windows.PIPE_LIMIT, 1)
+        values = (9, windows.PIPE_LIMIT if index == 0 else 0, windows.PIPE_LIMIT, 1)
         for output, value in zip(outputs, values, strict=True):
             output._obj.value = value
         return 1
@@ -663,7 +663,7 @@ def test_real_ffi_call_arguments_keep_native_arrays_and_explicit_stdio(
     def information(handle: int, *outputs: Any) -> int:
         assert handle == 10 + len(readbacks) * 2  # parent, never inherited child end
         assert last_error == 535  # connected before the quota query
-        values = (1, windows.PIPE_LIMIT if not readbacks else 0, windows.PIPE_LIMIT, 1)
+        values = (9, windows.PIPE_LIMIT if not readbacks else 0, windows.PIPE_LIMIT, 1)
         readbacks.append(outputs)
         for output, value in zip(outputs, values, strict=True):
             assert isinstance(output._obj, windows.DWORD)
@@ -762,7 +762,7 @@ def test_pipe_base_readback_accepts_bounded_actual_sizes(
     pipe_api: Kernel32, index: int, outgoing: int, incoming: int
 ) -> None:
     def information(_handle: int, *outputs: Any) -> int:
-        for output, value in zip(outputs, (1, outgoing, incoming, 1), strict=True):
+        for output, value in zip(outputs, (9, outgoing, incoming, 1), strict=True):
             output._obj.value = value
         return 1
 
@@ -770,7 +770,7 @@ def test_pipe_base_readback_accepts_bounded_actual_sizes(
     endpoints: list[windows.Handle] = []
     pipe_api.pipe(endpoints, index)
     assert endpoints[0].pipe_info is not None
-    assert tuple(value.value for value in endpoints[0].pipe_info) == (1, outgoing, incoming, 1)
+    assert tuple(value.value for value in endpoints[0].pipe_info) == (9, outgoing, incoming, 1)
     assert pipe_api.api.GetNamedPipeInfo.call_count == 1
     assert not any(endpoint.released for endpoint in endpoints)
     for endpoint in endpoints:
@@ -781,19 +781,20 @@ def test_pipe_base_readback_accepts_bounded_actual_sizes(
 @pytest.mark.parametrize(
     ("index", "values", "succeeds"),
     [
-        (0, (1, 1, 1, 1), False),  # API failure with otherwise plausible outputs
-        (0, (0, 1, 1, 1), True),  # client end
-        (0, (5, 1, 1, 1), True),  # message pipe
-        (0, (3, 1, 1, 1), True),  # unexpected flag
-        (0, (1, 1, 1, 0), True),
-        (0, (1, 1, 1, 2), True),
-        (0, (1, 0, 1, 1), True),  # duplex active output cannot allocate as needed
-        (0, (1, windows.PIPE_LIMIT + 1, 1, 1), True),
-        (1, (1, windows.PIPE_LIMIT + 1, 1, 1), True),  # even unused output has a bound
-        (2, (1, windows.PIPE_LIMIT + 1, 1, 1), True),
-        (0, (1, 1, 0, 1), True),
-        (1, (1, 0, 0, 1), True),
-        (2, (1, 0, windows.PIPE_LIMIT + 1, 1), True),
+        (0, (9, 1, 1, 1), False),  # API failure with otherwise plausible outputs
+        (0, (8, 1, 1, 1), True),  # missing server end
+        (0, (1, 1, 1, 1), True),  # missing reject-remote option
+        (0, (13, 1, 1, 1), True),  # message pipe
+        (0, (11, 1, 1, 1), True),  # unexpected flag
+        (0, (9, 1, 1, 0), True),
+        (0, (9, 1, 1, 2), True),
+        (0, (9, 0, 1, 1), True),  # duplex active output cannot allocate as needed
+        (0, (9, windows.PIPE_LIMIT + 1, 1, 1), True),
+        (1, (9, windows.PIPE_LIMIT + 1, 1, 1), True),  # even unused output has a bound
+        (2, (9, windows.PIPE_LIMIT + 1, 1, 1), True),
+        (0, (9, 1, 0, 1), True),
+        (1, (9, 0, 0, 1), True),
+        (2, (9, 0, windows.PIPE_LIMIT + 1, 1), True),
     ],
 )
 def test_pipe_base_readback_refuses_and_keeps_partial_owners(

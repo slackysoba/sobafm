@@ -131,3 +131,19 @@ Only unsigned 32-bit integer diagnostics survive validation. No handles, names,
 raw errors or streams enter the result. All call counts, guards, quota predicates,
 ownership and cleanup remain unchanged. This distinct manifest requires its own
 independent review and separate root clearance; it permits no replay of a4.
+
+## Demonstrated a5 pipe-flags correction
+
+The consumed a5 run returned `pipe-stdin` / `info-validate` / `capacity` with
+flags `9`, outgoing and incoming quotas `16384`, and instance count `1`.
+Every quota predicate passed; the expected-flags comparison against `1` caused
+the rejection before target creation. Creation already requests remote-client
+rejection (`8`), in addition to the server-end flag (`1`). Microsoft's
+[pipe creation contract](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-createnamedpipew)
+defines that option, and its [pipe conformance test](https://learn.microsoft.com/en-us/windows-hardware/test/hlk/testref/e3bcbd3f-3e9c-484a-a587-3c081cb28f7a)
+explicitly checks that pipe-info readback includes it. The corrected predicate
+requires exact flags `9`; missing server/remote-rejection flags, message mode or
+unknown bits still fail. Fakes now return the observed valid flags. Creation mode,
+quotas, calls, budgets and ownership are unchanged. This source fault provides no
+evidence of insufficient memory. A5 remains consumed; a new manifest requires
+independent review and separate root clearance before execution.

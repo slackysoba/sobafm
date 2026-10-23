@@ -361,7 +361,7 @@ def test_pipe_diagnostic_sanitizes_every_numeric_field(value: Any) -> None:
 async def test_first_pipe_diagnostic_reaches_result_without_cleanup_overwrite() -> None:
     owner = check(Child(b""))
     diagnostic = PipeDiagnostic(
-        "info-validate", flags=1, outgoing=16385, incoming=16384, instances=1
+        "info-validate", flags=9, outgoing=16385, incoming=16384, instances=1
     )
     owner.launch.record_failure("pipe-stdin", RuntimeError("private"), pipe=diagnostic)
     owner.launch.record_failure("pipe-stderr", OSError("later"), pipe=PipeDiagnostic("connect", 5))

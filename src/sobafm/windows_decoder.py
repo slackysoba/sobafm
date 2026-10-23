@@ -294,7 +294,7 @@ class Kernel32:
             instances=instances.value,
         )
         if (
-            flags.value != 1  # byte-type, server end
+            flags.value != 9  # byte-type, server end, reject remote clients
             or instances.value != 1
             or not 0 < incoming.value <= PIPE_LIMIT
             or outgoing.value > PIPE_LIMIT
