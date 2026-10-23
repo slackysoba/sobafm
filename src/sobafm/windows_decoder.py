@@ -12,8 +12,18 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sobafm.catalog_audio import TrackError, TrackFailure
-from sobafm.decoder_process import PIPE_LIMIT, InputCloser, Launch, WindowsJob, command, environment
+from sobafm.decoder_process import (
+    PIPE_LIMIT,
+    FailurePhase,
+    InputCloser,
+    Launch,
+    PipeDiagnostic,
+    WindowsJob,
+    command,
+    environment,
+)
 from sobafm.native import VerifiedNativeRuntime
+from sobafm.native_calls import GuardedAPI
 
 # Fixed-width Windows ABI fields also let owned fakes inspect layouts on Linux.
 DWORD = ctypes.c_uint32
@@ -203,6 +213,7 @@ class Kernel32:
         writing = index == 0
         parent_owner = Handle(self, None)
         endpoints.append(parent_owner)
+        self.pipe_diagnostic = PipeDiagnostic("server-create")
         parent_owner.value = self.api.CreateNamedPipeW(
             name,
             # Proactor's write transport also reads for the peer-close probe.
@@ -216,11 +227,13 @@ class Kernel32:
             None,
         )
         if parent_owner.value in (None, 0, ctypes.c_void_p(-1).value):
+            self.pipe_diagnostic = PipeDiagnostic("server-create", _windows_ctypes.get_last_error())
             parent_owner.closed = True  # documented invalid-handle result
             raise TrackError(TrackFailure.CAPACITY)
         security = SecurityAttributes(ctypes.sizeof(SecurityAttributes), None, 1)
         child_owner = Handle(self, None)
         endpoints.append(child_owner)
+        self.pipe_diagnostic = PipeDiagnostic("client-open")
         child_owner.value = self.api.CreateFileW(
             name,
             0xC0000000 if writing else 0x40000000,
@@ -231,41 +244,57 @@ class Kernel32:
             None,
         )
         if child_owner.value in (None, 0, ctypes.c_void_p(-1).value):
+            self.pipe_diagnostic = PipeDiagnostic("client-open", _windows_ctypes.get_last_error())
             child_owner.closed = True
             raise TrackError(TrackFailure.CAPACITY)
         # The just-opened client already connected to this single instance.
         parent_owner.overlapped = Overlapped()
         parent_owner.connect_event = Handle(self, None)
+        self.pipe_diagnostic = PipeDiagnostic("event-create")
         parent_owner.connect_event.value = self.api.CreateEventW(None, True, False, None)
         if not parent_owner.connect_event.value:
+            self.pipe_diagnostic = PipeDiagnostic("event-create", _windows_ctypes.get_last_error())
             parent_owner.connect_event.closed = True
             raise TrackError(TrackFailure.CAPACITY)
         parent_owner.overlapped.event = parent_owner.connect_event.fileno()
         parent_owner.uncertain = True
+        self.pipe_diagnostic = PipeDiagnostic("connect")
         if not self.api.ConnectNamedPipe(
             parent_owner.fileno(), ctypes.byref(parent_owner.overlapped)
         ):
             error: int = _windows_ctypes.get_last_error()
             if error != 535:
+                self.pipe_diagnostic = PipeDiagnostic("connect", error)
                 # Unexpected pending I/O must retain its endpoint, event and
                 # native OVERLAPPED; closing a handle is not completion proof.
                 parent_owner.uncertain = error == 997
                 raise TrackError(TrackFailure.CAPACITY)
         parent_owner.uncertain = False
+        self.pipe_diagnostic = PipeDiagnostic("event-close")
         parent_owner.connect_event.close()
         # Retain every native output before querying the rounded base quotas.
         # Zero in an active direction permits allocation as needed, not a bound.
         information = parent_owner.pipe_info = (DWORD(), DWORD(), DWORD(), DWORD())
         flags, outgoing, incoming, instances = information
+        self.pipe_diagnostic = PipeDiagnostic("info-query")
+        if not self.api.GetNamedPipeInfo(
+            parent_owner.fileno(),
+            ctypes.byref(flags),
+            ctypes.byref(outgoing),
+            ctypes.byref(incoming),
+            ctypes.byref(instances),
+        ):
+            self.pipe_diagnostic = PipeDiagnostic("info-query", _windows_ctypes.get_last_error())
+            raise TrackError(TrackFailure.CAPACITY)
+        self.pipe_diagnostic = PipeDiagnostic(
+            "info-validate",
+            flags=flags.value,
+            outgoing=outgoing.value,
+            incoming=incoming.value,
+            instances=instances.value,
+        )
         if (
-            not self.api.GetNamedPipeInfo(
-                parent_owner.fileno(),
-                ctypes.byref(flags),
-                ctypes.byref(outgoing),
-                ctypes.byref(incoming),
-                ctypes.byref(instances),
-            )
-            or flags.value != 1  # byte-type, server end
+            flags.value != 9  # byte-type, server end, reject remote clients
             or instances.value != 1
             or not 0 < incoming.value <= PIPE_LIMIT
             or outgoing.value > PIPE_LIMIT
@@ -346,7 +375,11 @@ class Kernel32:
             raise TrackError(TrackFailure.CLEANUP)
 
     def close(self, handle: int) -> bool:
-        return bool(self.api.CloseHandle(handle))
+        closed = bool(self.api.CloseHandle(handle))
+        diagnostic = getattr(self, "pipe_diagnostic", None)
+        if not closed and diagnostic is not None and diagnostic.stage == "event-close":
+            self.pipe_diagnostic = PipeDiagnostic("event-close", _windows_ctypes.get_last_error())
+        return closed
 
 
 class PipeProtocol(asyncio.StreamReaderProtocol):
@@ -385,6 +418,7 @@ class WindowsProcess:
         self.thread_handle: Handle | None = None
         self.creation: asyncio.Task[None] | None = None
         self.adoption: asyncio.Task[None] | None = None
+        self.adoption_phase: FailurePhase = "adopt-pipes"
         self.waiter: asyncio.Task[int] | None = None
         self.stop = threading.Event()
         self.known_absent = True  # no invocation yet; changed before the FFI call
@@ -402,16 +436,27 @@ class WindowsProcess:
     async def launch(
         cls, runtime: VerifiedNativeRuntime, boundary: WindowsJob, owner: Launch
     ) -> WindowsProcess:
+        return await cls.launch_command(command(runtime.executable), boundary, owner)
+
+    @classmethod
+    async def launch_command(
+        cls, argv: Sequence[str], boundary: WindowsJob, owner: Launch
+    ) -> WindowsProcess:
+        """Create suspended in the supplied Job; bind verifies it before execution."""
         child = cls(boundary, owner)
         owner.preparation = child
         child.creation = asyncio.create_task(
-            asyncio.to_thread(child._create, command(runtime.executable), environment())
+            asyncio.to_thread(child._create, tuple(argv), environment())
         )
         await asyncio.shield(child.creation)
         if child.failed:
             raise TrackError(TrackFailure.CAPACITY)
         child.adoption = asyncio.create_task(child._adopt())
-        await asyncio.shield(child.adoption)
+        try:
+            await asyncio.shield(child.adoption)
+        except BaseException as error:
+            owner.record_failure(child.adoption_phase, error)
+            raise
         return child
 
     def _capture(self) -> None:
@@ -432,11 +477,17 @@ class WindowsProcess:
             self.owner.unresolved = False
 
     def _create(self, argv: Sequence[str], env: Mapping[str, str]) -> None:
+        phase: FailurePhase = "native-setup"
         try:
             self.api = Kernel32()
+            if self.boundary.operation_guard is not None:
+                self.api.api = GuardedAPI(self.api.api, self.boundary.operation_guard)
+            phase = "job-setup"
             self.boundary.prepare()
             for index in (0, 1, 2):
+                phase = ("pipe-stdin", "pipe-stdout", "pipe-stderr")[index]
                 self.api.pipe(self.endpoints, index)
+            phase = "attributes"
             self.storage = CreationStorage(argv, env, self.boundary.creation_handle)
             self.api.attributes(self.storage, [self.endpoints[i].fileno() for i in (1, 3, 5)])
             if self.stop.is_set():
@@ -444,15 +495,19 @@ class WindowsProcess:
             self.owner.begin()
             self.owner.unresolved = True
             self.known_absent = False
+            phase = "create-process"
             returned = self.api.create(self.storage, self.info)
+            phase = "capture"
             self._capture()  # before disposal, endpoint closes, adoption or await
             if not returned:
+                phase = "create-process"
                 # A documented FALSE return with an empty output is a positive
                 # no-process result. An exception is deliberately not equivalent.
                 self.known_absent = not self.info.process and not self.info.thread
                 if self.known_absent:
                     self.owner.unresolved = False
                 raise TrackError(TrackFailure.CAPACITY)
+            phase = "capture"
             if (
                 self.process_handle is None
                 or self.thread_handle is None
@@ -461,6 +516,13 @@ class WindowsProcess:
             ):
                 raise TrackError(TrackFailure.CAPACITY)
         except BaseException as error:  # noqa: BLE001 - retain native state on every worker outcome
+            self.owner.record_failure(
+                self.boundary.setup_phase if phase == "job-setup" else phase,
+                error,
+                pipe=getattr(self.api, "pipe_diagnostic", None)
+                if phase in ("pipe-stdin", "pipe-stdout", "pipe-stderr")
+                else None,
+            )
             self.failed = True
             self._capture()
             if not self.owner.invoked:
@@ -472,6 +534,7 @@ class WindowsProcess:
                 try:
                     self.api.dispose(self.storage)
                 except BaseException as error:  # noqa: BLE001 - failed disposal remains a cleanup obligation
+                    self.owner.record_failure("dispose-attributes", error)
                     self.failed = True
                     error.__traceback__ = error.__context__ = error.__cause__ = None
             # Only the creating worker touches these parent copies of child stdio.
@@ -479,18 +542,21 @@ class WindowsProcess:
                 try:
                     endpoint.close()
                 except BaseException as error:  # noqa: BLE001 - failed closes remain owned
+                    self.owner.record_failure("close-child-endpoints", error)
                     self.failed = True
                     error.__traceback__ = error.__context__ = error.__cause__ = None
 
     async def _adopt(self) -> None:
         loop = asyncio.get_running_loop()
         for index in (0, 1, 2):
+            self.adoption_phase = ("adopt-stdin", "adopt-stdout", "adopt-stderr")[index]
             if self.stop.is_set():
                 raise TrackError(TrackFailure.CAPACITY)
             reader = asyncio.StreamReader(limit=PIPE_LIMIT)
             protocol = PipeProtocol(reader)
             self.protocols[index] = protocol
             endpoint = self.endpoints[index * 2]
+            self._charge()
             if index == 0:
                 transport, _ = await loop.connect_write_pipe(
                     lambda protocol=protocol: protocol, endpoint
@@ -515,14 +581,26 @@ class WindowsProcess:
             or len(self.transports) != 3
         ):
             raise TrackError(TrackFailure.CAPACITY)
-        self.boundary.verify_process(self.process_handle.fileno())
-        self.api.resume(self.thread_handle.fileno())
-        self.thread_handle.close()
+        phase: FailurePhase = "verify-job"
+        try:
+            self.boundary.verify_process(self.process_handle.fileno())
+            phase = "resume"
+            self.api.resume(self.thread_handle.fileno())
+            phase = "close-thread"
+            self.thread_handle.close()
+        except BaseException as error:
+            self.owner.record_failure(phase, error)
+            raise
         self.bound = True
+
+    def _charge(self) -> None:
+        if self.boundary.operation_guard is not None:
+            self.boundary.operation_guard()
 
     async def write(self, chunk: bytes) -> None:
         if not self.bound or self.stop.is_set() or self.writer is None:
             raise TrackError(TrackFailure.CAPACITY)
+        self._charge()
         self.writer.write(chunk)
         await self.writer.drain()
 
@@ -536,17 +614,20 @@ class WindowsProcess:
         await self._join_setup()
         if self.closer is None:
             self.closer = InputCloser(self.writer)
+        self._charge()
         await self.closer.close()
         if self.endpoints:
             endpoint = self.endpoints[0]
             protocol = self.protocols.get(0)
             if self.writer is None and protocol is not None:
                 if protocol.transport is not None:
+                    self._charge()
                     protocol.transport.close()
                 # Missing capture after an entered adoption remains unresolved.
             elif 0 not in self.transports:
                 endpoint.close()
-            while not endpoint.closed:  # noqa: ASYNC110 - actual owned-handle close, under caller's original deadline
+            while not endpoint.closed:
+                self._charge()
                 await asyncio.sleep(0.01)
 
     async def read(self, pipe: int, size: int) -> bytes:
@@ -604,6 +685,7 @@ class WindowsProcess:
             protocol = self.protocols.get(index // 2) if index % 2 == 0 else None
             transport = protocol.transport if protocol is not None else None
             if transport is not None:
+                self._charge()
                 transport.close()
             elif protocol is not None:
                 # An entered adoption with no capture is not proof that no
