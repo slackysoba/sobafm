@@ -39,6 +39,11 @@ message through the SDK's bounded receive path. It reuses creation-time Job
 assignment and owned pipes. It opens no provider, HTTP, socket or decoder and
 does not read credentials. The [finite control](../worker-fit-check.md) is prepared
 and independently reviewed before separately authorized native execution.
+One explicit launch may involve a contained virtual-environment interpreter
+descendant; the control charges the whole Job rather than assuming one process.
+Pre-call operation and cumulative-read budgets stop cleanup retries at exhaustion
+without abandoning ownership. Reporting failure and caller cancellation cannot
+end the runner while actual retirement remains unresolved.
 
 If the bootstrap cannot operate at this ceiling with attributable cap-failure
 evidence, the proposed current-runtime configuration is infeasible. Stop with

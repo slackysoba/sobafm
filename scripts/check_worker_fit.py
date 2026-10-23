@@ -12,7 +12,15 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from sobafm.worker_fit import MAXIMUM_CANDIDATE, FitCheck
+from sobafm.worker_fit import (
+    CLOSE_ATTEMPTS,
+    DRAIN_LIMIT,
+    MAXIMUM_CANDIDATE,
+    OPERATION_LIMIT,
+    FitCheck,
+    Result,
+    retained_wait,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
@@ -20,6 +28,7 @@ FILES = (
     "src/sobafm/worker_fit.py",
     "src/sobafm/windows_decoder.py",
     "src/sobafm/decoder_process.py",
+    "src/sobafm/native_calls.py",
     "src/sobafm/catalog_audio.py",
     "scripts/check_worker_fit.py",
     "uv.lock",
@@ -52,21 +61,37 @@ def identity() -> dict[str, object]:
         "files": {name: digest(ROOT / name) for name in FILES},
         "run_seconds": 15,
         "cleanup_seconds": 3,
+        "operation_limit": OPERATION_LIMIT,
+        "cumulative_read_request_bytes": DRAIN_LIMIT,
+        "close_attempts": CLOSE_ATTEMPTS,
         "pcm_retained_for_arithmetic": 34560000,
         "outside_charges_optimistically_omitted": True,
         "qualified_profile": False,
     }
 
 
-async def execute(python: Path, result_path: Path) -> None:
-    owner = FitCheck(python)
-    result = await asyncio.shield(owner.decision)
+def report(result_path: Path, result: Result) -> None:
     with result_path.open("x", encoding="utf-8") as stream:
         json.dump(asdict(result), stream, indent=2)
         stream.write("\n")
-    # Reporting a sticky timeout does not abandon any child, setup or storage.
-    # If this stays pending, retain this runner and its ownership; do not rerun.
-    await asyncio.shield(owner.task)
+
+
+async def execute(python: Path, result_path: Path) -> None:
+    owner = FitCheck(python)
+    report_failed = False
+    try:
+        result = await retained_wait(owner.decision)
+        try:
+            report(result_path, result)
+        except Exception:  # noqa: BLE001 - reporting cannot release process ownership
+            report_failed = True
+    finally:
+        # Join the independently retained retirement, even if work was cancelled
+        # before starting or the report failed. Repeated caller cancellation is
+        # deferred until actual release; a parked owner keeps this runner alive.
+        await owner.join()
+    if report_failed:
+        raise RuntimeError("fixed result report failed after actual retirement")
 
 
 def main() -> None:

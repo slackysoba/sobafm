@@ -6,8 +6,10 @@ and manifest and the orchestrator separately clears execution.
 
 ## Fixed scope
 
-- One new owned Python worker, one creation-time Job, one run; no descendants,
-  provider, decoder, sockets, authentication, host inspection or old fixtures.
+- One explicit Python launcher and its contained interpreter worker tree, one
+  creation-time Job, one run. The virtual-environment launcher may redirect to
+  an interpreter descendant; the whole Job is charged. No provider, decoder,
+  sockets, authentication, host inspection or old fixtures.
 - Process and Job private-commit ceiling: 35,439,999 bytes, with no subtraction.
   This is `70,000,000 - 34,560,000 - 1`, optimistically omitting every outside
   allocation. It is not a qualified audio reservation.
@@ -21,6 +23,19 @@ and manifest and the orchestrator separately clears execution.
   cleanup verdict. Failure never becomes success after that verdict. Ownership
   continues until setup, readers, writers, exit, Job and storage actually retire.
   A still-running cleanup must be preserved, not killed or retried.
+- A shared **512-operation** budget is charged before every explicit Job/Kernel32
+  function invocation, including nested queries/closes and termination fallback.
+  It also charges controlled pipe adoption/write/close submissions, reads and
+  close checks. Default production callers have no new guard or changed limits.
+- Cumulative stdout/stderr read requests, including useful-path reads and cleanup
+  drains, reserve their requested size before forwarding against **65,536 bytes**.
+  Unused request bytes are not refunded. No drain can extend this budget.
+- Cleanup requests termination once and permits at most **64** asynchronous close
+  checks within the shared operation budget. These are finite test controls,
+  not measured requirements or memory allowances. Exhaustion or unresolved
+  operation failure parks on an unset event with all owners/tasks/handles/storage
+  retained; it does not poll or retry native work. Already pending operations
+  remain owned. A parked case has no automatic resume or replacement path.
 
 ## Preparation and execution
 
@@ -35,7 +50,10 @@ Only after separate clearance, `scripts/check_worker_fit.py execute
 `.consumed` receipt before launching. The receipt prevents an automatic repeat.
 Do not remove or rename it to rerun. The `.result.json` contains fixed categories,
 exit code and release state; no raw errors, PCM, credentials or diagnostics.
-The runner stays alive if it still owns late cleanup after reporting a verdict.
+The runner joins actual retirement independently of the useful-work task. Repeated
+caller cancellation and result-file creation/write failure cannot take unresolved
+ownership into event-loop shutdown. A reporting failure is raised with fixed text
+only after actual retirement; a parked case keeps the runner alive indefinitely.
 
 ## Interpretation and stop conditions
 

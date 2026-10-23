@@ -14,6 +14,7 @@ from typing import Any
 from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.decoder_process import PIPE_LIMIT, InputCloser, Launch, WindowsJob, command, environment
 from sobafm.native import VerifiedNativeRuntime
+from sobafm.native_calls import GuardedAPI
 
 # Fixed-width Windows ABI fields also let owned fakes inspect layouts on Linux.
 DWORD = ctypes.c_uint32
@@ -441,6 +442,8 @@ class WindowsProcess:
     def _create(self, argv: Sequence[str], env: Mapping[str, str]) -> None:
         try:
             self.api = Kernel32()
+            if self.boundary.operation_guard is not None:
+                self.api.api = GuardedAPI(self.api.api, self.boundary.operation_guard)
             self.boundary.prepare()
             for index in (0, 1, 2):
                 self.api.pipe(self.endpoints, index)
@@ -498,6 +501,7 @@ class WindowsProcess:
             protocol = PipeProtocol(reader)
             self.protocols[index] = protocol
             endpoint = self.endpoints[index * 2]
+            self._charge()
             if index == 0:
                 transport, _ = await loop.connect_write_pipe(
                     lambda protocol=protocol: protocol, endpoint
@@ -527,9 +531,14 @@ class WindowsProcess:
         self.thread_handle.close()
         self.bound = True
 
+    def _charge(self) -> None:
+        if self.boundary.operation_guard is not None:
+            self.boundary.operation_guard()
+
     async def write(self, chunk: bytes) -> None:
         if not self.bound or self.stop.is_set() or self.writer is None:
             raise TrackError(TrackFailure.CAPACITY)
+        self._charge()
         self.writer.write(chunk)
         await self.writer.drain()
 
@@ -543,17 +552,20 @@ class WindowsProcess:
         await self._join_setup()
         if self.closer is None:
             self.closer = InputCloser(self.writer)
+        self._charge()
         await self.closer.close()
         if self.endpoints:
             endpoint = self.endpoints[0]
             protocol = self.protocols.get(0)
             if self.writer is None and protocol is not None:
                 if protocol.transport is not None:
+                    self._charge()
                     protocol.transport.close()
                 # Missing capture after an entered adoption remains unresolved.
             elif 0 not in self.transports:
                 endpoint.close()
-            while not endpoint.closed:  # noqa: ASYNC110 - actual owned-handle close, under caller's original deadline
+            while not endpoint.closed:
+                self._charge()
                 await asyncio.sleep(0.01)
 
     async def read(self, pipe: int, size: int) -> bytes:
@@ -611,6 +623,7 @@ class WindowsProcess:
             protocol = self.protocols.get(index // 2) if index % 2 == 0 else None
             transport = protocol.transport if protocol is not None else None
             if transport is not None:
+                self._charge()
                 transport.close()
             elif protocol is not None:
                 # An entered adoption with no capture is not proof that no

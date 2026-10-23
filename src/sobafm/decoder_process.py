@@ -15,6 +15,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 
 from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.native import VerifiedNativeRuntime
+from sobafm.native_calls import GuardedAPI
 
 CHILD_MEMORY = 128 * 1024**2
 PIPE_BLOCK_SIZE = 16 * 1024  # FFmpeg protocol operation size, not pipe capacity
@@ -265,10 +266,16 @@ class _Accounting(ctypes.Structure):
 class WindowsJob:
     """Private Job handle with enforced memory limits, membership and tree queries."""
 
-    def __init__(self, *, commit_limit: int = CHILD_MEMORY) -> None:
+    def __init__(
+        self,
+        *,
+        commit_limit: int = CHILD_MEMORY,
+        operation_guard: Callable[[], None] | None = None,
+    ) -> None:
         if type(commit_limit) is not int or not 0 < commit_limit <= CHILD_MEMORY:
             raise ValueError("invalid child commit limit")
         self._commit_limit = commit_limit
+        self.operation_guard = operation_guard
         self._handle: int | None = None
         self._api: Any = None  # typed at each explicit Win32 FFI boundary below
 
@@ -300,6 +307,8 @@ class WindowsJob:
         ):
             function = getattr(api, name)
             function.argtypes, function.restype = arguments, result
+        if self.operation_guard is not None:
+            api = GuardedAPI(api, self.operation_guard)
         self._api = api
         handle = api.CreateJobObjectW(None, None)
         if not handle:
