@@ -402,10 +402,17 @@ class WindowsProcess:
     async def launch(
         cls, runtime: VerifiedNativeRuntime, boundary: WindowsJob, owner: Launch
     ) -> WindowsProcess:
+        return await cls.launch_command(command(runtime.executable), boundary, owner)
+
+    @classmethod
+    async def launch_command(
+        cls, argv: Sequence[str], boundary: WindowsJob, owner: Launch
+    ) -> WindowsProcess:
+        """Create suspended in the supplied Job; bind verifies it before execution."""
         child = cls(boundary, owner)
         owner.preparation = child
         child.creation = asyncio.create_task(
-            asyncio.to_thread(child._create, command(runtime.executable), environment())
+            asyncio.to_thread(child._create, tuple(argv), environment())
         )
         await asyncio.shield(child.creation)
         if child.failed:

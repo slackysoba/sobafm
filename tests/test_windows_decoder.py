@@ -339,6 +339,19 @@ async def test_storage_retirement_refuses_undrained_reader_then_detaches_owned_g
     assert all(transport.protocol.transport is None for transport in rig.transports)
 
 
+async def test_worker_command_uses_same_creation_time_boundary(rig: Rig) -> None:
+    argv = ("C:/owned/python.exe", "-I", "-B", "-m", "sobafm.audio_worker", "--bootstrap-check")
+    child = await windows.WindowsProcess.launch_command(argv, rig.job, rig.owner)
+    assert rig.api.command_line == subprocess.list2cmdline(argv)
+    with pytest.raises(TrackError, match="capacity"):
+        await child.write(b"not yet bound")
+    child.bind()
+    assert rig.job.events == ["prepare", "verify"]
+    assert rig.api.events[-1] == "resume"
+    await rig.release()
+    await child.release_storage()
+
+
 @pytest.mark.parametrize(
     "failure", ["pipe0", "pipe1", "pipe2", "attributes", "create-false", "capture"]
 )

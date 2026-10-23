@@ -29,6 +29,7 @@ Each record captures one material decision: its context, the options considered,
 | [0008](0008-fail-lyria-producers-at-qualified-ingress-bounds.md) | Fail Lyria producers at qualified ingress bounds | Accepted on merge of PR #206; Proposed until then |
 | [0009](0009-raise-the-per-server-audio-footprint-ceiling-to-70-mb.md) | Raise the per-server audio footprint ceiling to 70 MB | Proposed until its decision pull request is accepted and merged |
 | [0010](0010-maintain-a-pinned-bounded-genai-distribution.md) | Maintain a pinned bounded Google Gen AI distribution | Proposed; accepted on decision PR merge after final maintainer acceptance |
+| [0011](0011-isolate-non-pcm-audio-in-a-bounded-worker.md) | Isolate non-PCM audio in a bounded Windows worker | Proposed; accepted on maintainer-approved merge |
 
 ADR-0009 proposes superseding only the 40,000,000-byte total and fixed
 38,000,000-byte parent clauses in ADR-0004/0006/0007/0008. Their accepted source
