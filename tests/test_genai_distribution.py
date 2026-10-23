@@ -1,17 +1,27 @@
-"""Owned archive and proposal checks; no SDK build, install or external call."""
+"""Owned source, dependency and installed metadata checks; no external calls."""
 
 import hashlib
 import importlib.util
 import io
+import json
 import tarfile
 import tomllib
+from importlib.metadata import distribution
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import unquote
 
 import pytest
 from packaging.requirements import Requirement
 
 MATERIALS = Path(__file__).resolve().parents[1] / "third_party/google-genai"
+SDK_VERSION = "2.26.0+sobafm.1"
+SDK_WHEEL_URL = (
+    "https://github.com/slackysoba/sobafm/releases/download/"
+    "sdk-google-genai-2.26.0-sobafm.1/"
+    "google_genai-2.26.0%2Bsobafm.1-py3-none-any.whl"
+)
+SDK_WHEEL_SHA256 = "95d2a9077f3c4730f846faa1e572fb52bf511333d4ab03bfd1f518c85af3bf03"
 
 
 def recipe() -> ModuleType:
@@ -82,7 +92,7 @@ def test_safe_source_is_owned_and_existing_destination_is_preserved(tmp_path: Pa
     assert (source / "README.md").read_bytes() == b"data"
 
 
-def test_reviewed_patch_is_exact_and_active_dependency_remains_stock() -> None:
+def test_reviewed_patch_and_published_dependency_are_pinned() -> None:
     upstream = tomllib.loads((MATERIALS / "UPSTREAM.toml").read_text(encoding="utf-8"))
     for expected in upstream["reviewed_sources"].values():
         assert len(bytes.fromhex(expected)) == 32
@@ -96,8 +106,12 @@ def test_reviewed_patch_is_exact_and_active_dependency_remains_stock() -> None:
         for value in project["project"]["dependencies"]
         if Requirement(value).name == "google-genai"
     )
-    assert dependency.url is None
-    assert str(dependency.specifier) == ">=2.26.0"
+    assert dependency.url == f"{SDK_WHEEL_URL}#sha256={SDK_WHEEL_SHA256}"
+    lock = tomllib.loads((MATERIALS.parents[1] / "uv.lock").read_text())
+    sdk = next(package for package in lock["package"] if package["name"] == "google-genai")
+    assert sdk["version"] == SDK_VERSION
+    assert sdk["source"] == {"url": SDK_WHEEL_URL}
+    assert sdk["wheels"] == [{"url": SDK_WHEEL_URL, "hash": f"sha256:{SDK_WHEEL_SHA256}"}]
 
 
 def test_canonical_patch_reconstructs_the_exact_reviewed_patch() -> None:
@@ -110,12 +124,16 @@ def test_canonical_patch_reconstructs_the_exact_reviewed_patch() -> None:
     assert len(canonical) == upstream["patch_bytes"]
 
 
-def test_proposed_direct_reference_survives_standard_requirement_metadata() -> None:
-    # This is an owned metadata specimen, never an active or downloadable dependency.
-    url = (
-        "https://example.invalid/google_genai-2.26.0%2Bsobafm.1-py3-none-any.whl#sha256=" + "a" * 64
+def test_installed_sdk_and_project_metadata_match_the_published_dependency() -> None:
+    requirements = distribution("sobafm").requires
+    assert requirements is not None
+    dependency = next(
+        Requirement(value) for value in requirements if Requirement(value).name == "google-genai"
     )
-    requirement = Requirement(f"google-genai @ {url}")
-    reparsed = Requirement(str(requirement))
-    assert reparsed.name == "google-genai"
-    assert reparsed.url == url
+    assert dependency.url == f"{SDK_WHEEL_URL}#sha256={SDK_WHEEL_SHA256}"
+    sdk = distribution("google-genai")
+    assert sdk.version == SDK_VERSION
+    assert sdk.metadata["License-Expression"] == "Apache-2.0 AND MIT"
+    direct = sdk.read_text("direct_url.json")
+    assert direct is not None
+    assert unquote(json.loads(direct)["url"]) == unquote(SDK_WHEEL_URL)
