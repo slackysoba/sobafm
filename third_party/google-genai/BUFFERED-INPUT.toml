@@ -1,0 +1,13 @@
+status = "unpublished-buffered-input-candidate"
+base_derived_version = "2.26.0+sobafm.1"
+derived_version = "2.26.0+sobafm.2"
+base_patch_sha256 = "bddf04295e8925cd3877f350d23b09c14d680f87f0cd94827c3787f1138d3a18"
+patch = "buffered-input.patch"
+notice = "NOTICE.buffered-input"
+patch_sha256 = "03adcc46ee9432383a8ea2676d0d261be03db533545c0f8c96f9a8f63d161a0b"
+
+[candidate_sources]
+"google/genai/live_music.py" = "2e349d816d3aef3e84ab37fa0887377ac4958cd1eb7a54ddf6a594516334c3fd"
+"google/genai/_bounded_receive.py" = "3b2c92862841b499574f5102528329be019422a88098e7aa812033ed43f5a944"
+"google/genai/json_shape_preflight.py" = "295163e901f9e9aee4faf6f288ee89e935aeff2027ebf8afd5c6b6ecc1ad8747"
+"google/genai/_buffered_input.py" = "95695ed9dae97f39939287d312a542c2e7c2ee1a60a697d8b8e27f9dc95b1cf6"

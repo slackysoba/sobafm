@@ -16,7 +16,9 @@ from google.genai.json_shape_preflight import ShapeLimits
 import sobafm.audio_budget
 import sobafm.deck
 from sobafm.audio_budget import (
+    LYRIA_INPUT_BATCH_BYTES,
     LYRIA_RECEIVE_BYTES,
+    LYRIA_RECEIVE_RESERVATION_BYTES,
     PCM_LIMIT,
     AudioBytes,
     AudioLedger,
@@ -61,12 +63,57 @@ async def test_real_connector_requires_and_forwards_public_bounded_options(
         return client
 
     monkeypatch.setattr(genai, "Client", owned_client)
-    options = BoundedReceiveOptions(bytearray(128), 128, 4, 0, 128, 1, ShapeLimits(128, 64, 8, 16))
+    options = BoundedReceiveOptions(
+        bytearray(128),
+        128,
+        4,
+        0,
+        128,
+        1,
+        ShapeLimits(128, 64, 8, 16),
+        input_storage=bytearray(LYRIA_INPUT_BATCH_BYTES),
+    )
     async with lyria("owned-fake-key")(options):
         pass
     assert seen == [
         {"model": "models/lyria-realtime-exp", "compression": None, "bounded_receive": options}
     ]
+
+
+async def test_each_connection_receives_its_own_prepaid_input_pair() -> None:
+    seen: list[BoundedReceiveOptions] = []
+
+    @contextlib.asynccontextmanager
+    async def connect(options: BoundedReceiveOptions) -> AsyncGenerator[MusicSession]:
+        seen.append(options)
+        yield FakeSession()
+
+    audio = AudioLedger()
+    storage = audio.lyria_receive
+    assert storage is not None
+    decks = [make_deck(connect, audio) for _ in range(2)]
+    for deck in decks:
+        deck.start()
+    try:
+        await settle()
+        assert len(seen) == 2
+        for index, options in enumerate(seen):
+            backing = storage.backings[index]
+            assert options.storage is backing.storage
+            assert options.input_storage is backing.input_storage
+            assert backing.owner is decks[index]
+            assert len(backing.input_storage) == LYRIA_INPUT_BATCH_BYTES
+            assert options.max_bytes == options.max_size == LYRIA_RECEIVE_BYTES
+            assert options.max_queue == 1
+            assert options.max_fragments == 64
+            assert options.max_empty_fragments == 8
+        assert seen[0].input_storage is not seen[1].input_storage
+        assert audio.reserved.other == 2 * LYRIA_RECEIVE_RESERVATION_BYTES
+    finally:
+        for deck in decks:
+            deck.retire()
+        for deck in decks:
+            await deck.wait_ended()
 
 
 def test_payload_allocation_is_prepaid_and_replacement_reuses_only_paid_storage(
@@ -83,7 +130,10 @@ def test_payload_allocation_is_prepaid_and_replacement_reuses_only_paid_storage(
     monkeypatch.setattr(sobafm.audio_budget, "ReceiveBacking", ObservedBacking)
     storage = audio.lyria_receive
     assert storage is not None
-    assert allocated == [AudioBytes(other=2 * LYRIA_RECEIVE_BYTES)] * 2
+    assert allocated == [AudioBytes(other=2 * LYRIA_RECEIVE_RESERVATION_BYTES)] * 2
+    assert all(
+        len(backing.input_storage) == LYRIA_INPUT_BATCH_BYTES for backing in storage.backings
+    )
     audio.unbounded()
     assert audio.lyria_receive is storage
     assert len(allocated) == 2
@@ -133,8 +183,53 @@ def test_partial_allocation_keeps_charge_and_owner_without_retry(
     assert len(storage.backings) == 1
     assert storage.claim(object()) is None
     assert not audio.bounded
-    assert audio.reserved == AudioBytes(other=2 * LYRIA_RECEIVE_BYTES)
+    assert audio.reserved == AudioBytes(other=2 * LYRIA_RECEIVE_RESERVATION_BYTES)
     assert calls == 2
+
+
+def test_receive_pair_refuses_duplicate_allocation_and_duplicate_owner() -> None:
+    audio = AudioLedger()
+    storage = audio.lyria_receive
+    assert storage is not None
+    owner = object()
+    first = storage.claim(owner)
+    assert first is not None
+    assert storage.claim(owner) is None
+    original = tuple(storage.backings)
+    with pytest.raises(RuntimeError, match="already started"):
+        storage.allocate()
+    assert tuple(storage.backings) == original
+    assert audio.reserved == AudioBytes(other=2 * LYRIA_RECEIVE_RESERVATION_BYTES)
+    storage.released(first, owner)
+    replacement = object()
+    assert storage.claim(replacement) is first
+    with pytest.raises(RuntimeError, match="ownership changed"):
+        storage.released(first, owner)
+
+
+def test_input_allocation_failure_retains_full_prepaid_pair_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio = AudioLedger()
+    calls: list[int] = []
+
+    def allocate(size: int) -> bytearray:
+        calls.append(size)
+        assert audio.reserved == AudioBytes(other=2 * LYRIA_RECEIVE_RESERVATION_BYTES)
+        if size == LYRIA_INPUT_BATCH_BYTES:
+            raise MemoryError("owned input allocation failure")
+        return bytearray(size)
+
+    monkeypatch.setattr(sobafm.audio_budget, "bytearray", allocate, raising=False)
+    with pytest.raises(MemoryError, match="owned input allocation failure"):
+        _ = audio.lyria_receive
+    storage = audio.lyria_receive
+    assert storage is not None
+    assert storage.uncertain
+    assert storage.backings == []
+    assert storage.claim(object()) is None
+    assert calls == [LYRIA_RECEIVE_BYTES, LYRIA_INPUT_BATCH_BYTES]
+    assert not audio.bounded
 
 
 async def test_active_receivers_are_distinct_no_third_store_and_reuse_follows_close(
@@ -152,6 +247,7 @@ async def test_active_receivers_are_distinct_no_third_store_and_reuse_follows_cl
     assert len(lyria.sessions) == 2
     assert [backing.owner for backing in storage.backings] == decks[:2]
     assert storage.backings[0].storage is not storage.backings[1].storage
+    assert storage.backings[0].input_storage is not storage.backings[1].input_storage
     assert decks[2].end_reason is EndReason.FAILED
     decks[0].retire()
     await decks[0].wait_ended()
@@ -165,7 +261,7 @@ async def test_active_receivers_are_distinct_no_third_store_and_reuse_follows_cl
     for deck in (decks[1], replacement):
         deck.retire()
         await deck.wait_ended()
-    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT, other=2 * LYRIA_RECEIVE_BYTES)
+    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT, other=2 * LYRIA_RECEIVE_RESERVATION_BYTES)
     assert not audio.bounded
 
 
@@ -416,6 +512,7 @@ async def test_installed_bounded_path_fails_safely_and_preserves_admitted_pcm(
     assert connection.calls[0]["compression"] is None
     assert connection.calls[0]["max_size"] == LYRIA_RECEIVE_BYTES
     assert connection.calls[0]["max_queue"] == 1
+    assert callable(connection.calls[0]["create_connection"])
     assert [frame.data for frame in deck.frames] == [audio]
     assert all(record.exc_info is None for record in caplog.records)
     assert "owned-secret" not in caplog.text
@@ -452,11 +549,14 @@ async def test_partial_receive_cancellation_waits_for_context_close_before_reuse
     assert storage is not None
     assert not deck.quiescent
     assert storage.backings[0].owner is deck
+    held_input = storage.backings[0].input_storage
+    assert callable(connection.calls[0]["create_connection"])
     assert connection.closes == 1
     connection.close_release.set()
     await deck.wait_ended()
     assert deck.quiescent
     assert storage.backings[0].owner is None
+    assert storage.backings[0].input_storage is held_input
     assert connection.streams == 2
     assert connection.legacy == 0
 
@@ -573,7 +673,7 @@ async def test_engine_close_survives_caller_cancellation_and_holds_slots_until_a
     storage = audio.lyria_receive
     assert storage is not None
     assert all(backing.owner is None for backing in storage.backings)
-    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT, other=2 * LYRIA_RECEIVE_BYTES)
+    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT, other=2 * LYRIA_RECEIVE_RESERVATION_BYTES)
     assert not audio.bounded
 
 

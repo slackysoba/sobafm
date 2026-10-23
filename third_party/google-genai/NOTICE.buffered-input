@@ -1,0 +1,22 @@
+SobaFM candidate Google Gen AI distribution 2.26.0+sobafm.2
+
+Based on Google Gen AI SDK 2.26.0, Copyright Google LLC, under Apache-2.0.
+The verified upstream source archive contains LICENSE and no NOTICE file.
+All upstream copyright and attribution notices remain in the source.
+
+SobaFM changes, 2026:
+- live_music.py: optional bounded receive, explicit compression forwarding,
+  setup/session propagation and terminal receive ownership.
+- _bounded_receive.py and json_shape_preflight.py: SobaFM-authored additions,
+  distributed under the MIT license in LICENSE.sobafm.
+- _buffered_input.py: SobaFM MIT addition using the public WebSockets factory
+  and asyncio BufferedProtocol with caller-funded fixed input/prefix capacity.
+- version.py, pyproject.toml and MANIFEST.in: derived version, license metadata
+  and inclusion of the corresponding source/recipe materials.
+
+Modified files carry a SobaFM modification notice. This is a downstream candidate,
+not a stock or Google-supported distribution. SobaFM's MIT license does not
+replace the Apache-2.0 license of upstream code. See both license files.
+
+This proposal authorizes isolated verification only. It has not been published,
+adopted as the application dependency or qualified for production readiness.

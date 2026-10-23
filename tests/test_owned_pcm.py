@@ -10,7 +10,13 @@ import discord
 import pytest
 
 import sobafm.mixer as mixing
-from sobafm.audio_budget import LYRIA_RECEIVE_BYTES, PCM_LIMIT, TOTAL_LIMIT, AudioBytes, AudioLedger
+from sobafm.audio_budget import (
+    LYRIA_RECEIVE_RESERVATION_BYTES,
+    PCM_LIMIT,
+    TOTAL_LIMIT,
+    AudioBytes,
+    AudioLedger,
+)
 from sobafm.deck import Deck, EndReason
 from sobafm.mixer import Mixer
 from sobafm.owned_pcm import OwnedPCM, PCMCapacityError, PCMOwner, PCMReceipt
@@ -142,7 +148,7 @@ async def test_static_charge_survives_cleanup_and_station_replacement_once() -> 
         remaining.release()
         await station.close()
     assert not audio.bounded
-    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT, other=2 * LYRIA_RECEIVE_BYTES)
+    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT, other=2 * LYRIA_RECEIVE_RESERVATION_BYTES)
 
 
 async def test_eight_frame_parent_refuses_staging_before_unpaid_crossfade_growth() -> None:

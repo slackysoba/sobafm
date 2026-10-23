@@ -15,6 +15,9 @@ PCM_LIMIT = 34_560_000
 TOTAL_LIMIT = 70_000_000  # strict: equality is ineligible
 PARENT_LIMIT = TOTAL_LIMIT - 1  # derived integer bound, not a separate partition
 LYRIA_RECEIVE_BYTES = 524_288
+LYRIA_INPUT_BATCH_BYTES = 4_096
+# One fixed parser-input buffer and a separate immutable used-prefix copy.
+LYRIA_RECEIVE_RESERVATION_BYTES = LYRIA_RECEIVE_BYTES + 2 * LYRIA_INPUT_BATCH_BYTES
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,7 @@ class ReceiveBacking:
 
     def __init__(self) -> None:
         self.storage = bytearray(LYRIA_RECEIVE_BYTES)
+        self.input_storage = bytearray(LYRIA_INPUT_BATCH_BYTES)
         self.owner: object | None = None
 
 
@@ -140,8 +144,12 @@ class LyriaReceiveStorage:
         self._lease = lease
         self.backings: list[ReceiveBacking] = []
         self.uncertain = False
+        self._allocation_started = False
 
     def allocate(self) -> None:
+        if self._allocation_started:
+            raise RuntimeError("receive storage allocation already started")
+        self._allocation_started = True
         try:
             for _ in range(2):
                 self.backings.append(ReceiveBacking())
@@ -150,6 +158,8 @@ class LyriaReceiveStorage:
             raise
 
     def claim(self, owner: object) -> ReceiveBacking | None:
+        if any(backing.owner is owner for backing in self.backings):
+            return None
         if not self.uncertain and len(self.backings) == 2:
             for backing in self.backings:
                 if backing.owner is None:
@@ -196,11 +206,12 @@ class AudioLedger:
     def lyria_receive(self) -> LyriaReceiveStorage | None:
         """Prepay fixed payload capacity before unknown work; reuse it across stations.
 
-        This charge covers only the two payload capacities. Headers, SDK models,
-        transport and player allocations retain their separate unknown obligation.
+        This charge covers two payload capacities plus each fixed input backing
+        and its bounded forwarding copy. Remaining headers, SDK models, transport
+        and player allocations retain their separate unknown obligation.
         """
         if self._lyria_receive is None:
-            lease = self.reserve(AudioBytes(other=2 * LYRIA_RECEIVE_BYTES))
+            lease = self.reserve(AudioBytes(other=2 * LYRIA_RECEIVE_RESERVATION_BYTES))
             if lease is None:
                 return None
             storage = self._lyria_receive = LyriaReceiveStorage(lease)

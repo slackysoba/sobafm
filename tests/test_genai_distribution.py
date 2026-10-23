@@ -17,13 +17,13 @@ import pytest
 from packaging.requirements import Requirement
 
 MATERIALS = Path(__file__).resolve().parents[1] / "third_party/google-genai"
-SDK_VERSION = "2.26.0+sobafm.1"
+SDK_VERSION = "2.26.0+sobafm.2"
 SDK_WHEEL_URL = (
     "https://github.com/slackysoba/sobafm/releases/download/"
-    "sdk-google-genai-2.26.0-sobafm.1/"
-    "google_genai-2.26.0%2Bsobafm.1-py3-none-any.whl"
+    "sdk-google-genai-2.26.0-sobafm.2/"
+    "google_genai-2.26.0%2Bsobafm.2-py3-none-any.whl"
 )
-SDK_WHEEL_SHA256 = "95d2a9077f3c4730f846faa1e572fb52bf511333d4ab03bfd1f518c85af3bf03"
+SDK_WHEEL_SHA256 = "740778147861c841590b08a6f77d412c30a6672ef44f7ac9f75ba0bd28d8aabf"
 
 
 def recipe() -> ModuleType:
@@ -96,6 +96,9 @@ def test_safe_source_is_owned_and_existing_destination_is_preserved(tmp_path: Pa
 
 def test_reviewed_patch_and_published_dependency_are_pinned() -> None:
     upstream = tomllib.loads((MATERIALS / "UPSTREAM.toml").read_text(encoding="utf-8"))
+    buffered = tomllib.loads((MATERIALS / "BUFFERED-INPUT.toml").read_text(encoding="utf-8"))
+    assert upstream["derived_version"] == buffered["base_derived_version"] == "2.26.0+sobafm.1"
+    assert buffered["derived_version"] == SDK_VERSION
     for expected in upstream["reviewed_sources"].values():
         assert len(bytes.fromhex(expected)) == 32
     assert (
@@ -144,6 +147,7 @@ def test_installed_sdk_and_project_metadata_match_the_published_dependency() -> 
 def test_upstream_advisory_input_matches_the_adopted_component() -> None:
     root = MATERIALS.parents[1]
     upstream = tomllib.loads((MATERIALS / "UPSTREAM.toml").read_text(encoding="utf-8"))
+    buffered = tomllib.loads((MATERIALS / "BUFFERED-INPUT.toml").read_text(encoding="utf-8"))
     lines = (root / ".github/genai-upstream/requirements.txt").read_text().splitlines()
     requirements = [line for line in lines if line.strip() and not line.startswith("#")]
     assert requirements == [f"{upstream['name']}=={upstream['version']}"]
@@ -153,23 +157,41 @@ def test_upstream_advisory_input_matches_the_adopted_component() -> None:
     assert upstream["upstream_purl"] == f"pkg:pypi/{requirement.name}@{upstream['version']}"
     lock = tomllib.loads((root / "uv.lock").read_text())
     sdk = next(package for package in lock["package"] if package["name"] == requirement.name)
-    assert sdk["version"] == upstream["derived_version"] == SDK_VERSION
+    assert upstream["derived_version"] == buffered["base_derived_version"]
+    assert sdk["version"] == buffered["derived_version"] == SDK_VERSION
     assert sdk["source"] == {"url": SDK_WHEEL_URL}
     assert sdk["wheels"] == [{"url": SDK_WHEEL_URL, "hash": f"sha256:{SDK_WHEEL_SHA256}"}]
 
 
 def test_derived_license_override_supplies_only_verified_metadata() -> None:
     upstream = tomllib.loads((MATERIALS / "UPSTREAM.toml").read_text(encoding="utf-8"))
+    buffered = tomllib.loads((MATERIALS / "BUFFERED-INPUT.toml").read_text(encoding="utf-8"))
     config = tomllib.loads((MATERIALS.parents[1] / "osv-scanner.toml").read_text())
     overrides = [entry for entry in config["PackageOverrides"] if entry["name"] == "google-genai"]
     assert len(overrides) == 1
     override = overrides[0]
     assert set(override) == {"name", "version", "ecosystem", "license", "reason"}
-    assert override["version"] == upstream["derived_version"] == SDK_VERSION
+    assert upstream["derived_version"] == buffered["base_derived_version"]
+    assert override["version"] == buffered["derived_version"] == SDK_VERSION
     assert override["ecosystem"] == "PyPI"
     licenses = [upstream["upstream_license"], upstream["additions_license"]]
     assert override["license"] == {"override": licenses}
     assert distribution("google-genai").metadata["License-Expression"] == " AND ".join(licenses)
+
+
+def test_installed_sdk_sources_match_the_published_buffered_extension() -> None:
+    buffered = tomllib.loads((MATERIALS / "BUFFERED-INPUT.toml").read_text(encoding="utf-8"))
+    sdk = distribution("google-genai")
+    assert sdk.version == buffered["derived_version"] == SDK_VERSION
+    for name, expected in buffered["candidate_sources"].items():
+        installed = Path(str(sdk.locate_file(name))).read_bytes()
+        notice = (
+            b"# Modified by SobaFM, 2026; see NOTICE and sobafm-distribution/.\n"
+            if name.endswith("/live_music.py")
+            else b"# SobaFM addition, 2026; MIT license, see LICENSE.sobafm and NOTICE.\n"
+        )
+        assert installed.startswith(notice)
+        assert hashlib.sha256(installed[len(notice) :]).hexdigest() == expected
 
 
 def test_normal_security_scan_covers_lock_and_explicit_upstream_identity() -> None:
