@@ -10,9 +10,10 @@ and manifest and the orchestrator separately clears execution.
   creation-time Job, one run. The virtual-environment launcher may redirect to
   an interpreter descendant; the whole Job is charged. No provider, decoder,
   sockets, authentication, host inspection or old fixtures.
-- Process and Job private-commit ceiling: 35,439,999 bytes, with no subtraction.
-  This is `70,000,000 - 34,560,000 - 1`, optimistically omitting every outside
-  allocation. It is not a qualified audio reservation.
+- Current comparison Process and Job private-commit ceiling: 65,439,999 bytes,
+  with no subtraction. This is `99,999,999 - 34,560,000`, optimistically omitting
+  every outside allocation. The earlier 35,439,999-byte necessary-condition
+  cases are consumed. Neither value is a qualified audio reservation.
 - Isolated Python mode, no bytecode writes, the current locked installed SDK .3,
   actual catalog imports, and one owned fake bounded SDK receive producing a
   single 3,840-byte PCM frame. No dynamic instructions or provider input.
@@ -147,3 +148,21 @@ unknown bits still fail. Fakes now return the observed valid flags. Creation mod
 quotas, calls, budgets and ownership are unchanged. This source fault provides no
 evidence of insufficient memory. A5 remains consumed; a new manifest requires
 independent review and separate root clearance before execution.
+
+## One fixed higher-cap comparison
+
+The separately cleared a6 run returned `allocation-failed`, worker exit `70`,
+actual storage release and `cap_cause_proven: false`. The worker's fixed
+MemoryError marker was observed; it alone does not attribute the error to the
+Job cap. Conditional maintainer authority permits one comparison at
+65,439,999 bytes to determine whether more capacity helps this same workload.
+Schema4 binds that single value and a distinct comparison case. There is no
+arbitrary cap argument or sweep; interpreter, environment, SDK, workload,
+native operation/drain budgets and cleanup remain unchanged.
+
+This optimistic arithmetic retains 34,560,000 bytes of PCM and omits **all**
+outside charges. The active application AudioLedger limit remains 70 MB.
+A successful comparison would support that added capacity helps this workload,
+not establish a complete 100 MB profile or production readiness. A failure ends
+this comparison. All earlier cases including a6 remain consumed. The a7 manifest
+is preparation only until independent review and separate root clearance.

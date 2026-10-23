@@ -277,7 +277,8 @@ async def test_runner_survives_repeated_cancellation_and_report_failure(
     child.release_gate = False
     owner = check(child)
 
-    def factory(python: Path) -> worker_fit.FitCheck:
+    def factory(python: Path, *, boundary: WindowsJob) -> worker_fit.FitCheck:
+        assert boundary._commit_limit == 65_439_999  # pyright: ignore[reportPrivateUsage]
         return owner
 
     monkeypatch.setattr(runner, "FitCheck", factory)
@@ -319,6 +320,33 @@ async def test_cancel_before_work_starts_still_has_independent_retirement() -> N
     await asyncio.wait_for(owner.join(), 1)
     assert owner.released
     assert child.released
+
+
+def test_comparison_identity_has_one_fixed_cap_and_unchanged_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "digest", lambda path: "a" * 64)
+    monkeypatch.setattr(runner.importlib.metadata, "distributions", lambda: ())
+    identity = runner.identity()
+    assert identity["schema"] == 4
+    assert identity["case"] == "242-worker-bootstrap-higher-cap-comparison"
+    assert identity["cap"] == runner.COMPARISON_LIMIT == 65_439_999
+    assert worker_fit.MAXIMUM_CANDIDATE == 35_439_999
+    assert identity["pcm_retained_for_arithmetic"] == 34_560_000
+    assert identity["outside_charges_optimistically_omitted"] is True
+    assert identity["qualified_profile"] is False
+    assert identity["operation_limit"] == 512
+    assert identity["cumulative_read_request_bytes"] == 65_536
+    assert identity["close_attempts"] == 64
+    assert identity["run_seconds"] == 15
+    assert identity["cleanup_seconds"] == 3
+
+
+def test_runner_rejects_arbitrary_cap_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner.sys, "argv", ["runner", "prepare", "unused.json", "--cap", "1"])
+    with pytest.raises(SystemExit) as rejected:
+        runner.main()
+    assert rejected.value.code == 2
 
 
 def test_first_diagnostic_is_fixed_and_does_not_retain_raw_exception() -> None:

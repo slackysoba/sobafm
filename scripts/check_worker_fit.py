@@ -12,10 +12,10 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from sobafm.decoder_process import WindowsJob
 from sobafm.worker_fit import (
     CLOSE_ATTEMPTS,
     DRAIN_LIMIT,
-    MAXIMUM_CANDIDATE,
     OPERATION_LIMIT,
     FitCheck,
     Result,
@@ -23,6 +23,8 @@ from sobafm.worker_fit import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+COMPARISON_LIMIT = 99_999_999 - 34_560_000
+CASE = "242-worker-bootstrap-higher-cap-comparison"
 FILES = (
     "src/sobafm/audio_worker.py",
     "src/sobafm/worker_fit.py",
@@ -42,9 +44,9 @@ def digest(path: Path) -> str:
 def identity() -> dict[str, object]:
     python = Path(sys.executable).resolve()
     return {
-        "schema": 3,
-        "case": "242-worker-bootstrap-pipe-diagnostic",
-        "cap": MAXIMUM_CANDIDATE,
+        "schema": 4,
+        "case": CASE,
+        "cap": COMPARISON_LIMIT,
         "python": str(python),
         "python_sha256": digest(python),
         "base_python_sha256": digest(Path(sys.base_prefix) / "python.exe"),
@@ -77,7 +79,7 @@ def report(result_path: Path, result: Result) -> None:
 
 
 async def execute(python: Path, result_path: Path) -> None:
-    owner = FitCheck(python)
+    owner = FitCheck(python, boundary=WindowsJob(commit_limit=COMPARISON_LIMIT))
     report_failed = False
     try:
         result = await retained_wait(owner.decision)
@@ -110,7 +112,7 @@ def main() -> None:
     # Exclusive creation consumes this exact case even if launch fails. The file
     # is evidence, not permission: review and root clearance remain external.
     with manifest.with_suffix(".consumed").open("x", encoding="utf-8") as stream:
-        stream.write("242-worker-bootstrap-pipe-diagnostic\n")
+        stream.write(CASE + "\n")
     asyncio.run(execute(Path(sys.executable).resolve(), manifest.with_suffix(".result.json")))
 
 
