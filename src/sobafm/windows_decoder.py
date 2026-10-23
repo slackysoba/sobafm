@@ -83,6 +83,7 @@ class Handle:
         self.closed = self.uncertain = False
         self.overlapped: Overlapped | None = None
         self.connect_event: Handle | None = None
+        self.pipe_info: tuple[DWORD, DWORD, DWORD, DWORD] | None = None
 
     @property
     def released(self) -> bool:
@@ -161,6 +162,7 @@ class Kernel32:
                 HANDLE,
             ),
             ("ConnectNamedPipe", [HANDLE, pointer], BOOL),
+            ("GetNamedPipeInfo", [HANDLE, *[ctypes.POINTER(DWORD)] * 4], BOOL),
             ("CreateEventW", [pointer, BOOL, BOOL, ctypes.c_wchar_p], HANDLE),
             ("InitializeProcThreadAttributeList", [pointer, DWORD, DWORD, pointer], BOOL),
             (
@@ -251,6 +253,25 @@ class Kernel32:
                 raise TrackError(TrackFailure.CAPACITY)
         parent_owner.uncertain = False
         parent_owner.connect_event.close()
+        # Retain every native output before querying the rounded base quotas.
+        # Zero in an active direction permits allocation as needed, not a bound.
+        information = parent_owner.pipe_info = (DWORD(), DWORD(), DWORD(), DWORD())
+        flags, outgoing, incoming, instances = information
+        if (
+            not self.api.GetNamedPipeInfo(
+                parent_owner.fileno(),
+                ctypes.byref(flags),
+                ctypes.byref(outgoing),
+                ctypes.byref(incoming),
+                ctypes.byref(instances),
+            )
+            or flags.value != 1  # byte-type, server end
+            or instances.value != 1
+            or not 0 < incoming.value <= PIPE_LIMIT
+            or outgoing.value > PIPE_LIMIT
+            or (writing and outgoing.value == 0)
+        ):
+            raise TrackError(TrackFailure.CAPACITY)
 
     def attributes(self, storage: CreationStorage, stdio: Sequence[int]) -> None:
         size = ctypes.c_size_t()
