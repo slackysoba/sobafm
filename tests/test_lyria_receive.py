@@ -600,3 +600,71 @@ async def test_observed_remote_close_keeps_its_category_when_retirement_starts_i
     assert deck.close_code == 1011
     assert deck.failure is sobafm.deck.Failure.EXHAUSTED
     assert deck.quiescent
+
+
+@pytest.mark.parametrize("filtered", [True, False], ids=["filtered", "invalid-MIME"])
+async def test_observed_terminal_result_survives_retirement_during_held_iterator_finalizer(
+    filtered: bool,
+) -> None:
+    closing, release = asyncio.Event(), asyncio.Event()
+
+    class Session(FakeSession):
+        async def receive(self) -> AsyncGenerator[genai.types.LiveMusicServerMessage]:
+            try:
+                if filtered:
+                    yield genai.types.LiveMusicServerMessage(
+                        filtered_prompt=genai.types.LiveMusicFilteredPrompt(
+                            text="owned", filtered_reason="PROHIBITED_CONTENT"
+                        )
+                    )
+                else:
+                    for mime in (MIME_TYPE, "owned/invalid"):
+                        yield genai.types.LiveMusicServerMessage(
+                            server_content=genai.types.LiveMusicServerContent(
+                                audio_chunks=[
+                                    genai.types.AudioChunk(data=bytes(FRAME_BYTES), mime_type=mime)
+                                ]
+                            )
+                        )
+            finally:
+                closing.set()
+                await release.wait()
+
+    session = Session()
+
+    @contextlib.asynccontextmanager
+    async def connect(_: BoundedReceiveOptions) -> AsyncGenerator[MusicSession]:
+        try:
+            yield session
+        finally:
+            session.closed = True
+
+    audio = AudioLedger()
+    deck = make_deck(connect, audio)
+    deck.start()
+    try:
+        async with asyncio.timeout(1):
+            await closing.wait()
+        deck.retire()
+        await settle()
+        assert not deck.quiescent
+        release.set()
+        async with asyncio.timeout(1):
+            await deck.wait_ended()
+        assert deck.end_reason is (EndReason.FILTERED if filtered else EndReason.FAILED)
+        assert deck.detail == (
+            "PROHIBITED_CONTENT" if filtered else "LyriaMessageError: unexpected audio format"
+        )
+        assert deck.quiescent
+        assert not deck.cleanup_failed
+        assert session.closed
+        assert len(deck.frames) == (0 if filtered else 1)
+        storage = audio.lyria_receive
+        assert storage is not None
+        assert all(backing.owner is None for backing in storage.backings)
+    finally:
+        release.set()
+        deck.retire()
+        async with asyncio.timeout(1):
+            await deck.wait_closed()
+        deck.discard_pcm()

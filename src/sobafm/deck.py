@@ -299,12 +299,8 @@ class Deck:
             if self.end_reason is None:
                 self._end(EndReason.RETIRED)
             raise
-        except PCMCapacityError as error:
-            self._end(EndReason.FAILED, "PCM capacity exhausted", error)
-        except LyriaMessageError as error:
-            detail = f"LyriaMessageError: {error}"
-            log.warning("Deck %d failed: %s", self.number, detail)
-            self._end(EndReason.FAILED, detail, error)
+        except (PCMCapacityError, LyriaMessageError) as error:
+            self._local_failed(error)
         except errors.APIError as error:
             self._remote_closed(error)
         except live_music.ConnectionClosed as error:
@@ -461,6 +457,14 @@ class Deck:
             self._uncertain = True
             self._cleanup_failure()
 
+    def _local_failed(self, error: PCMCapacityError | LyriaMessageError) -> None:
+        if isinstance(error, PCMCapacityError):
+            detail = "PCM capacity exhausted"
+        else:
+            detail = f"LyriaMessageError: {error}"
+            log.warning("Deck %d failed: %s", self.number, detail)
+        self._end(EndReason.FAILED, detail, error)
+
     def _remote_closed(self, error: errors.APIError) -> None:
         # Record an observed remote close before iterator/context cleanup can suspend.
         # A later retirement must not hide its refusal, quota or outage category.
@@ -510,6 +514,7 @@ class Deck:
                 try:
                     message = await anext(messages)
                 except StopAsyncIteration:
+                    self._end(EndReason.CLOSED)
                     return EndReason.CLOSED
                 except errors.APIError as error:
                     self._remote_closed(error)
@@ -518,10 +523,17 @@ class Deck:
                     message = None
                 if message is None:  # outside the handler: retain no provider exception graph
                     raise LyriaMessageError("unreadable message")
-                end_reason = self._process_message(message)
-                del message
+                try:
+                    end_reason = self._process_message(message)
+                finally:
+                    del message
                 if end_reason is not None:
+                    self._end(end_reason)
                     return end_reason
+        except (PCMCapacityError, LyriaMessageError) as error:
+            # Preserve an already-observed local failure before iterator closure suspends.
+            self._local_failed(error)
+            return EndReason.FAILED
         finally:
             self._start_cleanup_clock()
             if isinstance(messages, AsyncGenerator):

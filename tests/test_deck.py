@@ -191,7 +191,9 @@ async def test_escaping_processing_traceback_independently_retains_response(
     refs = enqueue_tracked_audio(session, bytes(FRAME_BYTES), retain=False, mime_type="invalid")
     caught: LyriaMessageError | None = None
     try:
-        await deck._receive(session)  # pyright: ignore[reportPrivateUsage]
+        # The receive boundary now records/sanitizes local failure before closing.
+        # An exception escaping the synchronous processor still independently owns its input.
+        deck._process_message(session.updates.get_nowait())  # pyright: ignore[reportPrivateUsage]
     except LyriaMessageError as error:
         caught = error
 
