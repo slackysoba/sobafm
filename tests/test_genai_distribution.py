@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
+import shlex
 import tarfile
 import tomllib
 from importlib.metadata import distribution
@@ -137,3 +139,57 @@ def test_installed_sdk_and_project_metadata_match_the_published_dependency() -> 
     direct = sdk.read_text("direct_url.json")
     assert direct is not None
     assert unquote(json.loads(direct)["url"]) == unquote(SDK_WHEEL_URL)
+
+
+def test_upstream_advisory_input_matches_the_adopted_component() -> None:
+    root = MATERIALS.parents[1]
+    upstream = tomllib.loads((MATERIALS / "UPSTREAM.toml").read_text(encoding="utf-8"))
+    lines = (root / ".github/genai-upstream/requirements.txt").read_text().splitlines()
+    requirements = [line for line in lines if line.strip() and not line.startswith("#")]
+    assert requirements == [f"{upstream['name']}=={upstream['version']}"]
+    requirement = Requirement(requirements[0])
+    assert requirement.name == "google-genai"
+    assert requirement.url is None
+    assert upstream["upstream_purl"] == f"pkg:pypi/{requirement.name}@{upstream['version']}"
+    lock = tomllib.loads((root / "uv.lock").read_text())
+    sdk = next(package for package in lock["package"] if package["name"] == requirement.name)
+    assert sdk["version"] == upstream["derived_version"] == SDK_VERSION
+    assert sdk["source"] == {"url": SDK_WHEEL_URL}
+    assert sdk["wheels"] == [{"url": SDK_WHEEL_URL, "hash": f"sha256:{SDK_WHEEL_SHA256}"}]
+
+
+def test_derived_license_override_supplies_only_verified_metadata() -> None:
+    upstream = tomllib.loads((MATERIALS / "UPSTREAM.toml").read_text(encoding="utf-8"))
+    config = tomllib.loads((MATERIALS.parents[1] / "osv-scanner.toml").read_text())
+    overrides = [entry for entry in config["PackageOverrides"] if entry["name"] == "google-genai"]
+    assert len(overrides) == 1
+    override = overrides[0]
+    assert set(override) == {"name", "version", "ecosystem", "license", "reason"}
+    assert override["version"] == upstream["derived_version"] == SDK_VERSION
+    assert override["ecosystem"] == "PyPI"
+    licenses = [upstream["upstream_license"], upstream["additions_license"]]
+    assert override["license"] == {"override": licenses}
+    assert distribution("google-genai").metadata["License-Expression"] == " AND ".join(licenses)
+
+
+def test_normal_security_scan_covers_lock_and_explicit_upstream_identity() -> None:
+    workflow = (MATERIALS.parents[1] / ".github/workflows/security.yml").read_text()
+    commands = re.findall(
+        r"      - name: Scan uv.lock\n        run: >-\n((?:          .+\n)+)", workflow
+    )
+    assert len(commands) == 1
+    tokens = shlex.split(" ".join(line.strip() for line in commands[0].splitlines()))
+    assert tokens == [
+        "./osv-scanner",
+        "scan",
+        "source",
+        "--config",
+        "osv-scanner.toml",
+        "--lockfile",
+        "uv.lock",
+        "--lockfile",
+        "requirements.txt:.github/genai-upstream/requirements.txt",
+        "--licenses=${ALLOWED_LICENSES}",
+        "--format=json",
+        "--all-packages",
+    ]

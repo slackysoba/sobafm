@@ -172,6 +172,18 @@ distribution follows accepted
 Connection defaults are unchanged and bounded receive remains inactive; this
 dependency pin supplies no production memory profile or readiness result.
 
+The normal required Security scan checks the complete `uv.lock` and the pinned
+upstream `google-genai==2.26.0` identity in
+[a scan-only requirements input](../.github/genai-upstream/requirements.txt);
+this input is never installed. Tests bind it to the adopted artifact's
+[upstream provenance](../third_party/google-genai/UPSTREAM.toml). An exact-version
+[license metadata override](../osv-scanner.toml) supplies the verified Apache-2.0
+and MIT licenses for the derived release, preserving vulnerability checks and
+the existing allowed-license policy. The same scan emits JSON for all packages
+so both identities can be verified. GitHub dependency review remains enabled,
+but its graph omits this direct-URL replacement; its success alone does not
+establish SDK coverage. Upstream advisory matching does not audit the local patch.
+
 ### Check that it started
 
 The log should show SobaFM logging in and a line starting `Connected as`. Slash commands registered globally can take a while to appear in Discord the first time. When they do, type `/` in your server and look for SobaFM's commands.
