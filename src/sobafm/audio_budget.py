@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 PCM_LIMIT = 34_560_000
 TOTAL_LIMIT = 70_000_000  # strict: equality is ineligible
 PARENT_LIMIT = TOTAL_LIMIT - 1  # derived integer bound, not a separate partition
+LYRIA_RECEIVE_BYTES = 524_288
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,44 @@ def _positive_pcm_bytes(pcm_bytes: int) -> None:
         raise ValueError("PCM reservations require positive integer byte bounds")
 
 
+class ReceiveBacking:
+    """One fixed payload store, borrowed exclusively through actual context closure."""
+
+    def __init__(self) -> None:
+        self.storage = bytearray(LYRIA_RECEIVE_BYTES)
+        self.owner: object | None = None
+
+
+class LyriaReceiveStorage:
+    """Two permanently prepaid payload stores; all remaining Lyria storage stays unknown."""
+
+    def __init__(self, lease: AudioLease) -> None:
+        self._lease = lease
+        self.backings: list[ReceiveBacking] = []
+        self.uncertain = False
+
+    def allocate(self) -> None:
+        try:
+            for _ in range(2):
+                self.backings.append(ReceiveBacking())
+        except BaseException:
+            self.uncertain = True
+            raise
+
+    def claim(self, owner: object) -> ReceiveBacking | None:
+        if not self.uncertain and len(self.backings) == 2:
+            for backing in self.backings:
+                if backing.owner is None:
+                    backing.owner = owner
+                    return backing
+        return None
+
+    def released(self, backing: ReceiveBacking, owner: object) -> None:
+        if not any(backing is item for item in self.backings) or backing.owner is not owner:
+            raise RuntimeError("receive backing ownership changed")
+        backing.owner = None  # capacity remains charged; only the verified borrow ends
+
+
 class AudioLedger:
     """One server's leases, retained across replacement stations by its owner.
 
@@ -135,6 +174,7 @@ class AudioLedger:
     def __init__(self) -> None:
         self._leases: set[AudioLease] = set()
         self._pcm: PCMOwner | None = None
+        self._lyria_receive: LyriaReceiveStorage | None = None
 
     @property
     def pcm(self) -> PCMOwner:
@@ -151,6 +191,25 @@ class AudioLedger:
                 raise PCMCapacityError
             self._pcm = PCMOwner(capacity)
         return self._pcm
+
+    @property
+    def lyria_receive(self) -> LyriaReceiveStorage | None:
+        """Prepay fixed payload capacity before unknown work; reuse it across stations.
+
+        This charge covers only the two payload capacities. Headers, SDK models,
+        transport and player allocations retain their separate unknown obligation.
+        """
+        if self._lyria_receive is None:
+            lease = self.reserve(AudioBytes(other=2 * LYRIA_RECEIVE_BYTES))
+            if lease is None:
+                return None
+            storage = self._lyria_receive = LyriaReceiveStorage(lease)
+            try:
+                storage.allocate()
+            except BaseException:
+                self.unbounded()  # unknown partial construction cannot enable admission
+                raise
+        return self._lyria_receive
 
     @property
     def reserved(self) -> AudioBytes:

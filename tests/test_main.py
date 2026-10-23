@@ -215,8 +215,9 @@ def test_logs_warnings_to_standard_output() -> None:
 
 # Unknown enum values, one spanning lines, and the first Lyria RealTime connection
 SDK_WARNINGS = (
-    "from google.genai import types; from sobafm.deck import lyria; "
-    "types.Scale('AIzaFakeKey'); types.Scale('AIzaFakeKey\\nmore'); lyria('placeholder-key')()"
+    "from google.genai import types; from sobafm.deck import BoundedReceiveOptions, lyria; "
+    "types.Scale('AIzaFakeKey'); types.Scale('AIzaFakeKey\\nmore'); "
+    "lyria('placeholder-key')(BoundedReceiveOptions(bytearray(16), 16, 1, 0, 16, 1))"
 )
 
 
@@ -258,13 +259,13 @@ class Socket:
 
 
 @contextlib.asynccontextmanager
-async def connect():
+async def connect(options: live_music.BoundedReceiveOptions):
     client = types.SimpleNamespace(vertexai=False)
     yield live_music.AsyncMusicSession(api_client=client, websocket=Socket())
 
 
 async def run():
-    deck = Deck(connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm)
+    deck = Deck(connect, MusicPlan.from_request("ambient"), audio=AudioLedger())
     deck.start()
     for _ in range(200):
         await asyncio.sleep(0.01)
