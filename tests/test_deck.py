@@ -33,6 +33,7 @@ from sobafm.deck import (
     PAUSE_AT_S,
     PREROLL_S,
     RESUME_BELOW_S,
+    BoundedReceiveOptions,  # pyright: ignore[reportPrivateImportUsage]
     Deck,
     EndReason,
     LyriaMessageError,
@@ -47,7 +48,7 @@ from tests.doubles import FakeClock, FakeLyria, FakeSession, serve, settle
 
 async def start_deck(lyria: FakeLyria, clock: FakeClock) -> tuple[Deck, FakeSession]:
     deck = Deck(
-        lyria.connect, MusicPlan.from_request("rainy lo-fi"), pcm=AudioLedger().pcm, clock=clock
+        lyria.connect, MusicPlan.from_request("rainy lo-fi"), audio=AudioLedger(), clock=clock
     )
     deck.start()
     await settle()
@@ -120,10 +121,10 @@ async def transient_deck(clock: FakeClock) -> AsyncGenerator[tuple[Deck, Transie
     session = TransientSession()
 
     @contextlib.asynccontextmanager
-    async def connect() -> AsyncGenerator[MusicSession]:
+    async def connect(options: BoundedReceiveOptions) -> AsyncGenerator[MusicSession]:
         yield session
 
-    deck = Deck(connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock)
+    deck = Deck(connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
     deck.start()
     await asyncio.wait_for(session.waiting.get(), 1)
     try:
@@ -186,13 +187,13 @@ async def test_escaping_processing_traceback_independently_retains_response(
     lyria: FakeLyria, clock: FakeClock
 ) -> None:
     session = TransientSession()
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
     refs = enqueue_tracked_audio(session, bytes(FRAME_BYTES), retain=False, mime_type="invalid")
     caught: LyriaMessageError | None = None
     try:
-        await deck._receive(session)  # pyright: ignore[reportPrivateUsage]
+        # The receive boundary now records/sanitizes local failure before closing.
+        # An exception escaping the synchronous processor still independently owns its input.
+        deck._process_message(session.updates.get_nowait())  # pyright: ignore[reportPrivateUsage]
     except LyriaMessageError as error:
         caught = error
 
@@ -296,9 +297,7 @@ async def test_retiring_ends_the_session_and_keeps_its_audio(
 async def test_retired_while_connecting_never_starts_playback(
     lyria: FakeLyria, clock: FakeClock
 ) -> None:
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
 
     deck.start()
     deck.retire()  # before its task has run at all
@@ -315,7 +314,7 @@ async def test_frees_a_deck_retired_while_connecting_without_collecting_cycles(
     gc.disable()  # so only reference counting can free it
     try:
         deck = Deck(
-            lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
+            lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock
         )
         deck.start()
         await settle()  # connecting
@@ -334,9 +333,7 @@ async def test_fails_when_connecting_stalls(
 ) -> None:
     monkeypatch.setattr(sobafm.deck, "CONNECT_TIMEOUT_S", 0.01)
     lyria.stall = True
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
 
     deck.start()
     await ended(deck)
@@ -359,9 +356,7 @@ async def test_records_when_lyria_closes_the_session(lyria: FakeLyria, clock: Fa
 
 async def test_records_a_failed_connection(lyria: FakeLyria, clock: FakeClock) -> None:
     lyria.failure = OSError("unreachable")
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
 
     deck.start()
     await ended(deck)
@@ -428,10 +423,10 @@ class EndingSession(FakeSession):
 
 async def test_records_a_stream_that_ends_as_closed(clock: FakeClock) -> None:
     @contextlib.asynccontextmanager
-    async def connect() -> AsyncGenerator[MusicSession]:
+    async def connect(options: BoundedReceiveOptions) -> AsyncGenerator[MusicSession]:
         yield EndingSession()
 
-    deck = Deck(connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock)
+    deck = Deck(connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
 
     deck.start()
     await ended(deck)
@@ -463,13 +458,15 @@ async def test_never_logs_a_frame_it_cannot_read(
     clock: FakeClock, caplog: pytest.LogCaptureFixture, frame: bytes
 ) -> None:
     @contextlib.asynccontextmanager
-    async def connect() -> AsyncGenerator[MusicSession]:  # the SDK's own session
+    async def connect(
+        options: BoundedReceiveOptions,
+    ) -> AsyncGenerator[MusicSession]:  # the SDK's own session
         client, socket = SimpleNamespace(vertexai=False), OneFrameSocket(frame)
         yield live_music.AsyncMusicSession(
             api_client=cast(Any, client), websocket=cast(Any, socket)
         )
 
-    deck = Deck(connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock)
+    deck = Deck(connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
 
     with caplog.at_level(logging.DEBUG):
         deck.start()
@@ -480,9 +477,8 @@ async def test_never_logs_a_frame_it_cannot_read(
         "LyriaMessageError: unreadable message",
     )
     assert "AIzaFakeKey" not in caplog.text  # in neither the messages nor a traceback
-    logged = next(record.exc_info[1] for record in caplog.records if record.exc_info)
-    assert logged is not None
-    assert logged.__context__ is None  # the SDK's error, which quotes the frame, isn't kept
+    assert not any(record.exc_info for record in caplog.records)
+    assert deck.quiescent  # neither a logged exception nor an open receive owner retains it
 
 
 @pytest.mark.parametrize(
@@ -582,9 +578,7 @@ async def test_retiring_a_stalled_connection_stops_it_at_once(
     lyria: FakeLyria, clock: FakeClock
 ) -> None:
     lyria.stall = True
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
     deck.start()
     await settle()
 
@@ -599,9 +593,7 @@ async def test_retiring_again_lets_a_stalled_setup_close(
     lyria: FakeLyria, clock: FakeClock
 ) -> None:
     lyria.stall_sends = True  # setup stalls once the session is open
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
     deck.start()
     await settle()
     retire_during_close(lyria, deck)
@@ -618,9 +610,7 @@ async def test_retiring_after_the_connect_timeout_lets_the_session_close(
 ) -> None:
     monkeypatch.setattr(sobafm.deck, "CONNECT_TIMEOUT_S", 0.01)
     lyria.stall_sends = True  # setup stalls once the session is open
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
     retire_during_close(lyria, deck)  # while the timeout's cancellation is still pending
 
     deck.start()
@@ -807,9 +797,7 @@ async def test_logs_a_failed_handshake_without_the_servers_text(
     failure: Failure | None,
 ) -> None:
     lyria.failure = error
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
 
     with caplog.at_level(logging.DEBUG):
         deck.start()
@@ -841,7 +829,7 @@ async def test_follows_no_redirect_while_connecting(caplog: pytest.LogCaptureFix
     client._api_client._websocket_base_url = lambda: f"ws://127.0.0.1:{origin_port}"  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
 
     async with origin, target:
-        deck = Deck(connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm)
+        deck = Deck(connect, MusicPlan.from_request("ambient"), audio=AudioLedger())
         with caplog.at_level(logging.INFO):  # production's level
             deck.start()
             async with asyncio.timeout(10):
@@ -859,9 +847,7 @@ async def test_logs_an_ssl_error_with_its_text(
 ) -> None:
     reason = "certificate verify failed: unable to get local issuer certificate"
     lyria.failure = ssl.SSLCertVerificationError(1, reason)  # also a ValueError
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
 
     with caplog.at_level(logging.DEBUG):
         deck.start()
@@ -926,9 +912,7 @@ async def test_records_a_close_during_setup_without_free_text(
     failure: Failure | None,
 ) -> None:
     lyria.failure = closed
-    deck = Deck(
-        lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
-    )
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock)
 
     with caplog.at_level(logging.DEBUG):
         deck.start()
@@ -955,7 +939,7 @@ async def test_frees_a_deck_whose_setup_failed_without_collecting_cycles(
     gc.disable()  # so only reference counting can free it
     try:
         deck = Deck(
-            lyria.connect, MusicPlan.from_request("ambient"), pcm=AudioLedger().pcm, clock=clock
+            lyria.connect, MusicPlan.from_request("ambient"), audio=AudioLedger(), clock=clock
         )
         deck.start()
         await ended(deck)

@@ -10,7 +10,7 @@ import discord
 import pytest
 
 import sobafm.mixer as mixing
-from sobafm.audio_budget import PCM_LIMIT, TOTAL_LIMIT, AudioBytes, AudioLedger
+from sobafm.audio_budget import LYRIA_RECEIVE_BYTES, PCM_LIMIT, TOTAL_LIMIT, AudioBytes, AudioLedger
 from sobafm.deck import Deck, EndReason
 from sobafm.mixer import Mixer
 from sobafm.owned_pcm import OwnedPCM, PCMCapacityError, PCMOwner, PCMReceipt
@@ -20,7 +20,7 @@ from sobafm.source import State
 from sobafm.station import SessionPool, Station
 from sobafm.status import Statuses
 from sobafm.track_deck import TrackFailure
-from tests.doubles import FakeLyria, drain_pcm, settle
+from tests.doubles import FakeLyria, PCMFixtureLedger, drain_pcm, settle
 from tests.test_track_deck import Rig
 from tests.test_track_deck import settle as settle_track
 
@@ -142,7 +142,7 @@ async def test_static_charge_survives_cleanup_and_station_replacement_once() -> 
         remaining.release()
         await station.close()
     assert not audio.bounded
-    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT)
+    assert audio.reserved == AudioBytes(pcm=PCM_LIMIT, other=2 * LYRIA_RECEIVE_BYTES)
 
 
 async def test_eight_frame_parent_refuses_staging_before_unpaid_crossfade_growth() -> None:
@@ -318,8 +318,8 @@ def test_refusal_precedes_copy_and_allocation_error_retains_debt() -> None:
 
 async def test_generated_refusal_preserves_frames_and_reports_local_failure() -> None:
     lyria = FakeLyria()
-    pcm = owner(2 * FRAME_BYTES - 1)
-    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), pcm=pcm)
+    audio = PCMFixtureLedger(2 * FRAME_BYTES - 1 + len(SILENCE))
+    deck = Deck(lyria.connect, MusicPlan.from_request("ambient"), audio=audio)
     deck.start()
     await settle()
     lyria.sessions[0].send_audio(data=bytes(2 * FRAME_BYTES))
@@ -334,7 +334,11 @@ async def test_generated_refusal_preserves_frames_and_reports_local_failure() ->
 
 
 async def test_explicit_drop_does_not_refund_a_popped_reader() -> None:
-    deck = Deck(FakeLyria().connect, MusicPlan.from_request("ambient"), pcm=owner(3 * FRAME_BYTES))
+    deck = Deck(
+        FakeLyria().connect,
+        MusicPlan.from_request("ambient"),
+        audio=PCMFixtureLedger(3 * FRAME_BYTES + len(SILENCE)),
+    )
     with closing(deck._splitter.split(bytes(2 * FRAME_BYTES + 7))) as frames:  # pyright: ignore[reportPrivateUsage]
         deck.frames.extend(frames)
     borrowed = deck.frames.popleft()

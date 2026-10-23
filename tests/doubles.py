@@ -16,6 +16,7 @@ from google.genai import errors, types
 
 from sobafm.audio_budget import AudioBytes, AudioLease, AudioLedger
 from sobafm.catalog import CatalogPage, CatalogQuery, CatalogTrack, CreditRecord
+from sobafm.deck import BoundedReceiveOptions  # pyright: ignore[reportPrivateImportUsage]
 from sobafm.lyria_engine import SessionPool
 from sobafm.mixer import Mixer
 from sobafm.owned_pcm import OwnedPCM, PCMOwner
@@ -365,7 +366,7 @@ class FakeLyria:
         self.closing: Callable[[], Awaitable[None]] | None = None  # runs as a session closes
 
     @asynccontextmanager
-    async def connect(self) -> AsyncGenerator[FakeSession]:
+    async def connect(self, options: BoundedReceiveOptions) -> AsyncGenerator[FakeSession]:
         if self.failure is not None:
             raise self.failure
         if self.stall:

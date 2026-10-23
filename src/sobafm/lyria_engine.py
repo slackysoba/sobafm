@@ -76,6 +76,7 @@ class LyriaEngine:
         self.decks: list[Deck] = []
         self.audio = audio if audio is not None else AudioLedger()
         self.pcm = self.audio.pcm  # ordinary full-capacity admission precedes unknown work
+        self._receive_storage = self.audio.lyria_receive
         # No hard receive/copy/transport envelope has been qualified for Lyria.
         # Keep catalog unavailable rather than changing Lyria's generation rules.
         self._audio_obligation = self.audio.unbounded()
@@ -85,6 +86,7 @@ class LyriaEngine:
         self._connect = connect
         self._pool = pool
         self._clock = clock
+        self._closing: asyncio.Task[None] | None = None
 
     @property
     def mode(self) -> Mode:
@@ -107,7 +109,7 @@ class LyriaEngine:
     def release_if_ended(self, retained: Sequence[Program]) -> None:
         """Neither desired/previous intent nor closing producers may lose their slots."""
         if not any(p.mode is self.mode for p in retained) and all(
-            deck.state is State.ENDED for deck in self.decks
+            deck.state is State.ENDED and deck.quiescent for deck in self.decks
         ):
             self._pool.release(self)
 
@@ -115,7 +117,14 @@ class LyriaEngine:
         """Retire every producer and release the reservation after actual cleanup."""
         for deck in self.decks:
             deck.retire()
+        if self._closing is None:
+            self._closing = asyncio.create_task(self._finish_close())
         await asyncio.gather(*(deck.wait_ended() for deck in self.decks))
+        if all(deck.quiescent for deck in self.decks):
+            await asyncio.shield(self._closing)
+
+    async def _finish_close(self) -> None:
+        await asyncio.gather(*(deck.wait_closed() for deck in self.decks))
         for deck in self.decks:
             deck.discard_pcm()
         self.decks.clear()
@@ -134,14 +143,14 @@ class LyriaEngine:
 
     def generate(self, program: Program) -> None:
         """Keep the program's two reserved sessions generating for the current plan."""
-        if not isinstance(program.plan, MusicPlan):
+        if self._closing is not None or not isinstance(program.plan, MusicPlan):
             return
         if self._clock() < self.retry(program).retry_at:
             return
-        sessions = sum(deck.state is not State.ENDED for deck in self.decks)
+        sessions = sum(deck.state is not State.ENDED or not deck.quiescent for deck in self.decks)
         for _ in range(SESSIONS_PER_STATION - sessions):
             deck = Deck(
-                self._connect, program.plan, pcm=self.pcm, clock=self._clock, program=program
+                self._connect, program.plan, audio=self.audio, clock=self._clock, program=program
             )
             deck.start()
             self.decks.append(deck)
@@ -192,7 +201,7 @@ class LyriaEngine:
         if all(deck.state is State.ENDED for deck in ready):
             spare = max(ready, key=lambda deck: deck.buffered_seconds, default=None)
         for deck in ended:
-            if deck is not spare:
+            if deck is not spare and deck.quiescent:
                 self.decks.remove(deck)
                 deck.discard_pcm()
 
