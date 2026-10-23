@@ -17,6 +17,7 @@ import sobafm.windows_decoder as windows
 from sobafm.catalog_audio import TrackError, TrackFailure
 from sobafm.decoder_process import Launch, WindowsJob, command, launch
 from sobafm.native import VerifiedNativeRuntime
+from sobafm.windows_decoder import Kernel32
 from tests.test_decoder_process import runtime as runtime
 from tests.test_track_deck import Rig as DeckRig
 
@@ -239,6 +240,30 @@ async def rig(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[Rig]:
     rig.adopt_gate.set()
 
 
+@pytest.fixture
+def pipe_api() -> Kernel32:
+    """Real pipe ownership/control flow, with only the Win32 calls replaced."""
+    api = object.__new__(Kernel32)
+
+    def information(handle: int, *outputs: Any) -> int:
+        index = api.api.GetNamedPipeInfo.call_count - 1
+        assert handle == 10 + index * 2
+        values = (1, windows.PIPE_LIMIT if index == 0 else 0, windows.PIPE_LIMIT, 1)
+        for output, value in zip(outputs, values, strict=True):
+            output._obj.value = value
+        return 1
+
+    api.api = SimpleNamespace(
+        CreateNamedPipeW=MagicMock(side_effect=[10, 12, 14]),
+        CreateFileW=MagicMock(side_effect=[11, 13, 15]),
+        CreateEventW=MagicMock(return_value=80),
+        ConnectNamedPipe=MagicMock(return_value=1),
+        GetNamedPipeInfo=MagicMock(side_effect=information),
+        CloseHandle=MagicMock(return_value=1),
+    )
+    return api
+
+
 async def until(predicate: Callable[[], bool]) -> None:
     async with asyncio.timeout(2):
         while not predicate():  # noqa: ASYNC110 - bounded owned-fake interleaving
@@ -426,6 +451,7 @@ def test_real_ffi_call_arguments_keep_native_arrays_and_explicit_stdio(
     created_parents: list[tuple[Any, ...]] = []
     created_children: list[tuple[Any, ...]] = []
     updates: list[tuple[int, Any]] = []
+    readbacks: list[tuple[Any, ...]] = []
     storage = windows.CreationStorage(
         [r"C:\spaced path\ffmpeg.exe", "-i", "pipe:0"],
         {"SystemRoot": "C:/Windows", "PATH": "C:/Windows/System32"},
@@ -451,6 +477,7 @@ def test_real_ffi_call_arguments_keep_native_arrays_and_explicit_stdio(
 
     def initialize(buffer: Any, count: int, flags: int, size: Any) -> int:
         nonlocal last_error
+        assert len(readbacks) == 3  # all pipe quotas precede attribute setup/creation
         assert count == 2
         assert flags == 0
         if buffer is None:
@@ -458,6 +485,16 @@ def test_real_ffi_call_arguments_keep_native_arrays_and_explicit_stdio(
             size._obj.value = 128
             return 0
         assert ctypes.sizeof(buffer) == 128
+        return 1
+
+    def information(handle: int, *outputs: Any) -> int:
+        assert handle == 10 + len(readbacks) * 2  # parent, never inherited child end
+        assert last_error == 535  # connected before the quota query
+        values = (1, windows.PIPE_LIMIT if not readbacks else 0, windows.PIPE_LIMIT, 1)
+        readbacks.append(outputs)
+        for output, value in zip(outputs, values, strict=True):
+            assert isinstance(output._obj, windows.DWORD)
+            output._obj.value = value
         return 1
 
     def update(buffer: Any, flags: int, key: int, values: Any, size: int, *unused: Any) -> int:
@@ -492,6 +529,7 @@ def test_real_ffi_call_arguments_keep_native_arrays_and_explicit_stdio(
         CreateNamedPipeW=MagicMock(side_effect=named),
         CreateFileW=MagicMock(side_effect=file),
         ConnectNamedPipe=MagicMock(side_effect=connect),
+        GetNamedPipeInfo=MagicMock(side_effect=information),
         CreateEventW=MagicMock(return_value=80),
         InitializeProcThreadAttributeList=MagicMock(side_effect=initialize),
         UpdateProcThreadAttribute=MagicMock(side_effect=update),
@@ -513,6 +551,15 @@ def test_real_ffi_call_arguments_keep_native_arrays_and_explicit_stdio(
     endpoints: list[windows.Handle] = []
     for index in (0, 1, 2):
         api.pipe(endpoints, index)
+    assert dll.GetNamedPipeInfo.argtypes == [windows.HANDLE] + [ctypes.POINTER(windows.DWORD)] * 4
+    assert dll.GetNamedPipeInfo.restype is windows.BOOL
+    assert len(readbacks) == 3
+    for parent, outputs in zip(endpoints[::2], readbacks, strict=True):
+        assert parent.pipe_info is not None
+        assert all(
+            output._obj is retained
+            for output, retained in zip(outputs, parent.pipe_info, strict=True)
+        )
     # The public Proactor writer must be able to issue its EOF/peer-close read;
     # a write-only stdin parent cannot support that operation.
     assert [p[1] for p in created_parents] == [0x40080003, 0x40080001, 0x40080001]
@@ -527,6 +574,138 @@ def test_real_ffi_call_arguments_keep_native_arrays_and_explicit_stdio(
     api.dispose(storage)
     assert deletes == 1
     assert storage.disposed
+
+
+@pytest.mark.parametrize(
+    ("index", "outgoing", "incoming"),
+    [
+        (0, 1, 1),
+        (0, windows.PIPE_LIMIT, windows.PIPE_LIMIT),
+        (1, 0, windows.PIPE_LIMIT),
+        (2, windows.PIPE_LIMIT, 1),
+    ],
+)
+def test_pipe_base_readback_accepts_bounded_actual_sizes(
+    pipe_api: Kernel32, index: int, outgoing: int, incoming: int
+) -> None:
+    def information(_handle: int, *outputs: Any) -> int:
+        for output, value in zip(outputs, (1, outgoing, incoming, 1), strict=True):
+            output._obj.value = value
+        return 1
+
+    pipe_api.api.GetNamedPipeInfo.side_effect = information
+    endpoints: list[windows.Handle] = []
+    pipe_api.pipe(endpoints, index)
+    assert endpoints[0].pipe_info is not None
+    assert tuple(value.value for value in endpoints[0].pipe_info) == (1, outgoing, incoming, 1)
+    assert pipe_api.api.GetNamedPipeInfo.call_count == 1
+    assert not any(endpoint.released for endpoint in endpoints)
+    for endpoint in endpoints:
+        endpoint.close()
+    assert all(endpoint.released for endpoint in endpoints)
+
+
+@pytest.mark.parametrize(
+    ("index", "values", "succeeds"),
+    [
+        (0, (1, 1, 1, 1), False),  # API failure with otherwise plausible outputs
+        (0, (0, 1, 1, 1), True),  # client end
+        (0, (5, 1, 1, 1), True),  # message pipe
+        (0, (3, 1, 1, 1), True),  # unexpected flag
+        (0, (1, 1, 1, 0), True),
+        (0, (1, 1, 1, 2), True),
+        (0, (1, 0, 1, 1), True),  # duplex active output cannot allocate as needed
+        (0, (1, windows.PIPE_LIMIT + 1, 1, 1), True),
+        (1, (1, windows.PIPE_LIMIT + 1, 1, 1), True),  # even unused output has a bound
+        (2, (1, windows.PIPE_LIMIT + 1, 1, 1), True),
+        (0, (1, 1, 0, 1), True),
+        (1, (1, 0, 0, 1), True),
+        (2, (1, 0, windows.PIPE_LIMIT + 1, 1), True),
+    ],
+)
+def test_pipe_base_readback_refuses_and_keeps_partial_owners(
+    pipe_api: Kernel32, index: int, values: tuple[int, int, int, int], succeeds: bool
+) -> None:
+    def information(_handle: int, *outputs: Any) -> bool:
+        for output, value in zip(outputs, values, strict=True):
+            output._obj.value = value
+        return succeeds
+
+    pipe_api.api.GetNamedPipeInfo.side_effect = information
+    endpoints: list[windows.Handle] = []
+    with pytest.raises(TrackError, match="capacity"):
+        pipe_api.pipe(endpoints, index)
+    assert len(endpoints) == 2
+    assert endpoints[0].pipe_info is not None
+    assert tuple(value.value for value in endpoints[0].pipe_info) == values
+    pipe_api.api.GetNamedPipeInfo.assert_called_once()
+    assert not any(endpoint.released for endpoint in endpoints)
+    for endpoint in endpoints:
+        endpoint.close()
+    assert all(endpoint.released for endpoint in endpoints)
+
+
+async def test_pipe_readback_failure_prevents_attributes_and_creation(
+    pipe_api: Kernel32, rig: Rig, runtime: VerifiedNativeRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rig.api, "pipe", pipe_api.pipe)
+    pipe_api.api.GetNamedPipeInfo.side_effect = OSError("owned readback failure")
+    with pytest.raises(TrackError, match="capacity"):
+        await windows.WindowsProcess.launch(runtime, rig.job, rig.owner)
+    child = rig.child()
+    assert child.known_absent
+    assert rig.owner.not_invoked
+    assert not rig.owner.invoked
+    assert not rig.owner.unresolved
+    assert not rig.api.events  # neither attributes nor process creation was entered
+    assert child.endpoints[0].pipe_info is not None
+    retained = child.endpoints[0].pipe_info
+    assert not child.endpoints[0].released
+    await rig.release()
+    assert all(endpoint.released for endpoint in child.endpoints)
+    assert child.endpoints[0].pipe_info is retained
+
+
+async def test_cancelled_pipe_readback_retains_worker_outputs_and_endpoints(
+    pipe_api: Kernel32, rig: Rig, runtime: VerifiedNativeRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rig.api, "pipe", pipe_api.pipe)
+    entered, release = threading.Event(), threading.Event()
+    information = pipe_api.api.GetNamedPipeInfo.side_effect
+
+    def held(handle: int, *outputs: Any) -> int:
+        result: int = information(handle, *outputs)
+        entered.set()
+        if not release.wait(2):
+            raise TimeoutError("owned fake readback gate")
+        return result
+
+    pipe_api.api.GetNamedPipeInfo.side_effect = held
+    borrower = asyncio.create_task(windows.WindowsProcess.launch(runtime, rig.job, rig.owner))
+    try:
+        await until(entered.is_set)
+        child = rig.child()
+        retained = child.endpoints[0].pipe_info
+        assert retained is not None
+        borrower.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await borrower
+        assert child.creation is not None
+        assert not child.creation.done()
+        assert rig.owner.cleanup_owner is child
+        assert not child.endpoints[0].released
+        assert not child.close_pipes()
+        child.kill()  # stop before any later creation can be invoked
+    finally:
+        release.set()
+    await rig.release()
+    assert "create" not in rig.api.events
+    assert rig.owner.not_invoked
+    assert child.creation.done()
+    assert not child.creation.cancelled()
+    assert child.endpoints[0].pipe_info is retained
+    assert all(endpoint.released for endpoint in child.endpoints)
+    assert pipe_api.api.GetNamedPipeInfo.call_count == 3
 
 
 @pytest.mark.parametrize("value", [0, 2, 0xFFFFFFFF])

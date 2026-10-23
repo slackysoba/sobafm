@@ -631,6 +631,15 @@ I/O or the parent's OS read requests and coalesced writes. Completed unread data
 quota growth and pending-I/O bookkeeping still require a qualified envelope;
 unknown transport obligations continue to refuse admission.
 
+On Windows, each connected fresh parent endpoint is read back once with
+`GetNamedPipeInfo` before attributes or process creation. Require a byte-type
+server end, one maximum instance, and active input/output base buffers between
+1 and 16,384 bytes; the unused stdout/stderr output direction may be zero but
+cannot exceed that bound. The endpoint retains all four native outputs through
+failure and cleanup. Failed or unexpected readback refuses creation. This bounds
+base buffers, not later kernel expansion/slack or internal pool structures, and
+does not qualify the complete transport envelope or enable catalog readiness.
+
 | Boundary | Selected limit/enforcement |
 | --- | --- |
 | Encoded input | At most 16 MiB cumulative, counted before writes regardless of Content-Length; retained queue at most 256 KiB per child; writes at most 16 KiB followed by drain |
