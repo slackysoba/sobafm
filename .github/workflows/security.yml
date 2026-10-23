@@ -39,7 +39,7 @@ jobs:
           ./osv-scanner scan source --config osv-scanner.toml
           --lockfile uv.lock
           --lockfile requirements.txt:.github/genai-upstream/requirements.txt
-          --licenses="${ALLOWED_LICENSES}" --format=json --all-packages
+          --licenses="${ALLOWED_LICENSES}" --format=json --all-packages --no-resolve
 
   dependency-review:
     name: Dependency review

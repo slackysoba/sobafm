@@ -192,4 +192,5 @@ def test_normal_security_scan_covers_lock_and_explicit_upstream_identity() -> No
         "--licenses=${ALLOWED_LICENSES}",
         "--format=json",
         "--all-packages",
+        "--no-resolve",
     ]

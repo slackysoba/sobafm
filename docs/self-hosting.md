@@ -179,8 +179,11 @@ this input is never installed. Tests bind it to the adopted artifact's
 [upstream provenance](../third_party/google-genai/UPSTREAM.toml). An exact-version
 [license metadata override](../osv-scanner.toml) supplies the verified Apache-2.0
 and MIT licenses for the derived release, preserving vulnerability checks and
-the existing allowed-license policy. The same scan emits JSON for all packages
-so both identities can be verified. GitHub dependency review remains enabled,
+the existing allowed-license policy. `--no-resolve` keeps the supplement limited
+to the explicit upstream identity; all actual direct and transitive dependencies
+are already in `uv.lock` and remain scanned. The same scan emits JSON for all
+packages so the complete lock and both SDK identities can be verified.
+GitHub dependency review remains enabled,
 but its graph omits this direct-URL replacement; its success alone does not
 establish SDK coverage. Upstream advisory matching does not audit the local patch.
 
