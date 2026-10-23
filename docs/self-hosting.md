@@ -164,7 +164,7 @@ Development source pins SobaFM's
 `uv sync --locked` installs its verified wheel; no separate SDK installation is
 needed. The release includes the
 [complete patched SDK source](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.3/google_genai-2.26.0%2Bsobafm.3.tar.gz)
-and [build manifest](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.3/google-genai-2.26.0%2Bsobafm.3.manifest.json).
+and [build manifest](https://github.com/slackysoba/sobafm/releases/download/sdk-google-genai-2.26.0-sobafm.3/candidate.json).
 The [source/package materials](../third_party/google-genai/CONNECTION-RETIREMENT-CANDIDATE.md) record the
 recipe, Apache-2.0/MIT licenses and modification notices. This downstream
 distribution follows accepted
