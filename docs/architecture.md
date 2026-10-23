@@ -356,8 +356,12 @@ The active SDK options pass that owner's exact input backing to the public
 connection factory. It limits new parser input to 4,096 bytes per callback, bounding
 nonempty audio Frame owners before the existing later collector guard. Large
 frames/messages can span callbacks. The application pins the published
-`2.26.0+sobafm.2` wheel and its SHA-256; the original sobafm.1 materials remain
-unchanged. These component capacities supply no complete physical
+`2.26.0+sobafm.3` wheel and its SHA-256; published preparation materials remain
+unchanged. The bounded SDK context joins actual connection closure, receive and
+keepalive borrowers, then retires terminal audio roots before acknowledging
+backing reuse. Its pinned WebSockets teardown stays inside the SDK adapter;
+failed or unsupported retirement retains the backing and debt. Admitted PCM and
+the original sticky three-second cleanup verdict remain unchanged. These component capacities supply no complete physical
 transport/native/player envelope, production profile or readiness grant.
 
 ### Station reconcile loop
