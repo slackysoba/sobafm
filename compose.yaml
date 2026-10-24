@@ -1,5 +1,7 @@
 # Run SobaFM from the published image. Put DISCORD_TOKEN and GEMINI_API_KEY in a .env file
 # next to this one (see .env.example), then: docker compose up -d
+# Published 1.0.0 is generated-only. This image reference does not select unreleased
+# two-mode source; see docs/self-hosting.md for version and catalog-readiness limits.
 services:
   sobafm:
     image: ghcr.io/slackysoba/sobafm:latest
