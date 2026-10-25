@@ -1,0 +1,22 @@
+name: Implementation task
+description: A cohesive, reviewable slice of an outcome
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome and scope
+      description: Link the parent outcome and relevant requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and verification
+      description: What observable result proves this is complete?
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and decisions
+      description: Identify actual prerequisites and maintainer decisions.
