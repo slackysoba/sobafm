@@ -1,0 +1,134 @@
+{
+  "version": "catalog-requests-1",
+  "status": "proposed-unrun",
+  "requests": [
+    {
+      "id": "R01",
+      "text": "Quiet solo piano for reading, with no singing.",
+      "kind": "discovery",
+      "interpretation": "Low-energy solo piano; instrumental; unobtrusive.",
+      "fit_checks": ["solo piano", "low energy", "no vocals"],
+      "jamendo_query": {"tags": "piano", "vocalinstrumental": "instrumental", "speed": "low"}
+    },
+    {
+      "id": "R02",
+      "text": "Warm lo-fi hip-hop beats for studying, no vocals.",
+      "kind": "discovery",
+      "interpretation": "Relaxed instrumental hip-hop; warm deliberate lo-fi texture.",
+      "fit_checks": ["hip-hop beat", "relaxed", "warm lo-fi texture", "no vocals"],
+      "jamendo_query": {"tags": "hiphop", "vocalinstrumental": "instrumental", "speed": "low"}
+    },
+    {
+      "id": "R03",
+      "text": "Spacious ambient music with no drums or singing for winding down.",
+      "kind": "discovery",
+      "interpretation": "Low-energy spacious ambient; no prominent percussion or vocals.",
+      "fit_checks": ["ambient", "spacious and calm", "no drums", "no vocals"],
+      "jamendo_query": {"tags": "ambient", "vocalinstrumental": "instrumental", "speed": "verylow"}
+    },
+    {
+      "id": "R04",
+      "text": "Relaxed acoustic folk songs with a singer for a Sunday morning.",
+      "kind": "discovery",
+      "interpretation": "Gentle acoustic folk with sung vocals.",
+      "fit_checks": ["folk", "acoustic", "relaxed", "sung vocals"],
+      "jamendo_query": {"tags": "folk", "acousticelectric": "acoustic", "vocalinstrumental": "vocal"}
+    },
+    {
+      "id": "R05",
+      "text": "Small-group instrumental jazz with a laid-back swing feel.",
+      "kind": "discovery",
+      "interpretation": "Relaxed acoustic jazz ensemble; swing rhythm; instrumental.",
+      "fit_checks": ["small jazz ensemble", "swing feel", "laid-back", "no vocals"],
+      "jamendo_query": {"tags": "jazz", "vocalinstrumental": "instrumental", "speed": "low"}
+    },
+    {
+      "id": "R06",
+      "text": "Upbeat funk with a strong bass groove for cooking.",
+      "kind": "discovery",
+      "interpretation": "Upbeat funk with prominent bass and rhythmic groove; vocals optional.",
+      "fit_checks": ["funk", "upbeat", "prominent bass groove"],
+      "jamendo_query": {"tags": "funk", "speed": "high"}
+    },
+    {
+      "id": "R07",
+      "text": "Catchy indie pop with sung vocals for a cheerful afternoon.",
+      "kind": "discovery",
+      "interpretation": "Melodic indie pop; cheerful mood; sung vocals.",
+      "fit_checks": ["indie pop", "catchy melody", "cheerful", "sung vocals"],
+      "jamendo_query": {"tags": "pop", "vocalinstrumental": "vocal"}
+    },
+    {
+      "id": "R08",
+      "text": "Driving instrumental electronic music for a workout.",
+      "kind": "discovery",
+      "interpretation": "High-energy electronic beat with a steady driving pulse; instrumental.",
+      "fit_checks": ["electronic", "driving pulse", "high energy", "no vocals"],
+      "jamendo_query": {"tags": "electronic", "vocalinstrumental": "instrumental", "speed": "high"}
+    },
+    {
+      "id": "R09",
+      "text": "Dreamy synthwave for a late-night drive, without singing.",
+      "kind": "discovery",
+      "interpretation": "Dreamy retro synthesizers with a steady beat; instrumental.",
+      "fit_checks": ["retro synth sound", "dreamy mood", "steady beat", "no vocals"],
+      "jamendo_query": {"tags": "synthwave", "vocalinstrumental": "instrumental"}
+    },
+    {
+      "id": "R10",
+      "text": "Dramatic orchestral music for an adventure scene, no vocals.",
+      "kind": "discovery",
+      "interpretation": "Orchestral instrumental with dramatic forward motion.",
+      "fit_checks": ["orchestral", "dramatic", "adventurous motion", "no vocals"],
+      "jamendo_query": {"tags": "soundtrack", "vocalinstrumental": "instrumental"}
+    },
+    {
+      "id": "R11",
+      "text": "Fast heavy metal with distorted guitars and energetic drums.",
+      "kind": "discovery",
+      "interpretation": "High-energy metal; fast drums and distorted guitars; vocals optional.",
+      "fit_checks": ["heavy metal", "distorted guitars", "fast energetic drums"],
+      "jamendo_query": {"tags": "metal", "speed": "high"}
+    },
+    {
+      "id": "R12",
+      "text": "Slow electric blues with expressive guitar and a singer.",
+      "kind": "discovery",
+      "interpretation": "Slow electric blues with prominent lead guitar and sung vocals.",
+      "fit_checks": ["blues", "slow", "expressive electric guitar", "sung vocals"],
+      "jamendo_query": {"tags": "blues", "vocalinstrumental": "vocal", "speed": "low"}
+    },
+    {
+      "id": "R13",
+      "text": "Gentle acoustic songs sung in French.",
+      "kind": "discovery",
+      "interpretation": "Gentle acoustic arrangement with French-language sung vocals.",
+      "fit_checks": ["gentle", "acoustic", "French lyrics", "sung vocals"],
+      "jamendo_query": {"acousticelectric": "acoustic", "vocalinstrumental": "vocal", "lang": "fr"}
+    },
+    {
+      "id": "R14",
+      "text": "Old-school hip-hop with rapped vocals and a relaxed beat.",
+      "kind": "discovery",
+      "interpretation": "Relaxed old-school hip-hop with rap rather than an instrumental beat alone.",
+      "fit_checks": ["old-school hip-hop", "rapped vocals", "relaxed beat"],
+      "jamendo_query": {"tags": "hiphop", "vocalinstrumental": "vocal", "speed": "low"}
+    },
+    {
+      "id": "R15",
+      "text": "Play Blinding Lights by The Weeknd.",
+      "kind": "exact_recording",
+      "interpretation": "The named recording by the named artist; a stylistic substitute is not an exact match.",
+      "fit_checks": ["title Blinding Lights", "recording by The Weeknd", "exact recording rather than a cover or stylistic substitute"],
+      "jamendo_query": {"name": "Blinding Lights", "artist_name": "The Weeknd"}
+    },
+    {
+      "id": "R16",
+      "text": "Play a solo piano recording of Erik Satie's Gymnopédie No. 1.",
+      "kind": "named_composition",
+      "interpretation": "A recording of the specified composition for solo piano; performer unspecified.",
+      "fit_checks": ["Gymnopédie No. 1 by Erik Satie", "solo piano", "no vocals"],
+      "jamendo_query": {"namesearch": "Gymnopédie", "vocalinstrumental": "instrumental"}
+    }
+  ]
+}
