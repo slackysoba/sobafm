@@ -26,9 +26,14 @@ or listener identities. Link a restricted approval record without copying secret
 
 ## Eligibility checklist
 
-- [ ] Exact license name, version/jurisdiction and authoritative URL recorded.
-- [ ] Dated recording-page license evidence agrees with metadata.
-- [ ] Recording, composition and incorporated material rights checked.
+For Jamendo, ccMixter and FMA, link the already-confirmed direct permission in
+the [catalog plan](../../docs/catalog-evaluation.md#confirmed-three-source-permission).
+Keep that confirmation separate from incomplete attribution or access evidence;
+do not ask for the same grant again.
+
+- [ ] Permission basis and its conditions recorded, reusing confirmed grants.
+- [ ] Available license/version/link and dated notices retained; gaps identified.
+- [ ] Recording/composition identity and incorporated material credits checked.
 - [ ] All supplied attribution parties and remix/sample chains retained.
 - [ ] Actual evaluation/use context and commercial/NC constraints resolved.
 - [ ] Applicable source-access terms reviewed separately from the license.
@@ -39,6 +44,7 @@ or listener identities. Link a restricted approval record without copying secret
 
 | Field | Evidence |
 | --- | --- |
+| Permission basis / confirmed source grant / carried-forward conditions | |
 | License / authoritative legal text / dated source observation | |
 | Recording/composition/remix rights evidence | |
 | Upstream work IDs, creators, licenses and required notices | |

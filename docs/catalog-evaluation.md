@@ -1,14 +1,40 @@
 # Catalog evaluation plan
 
-Status: documentation proposal for [issue #6](https://github.com/slackysoba/sobafm/issues/6)
+Status: comparison proposal and metadata inventory for [issue #6](https://github.com/slackysoba/sobafm/issues/6)
 and [Outcome 1](https://github.com/slackysoba/sobafm/issues/1). No candidate has
 been acquired, heard, rated or accepted by this work. No source is enabled.
 The [requirements](requirements.md#first-source-evaluation) remain authoritative.
 
 The first comparison asks whether a bounded editorial or hand-picked selection
 improves enjoyment over ordinary Jamendo results without losing request fit,
-availability or useful variety. It does not qualify an entire catalog, establish
-Discord playback rights, or prove production reliability.
+availability or useful variety. It does not qualify an entire catalog or establish
+production reliability. The permission basis below is already confirmed; the
+comparison measures selection quality, not whether that confirmation exists.
+
+## Confirmed three-source permission
+
+On 2026-10-27 the maintainer confirmed that the owners of **Jamendo, ccMixter
+and Free Music Archive** explicitly permitted use of their music in SobaFM.
+The [public authority record](https://github.com/slackysoba/sobafm/issues/6#issuecomment-6441099250)
+identifies all three and carries forward the conditions recorded in the
+[earlier clarification](https://github.com/slackysoba/sobafm/issues/6#issuecomment-6440417895):
+attribution is required; SobaFM must not be commercialized or monetized;
+donations are permitted. This resolves the earlier source-identification and
+direct-permission uncertainty, including FMA. No other source is included.
+
+Use this maintainer-confirmed direct permission as the basis for this work.
+Do not request the same grant again or replace it with a generic license-only
+assumption. No private grant correspondence is required or published. Preserve
+available recording licenses and notices as credit/provenance evidence; missing
+metadata is a specific completion task, not evidence that the direct permission
+is absent. Record any actual conflicting evidence concretely for review.
+
+Service access, credentials, recording identity, complete credits and the
+retrieval/storage route still need accurate records. The confirmation does not
+itself authorize audio acquisition/listening in this preparation slice, change the
+source-access policy, or enable a production source. Concise song status and
+complete ordinary-listener private `/now` credits remain the product contract.
+No Discord presence or permission changes are part of this preparation.
 
 ## Deliverables and remaining gates
 
@@ -19,14 +45,21 @@ This slice supplies the [fixed requests](../evaluations/catalog/requests.json),
 Copy the templates into a separately authorized run; leave their blank cells
 blank until evidence exists. An unchecked box means unverified, not denied.
 
+The subsequent [six-recording inventory](../evaluations/catalog/three-source-inventory.json)
+and [finite acquisition/listening proposal](../evaluations/catalog/three-source-pilot.md)
+record two proposed complete recordings per confirmed source, including access
+gaps and poor metadata matches. This smaller preparation pilot is not J0/J1/C1
+comparison evidence and does not replace the 16-request protocol below.
+
 Later acceptance requires:
 
 1. Maintainer authorization for a concrete bounded run: source access, actual
    use context, candidate acquisition, storage and human listening. Record
-   service/cost decisions and required permissions before using the service.
+   service/cost decisions before using the service; reuse the confirmed grants.
 2. Recording-specific eligibility and complete credits before any audio request
    or playback, including evaluation playback. Metadata discovery alone is not
-   admission. Unknown or conflicting rights exclude a candidate from listening.
+   admission. Resolve concrete missing credits/access evidence or conflicting
+   rights before listening, without reopening the confirmed source grants.
 3. Actual observations and human ratings, with missing cases retained.
 4. A reviewed source/storage decision supported by those results. The repository
    preference for editorial Jamendo and complete-track ccMixter is a hypothesis;
@@ -219,11 +252,12 @@ Before admission, verify:
 - Stable provider/recording identity and canonical credential-free landing page;
   title, version, supplied creators and any identified duplicate recordings.
 - Complete recording rather than a stem, sample pack, loop or isolated vocal;
-  evidence for composition, recording and incorporated sample/remix rights.
-- Exact license version/jurisdiction and its authoritative text; actual context
-  of evaluation and intended music-only Discord use, commercial/NC constraints,
-  additional permissions and any remaining conflict. Do not infer NC status
-  from self-hosting or the absence of a ticket price.
+  evidence identifying incorporated sample/remix works and attribution parties.
+- Permission basis and actual use conditions, using the confirmed direct grants
+  above for these three sources. Preserve the supplied license version,
+  jurisdiction and authoritative link where available; explicitly record missing
+  notices and any concrete conflict. For other sources, establish their own
+  permission basis. Do not infer NC status merely from self-hosting.
 - Source access terms separately from copyright permission; authorized acquisition
   route, permitted storage, bounded retention and removal/recheck obligations.
 - Immutable source-bound credit snapshot: supplied title/creators, notices,
@@ -254,15 +288,15 @@ dated evidence for review.
 
 ## Source-specific acquisition and storage gates
 
-These are evidence-backed constraints and proposed implementation gates, not
-recording rights acceptance. Re-read applicable terms at the authorized run and
+These are evidence-backed access constraints and proposed implementation gates,
+alongside the confirmed permission basis. Re-read applicable terms at the authorized run and
 at source integration. Public-document research date: **2026-10-27**.
 
 | Source | Current authoritative evidence | Gate before acquisition or implementation |
 | --- | --- | --- |
-| Jamendo | [API terms](https://devportal.jamendo.com/api_terms_of_use), clauses 2, 3.1, 3.3 and 4.1: application registration, non-commercial API use, recording licenses, operational caching and creator/provider/backlink credits | Confirm the application's service eligibility and credentials separately from each recording's rights. Use transient streaming buffers; no offline library. Bound necessary caching and refresh metadata as required. |
-| ccMixter | [Query API statement](https://ccmixter.org/about) permits third-party application access. [Terms](https://ccmixter.org/terms), sections 4 and 8, require track-specific license compliance and attribution and do not warrant non-infringement | Select complete tracks; resolve incorporated material and notices. Choose temporary copies or a bounded operator library only where the specific recording and acquisition route permit them. Do not infer unlimited host bandwidth or generic streaming rights from the API statement. |
-| FMA | [App-developer policy](https://freemusicarchive.org/app-developers): API closed, no hotlinking, apps host permitted copies; forwarding user searches and scraping results needs explicit FMA approval | Use manually curated operator imports with recording-specific copy/use permission and a hosting/storage decision. No runtime scraping or direct FMA playback. Repeated fetch/play/delete does not satisfy the hosting requirement. |
+| Jamendo | [API terms](https://devportal.jamendo.com/api_terms_of_use), clauses 2, 3.1, 3.3 and 4.1: application registration, non-commercial API use, recording licenses, operational caching and creator/provider/backlink credits | Use the confirmed grant and retain complete notices. Resolve actual application access/Client ID separately. Use transient streaming buffers; no offline library. Bound necessary caching and refresh metadata as required. |
+| ccMixter | [Query API statement](https://ccmixter.org/about) permits third-party application access. [Terms](https://ccmixter.org/terms), sections 4 and 8, describe attribution and recording conditions | Use the confirmed grant; select the complete mix and retain its incorporated-work credits. The pilot proposes bounded temporary copies, without assuming unlimited host bandwidth. |
+| FMA | [App-developer policy](https://freemusicarchive.org/app-developers): API closed, no hotlinking, apps host permitted copies; forwarding user searches and scraping results needs explicit FMA approval | Use the confirmed grant through manually curated operator imports with complete notices and a hosting/storage decision. No runtime scraping or direct FMA playback. Repeated fetch/play/delete does not satisfy the hosting requirement. |
 
 Jamendo's [download-method documentation](https://developer.jamendo.com/v3.0/tracks/file)
 separates download permission from stream retrieval and documents rejection when
@@ -279,12 +313,13 @@ is in scope. Deletion after use never expands permission.
 
 The Jamendo and ccMixter pages and the CC references were read directly. Jamendo's
 currently served terms show a 2013 last-modified date; this research does not
-assert a new revision. FMA's policy was available through the search index
-(reported crawled two weeks before research); direct retrieval returned 403.
-Its [FAQ](https://freemusicarchive.org/FAQ), also indexed but not directly fetched,
-says artists retain copyright and FMA cannot change their license terms. Obtain
-readable current FMA policy and recording evidence before admission. Do not
-bypass access restrictions or treat indexed text as completed qualification.
+assert a new revision. The subsequent
+[source-research checkpoint](https://github.com/slackysoba/sobafm/issues/6#issuecomment-6440870726)
+records readable FMA app-developer policy retrieved through Exa, resolving the
+earlier policy-read gap. This slice also observed the policy in the public search
+index; direct FMA page reads still returned 403. Its candidate records identify
+the missing recording-level notices and formats individually. Do not bypass
+access restrictions or mistake indexed metadata for current file availability.
 
 ## Decision handoff
 

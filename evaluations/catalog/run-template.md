@@ -13,6 +13,7 @@ for deliberately omitted measures. Keep personal data and secrets out of Git.
 | Purpose / date window / evaluation owner alias | |
 | Authorization for metadata discovery / provider access | |
 | Authorization for candidate acquisition / listening / recheck | |
+| Existing confirmed source permissions and conditions, without repeated approval | |
 | Actual use context / source service eligibility / cost decision | |
 | Candidate eligibility policy and reviewer | |
 | J0/J1 query mappings and API documentation date | |
