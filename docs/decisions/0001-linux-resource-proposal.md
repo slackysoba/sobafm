@@ -1,6 +1,7 @@
 # 0001: Evaluate a Docker-owned whole-service resource group
 
-Status: **Proposed, not accepted** (2026-10-27).
+Status: **Accepted experimental interpretation and bounded proof** (2026-10-27).
+The deployment architecture is not qualified or accepted for application use.
 Issue: [#7](https://github.com/slackysoba/sobafm/issues/7).
 Parent: [Outcome 1](https://github.com/slackysoba/sobafm/issues/1).
 
@@ -27,31 +28,32 @@ fit; merely choosing limits is insufficient.
    descendants and can constrain mapped libraries before useful work begins.
    They are not a substitute for the proposed process-tree cap.
 
-## Proposal and required decision
+## Decision
 
-Recommend reviewing option 1 first. It uses one image, one Compose service and
+The maintainer approved option 1 for the bounded experiment. It uses one image, one Compose service and
 ordinary Docker limits, without an application cgroup manager or native build
 framework. Use distribution decoder binaries only after exact security and
 licensing review. The source evidence, reservations, exclusions, cancellation
 ownership, initial Q1-Q4 proof and later L1-L6 application qualification are in
 [Linux feasibility](../linux-feasibility.md).
 
-**Concrete maintainer question:** may this shared group be the whole-worker
-accounting unit, with the full cap charged to each playing server, and may
-runtime placement before process start satisfy the containment requirement
-instead of delegating cgroup creation/migration to the non-root application?
+The human decision was **“Approve this interpretation and bounded proof.”**
+Its [record on #7](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6439759990)
+accepts the shared whole-worker accounting unit, charged in full to each playing
+server, and runtime placement before input rather than application-owned cgroup
+creation/migration. It authorizes the reviewed finite Q1-Q4 scope, including owned
+fixtures, once its remaining execution gates pass. The known tradeoff is a
+whole-service OOM failure domain.
 
-Recommendation: approve only that interpretation and the reviewed experiment's
-scope if its tradeoffs are acceptable. Retain the existing byte limits and
-require permission, aggregate PCM, useful-fit and release evidence before
-accepting the architecture. Alternatively, retain the literal application
-delegation requirement and leave #7 blocked pending a supported deployment
-design. Neither disposition has been recorded here.
-
-This proposal does not itself change requirements, grant execution permission,
-clear decoder vulnerabilities or authorize restricted-source access. Native PCM
-buffering and exact decoder redistribution/source delivery remain explicit
-acceptance gates. The documentation can be reviewed while these remain open.
+The byte limits, native PCM reconciliation, actual permissions, useful workload
+fit, decoder security/source obligations and native-target evidence remain
+mandatory. Approval does not authorize the larger cap, restricted-source access,
+paid/provider/Discord activity or host-security changes. At approval time,
+installation/build/execution remained held for storage reconciliation. The
+coordinator subsequently cleared bounded tooling preparation and allocated the
+experiment within the approved storage limits. Concrete harness review remains
+required before native execution. This does not require asking the maintainer
+to repeat the approved design decision.
 
 ## Consequences and fallback
 
@@ -70,7 +72,6 @@ before adopting it. A permission failure cannot be fixed by raising memory.
 ## Acceptance evidence still required
 
 - Independent review of the concrete plan and later qualification harness.
-- Maintainer disposition of the accounting/delegation question.
 - Cleared exact binary dependencies and source-access/compliance path.
 - Non-root/default-seccomp runtime authority and containment before input.
 - Aggregate PCM bounds, bounded copies and successful useful workloads.
@@ -82,6 +83,7 @@ creating a station/player/provider framework. Later integration evidence is
 collected at the real application boundaries; it does not force speculative
 application work before the eligible-recording end-to-end slice.
 
-No item above is claimed complete by this record. A later accepted record must
-include the decisions and evidence; accepted decisions are superseded by new
-records rather than rewritten.
+The experimental decision is recorded; the runtime evidence above is not claimed
+complete. A later architecture-adoption decision must cite actual results and
+state its supported targets/scope. Supersede this accepted experimental decision
+with a new record rather than rewriting its decision.

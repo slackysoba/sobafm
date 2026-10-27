@@ -1,11 +1,12 @@
 # Linux resource feasibility proposal
 
-Status: **proposed; not qualified or accepted**. This is the planning slice of
+Status: **experimental interpretation and Q1-Q4 scope approved; runtime unqualified**.
+This is the bounded feasibility slice of
 [issue #7](https://github.com/slackysoba/sobafm/issues/7), under
 [Outcome 1](https://github.com/slackysoba/sobafm/issues/1). The
 [requirements](requirements.md#approved-memory-definition) remain authoritative.
-The associated [proposed decision](decisions/0001-linux-resource-proposal.md)
-records the material interpretation and execution gates.
+The associated [accepted experimental decision](decisions/0001-linux-resource-proposal.md)
+records the approved interpretation and remaining execution gates.
 
 ## Result and evidence boundary
 
@@ -17,12 +18,12 @@ group cap. This deliberately pays for some memory twice. It avoids an applicatio
 cgroup manager, a privileged launcher and a separate worker service.
 
 The proposed controlled-capacity total is **98,979,840 decimal bytes**, below
-100,000,000. That is arithmetic, not proof of useful fit. Neither this grouped-cap
-interpretation nor replacing application delegation with runtime placement is an
-accepted decision. The requirements explicitly ask for usable cgroup delegation,
-namespace reachability and migration permission. This proposal must resolve that
-wording with the maintainer; it must not declare delegation demonstrated merely
-because Docker reports cgroup v2.
+100,000,000. That is arithmetic, not proof of useful fit. The maintainer
+[approved the grouped-cap/runtime-placement interpretation and bounded proof](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6439759990).
+Runtime authority, effective namespace reachability, placement before input and
+inherited descendant containment still need demonstration. Application cgroup
+delegation is not required for this experiment; reporting cgroup v2 alone is not
+evidence that any of those runtime properties work.
 
 Read-only diagnostics on 2026-10-27 established a Linux/x86_64 Docker engine with
 cgroup v2 and the cgroupfs driver, plus an x86_64 Linux contributor environment
@@ -88,7 +89,7 @@ and [Linux resources](https://github.com/opencontainers/runtime-spec/blob/v1.3.0
 
 | Authority question | Proposed owner and required evidence |
 | --- | --- |
-| Delegation/controller availability | Existing Docker runtime owns the container cgroup. Record its driver and enabled memory/PID controllers. No delegation to the application is assumed or requested. Maintainer acceptance of this distinction is pending. |
+| Delegation/controller availability | Existing Docker runtime owns the container cgroup. Record its driver and enabled memory/PID controllers. The accepted experimental interpretation does not require delegation to the application. Actual runtime authority remains to be demonstrated. |
 | Namespace reachability | Non-root entrypoint resolves its own cgroup through `/proc/self/cgroup` and the mounted cgroup filesystem, reads effective limits, and correlates them with scoped runtime inspection. A private namespace may report `/`; do not infer the host path from it. |
 | Placement/migration permission | The runtime must successfully place the entrypoint before start. A controlled child and grandchild must appear in the same limited domain. The app must not need permission to move itself or descendants out. |
 | Permission to alter limits | The application has none. It must be unable to raise limits, create an escape subtree or use a runtime socket. Failure to observe this closes the execution gate. |
@@ -248,6 +249,12 @@ action, stop and obtain a direct maintainer resolution; documentation approval
 does not authorize it. Local binary evaluation and image publication are
 separate gates, and neither is performed here.
 
+Private local binary evaluation on owned synthetic inputs does not itself
+redistribute an image. Assess the exact binary and any applicable local-use
+obligations for that experiment; do not make a publication/source-delivery plan
+a prerequisite when the action does not trigger it. The Q1/Q2 process-only
+stage below uses no decoder and has no decoder-specific licensing gate.
+
 The [Debian security tracker](https://security-tracker.debian.org/tracker/source-package/ffmpeg)
 currently lists unresolved entries for this stable version, including deferred
 fixes. Therefore this is a maintained-distribution candidate, **not a cleared
@@ -260,10 +267,11 @@ changes. Python-only scanning is insufficient.
 
 ## Finite qualification plan
 
-This plan is reviewable preparation, not permission to execute it. Do not create
-containers, install decoders, generate media or run resource experiments until
-the plan has independent review and applicable decisions/authorization are
-recorded on #7. Do not use production credentials, real providers or Discord in
+The experimental interpretation and Q1-Q4 scope are approved. The concrete
+harness still needs independent review and its security, source-access and
+storage gates cleared before containers, installations, fixture generation or
+resource experiments run. Do not ask again for the recorded design approval.
+Do not use production credentials, real providers or Discord in
 the offline phases. There are two stages: an early decoder/process stop-or-go
 proof and later application qualification. The first must not recreate a player,
 provider adapter, station/credit model or generic IPC framework. Later schedules
@@ -271,9 +279,9 @@ belong at actual integration boundaries when those boundaries exist.
 
 ### Entry gates and finite bounds
 
-1. Record maintainer disposition of the proposed group accounting and the
-   delegation requirement. An unaccepted interpretation cannot become an
-   application-wide dependency.
+1. Preserve the recorded maintainer approval of the experimental group
+   accounting/runtime-placement interpretation. It does not make an unqualified
+   configuration an application-wide dependency.
 2. Integrate #8's executable foundation and run its locked sync, pre-commit and
    offline suite on the exact documentation/qualification commit. Independent
    review must be posted on the PR. Missing checks are not passes.
@@ -281,6 +289,8 @@ belong at actual integration boundaries when those boundaries exist.
    dependency/security inventory,
    safe fixture provenance, and binary/source-access plan. Resolve applicable
    security exceptions before input reaches native code.
+   Apply decoder-specific gates when the decoder is introduced; they do not
+   prevent independent Q1/Q2 placement/enforcement evidence.
 4. Record exact image digest, source commit, architecture, native host/kernel,
    engine/runtime versions and resource settings for each tested target. The
    available native amd64 target can run Q1-Q4 independently once its other gates
@@ -301,6 +311,12 @@ the first containment, source-access, security, accounting or cleanup-ownership
 failure. Do not tune limits repeatedly until a run passes.
 
 ### Initial stop-or-go proof
+
+The concrete [Q1/Q2 runner and configuration](../evaluations/linux_resource/README.md)
+use the already present pinned amd64 Python image without decoder installation
+or an image build. Q3 remains unresolved because the focused permitted evidence
+pass did not establish a native PCM capacity bound. Run reviewed Q1/Q2 independently
+once their own gates pass, then stop; Q4 remains not run behind the Q3 gate.
 
 Use a small standard-library process runner, permitted local fixtures, pipes,
 bounded buffers and a paced PCM discard sink. The runner observes the real
@@ -369,7 +385,7 @@ provider reliability, Discord behavior, or BOTH-mode release readiness.
 
 ## Decision if this candidate does not fit
 
-Keep this proposal unaccepted until its gates pass. If the 90,177,536-byte
+Keep the application architecture unqualified until its gates pass. If the 90,177,536-byte
 whole-service cap cannot run the useful workload, the one concrete alternative
 is to retain the same one-container design and pools but evaluate a
 **268,435,456-byte group cap**, yielding **277,237,760 bytes** of controlled
@@ -384,7 +400,7 @@ service. If permissions rather than fit fail, increasing memory is irrelevant:
 stop and obtain a supported native Docker target with existing adequate runtime
 permissions, not a host security or delegation change made by the agent.
 
-Next action: independent review of this plan, maintainer resolution of the
-accounting/delegation interpretation, then a separately scoped authorized
-qualification implementation. Issue #7 remains open until actual acceptance
-evidence and decisions exist.
+Next action: independently review the prepared Q1/Q2 runner and obtain coordinator
+storage/execution clearance within the approved scope. Preserve the unresolved
+Q3 native PCM bound and Q4 not-run status. Issue #7 remains open until actual
+acceptance evidence exists; the larger-cap alternative is outside the approval.
