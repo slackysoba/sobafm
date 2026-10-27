@@ -35,6 +35,17 @@ uv run python -m sobafm.catalog_demo "Quiet solo piano, no singing" \
 
 The output includes ranked matches, complete supplied credits, rejections and coverage gaps for all three sources. It performs no network or audio activity. The [selection contract](docs/catalog-evaluation.md#current-selection-contract) explains the input bounds, limited prompt grammar and separate review required for real metadata.
 
+Normalize a saved source response into that catalog format:
+
+```sh
+uv run python -m sobafm.catalog_import ccmixter \
+  --input evaluations/catalog/import-ccmixter-observed.json \
+  --context evaluations/catalog/import-ccmixter-context.json \
+  > ccmixter-catalog.json 2> ccmixter-import-report.json
+```
+
+This included ccMixter observation retains a missing requested ID and incomplete upstream notices. The [import guide](docs/catalog-evaluation.md#saved-source-metadata-imports) also covers saved Jamendo JSON and FMA operator manifests, with synthetic fixtures for those two sources. Normalization reports evidence gaps and creates no playback admission or network activity.
+
 ## Documentation
 
 - [Product requirements](docs/requirements.md)

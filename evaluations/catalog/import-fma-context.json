@@ -1,0 +1,8 @@
+{
+  "schema": "sobafm-import-context-1",
+  "observed_at": "2026-10-27",
+  "evidence_kind": "synthetic",
+  "scope": "One invented operator manifest; no FMA access or imported asset.",
+  "state": "complete",
+  "requested_ids": []
+}
