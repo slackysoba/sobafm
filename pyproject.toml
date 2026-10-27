@@ -34,12 +34,12 @@ line-length = 100
 select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "evaluations/linux_resource"]
 pythonVersion = "3.14"
 pythonPlatform = "Linux"
 typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "evaluations/linux_resource/test_contract.py"]
 addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers"]
 filterwarnings = ["error"]

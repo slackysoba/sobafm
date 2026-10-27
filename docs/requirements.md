@@ -153,6 +153,8 @@ Derive a feasible configuration and qualify it in the intended container before 
 
 Containment must take effect before untrusted input reaches a worker or decoder. Resource containment is not a claim of complete security isolation. If cgroups are selected, demonstrate actual delegation, namespace reachability and migration permission in non-root, default-seccomp Docker. Do not silently require privileged containers, a Docker socket, host-wide writable cgroup mounts or host security changes.
 
+For the [approved #7 experiment](decisions/0001-linux-resource-proposal.md), the Docker-owned whole-service group is the shared whole-worker accounting unit, charged in full to each playing server alongside parent PCM/copy reservations. Demonstrate runtime authority and placement before input, effective namespace reachability and limits, and inherited containment of descendants; delegation or migration by the non-root application is not required for this interpretation. This approval covers the finite proof, not a qualified application architecture. All capacity, PCM, cleanup, security, source-access and native-target requirements remain unchanged.
+
 ### Cleanup
 
 Use one cleanup owner and one original monotonic three-second total deadline for feed cancellation, closure, joins, bounded drains, process-tree termination and reaping. Repeated cancellation does not reset the deadline or abandon ownership.
