@@ -1,6 +1,7 @@
 # Request and arm comparison record
 
-Blank template for the [catalog plan](../../docs/catalog-evaluation.md).
+Blank template for an optional deferred study under the
+[catalog plan](../../docs/catalog-evaluation.md), not a current implementation gate.
 Create one record for every R01–R16 and J0/J1/C1 combination: 48 records,
 including blocked, empty and unattempted cells. Do not prefill outcomes or scores.
 

@@ -40,7 +40,7 @@ Bound untrusted input, response sizes, queues, concurrency and retries independe
 
 ## Catalog quality and rights
 
-Evaluate enjoyment, request fit and recording fidelity separately. Curate eligible recordings before playback and retain source identity, provenance, attribution and retrieval/storage policy. A playable URL, an API flag or a consumer subscription does not establish the required playback permission.
+Implement the [accepted three-source selector](decisions/0002-prompt-catalog-selection.md) with deterministic regressions for fit ordering, complete recordings, hard constraints, immutable credits and missing/partial coverage. Listening is optional deferred evidence; metadata match never establishes enjoyment or fidelity. Curate eligible recordings before playback and retain source identity, provenance, attribution and retrieval/storage policy. A playable URL, an API flag or a consumer subscription does not establish the required playback permission.
 
 Use source-specific acquisition. Complete-file validation or deleting audio after use does not expand rights. Separate technical defects from taste; intentional lo-fi texture is not automatically a defect. Test improved encodings for availability and reliability, not only nominal fidelity.
 

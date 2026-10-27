@@ -1,11 +1,12 @@
 # Catalog evaluation plan
 
-Status: comparison proposal and metadata inventory for [issue #6](https://github.com/slackysoba/sobafm/issues/6)
-and [Outcome 1](https://github.com/slackysoba/sobafm/issues/1). No candidate has
-been acquired, heard, rated or accepted by this work. No source is enabled.
+Status: implemented offline selection contract and deferred optional comparison
+for [issue #6](https://github.com/slackysoba/sobafm/issues/6) and
+[Outcome 1](https://github.com/slackysoba/sobafm/issues/1). No real candidate has
+been acquired, heard, rated or admitted by this work. No playback source is enabled.
 The [requirements](requirements.md#first-source-evaluation) remain authoritative.
 
-The first comparison asks whether a bounded editorial or hand-picked selection
+The optional comparison asks whether a bounded editorial or hand-picked selection
 improves enjoyment over ordinary Jamendo results without losing request fit,
 availability or useful variety. It does not qualify an entire catalog or establish
 production reliability. The permission basis below is already confirmed; the
@@ -36,7 +37,90 @@ source-access policy, or enable a production source. Concise song status and
 complete ordinary-listener private `/now` credits remain the product contract.
 No Discord presence or permission changes are part of this preparation.
 
-## Deliverables and remaining gates
+## Current selection contract
+
+The [accepted decision](decisions/0002-prompt-catalog-selection.md) prioritizes
+strong prompt matches and complete recordings across all three prepared sources.
+Listening is optional deferred evidence, not a prerequisite for this implementation.
+
+`sobafm.catalog` accepts `sobafm-catalog-1` JSON: a `synthetic` boolean and at most
+one partition per source (`jamendo`, `ccmixter`, `fma`). Each partition declares
+`complete`, `partial` or `unavailable`, a note identifying its scope/date, and
+at most 256 records. These are bounded prepared subsets, not entire source
+catalogs. An omitted partition is `missing`; a complete zero-record partition
+is `empty`; a partial zero-record result stays `partial`. Report provided,
+admitted and matched counts before the result limit, including zero matches.
+
+Each recording preserves a stable source/recording key, title, primary artist,
+all supplied creators, credential-free provenance, complete-recording evidence,
+availability, optional duration/composition/composer, evidence-backed descriptor
+facts and immutable credits. Each fact has one supported feature, boolean value,
+strong/weak evidence and an evidence link. Unknown facts are omitted, never
+inferred from a missing tag. False facts require evidence too. A source tag alone
+does not automatically deserve strong confidence. Preserve upstream remix notices
+in the credit snapshot; missing required information remains inadmissible.
+
+The separate `sobafm-admission-1` review input is **trusted operator data**, never
+provider/model output. Each review contains the source/recording key, canonical
+`metadata_digest(recording)`, `credits_complete`, `access_ready`, matching
+`synthetic` status, an evidence link and an optional bounded explanatory note.
+True flags assert an actual scoped review;
+the parser cannot establish that the assertion is true. SHA-256 binds the review
+to the full parsed recording, including notices and descriptors; it is not a
+signature or authorization service. Any metadata change needs a fresh review.
+Admission does not prove successful audio retrieval, decoding or playback.
+
+`parse_catalog`, `parse_reviews` and `parse_query` reject unknown fields,
+duplicate identities/facts, conflicting constraints, invalid types, unsafe links
+and unbounded data before selection. Catalog JSON is capped at 2,000,000 UTF-8
+bytes; review JSON at 256,000 bytes; each recording at 32 facts, 16 creators and
+16 notice paragraphs of at most 1,024 characters. Text forbids control/bidi
+characters; links require HTTPS with no credentials, query or fragment. Preserve
+complete credits or reject the import; never truncate required notices to fit.
+Duration is an optional integer from 1 to 86,400 seconds, a finite metadata bound
+that permits long recordings, not a claim of full-file duration or completeness.
+
+The query model permits at most 16 soft and 16 required feature predicates,
+inclusive minimum/maximum seconds, exact source/recording key, title, primary
+artist, composition and composer, and up to 32 excluded recordings or creators.
+Identity uses case-folded Unicode normalization and collapsed whitespace, not
+fuzzy substitution. Creator exclusions check every supplied credited creator.
+Hard constraints need known evidence; required facts must be strong. For soft
+requests, a candidate must support at least one preference to remain a match.
+
+All sources enter one pool. Sort by most strong supported preferences, fewest
+contradictions, most weak supported preferences, fewest unknown preferences,
+then longer known duration and stable source/recording key. Missing duration
+sorts after known duration only when fit is tied. Return at most 20 results,
+with separate strong/weak/contradicted/unknown facts, full credits, rejection
+reasons and source coverage. There is no source preference or early-source exit.
+
+`catalog_prompt` uses a small phrase table, not general language understanding.
+It supports descriptor preferences, `no`/`without` plus a known descriptor,
+`instrumental`, `only piano`, `play <title> by <artist>`, and numeric
+`at least`/`at most`/`under`/`over`/`exactly` seconds/minutes/hours.
+Unknown positive terms are returned explicitly. Unsupported exclusions,
+mandatory wording, duration or identity syntax produce no executable query;
+use validated explicit queries for constraints outside this grammar. The fixed
+16 requests exercise bounded interpretation; they do not create listening scores.
+
+Run the offline demo after the normal locked setup:
+
+```sh
+uv run python -m sobafm.catalog_demo "Quiet solo piano, no singing" \
+  --catalog evaluations/catalog/selector-demo.json \
+  --reviews evaluations/catalog/selector-demo-reviews.json --limit 3
+```
+
+The fixtures contain six invented recordings and five synthetic review records.
+The complete ccMixter candidate ranks first, ahead of longer weaker matches;
+the preview and unreviewed candidate are rejected. ccMixter coverage remains
+partial. These files grant no real permissions and contain no music or media URL.
+The same CLI accepts reviewed real metadata with `synthetic: false`; it does
+not generate reviews or turn the earlier incomplete inventory into eligible songs.
+It performs no provider calls, audio acquisition, listening or Discord activity.
+
+## Deferred optional quality evidence
 
 This slice supplies the [fixed requests](../evaluations/catalog/requests.json),
 [run record](../evaluations/catalog/run-template.md),
@@ -51,7 +135,7 @@ record two proposed complete recordings per confirmed source, including access
 gaps and poor metadata matches. This smaller preparation pilot is not J0/J1/C1
 comparison evidence and does not replace the 16-request protocol below.
 
-Later acceptance requires:
+Only if a later listening comparison is requested, its execution requires:
 
 1. Maintainer authorization for a concrete bounded run: source access, actual
    use context, candidate acquisition, storage and human listening. Record
@@ -61,14 +145,15 @@ Later acceptance requires:
    admission. Resolve concrete missing credits/access evidence or conflicting
    rights before listening, without reopening the confirmed source grants.
 3. Actual observations and human ratings, with missing cases retained.
-4. A reviewed source/storage decision supported by those results. The repository
-   preference for editorial Jamendo and complete-track ccMixter is a hypothesis;
-   FMA remains a possible complement. None is selected by this plan.
+4. A reviewed account of results and any proposed source/storage change. The
+   accepted selector already compares all three sources; a comparison does not
+   automatically enable playback or expand storage permission.
 
-Merging this documentation cannot close #6 or satisfy Outcome 1. Ordinary CI
-must never initiate provider access, audio acquisition or listening.
+The selector's acceptance is deterministic checks and independent review, with
+real-source admission gaps kept explicit. No human listening request is pending.
+Ordinary CI must never initiate provider access, audio acquisition or listening.
 
-## Fixed requests and comparison arms
+## Optional fixed requests and comparison arms
 
 `requests.json` contains 16 synthetic requests, all within the 200-character
 command limit. R01–R14 span quiet and energetic music, vocals and instrumentals,
@@ -123,7 +208,8 @@ no activity by themselves and do not override a stricter provider limit.
 1. Freeze the commit, request-set version, pool, query mappings, ranking,
    eligibility policy, reviewer aliases, date window and success criteria.
    Use two human listeners where practical; at least one must not have curated
-   C1. A single-listener pilot is exploratory evidence only.
+   C1. A single-listener pilot is exploratory evidence only. This study-panel
+   size is not a Discord audience limit.
 2. Limit Jamendo discovery to 32 initial metadata calls: 16 requests in each
    arm, at most 10 returned candidates per cell. Permit one retry per failed
    call after the provider's required delay, with at most eight retries in
@@ -321,16 +407,13 @@ index; direct FMA page reads still returned 403. Its candidate records identify
 the missing recording-level notices and formats individually. Do not bypass
 access restrictions or mistake indexed metadata for current file availability.
 
-## Decision handoff
+## Evidence handoff
 
-Publish the populated evidence, including failures and limitations, on #6.
-Recommend one of: editorial Jamendo first; ccMixter complement; scoped FMA imports
-for demonstrated gaps; or no selection yet. Explain improvements, missing styles,
-rights boundaries, storage/maintenance cost and uncertainty. A combined C1 win
-does not justify enabling both of its sources automatically.
+Publish implementation checks, review and remaining source-specific admission
+gaps on #6. Preserve the distinction between a bounded metadata pool and live
+source coverage. No subjective quality claim follows from deterministic tests.
 
-The maintainer's accepted decision must identify enabled and excluded sources,
-eligible license/use context, retrieval/storage policy, remaining implementation
-and qualification work, and the evidence it relies on. Record consequential
-choices in a new decision record; do not rewrite accepted decisions. Keep #6
-open until its actual acceptance evidence and required decisions exist.
+If an optional listening study is later requested, publish populated observations,
+failures and limitations with its own authorization and scope. Explain any
+proposed source/storage change and record consequential choices in a new decision
+record. Do not turn an unrun study into a selector acceptance or playback gate.

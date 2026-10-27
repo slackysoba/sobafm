@@ -1,6 +1,6 @@
 # Catalog comparison run record
 
-Status: not started. This is a blank template for the
+Status: deferred optional study, not started. This is a blank template for the
 [catalog plan](../../docs/catalog-evaluation.md), not an approval or result.
 Do not replace blank observations with zero. Use `not measured` with a reason
 for deliberately omitted measures. Keep personal data and secrets out of Git.
@@ -115,7 +115,7 @@ Actual calls / transfer bytes / disk peak and retained bytes / cleanup evidence:
 | Independent review / findings and resolution | |
 | Maintainer decision / date / issue and decision-record links | |
 
-An evaluator recommendation is not maintainer acceptance. Link this run from
-issue #6. Keep that issue open until its acceptance evidence exists; do not
-claim Linux/Discord, full-recording integrity or release qualification from
-this selection pilot.
+An evaluator recommendation is not maintainer acceptance. Link any future run
+from its scoped evaluation issue. This unrun study is not a gate for the current
+selector implementation. Do not claim Linux/Discord, full-recording integrity
+or release qualification from this selection pilot.
