@@ -1,0 +1,13 @@
+{
+  "plugins": {
+    "per-file-ignores": {
+      ".github/pull_request_template.md": "MD041"
+    },
+    "md013": {
+      "enabled": false
+    },
+    "md033": {
+      "allowed_elements": "type,issue,slug"
+    }
+  }
+}
