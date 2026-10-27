@@ -1,0 +1,3307 @@
+# Faithful YAML rendering of the retained signed-metadata JSON proposal.
+# Historical proposal classification is preserved; see the result records for later outcomes.
+classification: signed_metadata_proposal_pending_acquisition_review
+source_commit: d1d728bfde50b6e6a0fe1d5aa5a6f16e9047b456  # pragma: allowlist secret - public source or artifact digest
+image: ghcr.io/astral-sh/uv@sha256:8f4ab6a0f2cc074290ba6a136eb016350b2b6b93a2108e07b72724901ad1914f  # pragma: allowlist secret - public source or artifact digest
+apt_version: 3.0.3
+target: amd64
+base_keyring_sha256: 506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017  # pragma: allowlist secret - public source or artifact digest
+inrelease:
+- name: security.debian.org_debian-security_dists_trixie-security_InRelease
+  sha256: 4a0cc61797b432453263179f8ac471bad3a01b393a4bd2300402cd1f7afd601a  # pragma: allowlist secret - public source or artifact digest
+  Suite: stable-security
+  Codename: trixie-security
+  Date: Tue, 27 Oct 2026 02:28:22 UTC
+  Valid-Until: Tue, 03 Nov 2026 02:28:22 UTC
+- name: deb.debian.org_debian_dists_trixie-updates_InRelease
+  sha256: 1f9c70a9c308a0a9cc550e509427bbc22f805f14f12af8f65ec3cdaa09d8fdb4  # pragma: allowlist secret - public source or artifact digest
+  Suite: stable-updates
+  Codename: trixie-updates
+  Date: Tue, 27 Oct 2026 08:09:34 UTC
+  Valid-Until: Tue, 03 Nov 2026 08:09:34 UTC
+- name: deb.debian.org_debian_dists_trixie_InRelease
+  sha256: 0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675  # pragma: allowlist secret - public source or artifact digest
+  Suite: stable
+  Codename: trixie
+  Date: Sat, 12 Sep 2026 07:55:41 UTC
+base_packages:
+- package: adduser
+  version: '3.152'
+  architecture: all
+  source_package: adduser
+  source_version: '3.152'
+- package: apt
+  version: 3.0.3
+  architecture: amd64
+  source_package: apt
+  source_version: 3.0.3
+- package: base-files
+  version: 13.8+deb13u7
+  architecture: amd64
+  source_package: base-files
+  source_version: 13.8+deb13u7
+- package: base-passwd
+  version: 3.6.7
+  architecture: amd64
+  source_package: base-passwd
+  source_version: 3.6.7
+- package: bash
+  version: 5.2.37-2+b10
+  architecture: amd64
+  source_package: bash
+  source_version: 5.2.37-2
+- package: bsdutils
+  version: 1:2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: ca-certificates
+  version: '20250419'
+  architecture: all
+  source_package: ca-certificates
+  source_version: '20250419'
+- package: coreutils
+  version: 9.7-3
+  architecture: amd64
+  source_package: coreutils
+  source_version: 9.7-3
+- package: dash
+  version: 0.5.12-12
+  architecture: amd64
+  source_package: dash
+  source_version: 0.5.12-12
+- package: debconf
+  version: 1.5.91
+  architecture: all
+  source_package: debconf
+  source_version: 1.5.91
+- package: debian-archive-keyring
+  version: '2025.1'
+  architecture: all
+  source_package: debian-archive-keyring
+  source_version: '2025.1'
+- package: debianutils
+  version: 5.23.2
+  architecture: amd64
+  source_package: debianutils
+  source_version: 5.23.2
+- package: diffutils
+  version: 1:3.10-4
+  architecture: amd64
+  source_package: diffutils
+  source_version: 1:3.10-4
+- package: dpkg
+  version: 1.22.22
+  architecture: amd64
+  source_package: dpkg
+  source_version: 1.22.22
+- package: findutils
+  version: 4.10.0-3
+  architecture: amd64
+  source_package: findutils
+  source_version: 4.10.0-3
+- package: gcc-14-base:amd64
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: grep
+  version: 3.11-4
+  architecture: amd64
+  source_package: grep
+  source_version: 3.11-4
+- package: gzip
+  version: 1.13-1+deb13u1
+  architecture: amd64
+  source_package: gzip
+  source_version: 1.13-1+deb13u1
+- package: hostname
+  version: '3.25'
+  architecture: amd64
+  source_package: hostname
+  source_version: '3.25'
+- package: init-system-helpers
+  version: 1.69~deb13u1
+  architecture: all
+  source_package: init-system-helpers
+  source_version: 1.69~deb13u1
+- package: libacl1:amd64
+  version: 2.3.2-2+b1
+  architecture: amd64
+  source_package: acl
+  source_version: 2.3.2-2
+- package: libapt-pkg7.0:amd64
+  version: 3.0.3
+  architecture: amd64
+  source_package: apt
+  source_version: 3.0.3
+- package: libattr1:amd64
+  version: 1:2.5.2-3
+  architecture: amd64
+  source_package: attr
+  source_version: 1:2.5.2-3
+- package: libaudit-common
+  version: 1:4.0.2-2+deb13u1
+  architecture: all
+  source_package: audit
+  source_version: 1:4.0.2-2+deb13u1
+- package: libaudit1:amd64
+  version: 1:4.0.2-2+deb13u1
+  architecture: amd64
+  source_package: audit
+  source_version: 1:4.0.2-2+deb13u1
+- package: libblkid1:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libbsd0:amd64
+  version: 0.12.2-2
+  architecture: amd64
+  source_package: libbsd
+  source_version: 0.12.2-2
+- package: libbz2-1.0:amd64
+  version: 1.0.8-6
+  architecture: amd64
+  source_package: bzip2
+  source_version: 1.0.8-6
+- package: libc-bin
+  version: 2.41-12+deb13u4
+  architecture: amd64
+  source_package: glibc
+  source_version: 2.41-12+deb13u4
+- package: libc6:amd64
+  version: 2.41-12+deb13u4
+  architecture: amd64
+  source_package: glibc
+  source_version: 2.41-12+deb13u4
+- package: libcap-ng0:amd64
+  version: 0.8.5-4+b1
+  architecture: amd64
+  source_package: libcap-ng
+  source_version: 0.8.5-4
+- package: libcap2:amd64
+  version: 1:2.75-10+deb13u1+b3
+  architecture: amd64
+  source_package: libcap2
+  source_version: 1:2.75-10+deb13u1
+- package: libcrypt1:amd64
+  version: 1:4.4.38-1
+  architecture: amd64
+  source_package: libxcrypt
+  source_version: 1:4.4.38-1
+- package: libdb5.3t64:amd64
+  version: 5.3.28+dfsg2-9
+  architecture: amd64
+  source_package: db5.3
+  source_version: 5.3.28+dfsg2-9
+- package: libdebconfclient0:amd64
+  version: '0.280'
+  architecture: amd64
+  source_package: cdebconf
+  source_version: '0.280'
+- package: libffi8:amd64
+  version: 3.4.8-2
+  architecture: amd64
+  source_package: libffi
+  source_version: 3.4.8-2
+- package: libgcc-s1:amd64
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: libgdbm6t64:amd64
+  version: 1.24-2
+  architecture: amd64
+  source_package: gdbm
+  source_version: 1.24-2
+- package: libgmp10:amd64
+  version: 2:6.3.0+dfsg-3
+  architecture: amd64
+  source_package: gmp
+  source_version: 2:6.3.0+dfsg-3
+- package: libhogweed6t64:amd64
+  version: 3.10.1-1
+  architecture: amd64
+  source_package: nettle
+  source_version: 3.10.1-1
+- package: liblastlog2-2:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: liblz4-1:amd64
+  version: 1.10.0-4
+  architecture: amd64
+  source_package: lz4
+  source_version: 1.10.0-4
+- package: liblzma5:amd64
+  version: 5.8.1-1+deb13u1
+  architecture: amd64
+  source_package: xz-utils
+  source_version: 5.8.1-1+deb13u1
+- package: libmd0:amd64
+  version: 1.1.0-2+b1
+  architecture: amd64
+  source_package: libmd
+  source_version: 1.1.0-2
+- package: libmount1:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libncursesw6:amd64
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: libnettle8t64:amd64
+  version: 3.10.1-1
+  architecture: amd64
+  source_package: nettle
+  source_version: 3.10.1-1
+- package: libpam-modules:amd64
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam-modules-bin
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam-runtime
+  version: 1.7.0-5
+  architecture: all
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam0g:amd64
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpcre2-8-0:amd64
+  version: 10.46-1~deb13u2
+  architecture: amd64
+  source_package: pcre2
+  source_version: 10.46-1~deb13u2
+- package: libreadline8t64:amd64
+  version: 8.2-6
+  architecture: amd64
+  source_package: readline
+  source_version: 8.2-6
+- package: libseccomp2:amd64
+  version: 2.6.0-2
+  architecture: amd64
+  source_package: libseccomp
+  source_version: 2.6.0-2
+- package: libselinux1:amd64
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libselinux
+  source_version: 3.8.1-1
+- package: libsemanage-common
+  version: 3.8.1-1
+  architecture: all
+  source_package: libsemanage
+  source_version: 3.8.1-1
+- package: libsemanage2:amd64
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libsemanage
+  source_version: 3.8.1-1
+- package: libsepol2:amd64
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libsepol
+  source_version: 3.8.1-1
+- package: libsmartcols1:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libsqlite3-0:amd64
+  version: 3.46.1-7+deb13u2
+  architecture: amd64
+  source_package: sqlite3
+  source_version: 3.46.1-7+deb13u2
+- package: libssl3t64:amd64
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: libstdc++6:amd64
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: libsystemd0:amd64
+  version: 257.13-1~deb13u1
+  architecture: amd64
+  source_package: systemd
+  source_version: 257.13-1~deb13u1
+- package: libtinfo6:amd64
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: libudev1:amd64
+  version: 257.13-1~deb13u1
+  architecture: amd64
+  source_package: systemd
+  source_version: 257.13-1~deb13u1
+- package: libuuid1:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libxxhash0:amd64
+  version: 0.8.3-2
+  architecture: amd64
+  source_package: xxhash
+  source_version: 0.8.3-2
+- package: libzstd1:amd64
+  version: 1.5.7+dfsg-1
+  architecture: amd64
+  source_package: libzstd
+  source_version: 1.5.7+dfsg-1
+- package: login
+  version: 1:4.16.0-2+really2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: login.defs
+  version: 1:4.17.4-2
+  architecture: all
+  source_package: shadow
+  source_version: 1:4.17.4-2
+- package: mawk
+  version: 1.3.4.20250131-1
+  architecture: amd64
+  source_package: mawk
+  source_version: 1.3.4.20250131-1
+- package: mount
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: ncurses-base
+  version: 6.5+20250216-2
+  architecture: all
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: ncurses-bin
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: netbase
+  version: '6.5'
+  architecture: all
+  source_package: netbase
+  source_version: '6.5'
+- package: openssl
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: openssl-provider-legacy
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: passwd
+  version: 1:4.17.4-2
+  architecture: amd64
+  source_package: shadow
+  source_version: 1:4.17.4-2
+- package: perl-base
+  version: 5.40.1-6+deb13u1
+  architecture: amd64
+  source_package: perl
+  source_version: 5.40.1-6+deb13u1
+- package: readline-common
+  version: 8.2-6
+  architecture: all
+  source_package: readline
+  source_version: 8.2-6
+- package: sed
+  version: 4.9-2+deb13u1
+  architecture: amd64
+  source_package: sed
+  source_version: 4.9-2+deb13u1
+- package: sqv
+  version: 1.3.0-3+b2
+  architecture: amd64
+  source_package: rust-sequoia-sqv
+  source_version: 1.3.0-3
+- package: sysvinit-utils
+  version: 3.14-4
+  architecture: amd64
+  source_package: sysvinit
+  source_version: 3.14-4
+- package: tar
+  version: 1.35+dfsg-3.1
+  architecture: amd64
+  source_package: tar
+  source_version: 1.35+dfsg-3.1
+- package: tzdata
+  version: 2026c-0+deb13u1
+  architecture: all
+  source_package: tzdata
+  source_version: 2026c-0+deb13u1
+- package: util-linux
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: zlib1g:amd64
+  version: 1:1.3.dfsg+really1.3.1-1+b1
+  architecture: amd64
+  source_package: zlib
+  source_version: 1:1.3.dfsg+really1.3.1-1
+proposed_packages:
+- package: ffmpeg
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/ffmpeg_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 2001944
+  sha256: 8669bc77e55393c14e0dd257ba9a916007cb6da0e1074c9b5e1d53812024f2af  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 2680
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/ffmpeg_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: ffmpeg_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:693b0be5b66a80a294c433336be6d5e1  # pragma: allowlist secret - public source or artifact digest
+  depends: libavcodec61 (>= 7:7.1.5), libavdevice61 (>= 7:7.1.5), libavfilter10 (>= 7:7.1.5), libavformat61 (>=
+    7:7.1.5), libavutil59 (>= 7:7.1.5), libc6 (>= 2.35), libplacebo349 (>= 7.349.0), libpostproc58 (>= 7:7.1.5),
+    libsdl2-2.0-0 (>= 2.0.12), libswresample5 (>= 7:7.1.5), libswscale8 (>= 7:7.1.5)
+- package: fontconfig
+  version: 2.15.0-2.3
+  architecture: amd64
+  source_package: fontconfig
+  source_version: 2.15.0-2.3
+  filename: pool/main/f/fontconfig/fontconfig_2.15.0-2.3_amd64.deb
+  size_bytes: 463312
+  sha256: 09794b188e042c90b4a89fcb5afeb276bc231b74ddf8a3efbbc7dfb6f0eac4cb  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 681
+  uri: https://deb.debian.org/debian/pool/main/f/fontconfig/fontconfig_2.15.0-2.3_amd64.deb
+  apt_local_filename: fontconfig_2.15.0-2.3_amd64.deb
+  apt_uri_hash: MD5Sum:c186e7685a219328fd50e7370038d2c5  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libfontconfig1 (>= 2.13.0), libfreetype6 (>= 2.2.1), fontconfig-config
+- package: fontconfig-config
+  version: 2.15.0-2.3
+  architecture: amd64
+  source_package: fontconfig
+  source_version: 2.15.0-2.3
+  filename: pool/main/f/fontconfig/fontconfig-config_2.15.0-2.3_amd64.deb
+  size_bytes: 318308
+  sha256: 0475c00d02660c07a15085051818625331bb502e053242106aaaa1f2ddb41225  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 533
+  uri: https://deb.debian.org/debian/pool/main/f/fontconfig/fontconfig-config_2.15.0-2.3_amd64.deb
+  apt_local_filename: fontconfig-config_2.15.0-2.3_amd64.deb
+  apt_uri_hash: MD5Sum:95f8ab94549d523b1a2739afefe99757  # pragma: allowlist secret - public source or artifact digest
+  depends: debconf (>= 0.5) | debconf-2.0, fonts-dejavu-core | fonts-liberation | fonts-croscore | fonts-freefont-otf
+    | fonts-freefont-ttf | fonts-urw-base35 | fonts-texgyre | fonts-noto-core
+  breaks: libfontconfig1 (<< 2.13.0)
+- package: fonts-dejavu-core
+  version: 2.37-8
+  architecture: all
+  source_package: fonts-dejavu
+  source_version: 2.37-8
+  filename: pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb
+  size_bytes: 840460
+  sha256: 86635b3d25b3655fc11cb3ecc3af59f0bf19643b02b94f2de48bd10253cdba12  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 2292
+  uri: https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb
+  apt_local_filename: fonts-dejavu-core_2.37-8_all.deb
+  apt_uri_hash: MD5Sum:a1ef9f90a50918bc2430b08ec79dad1e  # pragma: allowlist secret - public source or artifact digest
+  depends: fonts-dejavu-mono
+- package: fonts-dejavu-mono
+  version: 2.37-8
+  architecture: all
+  source_package: fonts-dejavu
+  source_version: 2.37-8
+  filename: pool/main/f/fonts-dejavu/fonts-dejavu-mono_2.37-8_all.deb
+  size_bytes: 488808
+  sha256: 3003e98a5debfdeadc7040a7f715fe9fe6fb67f68deacf6049b54e30f07fc014  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1281
+  uri: https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-mono_2.37-8_all.deb
+  apt_local_filename: fonts-dejavu-mono_2.37-8_all.deb
+  apt_uri_hash: MD5Sum:946eab8f7cb1e6313bb25975156f1714  # pragma: allowlist secret - public source or artifact digest
+  breaks: fonts-dejavu-core (<< 2.37-7~), fonts-dejavu-extra (<< 2.37-7~)
+  replaces: fonts-dejavu-core (<< 2.37-7~), fonts-dejavu-extra (<< 2.37-7~)
+- package: libaom3
+  version: 3.12.1-1+deb13u1
+  architecture: amd64
+  source_package: aom
+  source_version: 3.12.1-1+deb13u1
+  filename: pool/main/a/aom/libaom3_3.12.1-1+deb13u1_amd64.deb
+  size_bytes: 1871712
+  sha256: 743eec7c94ae30295bc557ebac3dfae948e7390e89a2743c585d56297e9d312e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 5579
+  uri: https://deb.debian.org/debian/pool/main/a/aom/libaom3_3.12.1-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libaom3_3.12.1-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:af6c0449754a8c6a219ecd5f11c54f70  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libasound2-data
+  version: 1.2.14-1+deb13u1
+  architecture: all
+  source_package: alsa-lib
+  source_version: 1.2.14-1+deb13u1
+  filename: pool/main/a/alsa-lib/libasound2-data_1.2.14-1+deb13u1_all.deb
+  size_bytes: 21188
+  sha256: 04688afdff3769c0f685541daed7b2f6f0cb946799ddf1d5847ddf11fe245559  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 197
+  uri: https://deb.debian.org/debian/pool/main/a/alsa-lib/libasound2-data_1.2.14-1%2bdeb13u1_all.deb
+  apt_local_filename: libasound2-data_1.2.14-1+deb13u1_all.deb
+  apt_uri_hash: MD5Sum:3ff33adf1c4821f8ad7cd8f427a1c905  # pragma: allowlist secret - public source or artifact digest
+  breaks: libasound2t64 (<< 1.2.14-1+deb13u1)
+  replaces: libasound2t64 (<< 1.2.14-1+deb13u1)
+- package: libasound2t64
+  version: 1.2.14-1+deb13u1
+  architecture: amd64
+  source_package: alsa-lib
+  source_version: 1.2.14-1+deb13u1
+  filename: pool/main/a/alsa-lib/libasound2t64_1.2.14-1+deb13u1_amd64.deb
+  size_bytes: 380896
+  sha256: 5495496142d57e5ad6d581ac5456ec3c87f872c109a2bfb815d154b673eebc67  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1265
+  uri: https://deb.debian.org/debian/pool/main/a/alsa-lib/libasound2t64_1.2.14-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libasound2t64_1.2.14-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:e1004bd73f203a8a5b25be22c5b358cf  # pragma: allowlist secret - public source or artifact digest
+  depends: libasound2-data (>= 1.2.14-1+deb13u1), libc6 (>= 2.38)
+  provides: libasound2 (= 1.2.14-1+deb13u1)
+  breaks: alsa-utils (<< 1.2.1), libasound2 (<< 1.2.14-1+deb13u1)
+  replaces: libasound2
+- package: libass9
+  version: 1:0.17.3-1+deb13u1
+  architecture: amd64
+  source_package: libass
+  source_version: 1:0.17.3-1+deb13u1
+  filename: pool/main/liba/libass/libass9_0.17.3-1+deb13u1_amd64.deb
+  size_bytes: 114152
+  sha256: 000faddfaa19c7c1631f2d71a9cd1982cd3a88611967debe631440a1c64617b4  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 286
+  uri: https://deb.debian.org/debian/pool/main/liba/libass/libass9_0.17.3-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libass9_1%3a0.17.3-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:35161f9ec04b85ef2ce795f9b5f90910  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libfontconfig1 (>= 2.13.0), libfreetype6 (>= 2.3.5), libfribidi0 (>= 1.0.0), libharfbuzz0b
+    (>= 1.2.6), libunibreak6 (>= 1.0)
+- package: libasyncns0
+  version: 0.8-6+b5
+  architecture: amd64
+  source_package: libasyncns
+  source_version: 0.8-6
+  filename: pool/main/liba/libasyncns/libasyncns0_0.8-6+b5_amd64.deb
+  size_bytes: 12028
+  sha256: e7958777b0e3586349c57ac759a95b68f80d28e5bd1c4225705198b39b436115  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 39
+  uri: https://deb.debian.org/debian/pool/main/liba/libasyncns/libasyncns0_0.8-6%2bb5_amd64.deb
+  apt_local_filename: libasyncns0_0.8-6+b5_amd64.deb
+  apt_uri_hash: MD5Sum:c4868c175574e6ec20cb7af66803aca2  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libatomic1
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+  filename: pool/main/g/gcc-14/libatomic1_14.2.0-19_amd64.deb
+  size_bytes: 9308
+  sha256: 212b399aae2f7299203d261a57e49372e09565a9a5ea971905f94a3960366c05  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 45
+  uri: https://deb.debian.org/debian/pool/main/g/gcc-14/libatomic1_14.2.0-19_amd64.deb
+  apt_local_filename: libatomic1_14.2.0-19_amd64.deb
+  apt_uri_hash: MD5Sum:ac6daa5a9f8809b24584507f08e54de5  # pragma: allowlist secret - public source or artifact digest
+  depends: gcc-14-base (= 14.2.0-19), libc6 (>= 2.14)
+- package: libavc1394-0
+  version: 0.5.4-5+b2
+  architecture: amd64
+  source_package: libavc1394
+  source_version: 0.5.4-5
+  filename: pool/main/liba/libavc1394/libavc1394-0_0.5.4-5+b2_amd64.deb
+  size_bytes: 18164
+  sha256: f76cd439099e941a97587c6f49b53fe14357c6577d7b7d6cbd26b9ca54f64f5f  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 65
+  uri: https://deb.debian.org/debian/pool/main/liba/libavc1394/libavc1394-0_0.5.4-5%2bb2_amd64.deb
+  apt_local_filename: libavc1394-0_0.5.4-5+b2_amd64.deb
+  apt_uri_hash: MD5Sum:00597e103ff5db9d4d8592ce62d2e252  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libraw1394-11 (>= 2.1.2)
+- package: libavcodec61
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/libavcodec61_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 5821268
+  sha256: 6c07da16b276827973463bdd22607721df1c2877641c753d2418cf6bf49a0f2e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 16613
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/libavcodec61_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libavcodec61_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:f7c9dfe5730e4990ab2d25f562c5f751  # pragma: allowlist secret - public source or artifact digest
+  depends: libaom3 (>= 3.2.0), libavutil59 (= 7:7.1.5-0+deb13u1), libc6 (>= 2.35), libcairo2 (>= 1.2.4), libcodec2-1.2
+    (>= 1.2.0), libdav1d7 (>= 1.1.0), libglib2.0-0t64 (>= 2.12.0), libgsm1 (>= 1.0.18), libjxl0.11 (>= 0.8.0), liblzma5
+    (>= 5.1.1alpha+20120614), libmp3lame0 (>= 3.100), libopenjp2-7 (>= 2.0.0), libopus0 (>= 1.1), librav1e0.7 (>=
+    0.5.1), librsvg2-2 (>= 2.52.5), libshine3 (>= 3.1.0), libsnappy1v5 (>= 1.2.2), libspeex1 (>= 1.2~), libsvtav1enc2
+    (>= 2.2.1), libswresample5 (>= 7:7.1.5), libtheoradec1 (>= 1.0), libtheoraenc1 (>= 1.0), libtwolame0 (>= 0.3.10),
+    libva2 (>= 2.9.0), libvorbis0a (>= 1.1.2), libvorbisenc2 (>= 1.1.2), libvpl2 (>= 1:2.14.0), libvpx9 (>= 1.12.0),
+    libwebp7 (>= 1.5.0), libwebpmux3 (>= 1.5.0), libx264-164 (>= 2:0.164.3108+git31e19f9), libx265-215 (>= 4.1),
+    libxvidcore4 (>= 1.2.2), libzvbi0t64 (>= 0.2.35), zlib1g (>= 1:1.2.0)
+- package: libavdevice61
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/libavdevice61_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 126504
+  sha256: 90a1b5e3256960a9297b9767b230da0ea29281acf9532cc08b0de785c3b901fe  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 301
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/libavdevice61_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libavdevice61_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:70abb920fed29fbf799714917310c545  # pragma: allowlist secret - public source or artifact digest
+  depends: libasound2t64 (>= 1.0.16), libavc1394-0 (>= 0.5.3), libavcodec61 (>= 7:7.1.5), libavfilter10 (>= 7:7.1.5),
+    libavformat61 (= 7:7.1.5-0+deb13u1), libavutil59 (= 7:7.1.5-0+deb13u1), libc6 (>= 2.34), libcaca0 (>= 0.99.beta20),
+    libcdio-cdda2t64 (>= 10.2+2.0.0), libcdio-paranoia2t64 (>= 10.2+2.0.0), libdc1394-25 (>= 2.2.6), libdrm2 (>=
+    2.4.101), libgl1, libiec61883-0 (>= 1.2.0), libjack-jackd2-0 (>= 1.9.10+20150825) | libjack-0.125, libopenal1
+    (>= 1.14), libpulse0 (>= 0.99.1), libraw1394-11 (>= 2.1.2), libsdl2-2.0-0 (>= 2.0.12), libx11-6, libxcb-shape0,
+    libxcb-shm0, libxcb-xfixes0, libxcb1, libxext6, libxv1
+- package: libavfilter10
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/libavfilter10_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 4120684
+  sha256: 55015c70802ac95c8e14d7cba5f6051c649bd8d2dd4971312b754378edff5867  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 14159
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/libavfilter10_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libavfilter10_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:4c24b396fcf176243bbc8f38da6b46f5  # pragma: allowlist secret - public source or artifact digest
+  depends: libass9 (>= 1:0.15.0), libavcodec61 (= 7:7.1.5-0+deb13u1), libavformat61 (>= 7:7.1.5), libavutil59 (=
+    7:7.1.5-0+deb13u1), libbs2b0 (>= 3.1.0+dfsg), libc6 (>= 2.38), libflite1 (>= 1.4-release-9~), libfontconfig1
+    (>= 2.12.6), libfreetype6 (>= 2.2.1), libfribidi0 (>= 0.19.2), libharfbuzz0b (>= 0.9.9), liblilv-0-0 (>= 0.14.2~dfsg0),
+    libmysofa1 (>= 0.7~), libplacebo349 (>= 7.349.0), libpocketsphinx3 (>= 0.8+5prealpha+1), libpostproc58 (>= 7:7.1.5),
+    librubberband2 (>= 3.3.0+dfsg), libsphinxbase3t64 (>= 0.8+5prealpha), libstdc++6 (>= 13.1), libswresample5 (>=
+    7:7.1.5), libswscale8 (>= 7:7.1.5), libva2 (>= 1.7.3), libvidstab1.1, libvpl2 (>= 1:2.14.0), libzimg2 (>= 0.3.1),
+    libzmq5 (>= 3.2.3+dfsg), ocl-icd-libopencl1 | libopencl1, ocl-icd-libopencl1 (>= 1.0) | libopencl-1.2-1, zlib1g
+    (>= 1:1.1.4)
+- package: libavformat61
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/libavformat61_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 1203340
+  sha256: 4b580060cebbd33a25589ba71074e3106caf2826bcdb82cf8936b52960f34fb2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 3047
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/libavformat61_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libavformat61_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:71d9ecf1a075e40cad159db1f5db2253  # pragma: allowlist secret - public source or artifact digest
+  depends: libavcodec61 (= 7:7.1.5-0+deb13u1), libavutil59 (= 7:7.1.5-0+deb13u1), libbluray2 (>= 1:0.2.2), libbz2-1.0,
+    libc6 (>= 2.35), libchromaprint1 (>= 1.3.2), libdvdnav4 (>= 6.1.0), libdvdread8t64 (>= 6.1.0), libgme0 (>= 0.5.5),
+    libgnutls30t64 (>= 3.8.1), libopenmpt0t64 (>= 0.3.0), librabbitmq4 (>= 0.6.0), librist4 (>= 0.2.6+dfsg), libsrt1.5-gnutls
+    (>= 1.5.4), libssh-4 (>= 0.8.0), libxml2 (>= 2.7.4), libzmq5 (>= 4.0.1+dfsg), zlib1g (>= 1:1.2.0.2)
+- package: libavutil59
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/libavutil59_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 424956
+  sha256: bb5fe4ea1eef338c8346bf67cc728dac20b94451ad31db391d03d1f2b3fa37c1  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1252
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/libavutil59_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libavutil59_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:c8df1e2a213fa674bc753203f0e0d6ca  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.35), libdrm2 (>= 2.4.66), libva-drm2 (>= 1.3), libva-x11-2 (>= 1.3), libva2 (>= 2.21.0),
+    libvdpau1 (>= 0.2), libvpl2 (>= 1:2.14.0), libx11-6, ocl-icd-libopencl1 | libopencl1, ocl-icd-libopencl1 (>=
+    1.0) | libopencl-1.2-1
+- package: libblas3
+  version: 3.12.1-6
+  architecture: amd64
+  source_package: lapack
+  source_version: 3.12.1-6
+  filename: pool/main/l/lapack/libblas3_3.12.1-6_amd64.deb
+  size_bytes: 159604
+  sha256: 4af245ecafc30bfa1de9d20af02fec96654ead2f06b1dac40cb03fc9eb0bfbe6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 521
+  uri: https://deb.debian.org/debian/pool/main/l/lapack/libblas3_3.12.1-6_amd64.deb
+  apt_local_filename: libblas3_3.12.1-6_amd64.deb
+  apt_uri_hash: MD5Sum:009269addf607682ff0a0def1acfbafe  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libgcc-s1 (>= 3.0)
+  provides: libblas.so.3
+- package: libbluray2
+  version: 1:1.3.4-1+b2
+  architecture: amd64
+  source_package: libbluray
+  source_version: 1:1.3.4-1
+  filename: pool/main/libb/libbluray/libbluray2_1.3.4-1+b2_amd64.deb
+  size_bytes: 138412
+  sha256: 82f9e58e8dfdfeb57b273111433c335500c26553eb82f2a025e94ed9fdae2c21  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 353
+  uri: https://deb.debian.org/debian/pool/main/libb/libbluray/libbluray2_1.3.4-1%2bb2_amd64.deb
+  apt_local_filename: libbluray2_1%3a1.3.4-1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:2c37b08cb296d65b214c83f715cab6ad  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libfontconfig1 (>= 2.12.6), libfreetype6 (>= 2.2.1), libudfread0 (>= 1.1.1), libxml2
+    (>= 2.7.4)
+- package: libbrotli1
+  version: 1.1.0-2+deb13u1
+  architecture: amd64
+  source_package: brotli
+  source_version: 1.1.0-2+deb13u1
+  filename: pool/updates/main/b/brotli/libbrotli1_1.1.0-2+deb13u1_amd64.deb
+  size_bytes: 303640
+  sha256: db46824c60fee46aff3cc0be3e5f736bc606cae669b1fb17516a41e8073251a9  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 865
+  uri: https://security.debian.org/debian-security/pool/updates/main/b/brotli/libbrotli1_1.1.0-2%2bdeb13u1_amd64.deb
+  apt_local_filename: libbrotli1_1.1.0-2+deb13u1_amd64.deb
+  apt_uri_hash: null
+  depends: libc6 (>= 2.29)
+- package: libbs2b0
+  version: 3.1.0+dfsg-8+b1
+  architecture: amd64
+  source_package: libbs2b
+  source_version: 3.1.0+dfsg-8
+  filename: pool/main/libb/libbs2b/libbs2b0_3.1.0+dfsg-8+b1_amd64.deb
+  size_bytes: 12520
+  sha256: 683621e230de5d9cb919f6c6c3a18db4eb7b80706761b983a4a8f2a56747351d  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 46
+  uri: https://deb.debian.org/debian/pool/main/libb/libbs2b/libbs2b0_3.1.0%2bdfsg-8%2bb1_amd64.deb
+  apt_local_filename: libbs2b0_3.1.0+dfsg-8+b1_amd64.deb
+  apt_uri_hash: MD5Sum:af8edc2289f87be92a38b77d9935383c  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libstdc++6 (>= 4.1.1)
+- package: libcaca0
+  version: 0.99.beta20-5+deb13u1
+  architecture: amd64
+  source_package: libcaca
+  source_version: 0.99.beta20-5+deb13u1
+  filename: pool/main/libc/libcaca/libcaca0_0.99.beta20-5+deb13u1_amd64.deb
+  size_bytes: 202116
+  sha256: 29d212b4b137aa8cfb0d98d496cf0aca65a2e8832b4c4d38ce1ea276d77c97a0  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 899
+  uri: https://deb.debian.org/debian/pool/main/libc/libcaca/libcaca0_0.99.beta20-5%2bdeb13u1_amd64.deb
+  apt_local_filename: libcaca0_0.99.beta20-5+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:d92f4a170dbce409b834a61077ac7d05  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libncursesw6 (>= 6), libslang2 (>= 2.2.4), libstdc++6 (>= 13.1), libtinfo6 (>= 6), zlib1g
+    (>= 1:1.1.4)
+- package: libcairo-gobject2
+  version: 1.18.4-1+b1
+  architecture: amd64
+  source_package: cairo
+  source_version: 1.18.4-1
+  filename: pool/main/c/cairo/libcairo-gobject2_1.18.4-1+b1_amd64.deb
+  size_bytes: 130284
+  sha256: 4fcd432ebe8f93599bd05426f304e2f70409aad271fc6b4b3a2c6243c99c377c  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 197
+  uri: https://deb.debian.org/debian/pool/main/c/cairo/libcairo-gobject2_1.18.4-1%2bb1_amd64.deb
+  apt_local_filename: libcairo-gobject2_1.18.4-1+b1_amd64.deb
+  apt_uri_hash: MD5Sum:3940f873974dfcad021f31442a80f9b2  # pragma: allowlist secret - public source or artifact digest
+  depends: libcairo2 (= 1.18.4-1+b1), libglib2.0-0t64 (>= 2.68.0)
+- package: libcairo2
+  version: 1.18.4-1+b1
+  architecture: amd64
+  source_package: cairo
+  source_version: 1.18.4-1
+  filename: pool/main/c/cairo/libcairo2_1.18.4-1+b1_amd64.deb
+  size_bytes: 537556
+  sha256: 01390b049661e4cc8bd39cef78b41c2587d4035619d3b00d6c7846f43d80bbba  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1391
+  uri: https://deb.debian.org/debian/pool/main/c/cairo/libcairo2_1.18.4-1%2bb1_amd64.deb
+  apt_local_filename: libcairo2_1.18.4-1+b1_amd64.deb
+  apt_uri_hash: MD5Sum:33a0a47234f9b4a0d7c91b29d01d6db2  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libfontconfig1 (>= 2.12.6), libfreetype6 (>= 2.11.1), libpixman-1-0 (>= 0.40.0), libpng16-16t64
+    (>= 1.6.46), libx11-6, libxcb-render0, libxcb-shm0, libxcb1 (>= 1.6), libxext6, libxrender1, zlib1g (>= 1:1.1.4)
+- package: libcdio-cdda2t64
+  version: 10.2+2.0.2-1+b1
+  architecture: amd64
+  source_package: libcdio-paranoia
+  source_version: 10.2+2.0.2-1
+  filename: pool/main/libc/libcdio-paranoia/libcdio-cdda2t64_10.2+2.0.2-1+b1_amd64.deb
+  size_bytes: 17704
+  sha256: 3d6cb8220d4e67719bb84feb35022656e6b6ca3dec88e823906fc72b57c83e6f  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 55
+  uri: https://deb.debian.org/debian/pool/main/libc/libcdio-paranoia/libcdio-cdda2t64_10.2%2b2.0.2-1%2bb1_amd64.deb
+  apt_local_filename: libcdio-cdda2t64_10.2+2.0.2-1+b1_amd64.deb
+  apt_uri_hash: MD5Sum:eab10227760c2d44e57e83e598ca9f5b  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.33), libcdio19t64 (>= 2.1.0)
+  provides: libcdio-cdda2 (= 10.2+2.0.2-1+b1)
+  breaks: libcdio-cdda2 (<< 10.2+2.0.2-1)
+  replaces: libcdio-cdda2
+- package: libcdio-paranoia2t64
+  version: 10.2+2.0.2-1+b1
+  architecture: amd64
+  source_package: libcdio-paranoia
+  source_version: 10.2+2.0.2-1
+  filename: pool/main/libc/libcdio-paranoia/libcdio-paranoia2t64_10.2+2.0.2-1+b1_amd64.deb
+  size_bytes: 17356
+  sha256: 8721c897d6f70d694d4b5f09e66ce00a98d236b2746664a8e27635532b7695b8  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 55
+  uri: https://deb.debian.org/debian/pool/main/libc/libcdio-paranoia/libcdio-paranoia2t64_10.2%2b2.0.2-1%2bb1_amd64.deb
+  apt_local_filename: libcdio-paranoia2t64_10.2+2.0.2-1+b1_amd64.deb
+  apt_uri_hash: MD5Sum:fa5ec4b9902a990abc6a610d92884a71  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libcdio-cdda2t64 (>= 10.2+2.0.0), libcdio19t64 (>= 2.1.0)
+  provides: libcdio-paranoia2 (= 10.2+2.0.2-1+b1)
+  breaks: libcdio-paranoia2 (<< 10.2+2.0.2-1)
+  replaces: libcdio-paranoia2
+- package: libcdio19t64
+  version: 2.2.0-4.1~deb13u1
+  architecture: amd64
+  source_package: libcdio
+  source_version: 2.2.0-4.1~deb13u1
+  filename: pool/main/libc/libcdio/libcdio19t64_2.2.0-4.1~deb13u1_amd64.deb
+  size_bytes: 61640
+  sha256: bddfa8b7eca542379962152216d3414e999bca809a4a25543a193b4d1acc4ba1  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 191
+  uri: https://deb.debian.org/debian/pool/main/libc/libcdio/libcdio19t64_2.2.0-4.1%7edeb13u1_amd64.deb
+  apt_local_filename: libcdio19t64_2.2.0-4.1~deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:92a20a2e286a6ac80757e88862bde0b4  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.33)
+  provides: libcdio19 (= 2.2.0-4.1~deb13u1)
+  breaks: libcdio19 (<< 2.2.0-4.1~deb13u1), libiso9660++-0 (<< 2.2.0), libiso9660++-0t64 (<< 2.2.0), libiso9660-11
+    (<< 2.2.0), libiso9660-11t64 (<< 2.2.0)
+  replaces: libcdio19
+- package: libchromaprint1
+  version: 1.5.1-7
+  architecture: amd64
+  source_package: chromaprint
+  source_version: 1.5.1-7
+  filename: pool/main/c/chromaprint/libchromaprint1_1.5.1-7_amd64.deb
+  size_bytes: 42948
+  sha256: ed8decea8352ae56e80862c4630c83f4f863d4eea653382ed8ae43ffacda60b5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 113
+  uri: https://deb.debian.org/debian/pool/main/c/chromaprint/libchromaprint1_1.5.1-7_amd64.deb
+  apt_local_filename: libchromaprint1_1.5.1-7_amd64.deb
+  apt_uri_hash: MD5Sum:33279e0a5f183f164de57a42f800edf4  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libgcc-s1 (>= 3.4), libstdc++6 (>= 13.1)
+- package: libcjson1
+  version: 1.7.18-3.1+deb13u1
+  architecture: amd64
+  source_package: cjson
+  source_version: 1.7.18-3.1+deb13u1
+  filename: pool/main/c/cjson/libcjson1_1.7.18-3.1+deb13u1_amd64.deb
+  size_bytes: 29848
+  sha256: e10b7fb966251f4f09690cb35f9e8fed6924194ec2d6973910d9e157cda82657  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 86
+  uri: https://deb.debian.org/debian/pool/main/c/cjson/libcjson1_1.7.18-3.1%2bdeb13u1_amd64.deb
+  apt_local_filename: libcjson1_1.7.18-3.1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:66b9ac35f46c712e2c9e48f0ea52dddb  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+- package: libcodec2-1.2
+  version: 1.2.0-3
+  architecture: amd64
+  source_package: codec2
+  source_version: 1.2.0-3
+  filename: pool/main/c/codec2/libcodec2-1.2_1.2.0-3_amd64.deb
+  size_bytes: 8170032
+  sha256: d68a3b754be7aa2d724d01d2079c542fc7cfa53eaa4ac89fbc6e63d950c02bd6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 16506
+  uri: https://deb.debian.org/debian/pool/main/c/codec2/libcodec2-1.2_1.2.0-3_amd64.deb
+  apt_local_filename: libcodec2-1.2_1.2.0-3_amd64.deb
+  apt_uri_hash: MD5Sum:4d9424cc2e92f2bf174074c70beca76b  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.32)
+- package: libcom-err2
+  version: 1.47.2-3+b12
+  architecture: amd64
+  source_package: e2fsprogs
+  source_version: 1.47.2-3
+  filename: pool/main/e/e2fsprogs/libcom-err2_1.47.2-3+b12_amd64.deb
+  size_bytes: 25036
+  sha256: bd43e020b8fed399db3eebf098111f10fba4c436fff99ccad72cc7e27c9764ec  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 64
+  uri: https://deb.debian.org/debian/pool/main/e/e2fsprogs/libcom-err2_1.47.2-3%2bb12_amd64.deb
+  apt_local_filename: libcom-err2_1.47.2-3+b12_amd64.deb
+  apt_uri_hash: MD5Sum:273bb4a18c17c3ebc1eeda75cf1211fe  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+  provides: libcom-err2t64 (= 1.47.2-3+b12), libcomerr2 (= 1.47.2-3+b12)
+  breaks: libcom-err2t64 (<< 1.47.0-2.4~exp1~), libcomerr2 (<< 1.43.9-1~)
+  replaces: libcom-err2t64, libcomerr2 (<< 1.43.9-1~)
+- package: libdatrie1
+  version: 0.2.13-3+b1
+  architecture: amd64
+  source_package: libdatrie
+  source_version: 0.2.13-3
+  filename: pool/main/libd/libdatrie/libdatrie1_0.2.13-3+b1_amd64.deb
+  size_bytes: 38132
+  sha256: 339eb88f23d72b8f0b7b1aebcefbab6de600d97b88bc6222dd8aad11d2ca9051  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 77
+  uri: https://deb.debian.org/debian/pool/main/libd/libdatrie/libdatrie1_0.2.13-3%2bb1_amd64.deb
+  apt_local_filename: libdatrie1_0.2.13-3+b1_amd64.deb
+  apt_uri_hash: MD5Sum:c6aacfaf094c1405f6470db80a2a48aa  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+- package: libdav1d7
+  version: 1.5.1-1
+  architecture: amd64
+  source_package: dav1d
+  source_version: 1.5.1-1
+  filename: pool/main/d/dav1d/libdav1d7_1.5.1-1_amd64.deb
+  size_bytes: 558612
+  sha256: 8c64de4465a8ae1ca23e1dada1dfc73d7b431540fd5ae18f21430928576d5b05  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1730
+  uri: https://deb.debian.org/debian/pool/main/d/dav1d/libdav1d7_1.5.1-1_amd64.deb
+  apt_local_filename: libdav1d7_1.5.1-1_amd64.deb
+  apt_uri_hash: MD5Sum:00fd1a932f4d979ef320ea7522f07957  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libdbus-1-3
+  version: 1.16.2-2
+  architecture: amd64
+  source_package: dbus
+  source_version: 1.16.2-2
+  filename: pool/main/d/dbus/libdbus-1-3_1.16.2-2_amd64.deb
+  size_bytes: 177904
+  sha256: bbcb711daff7e104b5f80f9b05475b6142674bfe65518a36a56e96a91068a3f5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 445
+  uri: https://deb.debian.org/debian/pool/main/d/dbus/libdbus-1-3_1.16.2-2_amd64.deb
+  apt_local_filename: libdbus-1-3_1.16.2-2_amd64.deb
+  apt_uri_hash: MD5Sum:686cab55ea673c13d19531883c4860eb  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libsystemd0
+- package: libdc1394-25
+  version: 2.2.6-5
+  architecture: amd64
+  source_package: libdc1394
+  source_version: 2.2.6-5
+  filename: pool/main/libd/libdc1394/libdc1394-25_2.2.6-5_amd64.deb
+  size_bytes: 110728
+  sha256: b8ac6c3a3b397085bcd80cf457c602cc3860caa1bb6dc9bc242bbde6b38d3d79  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 280
+  uri: https://deb.debian.org/debian/pool/main/libd/libdc1394/libdc1394-25_2.2.6-5_amd64.deb
+  apt_local_filename: libdc1394-25_2.2.6-5_amd64.deb
+  apt_uri_hash: MD5Sum:0e962d6862845b6ab1c95505fd0c4068  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libraw1394-11 (>= 2.1.2), libusb-1.0-0 (>= 2:1.0.9)
+- package: libdecor-0-0
+  version: 0.2.2-2
+  architecture: amd64
+  source_package: libdecor-0
+  source_version: 0.2.2-2
+  filename: pool/main/libd/libdecor-0/libdecor-0-0_0.2.2-2_amd64.deb
+  size_bytes: 15540
+  sha256: e4f228a9d4a38af23fab00f8e20219790b567e2e1f7804b3a215a26294350f82  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 62
+  uri: https://deb.debian.org/debian/pool/main/libd/libdecor-0/libdecor-0-0_0.2.2-2_amd64.deb
+  apt_local_filename: libdecor-0-0_0.2.2-2_amd64.deb
+  apt_uri_hash: MD5Sum:3534a0e94c56d5c80f51aa6496713f54  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libwayland-client0 (>= 1.20.0)
+  conflicts: libdecor
+  replaces: libdecor
+- package: libdeflate0
+  version: 1.23-2
+  architecture: amd64
+  source_package: libdeflate
+  source_version: 1.23-2
+  filename: pool/main/libd/libdeflate/libdeflate0_1.23-2_amd64.deb
+  size_bytes: 47344
+  sha256: 5fe37fb79d53f5c91da6ba3ac4c1a8453e1f2b1ff0e0ea45189c5338bbfdbf82  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 102
+  uri: https://deb.debian.org/debian/pool/main/libd/libdeflate/libdeflate0_1.23-2_amd64.deb
+  apt_local_filename: libdeflate0_1.23-2_amd64.deb
+  apt_uri_hash: MD5Sum:7c4b5c0d85726d2d9475d48d3587c775  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+- package: libdrm-amdgpu1
+  version: 2.4.124-2
+  architecture: amd64
+  source_package: libdrm
+  source_version: 2.4.124-2
+  filename: pool/main/libd/libdrm/libdrm-amdgpu1_2.4.124-2_amd64.deb
+  size_bytes: 22632
+  sha256: c1d97a5e32e2bc68e833b8abeae026b6306198e87ee4396a7ffecd4779caefbf  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 81
+  uri: https://deb.debian.org/debian/pool/main/libd/libdrm/libdrm-amdgpu1_2.4.124-2_amd64.deb
+  apt_local_filename: libdrm-amdgpu1_2.4.124-2_amd64.deb
+  apt_uri_hash: MD5Sum:340c0476be782374cc6686b503540145  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libdrm2 (>= 2.4.108)
+- package: libdrm-common
+  version: 2.4.124-2
+  architecture: all
+  source_package: libdrm
+  source_version: 2.4.124-2
+  filename: pool/main/libd/libdrm/libdrm-common_2.4.124-2_all.deb
+  size_bytes: 8288
+  sha256: 9a8a6c65c165e9964f106fb4ac710959b5d33e0790227e3ab6b27c4742d1254a  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 45
+  uri: https://deb.debian.org/debian/pool/main/libd/libdrm/libdrm-common_2.4.124-2_all.deb
+  apt_local_filename: libdrm-common_2.4.124-2_all.deb
+  apt_uri_hash: MD5Sum:d88988b4eefb036b42c8e3fa8afa74b6  # pragma: allowlist secret - public source or artifact digest
+- package: libdrm-intel1
+  version: 2.4.124-2
+  architecture: amd64
+  source_package: libdrm
+  source_version: 2.4.124-2
+  filename: pool/main/libd/libdrm/libdrm-intel1_2.4.124-2_amd64.deb
+  size_bytes: 64104
+  sha256: 188ab1fd74c838b3c8055d62107351e16a4bb7a25d39c30bbb9aac30ddd37238  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 182
+  uri: https://deb.debian.org/debian/pool/main/libd/libdrm/libdrm-intel1_2.4.124-2_amd64.deb
+  apt_local_filename: libdrm-intel1_2.4.124-2_amd64.deb
+  apt_uri_hash: MD5Sum:90e77d96c766f817f511e960788b8b7f  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libdrm2 (>= 2.4.108), libpciaccess0
+- package: libdrm2
+  version: 2.4.124-2
+  architecture: amd64
+  source_package: libdrm
+  source_version: 2.4.124-2
+  filename: pool/main/libd/libdrm/libdrm2_2.4.124-2_amd64.deb
+  size_bytes: 39032
+  sha256: fe2276901c7cd7b8079de63072d37fe1cbeb4eb001a3bc1f1d662ad89aa0890e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 128
+  uri: https://deb.debian.org/debian/pool/main/libd/libdrm/libdrm2_2.4.124-2_amd64.deb
+  apt_local_filename: libdrm2_2.4.124-2_amd64.deb
+  apt_uri_hash: MD5Sum:f5b2af6ff63fe9260f7765a20920c3db  # pragma: allowlist secret - public source or artifact digest
+  depends: libdrm-common (>= 2.4.124-2), libc6 (>= 2.38)
+- package: libdvdnav4
+  version: 6.1.1-3+b1
+  architecture: amd64
+  source_package: libdvdnav
+  source_version: 6.1.1-3
+  filename: pool/main/libd/libdvdnav/libdvdnav4_6.1.1-3+b1_amd64.deb
+  size_bytes: 44532
+  sha256: 8368250b65cc26911fd37acdeeed58e9ce5bd390e941f687abecca9d5cd659f0  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 132
+  uri: https://deb.debian.org/debian/pool/main/libd/libdvdnav/libdvdnav4_6.1.1-3%2bb1_amd64.deb
+  apt_local_filename: libdvdnav4_6.1.1-3+b1_amd64.deb
+  apt_uri_hash: MD5Sum:cb64dabb8f13d4fdb34f75c69fff0f1d  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libdvdread8t64 (>= 6.1.0)
+- package: libdvdread8t64
+  version: 6.1.3-2
+  architecture: amd64
+  source_package: libdvdread
+  source_version: 6.1.3-2
+  filename: pool/main/libd/libdvdread/libdvdread8t64_6.1.3-2_amd64.deb
+  size_bytes: 86248
+  sha256: f753a23580c00a2166211607a5511a9c25d75c9ebfc34598b6526637de150fec  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 191
+  uri: https://deb.debian.org/debian/pool/main/libd/libdvdread/libdvdread8t64_6.1.3-2_amd64.deb
+  apt_local_filename: libdvdread8t64_6.1.3-2_amd64.deb
+  apt_uri_hash: MD5Sum:b23af4fb2da4f764a25a999888db8e52  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+  provides: libdvdread8 (= 6.1.3-2)
+  breaks: libdvdread8 (<< 6.1.3-2)
+  replaces: libdvdread8
+- package: libedit2
+  version: 3.1-20250104-1
+  architecture: amd64
+  source_package: libedit
+  source_version: 3.1-20250104-1
+  filename: pool/main/libe/libedit/libedit2_3.1-20250104-1_amd64.deb
+  size_bytes: 93832
+  sha256: b002ea172b9c1e34a67bc497c523c67bb74c3f0a4e98113cb083990a1f1d3bfe  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 262
+  uri: https://deb.debian.org/debian/pool/main/libe/libedit/libedit2_3.1-20250104-1_amd64.deb
+  apt_local_filename: libedit2_3.1-20250104-1_amd64.deb
+  apt_uri_hash: MD5Sum:fd7269ccbfb9da8080f776e1d96823c0  # pragma: allowlist secret - public source or artifact digest
+  depends: libbsd0 (>= 0.1.3), libc6 (>= 2.38), libtinfo6 (>= 6)
+  replaces: libedit-dev (<< 3.1-20180525-2~)
+- package: libelf1t64
+  version: 0.192-4
+  architecture: amd64
+  source_package: elfutils
+  source_version: 0.192-4
+  filename: pool/main/e/elfutils/libelf1t64_0.192-4_amd64.deb
+  size_bytes: 189408
+  sha256: 94497b7e17b6f574a0605b380d454e20d3f01a9c63b70c2a2263f679d30053e1  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1228
+  uri: https://deb.debian.org/debian/pool/main/e/elfutils/libelf1t64_0.192-4_amd64.deb
+  apt_local_filename: libelf1t64_0.192-4_amd64.deb
+  apt_uri_hash: MD5Sum:906aacb5a1d743e4945a8690fb5fd59b  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4)
+  provides: libelf1 (= 0.192-4)
+  breaks: libelf1 (<< 0.192-4)
+  replaces: libelf1
+- package: libexpat1
+  version: 2.9.0-1~deb13u1
+  architecture: amd64
+  source_package: expat
+  source_version: 2.9.0-1~deb13u1
+  filename: pool/updates/main/e/expat/libexpat1_2.9.0-1~deb13u1_amd64.deb
+  size_bytes: 125744
+  sha256: feff874772cae904ae4d24e917b35664952bec4b4ae9100a4edda5a7fa746832  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 427
+  uri: https://security.debian.org/debian-security/pool/updates/main/e/expat/libexpat1_2.9.0-1%7edeb13u1_amd64.deb
+  apt_local_filename: libexpat1_2.9.0-1~deb13u1_amd64.deb
+  apt_uri_hash: null
+  pre_depends: libc6 (>= 2.36)
+- package: libfftw3-double3
+  version: 3.3.10-2+b1
+  architecture: amd64
+  source_package: fftw3
+  source_version: 3.3.10-2
+  filename: pool/main/f/fftw3/libfftw3-double3_3.3.10-2+b1_amd64.deb
+  size_bytes: 781356
+  sha256: 5808e90242319a7ec7c0d50b40cdb1ebec9d0e695dcde14a4e7f1cd84657dc96  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 2304
+  uri: https://deb.debian.org/debian/pool/main/f/fftw3/libfftw3-double3_3.3.10-2%2bb1_amd64.deb
+  apt_local_filename: libfftw3-double3_3.3.10-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:3de1637c65aa5d5fe60bed8e564f6e3a  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libgomp1 (>= 4.9)
+- package: libflac14
+  version: 1.5.0+ds-2
+  architecture: amd64
+  source_package: flac
+  source_version: 1.5.0+ds-2
+  filename: pool/main/f/flac/libflac14_1.5.0+ds-2_amd64.deb
+  size_bytes: 209588
+  sha256: 658b9f77d35638caf75dfaea4f6d5cde196104d5662f0776e23d7cc450bd4cb5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 479
+  uri: https://deb.debian.org/debian/pool/main/f/flac/libflac14_1.5.0%2bds-2_amd64.deb
+  apt_local_filename: libflac14_1.5.0+ds-2_amd64.deb
+  apt_uri_hash: MD5Sum:c28ba8931f9ee1bc8a4ea89ee095195b  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libogg0 (>= 1.1.0)
+- package: libflite1
+  version: 2.2-7
+  architecture: amd64
+  source_package: flite
+  source_version: 2.2-7
+  filename: pool/main/f/flite/libflite1_2.2-7_amd64.deb
+  size_bytes: 12811404
+  sha256: 5945190970be7d4a1f71fb6f7e3e340ba2675e770605df0754051d617a6c5ee6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 27558
+  uri: https://deb.debian.org/debian/pool/main/f/flite/libflite1_2.2-7_amd64.deb
+  apt_local_filename: libflite1_2.2-7_amd64.deb
+  apt_uri_hash: MD5Sum:053e5fe93ee8b112ff1e689b59856c8d  # pragma: allowlist secret - public source or artifact digest
+  depends: libasound2t64 (>= 1.0.16), libc6 (>= 2.38)
+- package: libfontconfig1
+  version: 2.15.0-2.3
+  architecture: amd64
+  source_package: fontconfig
+  source_version: 2.15.0-2.3
+  filename: pool/main/f/fontconfig/libfontconfig1_2.15.0-2.3_amd64.deb
+  size_bytes: 391576
+  sha256: 7ae91ec59857cc8e375eb2bdd371a4a69daea38f7787d06d474a847867d852b1  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 592
+  uri: https://deb.debian.org/debian/pool/main/f/fontconfig/libfontconfig1_2.15.0-2.3_amd64.deb
+  apt_local_filename: libfontconfig1_2.15.0-2.3_amd64.deb
+  apt_uri_hash: MD5Sum:51964bf406139551c59047e6cbdd4940  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libexpat1 (>= 2.0.1), libfreetype6 (>= 2.9.1), fontconfig-config (>= 2.15.0-2.3)
+  provides: libfontconfig
+  breaks: xpdf (<= 3.03-11)
+- package: libfreetype6
+  version: 2.13.3+dfsg-1+deb13u1
+  architecture: amd64
+  source_package: freetype
+  source_version: 2.13.3+dfsg-1+deb13u1
+  filename: pool/main/f/freetype/libfreetype6_2.13.3+dfsg-1+deb13u1_amd64.deb
+  size_bytes: 452308
+  sha256: e4947f3291528f03d574f2b01d5c5fc45c58c47480f32888a5cdf0f231ab584e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 963
+  uri: https://deb.debian.org/debian/pool/main/f/freetype/libfreetype6_2.13.3%2bdfsg-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libfreetype6_2.13.3+dfsg-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:0994fdb58c0168b608cd1e285deda3d2  # pragma: allowlist secret - public source or artifact digest
+  depends: libbrotli1 (>= 0.6.0), libbz2-1.0, libc6 (>= 2.33), libpng16-16t64 (>= 1.6.46), zlib1g (>= 1:1.1.4)
+- package: libfribidi0
+  version: 1.0.16-1
+  architecture: amd64
+  source_package: fribidi
+  source_version: 1.0.16-1
+  filename: pool/main/f/fribidi/libfribidi0_1.0.16-1_amd64.deb
+  size_bytes: 26484
+  sha256: f8c35ec8606d0843bd3cf020c6cfa39ddfe717ec58ed826b5855ba9927eb0d55  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 146
+  uri: https://deb.debian.org/debian/pool/main/f/fribidi/libfribidi0_1.0.16-1_amd64.deb
+  apt_local_filename: libfribidi0_1.0.16-1_amd64.deb
+  apt_uri_hash: MD5Sum:c9ab7bfcaf0a0aac06818ca8d52414cd  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4)
+- package: libgbm1
+  version: 25.0.7-2+deb13u1
+  architecture: amd64
+  source_package: mesa
+  source_version: 25.0.7-2+deb13u1
+  filename: pool/main/m/mesa/libgbm1_25.0.7-2+deb13u1_amd64.deb
+  size_bytes: 44592
+  sha256: 31fb6d76b9ceaf13848fa617df53f85f62626b4fe7464a93811c720af6d5f2dd  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 128
+  uri: https://deb.debian.org/debian/pool/main/m/mesa/libgbm1_25.0.7-2%2bdeb13u1_amd64.deb
+  apt_local_filename: libgbm1_25.0.7-2+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:08fc4af786f5d93877c51babe7134c5f  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libdrm2 (>= 2.4.121), libexpat1 (>= 2.0.1), libwayland-server0 (>= 1.15.0), mesa-libgallium
+    (= 25.0.7-2+deb13u1)
+- package: libgdk-pixbuf-2.0-0
+  version: 2.42.12+dfsg-4+deb13u1
+  architecture: amd64
+  source_package: gdk-pixbuf
+  source_version: 2.42.12+dfsg-4+deb13u1
+  filename: pool/main/g/gdk-pixbuf/libgdk-pixbuf-2.0-0_2.42.12+dfsg-4+deb13u1_amd64.deb
+  size_bytes: 141088
+  sha256: 94150fb955b2d3a9a5e054e31c5a4b048bad4a479207e86cde46fbc975c838b4  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 486
+  uri: https://deb.debian.org/debian/pool/main/g/gdk-pixbuf/libgdk-pixbuf-2.0-0_2.42.12%2bdfsg-4%2bdeb13u1_amd64.deb
+  apt_local_filename: libgdk-pixbuf-2.0-0_2.42.12+dfsg-4+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:14e598056707edd1144af24ceae616f1  # pragma: allowlist secret - public source or artifact digest
+  depends: libgdk-pixbuf2.0-common (>= 2.42.12+dfsg-4+deb13u1), shared-mime-info, libc6 (>= 2.34), libglib2.0-0t64
+    (>= 2.80.0), libjpeg62-turbo (>= 1.3.1), libpng16-16t64 (>= 1.6.46), libtiff6 (>= 4.0.3)
+- package: libgdk-pixbuf2.0-common
+  version: 2.42.12+dfsg-4+deb13u1
+  architecture: all
+  source_package: gdk-pixbuf
+  source_version: 2.42.12+dfsg-4+deb13u1
+  filename: pool/main/g/gdk-pixbuf/libgdk-pixbuf2.0-common_2.42.12+dfsg-4+deb13u1_all.deb
+  size_bytes: 311852
+  sha256: 9f0c64e33cf5bb3226a5a6ddf630dd76530596e476e6b47a8b27da444ff43a03  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 2552
+  uri: https://deb.debian.org/debian/pool/main/g/gdk-pixbuf/libgdk-pixbuf2.0-common_2.42.12%2bdfsg-4%2bdeb13u1_all.deb
+  apt_local_filename: libgdk-pixbuf2.0-common_2.42.12+dfsg-4+deb13u1_all.deb
+  apt_uri_hash: MD5Sum:4a155847d916d6db4bb869eb468341ed  # pragma: allowlist secret - public source or artifact digest
+- package: libgfortran5
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+  filename: pool/main/g/gcc-14/libgfortran5_14.2.0-19_amd64.deb
+  size_bytes: 836252
+  sha256: 11b62b53f4704de557e44b510e18a1a2106bcd9a3fc31a475a45952a9aa3dbb2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 3152
+  uri: https://deb.debian.org/debian/pool/main/g/gcc-14/libgfortran5_14.2.0-19_amd64.deb
+  apt_local_filename: libgfortran5_14.2.0-19_amd64.deb
+  apt_uri_hash: MD5Sum:4aa25c9245458f20151c1fa228d9209c  # pragma: allowlist secret - public source or artifact digest
+  depends: gcc-14-base (= 14.2.0-19), libc6 (>= 2.38), libgcc-s1 (>= 4.3)
+  breaks: gcc-4.3 (<< 4.3.6-1), gcc-4.4 (<< 4.4.6-4), gcc-4.5 (<< 4.5.3-2)
+- package: libgl1
+  version: 1.7.0-1+b2
+  architecture: amd64
+  source_package: libglvnd
+  source_version: 1.7.0-1
+  filename: pool/main/libg/libglvnd/libgl1_1.7.0-1+b2_amd64.deb
+  size_bytes: 89504
+  sha256: 87fa2f6e5abaed4ed385fac879c8dd735af719ee2300222d901793c66e041678  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 653
+  uri: https://deb.debian.org/debian/pool/main/libg/libglvnd/libgl1_1.7.0-1%2bb2_amd64.deb
+  apt_local_filename: libgl1_1.7.0-1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:b6cfc89725c0f9a5ab99fe1b73ced720  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libglvnd0 (= 1.7.0-1+b2), libglx0 (= 1.7.0-1+b2)
+- package: libgl1-mesa-dri
+  version: 25.0.7-2+deb13u1
+  architecture: amd64
+  source_package: mesa
+  source_version: 25.0.7-2+deb13u1
+  filename: pool/main/m/mesa/libgl1-mesa-dri_25.0.7-2+deb13u1_amd64.deb
+  size_bytes: 46240
+  sha256: 722fad9944bdfd29eb6421576331a2697f83bc4b3551d693edb7aefdde6bb198  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 241
+  uri: https://deb.debian.org/debian/pool/main/m/mesa/libgl1-mesa-dri_25.0.7-2%2bdeb13u1_amd64.deb
+  apt_local_filename: libgl1-mesa-dri_25.0.7-2+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:6d88ad70feebab7182f9202b5d1f50f0  # pragma: allowlist secret - public source or artifact digest
+  depends: libgbm1 (= 25.0.7-2+deb13u1), libvulkan1, libc6 (>= 2.34)
+- package: libglib2.0-0t64
+  version: 2.84.4-3~deb13u5
+  architecture: amd64
+  source_package: glib2.0
+  source_version: 2.84.4-3~deb13u5
+  filename: pool/main/g/glib2.0/libglib2.0-0t64_2.84.4-3~deb13u5_amd64.deb
+  size_bytes: 1521120
+  sha256: e2baf92c57d1db1753e5781a61450d9a01e7833c7bd2dfe87776a6811c11ecc2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 4449
+  uri: https://deb.debian.org/debian/pool/main/g/glib2.0/libglib2.0-0t64_2.84.4-3%7edeb13u5_amd64.deb
+  apt_local_filename: libglib2.0-0t64_2.84.4-3~deb13u5_amd64.deb
+  apt_uri_hash: MD5Sum:6db85a1a1278c564c400ac1bcfccb37f  # pragma: allowlist secret - public source or artifact digest
+  depends: libatomic1 (>= 4.8), libc6 (>= 2.38), libffi8 (>= 3.4), libmount1 (>= 2.40~rc2), libpcre2-8-0 (>= 10.22),
+    libselinux1 (>= 3.1~), zlib1g (>= 1:1.2.2)
+  provides: libgio-2.0-0 (= 2.84.4-3~deb13u5), libglib-2.0-0 (= 2.84.4-3~deb13u5), libglib2.0-0 (= 2.84.4-3~deb13u5),
+    libgmodule-2.0-0 (= 2.84.4-3~deb13u5), libgobject-2.0-0 (= 2.84.4-3~deb13u5), libgthread-2.0-0 (= 2.84.4-3~deb13u5)
+  breaks: glib-networking-tests (<< 2.70.0~), gnome-keyring (<< 40.0-3~), gnome-shell (<< 44.9-2~), libedataserver-1.2-26
+    (<< 3.44.3-2~), libgladeui-2-6 (<< 3.22.2), libglib2.0-0 (<< 2.80.0-7~), libsoup2.4-tests (<< 2.72.0-3~)
+  replaces: libglib2.0-0 (<< 2.80.0-7~)
+- package: libglvnd0
+  version: 1.7.0-1+b2
+  architecture: amd64
+  source_package: libglvnd
+  source_version: 1.7.0-1
+  filename: pool/main/libg/libglvnd/libglvnd0_1.7.0-1+b2_amd64.deb
+  size_bytes: 51960
+  sha256: 887f74008166549ce9e100c906aa937e95d6e5ce1c8d86efe8c95fd953359b9c  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 733
+  uri: https://deb.debian.org/debian/pool/main/libg/libglvnd/libglvnd0_1.7.0-1%2bb2_amd64.deb
+  apt_local_filename: libglvnd0_1.7.0-1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:edae38858e1a62866ca6b73fa24dbb24  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+  breaks: libgldispatch0-nvidia
+  replaces: libgldispatch0-nvidia
+- package: libglx-mesa0
+  version: 25.0.7-2+deb13u1
+  architecture: amd64
+  source_package: mesa
+  source_version: 25.0.7-2+deb13u1
+  filename: pool/main/m/mesa/libglx-mesa0_25.0.7-2+deb13u1_amd64.deb
+  size_bytes: 143408
+  sha256: 2e6ab57de9931e890621d3ade04213b06e7142a4ae8a72a1756c44d0271aaeb7  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 516
+  uri: https://deb.debian.org/debian/pool/main/m/mesa/libglx-mesa0_25.0.7-2%2bdeb13u1_amd64.deb
+  apt_local_filename: libglx-mesa0_25.0.7-2+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:0bb8d66a738463d614a9702e88b5dde9  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libdrm2 (>= 2.4.121), libexpat1 (>= 2.0.1), libx11-6 (>= 2:1.4.99.1), libx11-xcb1, libxcb-dri3-0,
+    libxcb-glx0 (>= 1.8), libxcb-present0, libxcb-shm0, libxcb-xfixes0, libxcb1, libxext6, libxxf86vm1, mesa-libgallium
+    (= 25.0.7-2+deb13u1), libgl1-mesa-dri
+  provides: libglx-vendor
+  breaks: glx-diversions (<< 0.8.4~), libopengl-perl (<< 0.6704+dfsg-2)
+- package: libglx0
+  version: 1.7.0-1+b2
+  architecture: amd64
+  source_package: libglvnd
+  source_version: 1.7.0-1
+  filename: pool/main/libg/libglvnd/libglx0_1.7.0-1+b2_amd64.deb
+  size_bytes: 34892
+  sha256: 2721fdca0fe3bd963cb39482eabc253af52b88f4a7f6dbb69e475549daf5af3b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 163
+  uri: https://deb.debian.org/debian/pool/main/libg/libglvnd/libglx0_1.7.0-1%2bb2_amd64.deb
+  apt_local_filename: libglx0_1.7.0-1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:98651dd8a213bb8bc7b3267a4a426649  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libglvnd0 (= 1.7.0-1+b2), libx11-6 (>= 2:1.4.99.1), libglx-mesa0
+- package: libgme0
+  version: 0.6.3-7+b2
+  architecture: amd64
+  source_package: game-music-emu
+  source_version: 0.6.3-7
+  filename: pool/main/g/game-music-emu/libgme0_0.6.3-7+b2_amd64.deb
+  size_bytes: 130908
+  sha256: fbcef23f20099dd7b88a3d9edb79482359b2ab845632acb929313df7d2c5b6b7  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 343
+  uri: https://deb.debian.org/debian/pool/main/g/game-music-emu/libgme0_0.6.3-7%2bb2_amd64.deb
+  apt_local_filename: libgme0_0.6.3-7+b2_amd64.deb
+  apt_uri_hash: MD5Sum:f553a6ad300a108a6b5c3f1dae02f3be  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 11), zlib1g (>= 1:1.1.4)
+- package: libgnutls30t64
+  version: 3.8.9-3+deb13u4
+  architecture: amd64
+  source_package: gnutls28
+  source_version: 3.8.9-3+deb13u4
+  filename: pool/main/g/gnutls28/libgnutls30t64_3.8.9-3+deb13u4_amd64.deb
+  size_bytes: 1469024
+  sha256: 18a8bdfd91c7e3bcb01719d55a2b56849c7160b34f1f52b1c4fdfdd41bf1352b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 3504
+  uri: https://deb.debian.org/debian/pool/main/g/gnutls28/libgnutls30t64_3.8.9-3%2bdeb13u4_amd64.deb
+  apt_local_filename: libgnutls30t64_3.8.9-3+deb13u4_amd64.deb
+  apt_uri_hash: MD5Sum:ce391a9ff4974eba985481ee3eaf34a5  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libgmp10 (>= 2:6.3.0+dfsg), libhogweed6t64 (>= 3.10), libidn2-0 (>= 2.0.0), libnettle8t64
+    (>= 3.10), libp11-kit0 (>= 0.25.1), libtasn1-6 (>= 4.14), libunistring5 (>= 1.1)
+  provides: libgnutls30 (= 3.8.9-3+deb13u4)
+  breaks: libgnutls30 (<< 3.8.9-3+deb13u4)
+  replaces: libgnutls30
+- package: libgomp1
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+  filename: pool/main/g/gcc-14/libgomp1_14.2.0-19_amd64.deb
+  size_bytes: 137148
+  sha256: 72b7a1a33c48f3195efeb044111b34ae684b1e640bb6495c832443b798601cd5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 368
+  uri: https://deb.debian.org/debian/pool/main/g/gcc-14/libgomp1_14.2.0-19_amd64.deb
+  apt_local_filename: libgomp1_14.2.0-19_amd64.deb
+  apt_uri_hash: MD5Sum:802973e7a4112ca440303b5beecfede6  # pragma: allowlist secret - public source or artifact digest
+  depends: gcc-14-base (= 14.2.0-19), libc6 (>= 2.38)
+  breaks: gcc-4.3 (<< 4.3.6-1), gcc-4.4 (<< 4.4.6-4), gcc-4.5 (<< 4.5.3-2)
+- package: libgraphite2-3
+  version: 1.3.14-2+deb13u1
+  architecture: amd64
+  source_package: graphite2
+  source_version: 1.3.14-2+deb13u1
+  filename: pool/main/g/graphite2/libgraphite2-3_1.3.14-2+deb13u1_amd64.deb
+  size_bytes: 75172
+  sha256: 1769ba3ed3c1fc75b7fbe02678e32aa24391205813eceef4e1e3500015d12ee3  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 191
+  uri: https://deb.debian.org/debian/pool/main/g/graphite2/libgraphite2-3_1.3.14-2%2bdeb13u1_amd64.deb
+  apt_local_filename: libgraphite2-3_1.3.14-2+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:88afc62ee0e94eedec7c371d167f596a  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+  provides: libgraphite2-2.0.0
+  breaks: libgraphite2-2.0.0 (<< 1.2.0)
+  replaces: libgraphite2-2.0.0
+- package: libgsm1
+  version: 1.0.22-1+b2
+  architecture: amd64
+  source_package: libgsm
+  source_version: 1.0.22-1
+  filename: pool/main/libg/libgsm/libgsm1_1.0.22-1+b2_amd64.deb
+  size_bytes: 29304
+  sha256: 388909810b0133b0dd8ea84884cd34db7bcbbd0f2643a7a65296a34644704a5e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 90
+  uri: https://deb.debian.org/debian/pool/main/libg/libgsm/libgsm1_1.0.22-1%2bb2_amd64.deb
+  apt_local_filename: libgsm1_1.0.22-1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:34b3a68e98bf9b2831f9d52ba9b266e6  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4)
+  conflicts: libgsm-dev
+- package: libgssapi-krb5-2
+  version: 1.21.3-5+deb13u1
+  architecture: amd64
+  source_package: krb5
+  source_version: 1.21.3-5+deb13u1
+  filename: pool/main/k/krb5/libgssapi-krb5-2_1.21.3-5+deb13u1_amd64.deb
+  size_bytes: 138356
+  sha256: 30847c1fde4240567d7ed3aeab4f655dd591203758b857e85e824045aae70299  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 434
+  uri: https://deb.debian.org/debian/pool/main/k/krb5/libgssapi-krb5-2_1.21.3-5%2bdeb13u1_amd64.deb
+  apt_local_filename: libgssapi-krb5-2_1.21.3-5+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:9d93b5d1adb11eec662012c1b7dcd33b  # pragma: allowlist secret - public source or artifact digest
+  depends: libkrb5-3 (= 1.21.3-5+deb13u1), libc6 (>= 2.38), libcom-err2 (>= 1.43.9), libk5crypto3 (>= 1.20), libkrb5support0
+    (= 1.21.3-5+deb13u1)
+- package: libharfbuzz0b
+  version: 10.2.0-1+deb13u1
+  architecture: amd64
+  source_package: harfbuzz
+  source_version: 10.2.0-1+deb13u1
+  filename: pool/main/h/harfbuzz/libharfbuzz0b_10.2.0-1+deb13u1_amd64.deb
+  size_bytes: 478952
+  sha256: 932165b933e5eb633293afe984a983ebe89cb27c923ce7208626f1da6c0c7941  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1346
+  uri: https://deb.debian.org/debian/pool/main/h/harfbuzz/libharfbuzz0b_10.2.0-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libharfbuzz0b_10.2.0-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:322bb1f99d1f8c25a0a5e1092d10ad85  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libfreetype6 (>= 2.11.1), libglib2.0-0t64 (>= 2.32.0), libgraphite2-3 (>= 1.2.2)
+  conflicts: libharfbuzz0, libharfbuzz0a
+  replaces: libharfbuzz0, libharfbuzz0a
+- package: libhwy1t64
+  version: 1.2.0-2+b2
+  architecture: amd64
+  source_package: highway
+  source_version: 1.2.0-2
+  filename: pool/main/h/highway/libhwy1t64_1.2.0-2+b2_amd64.deb
+  size_bytes: 676044
+  sha256: 540c4ff28255fbfa89468061b722dfc2b773b0c1ecf163a063202482dea5b119  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 4747
+  uri: https://deb.debian.org/debian/pool/main/h/highway/libhwy1t64_1.2.0-2%2bb2_amd64.deb
+  apt_local_filename: libhwy1t64_1.2.0-2+b2_amd64.deb
+  apt_uri_hash: MD5Sum:177f80e86a547d33588772be06c21e45  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.25), libgcc-s1 (>= 3.0), libstdc++6 (>= 5.2)
+  provides: libhwy1 (= 1.2.0-2+b2)
+  breaks: libhwy1 (<< 1.2.0-2)
+  replaces: libhwy1
+- package: libidn2-0
+  version: 2.3.8-2
+  architecture: amd64
+  source_package: libidn2
+  source_version: 2.3.8-2
+  filename: pool/main/libi/libidn2/libidn2-0_2.3.8-2_amd64.deb
+  size_bytes: 109096
+  sha256: 90b039bcdc4578f8e1c4935adf8dbb525e36a164deefdbbb8c45bac347d48278  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 446
+  uri: https://deb.debian.org/debian/pool/main/libi/libidn2/libidn2-0_2.3.8-2_amd64.deb
+  apt_local_filename: libidn2-0_2.3.8-2_amd64.deb
+  apt_uri_hash: MD5Sum:c12f652b328832486b6992d355e52c29  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libunistring5 (>= 1.1)
+- package: libiec61883-0
+  version: 1.2.0-7
+  architecture: amd64
+  source_package: libiec61883
+  source_version: 1.2.0-7
+  filename: pool/main/libi/libiec61883/libiec61883-0_1.2.0-7_amd64.deb
+  size_bytes: 30580
+  sha256: 688dd2a0f65997d915acbd4ee5415e3b7704caf7854f20fd6b685bc56e254944  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 82
+  uri: https://deb.debian.org/debian/pool/main/libi/libiec61883/libiec61883-0_1.2.0-7_amd64.deb
+  apt_local_filename: libiec61883-0_1.2.0-7_amd64.deb
+  apt_uri_hash: MD5Sum:49c0761a67dc3ddb4ba4c4d2af9fa653  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libraw1394-11 (>= 2.1.2)
+- package: libjack-jackd2-0
+  version: 1.9.22~dfsg-4
+  architecture: amd64
+  source_package: jackd2
+  source_version: 1.9.22~dfsg-4
+  filename: pool/main/j/jackd2/libjack-jackd2-0_1.9.22~dfsg-4_amd64.deb
+  size_bytes: 286512
+  sha256: 64ec8d64ae0149bfa17b43d414cc8ae9032a27f76123864d185b275681666c45  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1165
+  uri: https://deb.debian.org/debian/pool/main/j/jackd2/libjack-jackd2-0_1.9.22%7edfsg-4_amd64.deb
+  apt_local_filename: libjack-jackd2-0_1.9.22~dfsg-4_amd64.deb
+  apt_uri_hash: MD5Sum:9dad0ffeead02ad36e8a9331d7f7d930  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libdb5.3t64, libgcc-s1 (>= 3.0), libopus0 (>= 1.3.1-2~), libsamplerate0 (>= 0.1.7),
+    libstdc++6 (>= 14)
+  provides: libjack-0.116, libjack-0.125
+  conflicts: libjack-0.116, libjack-0.125, libjack0
+  replaces: libjack-0.116, libjack-0.125
+- package: libjbig0
+  version: 2.1-6.1+b2
+  architecture: amd64
+  source_package: jbigkit
+  source_version: 2.1-6.1
+  filename: pool/main/j/jbigkit/libjbig0_2.1-6.1+b2_amd64.deb
+  size_bytes: 32116
+  sha256: 95cbc44561651e1b3385454df08e8f2efe84498f6963a85259be2cc2fe798709  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 85
+  uri: https://deb.debian.org/debian/pool/main/j/jbigkit/libjbig0_2.1-6.1%2bb2_amd64.deb
+  apt_local_filename: libjbig0_2.1-6.1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:590134f899b900c7c9f8f87cf750ea63  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4)
+- package: libjpeg62-turbo
+  version: 1:2.1.5-4
+  architecture: amd64
+  source_package: libjpeg-turbo
+  source_version: 1:2.1.5-4
+  filename: pool/main/libj/libjpeg-turbo/libjpeg62-turbo_2.1.5-4_amd64.deb
+  size_bytes: 168152
+  sha256: 5504299ad0e3c0a9ca9f962a68a650a040db52f9f416a109e74df48d55601d3f  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 694
+  uri: https://deb.debian.org/debian/pool/main/libj/libjpeg-turbo/libjpeg62-turbo_2.1.5-4_amd64.deb
+  apt_local_filename: libjpeg62-turbo_1%3a2.1.5-4_amd64.deb
+  apt_uri_hash: MD5Sum:529794778276370a5b4830dbd8481747  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+  provides: libjpeg62 (= 1:2.1.5-4)
+  conflicts: libjpeg62
+  replaces: libjpeg62
+- package: libjxl0.11
+  version: 0.11.2-0.1~deb13u3
+  architecture: amd64
+  source_package: jpeg-xl
+  source_version: 0.11.2-0.1~deb13u3
+  filename: pool/updates/main/j/jpeg-xl/libjxl0.11_0.11.2-0.1~deb13u3_amd64.deb
+  size_bytes: 1133480
+  sha256: ddcb149f875b2ed6ab9160c59c1f46eef48b821005033e574dc829e6deacc26e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 3643
+  uri: https://security.debian.org/debian-security/pool/updates/main/j/jpeg-xl/libjxl0.11_0.11.2-0.1%7edeb13u3_amd64.deb
+  apt_local_filename: libjxl0.11_0.11.2-0.1~deb13u3_amd64.deb
+  apt_uri_hash: null
+  depends: libbrotli1 (>= 0.6.0), libc6 (>= 2.38), libgcc-s1 (>= 3.4), libhwy1t64 (>= 1.0.0), liblcms2-2 (>= 2.13),
+    libstdc++6 (>= 12)
+- package: libk5crypto3
+  version: 1.21.3-5+deb13u1
+  architecture: amd64
+  source_package: krb5
+  source_version: 1.21.3-5+deb13u1
+  filename: pool/main/k/krb5/libk5crypto3_1.21.3-5+deb13u1_amd64.deb
+  size_bytes: 81152
+  sha256: 7da07ee674b47f1f0be7cc89317c25310086a1f1761217d0f72e6ae2c5a69b84  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 266
+  uri: https://deb.debian.org/debian/pool/main/k/krb5/libk5crypto3_1.21.3-5%2bdeb13u1_amd64.deb
+  apt_local_filename: libk5crypto3_1.21.3-5+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:96cdff8aed6de85e2ac31dc1513207ba  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libkrb5support0 (= 1.21.3-5+deb13u1)
+  breaks: libgssapi-krb5-2 (<= 1.18~), libkrb5-3 (<= 1.18~)
+- package: libkeyutils1
+  version: 1.6.3-6
+  architecture: amd64
+  source_package: keyutils
+  source_version: 1.6.3-6
+  filename: pool/main/k/keyutils/libkeyutils1_1.6.3-6_amd64.deb
+  size_bytes: 9456
+  sha256: 0b11ad17be0300b63ad4eeb4c6450fed24d34b7b740f23e5363dcb29ee6d5eba  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 41
+  uri: https://deb.debian.org/debian/pool/main/k/keyutils/libkeyutils1_1.6.3-6_amd64.deb
+  apt_local_filename: libkeyutils1_1.6.3-6_amd64.deb
+  apt_uri_hash: MD5Sum:d94a241f2f7ab7edf5b6fb049fde8380  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+- package: libkrb5-3
+  version: 1.21.3-5+deb13u1
+  architecture: amd64
+  source_package: krb5
+  source_version: 1.21.3-5+deb13u1
+  filename: pool/main/k/krb5/libkrb5-3_1.21.3-5+deb13u1_amd64.deb
+  size_bytes: 326056
+  sha256: 47d71d6a7f2e59b9bae5f89602397594805113b95889ad18fa703cd53abafc97  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1074
+  uri: https://deb.debian.org/debian/pool/main/k/krb5/libkrb5-3_1.21.3-5%2bdeb13u1_amd64.deb
+  apt_local_filename: libkrb5-3_1.21.3-5+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:c79f19d86512fadcbff5efa5317c23fb  # pragma: allowlist secret - public source or artifact digest
+  depends: libkrb5support0 (= 1.21.3-5+deb13u1), libc6 (>= 2.38), libcom-err2 (>= 1.43.9), libk5crypto3 (>= 1.20),
+    libkeyutils1 (>= 1.5.9), libssl3t64 (>= 3.0.0)
+  breaks: libapache2-mod-auth-kerb (<= 5.4-2.4)
+- package: libkrb5support0
+  version: 1.21.3-5+deb13u1
+  architecture: amd64
+  source_package: krb5
+  source_version: 1.21.3-5+deb13u1
+  filename: pool/main/k/krb5/libkrb5support0_1.21.3-5+deb13u1_amd64.deb
+  size_bytes: 33124
+  sha256: 3a0acd8b37955c0e102c756b52c97df2a31f67b96453c35dab70df218d309117  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 137
+  uri: https://deb.debian.org/debian/pool/main/k/krb5/libkrb5support0_1.21.3-5%2bdeb13u1_amd64.deb
+  apt_local_filename: libkrb5support0_1.21.3-5+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:20061bfd85a525d45bdce33e5300c43c  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+  breaks: krb5-admin-server (<< 1.20.1-4~), krb5-kdc (<< 1.20.1-4~), krb5-pkinit (<< 1.20.1-4~), krb5-user (<< 1.20.1-4~),
+    libgssapi-krb5-2 (<< 1.20), libk5crypto3 (<< 1.20.1-4~), libkadm5clnt-mit9 (<< 1.13~alpha1-1), libkadm5srv-mit12
+    (<< 1.20.1-4~), libkadm5srv-mit9 (<< 1.13~alpha1-1), libkdb5-10t64 (<< 1.20.1-4~), libkdb5-8 (<< 1.16), libkrb5-3
+    (<< 1.20.1-4~)
+- package: liblapack3
+  version: 3.12.1-6
+  architecture: amd64
+  source_package: lapack
+  source_version: 3.12.1-6
+  filename: pool/main/l/lapack/liblapack3_3.12.1-6_amd64.deb
+  size_bytes: 2446688
+  sha256: abfc59c8410beee738617bb6daf86b295e45ec0bd08cc0e97bfecc3cfa40fe75  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 7453
+  uri: https://deb.debian.org/debian/pool/main/l/lapack/liblapack3_3.12.1-6_amd64.deb
+  apt_local_filename: liblapack3_3.12.1-6_amd64.deb
+  apt_uri_hash: MD5Sum:070d94c9032ed79d6d1a7a3b992ac78c  # pragma: allowlist secret - public source or artifact digest
+  depends: libblas3 | libblas.so.3, libc6 (>= 2.29), libgcc-s1 (>= 4.0), libgfortran5 (>= 8)
+  provides: liblapack.so.3
+- package: liblcms2-2
+  version: 2.16-2+deb13u2
+  architecture: amd64
+  source_package: lcms2
+  source_version: 2.16-2+deb13u2
+  filename: pool/main/l/lcms2/liblcms2-2_2.16-2+deb13u2_amd64.deb
+  size_bytes: 160264
+  sha256: 32e53c2002ccea8c60c02779bea0ba49ac132fef702988a30d64af79b6617806  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 454
+  uri: https://deb.debian.org/debian/pool/main/l/lcms2/liblcms2-2_2.16-2%2bdeb13u2_amd64.deb
+  apt_local_filename: liblcms2-2_2.16-2+deb13u2_amd64.deb
+  apt_uri_hash: MD5Sum:263113687b91aafa4e934fa16d91291b  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+- package: liblerc4
+  version: 4.0.0+ds-5
+  architecture: amd64
+  source_package: lerc
+  source_version: 4.0.0+ds-5
+  filename: pool/main/l/lerc/liblerc4_4.0.0+ds-5_amd64.deb
+  size_bytes: 182976
+  sha256: 2e0c13c0ddbde12968c2c713c2e0474a5b78e90d5216031256a725e8c76aa31c  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 603
+  uri: https://deb.debian.org/debian/pool/main/l/lerc/liblerc4_4.0.0%2bds-5_amd64.deb
+  apt_local_filename: liblerc4_4.0.0+ds-5_amd64.deb
+  apt_uri_hash: MD5Sum:8c5933a75125eed15b466c16bf201bfa  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libgcc-s1 (>= 3.3.1), libstdc++6 (>= 11)
+- package: liblilv-0-0
+  version: 0.24.26-1
+  architecture: amd64
+  source_package: lilv
+  source_version: 0.24.26-1
+  filename: pool/main/l/lilv/liblilv-0-0_0.24.26-1_amd64.deb
+  size_bytes: 43464
+  sha256: 71f03560980b7c7f89ada7bd49ac3239166db770b2fa752b13d67abbd98ce8bc  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 122
+  uri: https://deb.debian.org/debian/pool/main/l/lilv/liblilv-0-0_0.24.26-1_amd64.deb
+  apt_local_filename: liblilv-0-0_0.24.26-1_amd64.deb
+  apt_uri_hash: MD5Sum:11cfd64048acd488802e572c6b777e3c  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libserd-0-0 (>= 0.30.2), libsord-0-0 (>= 0.14.0~dfsg0), libsratom-0-0 (>= 0.4.6~dfsg0),
+    libzix-0-0 (>= 0.6.2)
+- package: libllvm19
+  version: 1:19.1.7-3+b1
+  architecture: amd64
+  source_package: llvm-toolchain-19
+  source_version: 1:19.1.7-3
+  filename: pool/main/l/llvm-toolchain-19/libllvm19_19.1.7-3+b1_amd64.deb
+  size_bytes: 25978316
+  sha256: db0d614d61345ca710fb73e75105f1ec6e38898fa7b3aa99fa7eb7d8b0a11d57  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 126696
+  uri: https://deb.debian.org/debian/pool/main/l/llvm-toolchain-19/libllvm19_19.1.7-3%2bb1_amd64.deb
+  apt_local_filename: libllvm19_1%3a19.1.7-3+b1_amd64.deb
+  apt_uri_hash: MD5Sum:46d9b011e2daeb518da6dd49e8d81170  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libedit2 (>= 2.11-20080614-0), libffi8 (>= 3.4), libgcc-s1 (>= 4.3), libstdc++6 (>=
+    12), libxml2 (>= 2.7.4), libz3-4 (>= 4.13.3), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.2.0)
+  breaks: llvm-19-dev (<< 1:19.1.0~++rc3-1~exp2)
+  replaces: llvm-19-dev (<< 1:19.1.0~++rc3-1~exp2)
+- package: libmbedcrypto16
+  version: 3.6.6-0.1~deb13u1
+  architecture: amd64
+  source_package: mbedtls
+  source_version: 3.6.6-0.1~deb13u1
+  filename: pool/main/m/mbedtls/libmbedcrypto16_3.6.6-0.1~deb13u1_amd64.deb
+  size_bytes: 365220
+  sha256: b38baf2ecaca7b28b3005d34b8108ee9b17681426b20662813995e939aea6dfa  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 776
+  uri: https://deb.debian.org/debian/pool/main/m/mbedtls/libmbedcrypto16_3.6.6-0.1%7edeb13u1_amd64.deb
+  apt_local_filename: libmbedcrypto16_3.6.6-0.1~deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:89f21835c056854e18e641c017072cf9  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.25)
+- package: libmp3lame0
+  version: 3.100-6+b3
+  architecture: amd64
+  source_package: lame
+  source_version: 3.100-6
+  filename: pool/main/l/lame/libmp3lame0_3.100-6+b3_amd64.deb
+  size_bytes: 362660
+  sha256: 3867319c9fbbc8cc25f2d1dc1d75d13548c84c37fa709c1ac9ca02ac051b63ab  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 548
+  uri: https://deb.debian.org/debian/pool/main/l/lame/libmp3lame0_3.100-6%2bb3_amd64.deb
+  apt_local_filename: libmp3lame0_3.100-6+b3_amd64.deb
+  apt_uri_hash: MD5Sum:488959c443889726e46be619e0bcb2d8  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+- package: libmpg123-0t64
+  version: 1.32.10-1+deb13u1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.32.10-1+deb13u1
+  filename: pool/main/m/mpg123/libmpg123-0t64_1.32.10-1+deb13u1_amd64.deb
+  size_bytes: 149184
+  sha256: 31fa6ef638f1fdbe198faee0b6fe50d9dd468077f8247cc3dbf6b2250abb6101  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 397
+  uri: https://deb.debian.org/debian/pool/main/m/mpg123/libmpg123-0t64_1.32.10-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libmpg123-0t64_1.32.10-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:3427e2d224dc6aafe70047378f5b50a4  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.33)
+  provides: libmpg123-0 (= 1.32.10-1+deb13u1)
+  breaks: libmpg123-0 (<< 1.32.10-1+deb13u1)
+  replaces: libmpg123-0
+- package: libmysofa1
+  version: 1.3.3+dfsg-1
+  architecture: amd64
+  source_package: libmysofa
+  source_version: 1.3.3+dfsg-1
+  filename: pool/main/libm/libmysofa/libmysofa1_1.3.3+dfsg-1_amd64.deb
+  size_bytes: 1158180
+  sha256: 27c71e7a0cb7b4d9a683b4ad721d65f11ff1d83823873ee28ac892078bcdb0a1  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1267
+  uri: https://deb.debian.org/debian/pool/main/libm/libmysofa/libmysofa1_1.3.3%2bdfsg-1_amd64.deb
+  apt_local_filename: libmysofa1_1.3.3+dfsg-1_amd64.deb
+  apt_uri_hash: MD5Sum:ec2b9cc07f658c48d3414eb07dcc9fb6  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), zlib1g (>= 1:1.1.4)
+- package: libnorm1t64
+  version: 1.5.9+dfsg-3.1+b2
+  architecture: amd64
+  source_package: norm
+  source_version: 1.5.9+dfsg-3.1
+  filename: pool/main/n/norm/libnorm1t64_1.5.9+dfsg-3.1+b2_amd64.deb
+  size_bytes: 221468
+  sha256: cf48143ffa3886224cd0af63a8ecfac6f87177d80e7a053793c8621781b944ea  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 513
+  uri: https://deb.debian.org/debian/pool/main/n/norm/libnorm1t64_1.5.9%2bdfsg-3.1%2bb2_amd64.deb
+  apt_local_filename: libnorm1t64_1.5.9+dfsg-3.1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:4084834ef2ba3516846627f28b0b6183  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 5)
+  provides: libnorm1 (= 1.5.9+dfsg-3.1+b2)
+  breaks: libnorm1 (<< 1.5.9+dfsg-3.1)
+  replaces: libnorm1
+- package: libnuma1
+  version: 2.0.19-1
+  architecture: amd64
+  source_package: numactl
+  source_version: 2.0.19-1
+  filename: pool/main/n/numactl/libnuma1_2.0.19-1_amd64.deb
+  size_bytes: 22212
+  sha256: e578583f73f8208564e5035b18aa729c441fc7ecb389c666923552e123f4d655  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 75
+  uri: https://deb.debian.org/debian/pool/main/n/numactl/libnuma1_2.0.19-1_amd64.deb
+  apt_local_filename: libnuma1_2.0.19-1_amd64.deb
+  apt_uri_hash: MD5Sum:4af0b725a3d4b56dd041469efb53447e  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+- package: libogg0
+  version: 1.3.5-3+b2
+  architecture: amd64
+  source_package: libogg
+  source_version: 1.3.5-3
+  filename: pool/main/libo/libogg/libogg0_1.3.5-3+b2_amd64.deb
+  size_bytes: 23812
+  sha256: 911aec914f5bda0788164ff8068b682537378bf8d407b1d6c1b377522f96b83b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 62
+  uri: https://deb.debian.org/debian/pool/main/libo/libogg/libogg0_1.3.5-3%2bb2_amd64.deb
+  apt_local_filename: libogg0_1.3.5-3+b2_amd64.deb
+  apt_uri_hash: MD5Sum:67b028052107849a5983e6ef1244360d  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+- package: libopenal-data
+  version: 1:1.24.2-1
+  architecture: all
+  source_package: openal-soft
+  source_version: 1:1.24.2-1
+  filename: pool/main/o/openal-soft/libopenal-data_1.24.2-1_all.deb
+  size_bytes: 167780
+  sha256: 003fb223f6ccd387adc28357021c243c604591806afb84dc46e906b911d8de38  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 260
+  uri: https://deb.debian.org/debian/pool/main/o/openal-soft/libopenal-data_1.24.2-1_all.deb
+  apt_local_filename: libopenal-data_1%3a1.24.2-1_all.deb
+  apt_uri_hash: MD5Sum:2eee097a09a8bed1e0b9b21e1fe66be4  # pragma: allowlist secret - public source or artifact digest
+  breaks: libopenal1 (<< 1:1.14-5)
+  replaces: libopenal1 (<< 1:1.14-5)
+- package: libopenal1
+  version: 1:1.24.2-1
+  architecture: amd64
+  source_package: openal-soft
+  source_version: 1:1.24.2-1
+  filename: pool/main/o/openal-soft/libopenal1_1.24.2-1_amd64.deb
+  size_bytes: 637304
+  sha256: 7b888c0854bdf8e61fb000aa2816ea5ed76cf52da85dba94e463cce5e182662d  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1574
+  uri: https://deb.debian.org/debian/pool/main/o/openal-soft/libopenal1_1.24.2-1_amd64.deb
+  apt_local_filename: libopenal1_1%3a1.24.2-1_amd64.deb
+  apt_uri_hash: MD5Sum:8de3b1e37550961606830b9a21981247  # pragma: allowlist secret - public source or artifact digest
+  depends: libopenal-data (= 1:1.24.2-1), libc6 (>= 2.38), libgcc-s1 (>= 4.0), libstdc++6 (>= 14)
+- package: libopenjp2-7
+  version: 2.5.3-2.1~deb13u2
+  architecture: amd64
+  source_package: openjpeg2
+  source_version: 2.5.3-2.1~deb13u2
+  filename: pool/main/o/openjpeg2/libopenjp2-7_2.5.3-2.1~deb13u2_amd64.deb
+  size_bytes: 204616
+  sha256: 7ddf6360e8845853ba3c9cfaefc2ad6b92b2627eb8564a257f5f2a4c857f8748  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 532
+  uri: https://deb.debian.org/debian/pool/main/o/openjpeg2/libopenjp2-7_2.5.3-2.1%7edeb13u2_amd64.deb
+  apt_local_filename: libopenjp2-7_2.5.3-2.1~deb13u2_amd64.deb
+  apt_uri_hash: MD5Sum:07e72f2421f5a7f6692e7ca04b879709  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libopenmpt0t64
+  version: 0.7.13-1+b1
+  architecture: amd64
+  source_package: libopenmpt
+  source_version: 0.7.13-1
+  filename: pool/main/libo/libopenmpt/libopenmpt0t64_0.7.13-1+b1_amd64.deb
+  size_bytes: 855104
+  sha256: 37537d1b0dc3798d9157aa453427609a3e7f52c0c89b36563764c193194aaa6a  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 2355
+  uri: https://deb.debian.org/debian/pool/main/libo/libopenmpt/libopenmpt0t64_0.7.13-1%2bb1_amd64.deb
+  apt_local_filename: libopenmpt0t64_0.7.13-1+b1_amd64.deb
+  apt_uri_hash: MD5Sum:bb28c8ec7d377f8eef722e05983ee39b  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.32), libgcc-s1 (>= 4.0), libmpg123-0t64 (>= 1.28.0), libstdc++6 (>= 13.1), libvorbis0a (>=
+    1.1.2), libvorbisfile3 (>= 1.1.2), zlib1g (>= 1:1.1.4)
+  provides: libopenmpt0 (= 0.7.13-1+b1)
+  breaks: libopenmpt0 (<< 0.7.13-1)
+  replaces: libopenmpt0
+- package: libopus0
+  version: 1.5.2-2
+  architecture: amd64
+  source_package: opus
+  source_version: 1.5.2-2
+  filename: pool/main/o/opus/libopus0_1.5.2-2_amd64.deb
+  size_bytes: 2851932
+  sha256: 794056db33d71b2ac4bd8b5a4eb23b627bcb8a49d123c33b6e841a996253a067  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 3494
+  uri: https://deb.debian.org/debian/pool/main/o/opus/libopus0_1.5.2-2_amd64.deb
+  apt_local_filename: libopus0_1.5.2-2_amd64.deb
+  apt_uri_hash: MD5Sum:938057fb1163ba46da50f7f7c5efd5a6  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+- package: libp11-kit0
+  version: 0.25.5-3
+  architecture: amd64
+  source_package: p11-kit
+  source_version: 0.25.5-3
+  filename: pool/main/p/p11-kit/libp11-kit0_0.25.5-3_amd64.deb
+  size_bytes: 425240
+  sha256: 784bf2063e166c8bc851a32623b74ebd85c499043a9d57c5bbd64fa63447f45a  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1882
+  uri: https://deb.debian.org/debian/pool/main/p/p11-kit/libp11-kit0_0.25.5-3_amd64.deb
+  apt_local_filename: libp11-kit0_0.25.5-3_amd64.deb
+  apt_uri_hash: MD5Sum:d27fc7a8b7a7baac77b087b96d69d143  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libffi8 (>= 3.4)
+- package: libpango-1.0-0
+  version: 1.56.3-1
+  architecture: amd64
+  source_package: pango1.0
+  source_version: 1.56.3-1
+  filename: pool/main/p/pango1.0/libpango-1.0-0_1.56.3-1_amd64.deb
+  size_bytes: 226324
+  sha256: 4fa38472696d2ddb10bfc9a4692a9446e8478fdb1f48c769a609fc9fec3adfc5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 554
+  uri: https://deb.debian.org/debian/pool/main/p/pango1.0/libpango-1.0-0_1.56.3-1_amd64.deb
+  apt_local_filename: libpango-1.0-0_1.56.3-1_amd64.deb
+  apt_uri_hash: MD5Sum:eccf5128c85bb458dcf7b2066ccea70e  # pragma: allowlist secret - public source or artifact digest
+  depends: fontconfig (>= 2.15.0), libc6 (>= 2.38), libfribidi0 (>= 1.0.0), libglib2.0-0t64 (>= 2.80.0), libharfbuzz0b
+    (>= 8.4.0), libthai0 (>= 0.1.25)
+- package: libpangocairo-1.0-0
+  version: 1.56.3-1
+  architecture: amd64
+  source_package: pango1.0
+  source_version: 1.56.3-1
+  filename: pool/main/p/pango1.0/libpangocairo-1.0-0_1.56.3-1_amd64.deb
+  size_bytes: 35748
+  sha256: 6994729c5b7a9649661ec078cf039991f22eff44600543aa917894f83c89cd05  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 103
+  uri: https://deb.debian.org/debian/pool/main/p/pango1.0/libpangocairo-1.0-0_1.56.3-1_amd64.deb
+  apt_local_filename: libpangocairo-1.0-0_1.56.3-1_amd64.deb
+  apt_uri_hash: MD5Sum:0f688eab8250ca56fc7a5249acc12acd  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libcairo2 (>= 1.18.0), libfontconfig1 (>= 2.15.0), libglib2.0-0t64 (>= 2.80.0), libharfbuzz0b
+    (>= 8.4.0), libpango-1.0-0 (= 1.56.3-1), libpangoft2-1.0-0 (= 1.56.3-1)
+- package: libpangoft2-1.0-0
+  version: 1.56.3-1
+  architecture: amd64
+  source_package: pango1.0
+  source_version: 1.56.3-1
+  filename: pool/main/p/pango1.0/libpangoft2-1.0-0_1.56.3-1_amd64.deb
+  size_bytes: 55568
+  sha256: b506cf66f78ddf542ddb4bb4a68b3d748d41caa6e190e4480430a6630c1e5105  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 158
+  uri: https://deb.debian.org/debian/pool/main/p/pango1.0/libpangoft2-1.0-0_1.56.3-1_amd64.deb
+  apt_local_filename: libpangoft2-1.0-0_1.56.3-1_amd64.deb
+  apt_uri_hash: MD5Sum:f5fa1850c216771c9d9a591787222f41  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libfontconfig1 (>= 2.15.0), libfreetype6 (>= 2.2.1), libglib2.0-0t64 (>= 2.80.0), libharfbuzz0b
+    (>= 8.4.0), libpango-1.0-0 (= 1.56.3-1)
+- package: libpciaccess0
+  version: 0.17-3+b3
+  architecture: amd64
+  source_package: libpciaccess
+  source_version: 0.17-3
+  filename: pool/main/libp/libpciaccess/libpciaccess0_0.17-3+b3_amd64.deb
+  size_bytes: 51920
+  sha256: d9a0091071635a84e837051e4813005ac445071731becea28fba4d9806df5252  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 97
+  uri: https://deb.debian.org/debian/pool/main/libp/libpciaccess/libpciaccess0_0.17-3%2bb3_amd64.deb
+  apt_local_filename: libpciaccess0_0.17-3+b3_amd64.deb
+  apt_uri_hash: MD5Sum:cf5bbdf3fd7e3b6026f6380553ce2c0a  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), zlib1g (>= 1:1.1.4)
+- package: libpgm-5.3-0t64
+  version: 5.3.128~dfsg-2.1+b1
+  architecture: amd64
+  source_package: libpgm
+  source_version: 5.3.128~dfsg-2.1
+  filename: pool/main/libp/libpgm/libpgm-5.3-0t64_5.3.128~dfsg-2.1+b1_amd64.deb
+  size_bytes: 161816
+  sha256: 865c47a7865da63e7d620f0999ab7d10cdae8b638b691061166975c654a0e5f9  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 329
+  uri: https://deb.debian.org/debian/pool/main/libp/libpgm/libpgm-5.3-0t64_5.3.128%7edfsg-2.1%2bb1_amd64.deb
+  apt_local_filename: libpgm-5.3-0t64_5.3.128~dfsg-2.1+b1_amd64.deb
+  apt_uri_hash: MD5Sum:5417ac831f374bcb47fa46220d6cb26f  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+  provides: libpgm-5.3-0 (= 5.3.128~dfsg-2.1+b1)
+  breaks: libpgm-5.3-0 (<< 5.3.128~dfsg-2.1)
+  replaces: libpgm-5.3-0
+- package: libpixman-1-0
+  version: 0.44.0-3
+  architecture: amd64
+  source_package: pixman
+  source_version: 0.44.0-3
+  filename: pool/main/p/pixman/libpixman-1-0_0.44.0-3_amd64.deb
+  size_bytes: 247888
+  sha256: 3862c87596f6b4b60fc916395fd69aa10af28a875a8e5c081a8cf30ddd120bd6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 715
+  uri: https://deb.debian.org/debian/pool/main/p/pixman/libpixman-1-0_0.44.0-3_amd64.deb
+  apt_local_filename: libpixman-1-0_0.44.0-3_amd64.deb
+  apt_uri_hash: MD5Sum:7e728eb855d27c47d9b26600f8d9fc7c  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+- package: libplacebo349
+  version: 7.349.0-3
+  architecture: amd64
+  source_package: libplacebo
+  source_version: 7.349.0-3
+  filename: pool/main/libp/libplacebo/libplacebo349_7.349.0-3_amd64.deb
+  size_bytes: 2541596
+  sha256: 3d2ebdb86ccc35b9d115e8280cfc12c2cdc5ca67d0234af7370259181768dff2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 9190
+  uri: https://deb.debian.org/debian/pool/main/libp/libplacebo/libplacebo349_7.349.0-3_amd64.deb
+  apt_local_filename: libplacebo349_7.349.0-3_amd64.deb
+  apt_uri_hash: MD5Sum:b4f05118130371eb0d03cf66f9f65e48  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libgcc-s1 (>= 3.4), liblcms2-2 (>= 2.6), libstdc++6 (>= 13.1), libvulkan1 (>= 1.2.131.2)
+- package: libpng16-16t64
+  version: 1.6.48-1+deb13u6
+  architecture: amd64
+  source_package: libpng1.6
+  source_version: 1.6.48-1+deb13u6
+  filename: pool/updates/main/libp/libpng1.6/libpng16-16t64_1.6.48-1+deb13u6_amd64.deb
+  size_bytes: 283368
+  sha256: 0f8034d1c2547760430c81e8d87e5d6acd533a3493c80cf76dbecd0343b6773c  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 444
+  uri: https://security.debian.org/debian-security/pool/updates/main/libp/libpng1.6/libpng16-16t64_1.6.48-1%2bdeb13u6_amd64.deb
+  apt_local_filename: libpng16-16t64_1.6.48-1+deb13u6_amd64.deb
+  apt_uri_hash: null
+  depends: libc6 (>= 2.29), zlib1g (>= 1:1.2.3.4)
+  provides: libpng16-16 (= 1.6.48-1+deb13u6)
+  breaks: libpng16-16 (<< 1.6.48-1+deb13u6)
+  replaces: libpng16-16
+- package: libpocketsphinx3
+  version: 0.8+5prealpha+1-15+b4
+  architecture: amd64
+  source_package: pocketsphinx
+  source_version: 0.8+5prealpha+1-15
+  filename: pool/main/p/pocketsphinx/libpocketsphinx3_0.8+5prealpha+1-15+b4_amd64.deb
+  size_bytes: 125524
+  sha256: b2c444a2f9b7456fa804f672c0d7849a33d857f5a1de7710b02355721cfd2750  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 318
+  uri: https://deb.debian.org/debian/pool/main/p/pocketsphinx/libpocketsphinx3_0.8%2b5prealpha%2b1-15%2bb4_amd64.deb
+  apt_local_filename: libpocketsphinx3_0.8+5prealpha+1-15+b4_amd64.deb
+  apt_uri_hash: MD5Sum:f023b10254b79dd53919f90452a25d3e  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libsphinxbase3t64 (>= 0.8+5prealpha+1)
+- package: libpostproc58
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/libpostproc58_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 96040
+  sha256: 4a19b79dac4353419018509568f554df3ce937d2283c859f6454c3fe543135b6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 184
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/libpostproc58_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libpostproc58_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:ec6dd1ab6432abd5d19eeffb363aedff  # pragma: allowlist secret - public source or artifact digest
+  depends: libavutil59 (>= 7:7.1.5), libc6 (>= 2.14)
+- package: libpulse0
+  version: 17.0+dfsg1-2+b1
+  architecture: amd64
+  source_package: pulseaudio
+  source_version: 17.0+dfsg1-2
+  filename: pool/main/p/pulseaudio/libpulse0_17.0+dfsg1-2+b1_amd64.deb
+  size_bytes: 275632
+  sha256: 786aca79119cb249562708fd24dcdf817604cfe75bbfcb8cda3464042e17f40e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 973
+  uri: https://deb.debian.org/debian/pool/main/p/pulseaudio/libpulse0_17.0%2bdfsg1-2%2bb1_amd64.deb
+  apt_local_filename: libpulse0_17.0+dfsg1-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:23a6e757fa15d2a47adf70b08d212280  # pragma: allowlist secret - public source or artifact digest
+  depends: libasyncns0 (>= 0.3), libc6 (>= 2.38), libdbus-1-3 (>= 1.10), libsndfile1 (>= 1.0.20), libsystemd0, libx11-6,
+    libx11-xcb1, libxcb1
+- package: librabbitmq4
+  version: 0.15.0-1+deb13u2
+  architecture: amd64
+  source_package: librabbitmq
+  source_version: 0.15.0-1+deb13u2
+  filename: pool/main/libr/librabbitmq/librabbitmq4_0.15.0-1+deb13u2_amd64.deb
+  size_bytes: 42508
+  sha256: 7b81f891935c05a01ddca461564906dbc3c48f02519b2c20b8ca7590f2868112  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 119
+  uri: https://deb.debian.org/debian/pool/main/libr/librabbitmq/librabbitmq4_0.15.0-1%2bdeb13u2_amd64.deb
+  apt_local_filename: librabbitmq4_0.15.0-1+deb13u2_amd64.deb
+  apt_uri_hash: MD5Sum:ac0753906fa924cf70f826e1498e1ed2  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.17), libssl3t64 (>= 3.0.0)
+- package: librav1e0.7
+  version: 0.7.1-9+b2
+  architecture: amd64
+  source_package: rust-rav1e
+  source_version: 0.7.1-9
+  filename: pool/main/r/rust-rav1e/librav1e0.7_0.7.1-9+b2_amd64.deb
+  size_bytes: 946396
+  sha256: d5b1373a8d6905ee4523faf1db7a626dc660e03836ec91b616e57ba386f47eb6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 3238
+  uri: https://deb.debian.org/debian/pool/main/r/rust-rav1e/librav1e0.7_0.7.1-9%2bb2_amd64.deb
+  apt_local_filename: librav1e0.7_0.7.1-9+b2_amd64.deb
+  apt_uri_hash: MD5Sum:fab57a130388143574c34f30d233d3fa  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libgcc-s1 (>= 4.2)
+- package: libraw1394-11
+  version: 2.1.2-2+b2
+  architecture: amd64
+  source_package: libraw1394
+  source_version: 2.1.2-2
+  filename: pool/main/libr/libraw1394/libraw1394-11_2.1.2-2+b2_amd64.deb
+  size_bytes: 38788
+  sha256: f6f4f76b427f2caa2ed0905e64f13c2a8902fba04c08060e806b32bc35d6daf8  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 98
+  uri: https://deb.debian.org/debian/pool/main/libr/libraw1394/libraw1394-11_2.1.2-2%2bb2_amd64.deb
+  apt_local_filename: libraw1394-11_2.1.2-2+b2_amd64.deb
+  apt_uri_hash: MD5Sum:de6f001d987f8ea9f1b3055da36119f6  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+- package: librist4
+  version: 0.2.11+dfsg-1
+  architecture: amd64
+  source_package: librist
+  source_version: 0.2.11+dfsg-1
+  filename: pool/main/libr/librist/librist4_0.2.11+dfsg-1_amd64.deb
+  size_bytes: 72092
+  sha256: a3f66bd87fdd95561ec41894a782ca9e2e9272ed72c925be8a44da95e41a03b2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 187
+  uri: https://deb.debian.org/debian/pool/main/libr/librist/librist4_0.2.11%2bdfsg-1_amd64.deb
+  apt_local_filename: librist4_0.2.11+dfsg-1_amd64.deb
+  apt_uri_hash: MD5Sum:fbeb76d92596a0f71b1c71f7c90a57b1  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libcjson1 (>= 1.7.5), libmbedcrypto16 (>= 3.6.0)
+- package: librsvg2-2
+  version: 2.60.0+dfsg-1+deb13u1
+  architecture: amd64
+  source_package: librsvg
+  source_version: 2.60.0+dfsg-1+deb13u1
+  filename: pool/updates/main/libr/librsvg/librsvg2-2_2.60.0+dfsg-1+deb13u1_amd64.deb
+  size_bytes: 1794824
+  sha256: 5f68f720eccefebda3855a30007cab9d7662042ccbc01c126aa5f697ae6e5791  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 6160
+  uri: https://security.debian.org/debian-security/pool/updates/main/libr/librsvg/librsvg2-2_2.60.0%2bdfsg-1%2bdeb13u1_amd64.deb
+  apt_local_filename: librsvg2-2_2.60.0+dfsg-1+deb13u1_amd64.deb
+  apt_uri_hash: null
+  depends: libc6 (>= 2.38), libcairo-gobject2 (>= 1.10.0), libcairo2 (>= 1.15.8), libdav1d7 (>= 0.1.0), libgcc-s1
+    (>= 4.2), libgdk-pixbuf-2.0-0 (>= 2.25.2), libglib2.0-0t64 (>= 2.54.0), libpango-1.0-0 (>= 1.48.11), libpangocairo-1.0-0
+    (>= 1.48.11), libxml2 (>= 2.9.0)
+- package: librubberband2
+  version: 3.3.0+dfsg-2+b3
+  architecture: amd64
+  source_package: rubberband
+  source_version: 3.3.0+dfsg-2
+  filename: pool/main/r/rubberband/librubberband2_3.3.0+dfsg-2+b3_amd64.deb
+  size_bytes: 141556
+  sha256: 4593fde69a6a10f2356d0fd1e7b1cd61faa48cc83a1a0b01b7d021dfe5252a85  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 406
+  uri: https://deb.debian.org/debian/pool/main/r/rubberband/librubberband2_3.3.0%2bdfsg-2%2bb3_amd64.deb
+  apt_local_filename: librubberband2_3.3.0+dfsg-2+b3_amd64.deb
+  apt_uri_hash: MD5Sum:58fd9be3f549be916f4186c5a21207bc  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libfftw3-double3 (>= 3.3.10), libgcc-s1 (>= 3.0), libsamplerate0 (>= 0.1.7), libstdc++6
+    (>= 13.1)
+- package: libsamplerate0
+  version: 0.2.2-4+b2
+  architecture: amd64
+  source_package: libsamplerate
+  source_version: 0.2.2-4
+  filename: pool/main/libs/libsamplerate/libsamplerate0_0.2.2-4+b2_amd64.deb
+  size_bytes: 950084
+  sha256: 2665417fa996c1e249dbaa65c32305ac666e5ae865fad0f109b629935ec0bd18  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1494
+  uri: https://deb.debian.org/debian/pool/main/libs/libsamplerate/libsamplerate0_0.2.2-4%2bb2_amd64.deb
+  apt_local_filename: libsamplerate0_0.2.2-4+b2_amd64.deb
+  apt_uri_hash: MD5Sum:a469c5c19f43bfc2e150f2039fa5563f  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+- package: libsdl2-2.0-0
+  version: 2.32.4+dfsg-1
+  architecture: amd64
+  source_package: libsdl2
+  source_version: 2.32.4+dfsg-1
+  filename: pool/main/libs/libsdl2/libsdl2-2.0-0_2.32.4+dfsg-1_amd64.deb
+  size_bytes: 669048
+  sha256: c61af1033d79fa6a393c49fac987165876de8ff27ebbd6a36cf19f5fc84d7a7a  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 2055
+  uri: https://deb.debian.org/debian/pool/main/libs/libsdl2/libsdl2-2.0-0_2.32.4%2bdfsg-1_amd64.deb
+  apt_local_filename: libsdl2-2.0-0_2.32.4+dfsg-1_amd64.deb
+  apt_uri_hash: MD5Sum:04b7d3f95cb5b178ebed962857ed8be9  # pragma: allowlist secret - public source or artifact digest
+  depends: libasound2t64 (>= 1.0.27), libc6 (>= 2.38), libdecor-0-0 (>= 0.1.1-2~), libdrm2 (>= 2.4.71), libgbm1
+    (>= 17.1.0~rc2), libpulse0 (>= 5.0), libsamplerate0 (>= 0.1.7), libwayland-client0 (>= 1.20.0), libwayland-cursor0
+    (>= 1.18), libwayland-egl1 (>= 1.18), libx11-6 (>= 2:1.2.99.901), libxcursor1 (>> 1.1.2), libxext6, libxfixes3
+    (>= 1:5.0), libxi6 (>= 2:1.6.99.1), libxkbcommon0 (>= 0.5.0), libxrandr2 (>= 2:1.2.99.3), libxss1
+  conflicts: libsdl-1.3-0
+  replaces: libsdl-1.3-0
+- package: libsensors-config
+  version: 1:3.6.2-2
+  architecture: all
+  source_package: lm-sensors
+  source_version: 1:3.6.2-2
+  filename: pool/main/l/lm-sensors/libsensors-config_3.6.2-2_all.deb
+  size_bytes: 16236
+  sha256: 3056da80c7d963af795dab480ab6f6f4b154ad4ac39f522dc52d17c834fea253  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 37
+  uri: https://deb.debian.org/debian/pool/main/l/lm-sensors/libsensors-config_3.6.2-2_all.deb
+  apt_local_filename: libsensors-config_1%3a3.6.2-2_all.deb
+  apt_uri_hash: MD5Sum:9d468823435bd29c9fe580b1db754ae3  # pragma: allowlist secret - public source or artifact digest
+- package: libsensors5
+  version: 1:3.6.2-2
+  architecture: amd64
+  source_package: lm-sensors
+  source_version: 1:3.6.2-2
+  filename: pool/main/l/lm-sensors/libsensors5_3.6.2-2_amd64.deb
+  size_bytes: 37492
+  sha256: f0a994a6d7cfa695dea5343d0d1ba7eed796c0ad920c7282998b95f60049c4f6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 100
+  uri: https://deb.debian.org/debian/pool/main/l/lm-sensors/libsensors5_3.6.2-2_amd64.deb
+  apt_local_filename: libsensors5_1%3a3.6.2-2_amd64.deb
+  apt_uri_hash: MD5Sum:641055c30e7159c6504b7b945d7c01e7  # pragma: allowlist secret - public source or artifact digest
+  depends: libsensors-config, libc6 (>= 2.38)
+- package: libserd-0-0
+  version: 0.32.4-1
+  architecture: amd64
+  source_package: serd
+  source_version: 0.32.4-1
+  filename: pool/main/s/serd/libserd-0-0_0.32.4-1_amd64.deb
+  size_bytes: 46964
+  sha256: a2e1097666c09bf2fce41bff40b8d4cfb8c3c419da99fcb746ea175c5d48fcd5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 123
+  uri: https://deb.debian.org/debian/pool/main/s/serd/libserd-0-0_0.32.4-1_amd64.deb
+  apt_local_filename: libserd-0-0_0.32.4-1_amd64.deb
+  apt_uri_hash: MD5Sum:953bef44831407de46eef876202b759e  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+- package: libsharpyuv0
+  version: 1.5.0-0.1
+  architecture: amd64
+  source_package: libwebp
+  source_version: 1.5.0-0.1
+  filename: pool/main/libw/libwebp/libsharpyuv0_1.5.0-0.1_amd64.deb
+  size_bytes: 115612
+  sha256: 51934833d909588f7761fd84362114e90d8d2d38af57edf5df5c4a705e037547  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 143
+  uri: https://deb.debian.org/debian/pool/main/libw/libwebp/libsharpyuv0_1.5.0-0.1_amd64.deb
+  apt_local_filename: libsharpyuv0_1.5.0-0.1_amd64.deb
+  apt_uri_hash: MD5Sum:438d9fd296a1102dfa7f001641d8857a  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+- package: libshine3
+  version: 3.1.1-2+b2
+  architecture: amd64
+  source_package: shine
+  source_version: 3.1.1-2
+  filename: pool/main/s/shine/libshine3_3.1.1-2+b2_amd64.deb
+  size_bytes: 23128
+  sha256: 8908eb0c70893d122ee9cbed7186736ad94b45716404ef9622845bdd7d17b29d  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 61
+  uri: https://deb.debian.org/debian/pool/main/s/shine/libshine3_3.1.1-2%2bb2_amd64.deb
+  apt_local_filename: libshine3_3.1.1-2+b2_amd64.deb
+  apt_uri_hash: MD5Sum:7c22a5a93eec8cfac04b39bcd4205cba  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+- package: libslang2
+  version: 2.3.3-5+b2
+  architecture: amd64
+  source_package: slang2
+  source_version: 2.3.3-5
+  filename: pool/main/s/slang2/libslang2_2.3.3-5+b2_amd64.deb
+  size_bytes: 549496
+  sha256: 49b52a2cbe0f2257f4f7c68a0eaecd90962edabf08097611548b3ea4bd73292e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 2395
+  uri: https://deb.debian.org/debian/pool/main/s/slang2/libslang2_2.3.3-5%2bb2_amd64.deb
+  apt_local_filename: libslang2_2.3.3-5+b2_amd64.deb
+  apt_uri_hash: MD5Sum:769716d4335732c16befbeb31942e293  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+- package: libsnappy1v5
+  version: 1.2.2-1
+  architecture: amd64
+  source_package: snappy
+  source_version: 1.2.2-1
+  filename: pool/main/s/snappy/libsnappy1v5_1.2.2-1_amd64.deb
+  size_bytes: 29252
+  sha256: 53ec5f1050d64375a63cd1c30ee4a6d21ef0cfd485f9999aa0b70dd424ca3465  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 93
+  uri: https://deb.debian.org/debian/pool/main/s/snappy/libsnappy1v5_1.2.2-1_amd64.deb
+  apt_local_filename: libsnappy1v5_1.2.2-1_amd64.deb
+  apt_uri_hash: MD5Sum:5e2457205f23689a487168e17d9d4b7e  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libstdc++6 (>= 5.2)
+  conflicts: libsnappy1
+- package: libsndfile1
+  version: 1.2.2-2+deb13u1
+  architecture: amd64
+  source_package: libsndfile
+  source_version: 1.2.2-2+deb13u1
+  filename: pool/main/libs/libsndfile/libsndfile1_1.2.2-2+deb13u1_amd64.deb
+  size_bytes: 199172
+  sha256: d92263a045554e6f39c6b1c2ee4cca44a3248d9b9339301ff195969bf84b75eb  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 595
+  uri: https://deb.debian.org/debian/pool/main/libs/libsndfile/libsndfile1_1.2.2-2%2bdeb13u1_amd64.deb
+  apt_local_filename: libsndfile1_1.2.2-2+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:e2588b28bc4004bdf820bd84c1281981  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libflac14 (>= 1.5.0), libmp3lame0 (>= 3.100), libmpg123-0t64 (>= 1.28.0), libogg0 (>=
+    1.3.0), libopus0 (>= 1.1), libvorbis0a (>= 1.2.3), libvorbisenc2 (>= 1.1.2)
+- package: libsodium23
+  version: 1.0.18-1+deb13u1
+  architecture: amd64
+  source_package: libsodium
+  source_version: 1.0.18-1+deb13u1
+  filename: pool/main/libs/libsodium/libsodium23_1.0.18-1+deb13u1_amd64.deb
+  size_bytes: 165028
+  sha256: 9ff9d97bb7ce3aee7f6e6ec3a785cdbe237454a7b9fd84728121bc4ef2bebebe  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 431
+  uri: https://deb.debian.org/debian/pool/main/libs/libsodium/libsodium23_1.0.18-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libsodium23_1.0.18-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:ffe701bd7c1b211e688db5d340f91304  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libsord-0-0
+  version: 0.16.18-1
+  architecture: amd64
+  source_package: sord
+  source_version: 0.16.18-1
+  filename: pool/main/s/sord/libsord-0-0_0.16.18-1_amd64.deb
+  size_bytes: 17964
+  sha256: cbb4167b1a85cfec94faa9f85666ee382a8bc79ce93f5d7457514e8334299e52  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 54
+  uri: https://deb.debian.org/debian/pool/main/s/sord/libsord-0-0_0.16.18-1_amd64.deb
+  apt_local_filename: libsord-0-0_0.16.18-1_amd64.deb
+  apt_uri_hash: MD5Sum:ef87d4e8a083cc367c737bb3d6099781  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libserd-0-0 (>= 0.30), libzix-0-0 (>= 0.4.2)
+- package: libsoxr0
+  version: 0.1.3-4+b2
+  architecture: amd64
+  source_package: libsoxr
+  source_version: 0.1.3-4
+  filename: pool/main/libs/libsoxr/libsoxr0_0.1.3-4+b2_amd64.deb
+  size_bytes: 81008
+  sha256: 384caa47b6cfe780f30d33c5dfb1c18f6579aed9f3bdbf7f8cd0395ab2d537b7  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 237
+  uri: https://deb.debian.org/debian/pool/main/libs/libsoxr/libsoxr0_0.1.3-4%2bb2_amd64.deb
+  apt_local_filename: libsoxr0_0.1.3-4+b2_amd64.deb
+  apt_uri_hash: MD5Sum:9163ff9483cc8f1cfbae01296ca78020  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libgomp1 (>= 4.9)
+- package: libspeex1
+  version: 1.2.1-3
+  architecture: amd64
+  source_package: speex
+  source_version: 1.2.1-3
+  filename: pool/main/s/speex/libspeex1_1.2.1-3_amd64.deb
+  size_bytes: 56824
+  sha256: 26623d450c2a51f9f6801b19ee5be1303aee4087557d1389020a0df00afa6e77  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 137
+  uri: https://deb.debian.org/debian/pool/main/s/speex/libspeex1_1.2.1-3_amd64.deb
+  apt_local_filename: libspeex1_1.2.1-3_amd64.deb
+  apt_uri_hash: MD5Sum:3ba67f24c9a992c6af558df940185cb4  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+- package: libsphinxbase3t64
+  version: 0.8+5prealpha+1-21+b1
+  architecture: amd64
+  source_package: sphinxbase
+  source_version: 0.8+5prealpha+1-21
+  filename: pool/main/s/sphinxbase/libsphinxbase3t64_0.8+5prealpha+1-21+b1_amd64.deb
+  size_bytes: 121416
+  sha256: 97edf4f50ed24364795e53abecd6e100d1f24278968b2eb01a688c78255eb80b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 334
+  uri: https://deb.debian.org/debian/pool/main/s/sphinxbase/libsphinxbase3t64_0.8%2b5prealpha%2b1-21%2bb1_amd64.deb
+  apt_local_filename: libsphinxbase3t64_0.8+5prealpha+1-21+b1_amd64.deb
+  apt_uri_hash: MD5Sum:da4483a397f2f041b32b408c8dcd80ab  # pragma: allowlist secret - public source or artifact digest
+  depends: libblas3 | libblas.so.3, libc6 (>= 2.34), liblapack3 | liblapack.so.3, libpulse0 (>= 0.99.1)
+  provides: libsphinxbase3 (= 0.8+5prealpha+1-21+b1)
+  breaks: libsphinxbase3 (<< 0.8+5prealpha+1-21)
+  replaces: libsphinxbase3
+- package: libsratom-0-0
+  version: 0.6.18-1
+  architecture: amd64
+  source_package: sratom
+  source_version: 0.6.18-1
+  filename: pool/main/s/sratom/libsratom-0-0_0.6.18-1_amd64.deb
+  size_bytes: 17692
+  sha256: 63195bd9233678ed397cfded0aae85d85cf2584ff7c638b34013ca34544962d7  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 61
+  uri: https://deb.debian.org/debian/pool/main/s/sratom/libsratom-0-0_0.6.18-1_amd64.deb
+  apt_local_filename: libsratom-0-0_0.6.18-1_amd64.deb
+  apt_uri_hash: MD5Sum:a3000c749f2f29aa4f87659a70bed014  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libserd-0-0 (>= 0.30.2), libsord-0-0 (>= 0.16.16)
+- package: libsrt1.5-gnutls
+  version: 1.5.4-1+deb13u1
+  architecture: amd64
+  source_package: srt
+  source_version: 1.5.4-1+deb13u1
+  filename: pool/main/s/srt/libsrt1.5-gnutls_1.5.4-1+deb13u1_amd64.deb
+  size_bytes: 347996
+  sha256: 234ed0b5fcff17d2ecce4c625d897b78545f94f5096b1ec689e9a678f9067f1c  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1012
+  uri: https://deb.debian.org/debian/pool/main/s/srt/libsrt1.5-gnutls_1.5.4-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libsrt1.5-gnutls_1.5.4-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:c394dbc05db20bffd0a6437468a75076  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libgnutls30t64 (>= 3.7.0), libnettle8t64, libstdc++6 (>= 14)
+- package: libssh-4
+  version: 0.11.5-0+deb13u1
+  architecture: amd64
+  source_package: libssh
+  source_version: 0.11.5-0+deb13u1
+  filename: pool/main/libs/libssh/libssh-4_0.11.5-0+deb13u1_amd64.deb
+  size_bytes: 211924
+  sha256: bc8cbc13617d1b21fa6f686f9f269a4f849f00624d5bb179785a058981701233  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 583
+  uri: https://deb.debian.org/debian/pool/main/libs/libssh/libssh-4_0.11.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libssh-4_0.11.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:cf348ab283fc2187fc8c0ef68a859635  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libgssapi-krb5-2 (>= 1.17), libssl3t64 (>= 3.0.0), zlib1g (>= 1:1.1.4)
+- package: libsvtav1enc2
+  version: 2.3.0+dfsg-1
+  architecture: amd64
+  source_package: svt-av1
+  source_version: 2.3.0+dfsg-1
+  filename: pool/main/s/svt-av1/libsvtav1enc2_2.3.0+dfsg-1_amd64.deb
+  size_bytes: 2489492
+  sha256: cdaf961c3cc4fe78a19ff18c17d83d813f78a378fdcc4c86ccbb9b54e84ae599  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 7839
+  uri: https://deb.debian.org/debian/pool/main/s/svt-av1/libsvtav1enc2_2.3.0%2bdfsg-1_amd64.deb
+  apt_local_filename: libsvtav1enc2_2.3.0+dfsg-1_amd64.deb
+  apt_uri_hash: MD5Sum:8246119a4f34194b2952d38703a823b3  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libswresample5
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/libswresample5_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 109260
+  sha256: abe0f2f6a27db64a0d2d344e333880be997b2ec5431fc187a100078075680d94  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 241
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/libswresample5_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libswresample5_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:11ad22ef87bc735f03c40762733622b6  # pragma: allowlist secret - public source or artifact digest
+  depends: libavutil59 (>= 7:7.1.5), libc6 (>= 2.29), libsoxr0 (>= 0.1.0)
+- package: libswscale8
+  version: 7:7.1.5-0+deb13u1
+  architecture: amd64
+  source_package: ffmpeg
+  source_version: 7:7.1.5-0+deb13u1
+  filename: pool/main/f/ffmpeg/libswscale8_7.1.5-0+deb13u1_amd64.deb
+  size_bytes: 241564
+  sha256: cf43cf4fe02a02cd36b25a86a2fcdeeaca9cc22bb1c81239302514db701d4e6d  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 781
+  uri: https://deb.debian.org/debian/pool/main/f/ffmpeg/libswscale8_7.1.5-0%2bdeb13u1_amd64.deb
+  apt_local_filename: libswscale8_7%3a7.1.5-0+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:c643dc0e1e4520cbeaba9325204aa4c4  # pragma: allowlist secret - public source or artifact digest
+  depends: libavutil59 (= 7:7.1.5-0+deb13u1), libc6 (>= 2.34)
+- package: libtasn1-6
+  version: 4.20.0-2+deb13u1
+  architecture: amd64
+  source_package: libtasn1-6
+  source_version: 4.20.0-2+deb13u1
+  filename: pool/main/libt/libtasn1-6/libtasn1-6_4.20.0-2+deb13u1_amd64.deb
+  size_bytes: 50112
+  sha256: 23fec6e06583ce2bad9b2c04c9b485e90440e259b1abf8677cd80d3ce60831ad  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 122
+  uri: https://deb.debian.org/debian/pool/main/libt/libtasn1-6/libtasn1-6_4.20.0-2%2bdeb13u1_amd64.deb
+  apt_local_filename: libtasn1-6_4.20.0-2+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:0dee8d137e0d8bbc8a57e721c13a5f66  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+- package: libthai-data
+  version: 0.1.29-2
+  architecture: all
+  source_package: libthai
+  source_version: 0.1.29-2
+  filename: pool/main/libt/libthai/libthai-data_0.1.29-2_all.deb
+  size_bytes: 167504
+  sha256: fd38d40602834d510a29140bd27fd48485105e834f03dccab1c02e2edaa794dd  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 618
+  uri: https://deb.debian.org/debian/pool/main/libt/libthai/libthai-data_0.1.29-2_all.deb
+  apt_local_filename: libthai-data_0.1.29-2_all.deb
+  apt_uri_hash: MD5Sum:dcad33696efc1f34f13945164a42e5df  # pragma: allowlist secret - public source or artifact digest
+  breaks: libthai0 (<< 0.1.10)
+- package: libthai0
+  version: 0.1.29-2+b1
+  architecture: amd64
+  source_package: libthai
+  source_version: 0.1.29-2
+  filename: pool/main/libt/libthai/libthai0_0.1.29-2+b1_amd64.deb
+  size_bytes: 49420
+  sha256: e6364c07aeeffe9a95f267061d9df168e48e9dc9126c3b40e19dc829f67702a7  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 92
+  uri: https://deb.debian.org/debian/pool/main/libt/libthai/libthai0_0.1.29-2%2bb1_amd64.deb
+  apt_local_filename: libthai0_0.1.29-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:cafac6592587bb71121a5f5f96306a19  # pragma: allowlist secret - public source or artifact digest
+  depends: libthai-data (>= 0.1.10), libc6 (>= 2.14), libdatrie1 (>= 0.2.0)
+- package: libtheoradec1
+  version: 1.2.0~alpha1+dfsg-6
+  architecture: amd64
+  source_package: libtheora
+  source_version: 1.2.0~alpha1+dfsg-6
+  filename: pool/main/libt/libtheora/libtheoradec1_1.2.0~alpha1+dfsg-6_amd64.deb
+  size_bytes: 58432
+  sha256: 31c566d16b0a30f2c100d685d09b831d10d756bd043107ec6594c082274c0c74  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 136
+  uri: https://deb.debian.org/debian/pool/main/libt/libtheora/libtheoradec1_1.2.0%7ealpha1%2bdfsg-6_amd64.deb
+  apt_local_filename: libtheoradec1_1.2.0~alpha1+dfsg-6_amd64.deb
+  apt_uri_hash: MD5Sum:6c2bfc6641b8564cae1d29a04dee0dd8  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libcairo2 (>= 1.2.4)
+  breaks: libtheora0 (<< 1.2.0~alpha1+dfsg-1)
+  replaces: libtheora0 (<< 1.2.0~alpha1+dfsg-1)
+- package: libtheoraenc1
+  version: 1.2.0~alpha1+dfsg-6
+  architecture: amd64
+  source_package: libtheora
+  source_version: 1.2.0~alpha1+dfsg-6
+  filename: pool/main/libt/libtheora/libtheoraenc1_1.2.0~alpha1+dfsg-6_amd64.deb
+  size_bytes: 108424
+  sha256: ce795eba6cdb510a52cd158dee7930a23667ffb4bdf07fbc44d4590edbf6f503  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 255
+  uri: https://deb.debian.org/debian/pool/main/libt/libtheora/libtheoraenc1_1.2.0%7ealpha1%2bdfsg-6_amd64.deb
+  apt_local_filename: libtheoraenc1_1.2.0~alpha1+dfsg-6_amd64.deb
+  apt_uri_hash: MD5Sum:eed038470e8d94241810066bb32de38b  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libogg0 (>= 1.1.0)
+  breaks: libtheora0 (<< 1.2.0~alpha1+dfsg-1)
+  replaces: libtheora0 (<< 1.2.0~alpha1+dfsg-1)
+- package: libtiff6
+  version: 4.7.0-3+deb13u3
+  architecture: amd64
+  source_package: tiff
+  source_version: 4.7.0-3+deb13u3
+  filename: pool/main/t/tiff/libtiff6_4.7.0-3+deb13u3_amd64.deb
+  size_bytes: 345492
+  sha256: 6bb2038f36817ae1ee6d33df03917b21835dcc2e0f3e3e80a71390e83c171173  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 766
+  uri: https://deb.debian.org/debian/pool/main/t/tiff/libtiff6_4.7.0-3%2bdeb13u3_amd64.deb
+  apt_local_filename: libtiff6_4.7.0-3+deb13u3_amd64.deb
+  apt_uri_hash: MD5Sum:22c223cc85d0ec5c73daf59cf1a9b928  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.33), libdeflate0 (>= 1.0), libjbig0 (>= 2.0), libjpeg62-turbo (>= 1.3.1), liblerc4 (>= 3.0),
+    liblzma5 (>= 5.1.1alpha+20120614), libwebp7 (>= 1.5.0), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4)
+  breaks: libimager-perl (<< 1.022+dfsg)
+- package: libtwolame0
+  version: 0.4.0-2+b2
+  architecture: amd64
+  source_package: twolame
+  source_version: 0.4.0-2
+  filename: pool/main/t/twolame/libtwolame0_0.4.0-2+b2_amd64.deb
+  size_bytes: 51340
+  sha256: f3e739c8dd8b7c77043406bb4a4eef16d192e2e0aa5f8d9f39e09ff087844e6d  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 155
+  uri: https://deb.debian.org/debian/pool/main/t/twolame/libtwolame0_0.4.0-2%2bb2_amd64.deb
+  apt_local_filename: libtwolame0_0.4.0-2+b2_amd64.deb
+  apt_uri_hash: MD5Sum:0267a9a6f9333a439470aad16a36ff81  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+- package: libudfread0
+  version: 1.1.2-1+b2
+  architecture: amd64
+  source_package: libudfread
+  source_version: 1.1.2-1
+  filename: pool/main/libu/libudfread/libudfread0_1.1.2-1+b2_amd64.deb
+  size_bytes: 17712
+  sha256: dbb34708521e4e895d1e061b765548ea408e670c8b2a17e84529166afa88e5f1  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 57
+  uri: https://deb.debian.org/debian/pool/main/libu/libudfread/libudfread0_1.1.2-1%2bb2_amd64.deb
+  apt_local_filename: libudfread0_1.1.2-1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:8a47e62f833644517f26ffe5c3be9723  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+- package: libunibreak6
+  version: 6.1-3
+  architecture: amd64
+  source_package: libunibreak
+  source_version: 6.1-3
+  filename: pool/main/libu/libunibreak/libunibreak6_6.1-3_amd64.deb
+  size_bytes: 21940
+  sha256: a5d5fa113f195288ed145d48d0e886671c94416ae7c800f943bc21cc4ef628cc  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 150
+  uri: https://deb.debian.org/debian/pool/main/libu/libunibreak/libunibreak6_6.1-3_amd64.deb
+  apt_local_filename: libunibreak6_6.1-3_amd64.deb
+  apt_uri_hash: MD5Sum:c1140b8d0125a190b858e1e32c9fed5a  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4)
+- package: libunistring5
+  version: 1.3-2
+  architecture: amd64
+  source_package: libunistring
+  source_version: 1.3-2
+  filename: pool/main/libu/libunistring/libunistring5_1.3-2_amd64.deb
+  size_bytes: 476768
+  sha256: 6dd3490bef06ea1096f32d10766b7e016cf579bfae8451d1b7df15ce05b8aa46  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 2092
+  uri: https://deb.debian.org/debian/pool/main/libu/libunistring/libunistring5_1.3-2_amd64.deb
+  apt_local_filename: libunistring5_1.3-2_amd64.deb
+  apt_uri_hash: MD5Sum:954d362e7a674be8969e0c223782de72  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libusb-1.0-0
+  version: 2:1.0.28-1
+  architecture: amd64
+  source_package: libusb-1.0
+  source_version: 2:1.0.28-1
+  filename: pool/main/libu/libusb-1.0/libusb-1.0-0_1.0.28-1_amd64.deb
+  size_bytes: 59552
+  sha256: bb6467a002915c4ac464aa1b22204907951a30e43bcb86596ebd3539e84458e9  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 157
+  uri: https://deb.debian.org/debian/pool/main/libu/libusb-1.0/libusb-1.0-0_1.0.28-1_amd64.deb
+  apt_local_filename: libusb-1.0-0_2%3a1.0.28-1_amd64.deb
+  apt_uri_hash: MD5Sum:2a47b89544acfb2b882e96b8d00ab410  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libudev1 (>= 183)
+- package: libva-drm2
+  version: 2.22.0-3
+  architecture: amd64
+  source_package: libva
+  source_version: 2.22.0-3
+  filename: pool/main/libv/libva/libva-drm2_2.22.0-3_amd64.deb
+  size_bytes: 18324
+  sha256: 5dce5007ddc0ce87a61db4d71476ce1a5a135737b5185ce2e8b7067342fcafc6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 44
+  uri: https://deb.debian.org/debian/pool/main/libv/libva/libva-drm2_2.22.0-3_amd64.deb
+  apt_local_filename: libva-drm2_2.22.0-3_amd64.deb
+  apt_uri_hash: MD5Sum:d88a961711ddb6fd0af0fde3a5e0f0e1  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libdrm2 (>= 2.4.60), libva2 (>= 2.22.0), libva2 (<< 2.22.0.1)
+- package: libva-x11-2
+  version: 2.22.0-3
+  architecture: amd64
+  source_package: libva
+  source_version: 2.22.0-3
+  filename: pool/main/libv/libva/libva-x11-2_2.22.0-3_amd64.deb
+  size_bytes: 23136
+  sha256: 97baabc9ae8dfbe718ca80543dc7337d330dd17e2a59138bf42a66a35d59309b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 57
+  uri: https://deb.debian.org/debian/pool/main/libv/libva/libva-x11-2_2.22.0-3_amd64.deb
+  apt_local_filename: libva-x11-2_2.22.0-3_amd64.deb
+  apt_uri_hash: MD5Sum:57b01729ed5de118c28755da466921ac  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.33), libdrm2 (>= 2.4.60), libva2 (>= 2.22.0), libva2 (<< 2.22.0.1), libx11-6 (>= 2:1.4.99.1),
+    libx11-xcb1, libxcb-dri3-0, libxcb1, libxext6, libxfixes3
+- package: libva2
+  version: 2.22.0-3
+  architecture: amd64
+  source_package: libva
+  source_version: 2.22.0-3
+  filename: pool/main/libv/libva/libva2_2.22.0-3_amd64.deb
+  size_bytes: 79372
+  sha256: b76bdd330de47a826698aaed10f53435b703e9a7d4415dd68269c97709f46a9b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 250
+  uri: https://deb.debian.org/debian/pool/main/libv/libva/libva2_2.22.0-3_amd64.deb
+  apt_local_filename: libva2_2.22.0-3_amd64.deb
+  apt_uri_hash: MD5Sum:216ae5c39da66072d93a3c5eae1b1fb4  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+  provides: libva-driver-abi-1.0, libva-driver-abi-1.17, libva-driver-abi-1.18, libva-driver-abi-1.19, libva-driver-abi-1.20,
+    libva-driver-abi-1.21, libva-driver-abi-1.22, libva-driver-abi-1.8
+- package: libvdpau1
+  version: 1.5-3+b1
+  architecture: amd64
+  source_package: libvdpau
+  source_version: 1.5-3
+  filename: pool/main/libv/libvdpau/libvdpau1_1.5-3+b1_amd64.deb
+  size_bytes: 27160
+  sha256: 7c872493296cc8ce829ab38a68b5e51c351466a5fd0daf485984c829282a94e3  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 111
+  uri: https://deb.debian.org/debian/pool/main/libv/libvdpau/libvdpau1_1.5-3%2bb1_amd64.deb
+  apt_local_filename: libvdpau1_1.5-3+b1_amd64.deb
+  apt_uri_hash: MD5Sum:e71f1648d133d49101eb044c85760885  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libx11-6 (>= 2:1.4.99.1), libxext6
+- package: libvidstab1.1
+  version: 1.1.0-2+b2
+  architecture: amd64
+  source_package: libvidstab
+  source_version: 1.1.0-2
+  filename: pool/main/libv/libvidstab/libvidstab1.1_1.1.0-2+b2_amd64.deb
+  size_bytes: 38896
+  sha256: 248da59fbb0d161666ee40846471f066cef65960735c9a39cc0fa9134db4323f  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 99
+  uri: https://deb.debian.org/debian/pool/main/libv/libvidstab/libvidstab1.1_1.1.0-2%2bb2_amd64.deb
+  apt_local_filename: libvidstab1.1_1.1.0-2+b2_amd64.deb
+  apt_uri_hash: MD5Sum:1917f97bb5018342f491241fa3edf362  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libgomp1 (>= 4.9)
+- package: libvorbis0a
+  version: 1.3.7-3
+  architecture: amd64
+  source_package: libvorbis
+  source_version: 1.3.7-3
+  filename: pool/main/libv/libvorbis/libvorbis0a_1.3.7-3_amd64.deb
+  size_bytes: 89960
+  sha256: 0465f7f602f7b00965e58e7273b5876060ab7946f0452a9f95d979046932cc42  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 208
+  uri: https://deb.debian.org/debian/pool/main/libv/libvorbis/libvorbis0a_1.3.7-3_amd64.deb
+  apt_local_filename: libvorbis0a_1.3.7-3_amd64.deb
+  apt_uri_hash: MD5Sum:847fa3ce164022557c69fca9621284cd  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libogg0 (>= 1.1.0)
+- package: libvorbisenc2
+  version: 1.3.7-3
+  architecture: amd64
+  source_package: libvorbis
+  source_version: 1.3.7-3
+  filename: pool/main/libv/libvorbis/libvorbisenc2_1.3.7-3_amd64.deb
+  size_bytes: 75432
+  sha256: 5fbbf06a5b196235aa2753cd12bbe7f843328571d368f15b1c337578e29f73a2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 698
+  uri: https://deb.debian.org/debian/pool/main/libv/libvorbis/libvorbisenc2_1.3.7-3_amd64.deb
+  apt_local_filename: libvorbisenc2_1.3.7-3_amd64.deb
+  apt_uri_hash: MD5Sum:a497095e426d92d21c05915487617076  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libvorbis0a (= 1.3.7-3)
+- package: libvorbisfile3
+  version: 1.3.7-3
+  architecture: amd64
+  source_package: libvorbis
+  source_version: 1.3.7-3
+  filename: pool/main/libv/libvorbis/libvorbisfile3_1.3.7-3_amd64.deb
+  size_bytes: 20856
+  sha256: 02822ab3da107b6f65bb3f7ac5bc8d68f51f998dd6886dd38f509f4d04d0ccd6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 58
+  uri: https://deb.debian.org/debian/pool/main/libv/libvorbis/libvorbisfile3_1.3.7-3_amd64.deb
+  apt_local_filename: libvorbisfile3_1.3.7-3_amd64.deb
+  apt_uri_hash: MD5Sum:d1b49b1a3a7fadc1f09126f2edfd5b77  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libogg0 (>= 1.1.0), libvorbis0a (= 1.3.7-3)
+- package: libvpl2
+  version: 1:2.14.0-1+b1
+  architecture: amd64
+  source_package: libvpl
+  source_version: 1:2.14.0-1
+  filename: pool/main/libv/libvpl/libvpl2_2.14.0-1+b1_amd64.deb
+  size_bytes: 129124
+  sha256: cee5b3fdfb5c2a944f4366406bf245992c7aaa234cdfb41acffba8f2bfbed1b4  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 415
+  uri: https://deb.debian.org/debian/pool/main/libv/libvpl/libvpl2_2.14.0-1%2bb1_amd64.deb
+  apt_local_filename: libvpl2_1%3a2.14.0-1+b1_amd64.deb
+  apt_uri_hash: MD5Sum:aeb537b2479f3aa65a206c8fd64ed30e  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 11)
+- package: libvpx9
+  version: 1.15.0-2.1+deb13u1
+  architecture: amd64
+  source_package: libvpx
+  source_version: 1.15.0-2.1+deb13u1
+  filename: pool/main/libv/libvpx/libvpx9_1.15.0-2.1+deb13u1_amd64.deb
+  size_bytes: 1114728
+  sha256: 5c2baac5c97a1fe01c4f0a2216743b901dc72437351e7451725a394c08037bcc  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 3545
+  uri: https://deb.debian.org/debian/pool/main/libv/libvpx/libvpx9_1.15.0-2.1%2bdeb13u1_amd64.deb
+  apt_local_filename: libvpx9_1.15.0-2.1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:376fdfaea352ea06d425494e65d03f28  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libvulkan1
+  version: 1.4.309.0-1
+  architecture: amd64
+  source_package: vulkan-loader
+  source_version: 1.4.309.0-1
+  filename: pool/main/v/vulkan-loader/libvulkan1_1.4.309.0-1_amd64.deb
+  size_bytes: 130128
+  sha256: f47da79cd140264fe21cceb08bc87a71bc7fec05819e4a421f3f518d21101a37  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 555
+  uri: https://deb.debian.org/debian/pool/main/v/vulkan-loader/libvulkan1_1.4.309.0-1_amd64.deb
+  apt_local_filename: libvulkan1_1.4.309.0-1_amd64.deb
+  apt_uri_hash: MD5Sum:9e06e13d05fb085333282be777ffbc33  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+  breaks: libvulkan-dev (<< 1.1.70+dfsg1-2), vulkan-loader
+  replaces: libvulkan-dev (<< 1.1.70+dfsg1-2), vulkan-loader
+- package: libwayland-client0
+  version: 1.23.1-3
+  architecture: amd64
+  source_package: wayland
+  source_version: 1.23.1-3
+  filename: pool/main/w/wayland/libwayland-client0_1.23.1-3_amd64.deb
+  size_bytes: 26816
+  sha256: d1607e1db1a7c5378a2e5c6ae7b20f64dc6acf134f953d84a7f5204b74339f33  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 94
+  uri: https://deb.debian.org/debian/pool/main/w/wayland/libwayland-client0_1.23.1-3_amd64.deb
+  apt_local_filename: libwayland-client0_1.23.1-3_amd64.deb
+  apt_uri_hash: MD5Sum:c394695dccdc96243173a5699fe0b184  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libffi8 (>= 3.4)
+- package: libwayland-cursor0
+  version: 1.23.1-3
+  architecture: amd64
+  source_package: wayland
+  source_version: 1.23.1-3
+  filename: pool/main/w/wayland/libwayland-cursor0_1.23.1-3_amd64.deb
+  size_bytes: 11880
+  sha256: 26fccae2b1228744de0cad6c688550b8d13cd4e8d4ccf0cfdae015634ece673f  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 51
+  uri: https://deb.debian.org/debian/pool/main/w/wayland/libwayland-cursor0_1.23.1-3_amd64.deb
+  apt_local_filename: libwayland-cursor0_1.23.1-3_amd64.deb
+  apt_uri_hash: MD5Sum:b3472a9c3a41fc922671329bc080ed39  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.28), libwayland-client0 (>= 1.20.0)
+- package: libwayland-egl1
+  version: 1.23.1-3
+  architecture: amd64
+  source_package: wayland
+  source_version: 1.23.1-3
+  filename: pool/main/w/wayland/libwayland-egl1_1.23.1-3_amd64.deb
+  size_bytes: 5860
+  sha256: 7c5c3429028b39b9432792db08cb218c43891df439ebc648b83ebee676a80ec5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 30
+  uri: https://deb.debian.org/debian/pool/main/w/wayland/libwayland-egl1_1.23.1-3_amd64.deb
+  apt_local_filename: libwayland-egl1_1.23.1-3_amd64.deb
+  apt_uri_hash: MD5Sum:7a63e8456ba8c555c69d073ecf0d21e7  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.2.5)
+- package: libwayland-server0
+  version: 1.23.1-3
+  architecture: amd64
+  source_package: wayland
+  source_version: 1.23.1-3
+  filename: pool/main/w/wayland/libwayland-server0_1.23.1-3_amd64.deb
+  size_bytes: 34432
+  sha256: 2967212bd582e0dffca443fdc44f4c660e7368d41f7ee3a7f6314e0c3abfe9ea  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 112
+  uri: https://deb.debian.org/debian/pool/main/w/wayland/libwayland-server0_1.23.1-3_amd64.deb
+  apt_local_filename: libwayland-server0_1.23.1-3_amd64.deb
+  apt_uri_hash: MD5Sum:56d202e0f34b4571a0a16427f818e43f  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libffi8 (>= 3.4)
+- package: libwebp7
+  version: 1.5.0-0.1
+  architecture: amd64
+  source_package: libwebp
+  source_version: 1.5.0-0.1
+  filename: pool/main/libw/libwebp/libwebp7_1.5.0-0.1_amd64.deb
+  size_bytes: 317856
+  sha256: c749744b04abdd1426b0c7718e516362c03a557c5151662092d6d4f2cef6e7c1  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 631
+  uri: https://deb.debian.org/debian/pool/main/libw/libwebp/libwebp7_1.5.0-0.1_amd64.deb
+  apt_local_filename: libwebp7_1.5.0-0.1_amd64.deb
+  apt_uri_hash: MD5Sum:bf682e1e438b4927c3807cad4ca6c1a9  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libsharpyuv0 (>= 1.5.0)
+- package: libwebpmux3
+  version: 1.5.0-0.1
+  architecture: amd64
+  source_package: libwebp
+  source_version: 1.5.0-0.1
+  filename: pool/main/libw/libwebp/libwebpmux3_1.5.0-0.1_amd64.deb
+  size_bytes: 126140
+  sha256: 8bc86d509406ad496b6414c7068b3dadc0f8c502027973cbf1765c7bb54fabdf  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 171
+  uri: https://deb.debian.org/debian/pool/main/libw/libwebp/libwebpmux3_1.5.0-0.1_amd64.deb
+  apt_local_filename: libwebpmux3_1.5.0-0.1_amd64.deb
+  apt_uri_hash: MD5Sum:ce411829b540c56881f7cb6cfff1d558  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libwebp7 (>= 1.5.0)
+- package: libx11-6
+  version: 2:1.8.12-1
+  architecture: amd64
+  source_package: libx11
+  source_version: 2:1.8.12-1
+  filename: pool/main/libx/libx11/libx11-6_1.8.12-1_amd64.deb
+  size_bytes: 815292
+  sha256: b5a3fd3bf8c8fd0364bfb9bea00dcba7fc301229bd02dded084632d31f5b0fb3  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1638
+  uri: https://deb.debian.org/debian/pool/main/libx/libx11/libx11-6_1.8.12-1_amd64.deb
+  apt_local_filename: libx11-6_2%3a1.8.12-1_amd64.deb
+  apt_uri_hash: MD5Sum:723fec07f977145e0ed2c6ff8048a69d  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libxcb1 (>= 1.11.1), libx11-data
+  breaks: libx11-xcb1 (<< 2:1.7.0-2)
+- package: libx11-data
+  version: 2:1.8.12-1
+  architecture: all
+  source_package: libx11
+  source_version: 2:1.8.12-1
+  filename: pool/main/libx/libx11/libx11-data_1.8.12-1_all.deb
+  size_bytes: 343072
+  sha256: c54f87069888f80ba4da586da6147d74c7598ccdd8b90906dbc4271fa414c738  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1576
+  uri: https://deb.debian.org/debian/pool/main/libx/libx11/libx11-data_1.8.12-1_all.deb
+  apt_local_filename: libx11-data_2%3a1.8.12-1_all.deb
+  apt_uri_hash: MD5Sum:1c54a8670f2640f5cf999c5da9d5f88c  # pragma: allowlist secret - public source or artifact digest
+- package: libx11-xcb1
+  version: 2:1.8.12-1
+  architecture: amd64
+  source_package: libx11
+  source_version: 2:1.8.12-1
+  filename: pool/main/libx/libx11/libx11-xcb1_1.8.12-1_amd64.deb
+  size_bytes: 247128
+  sha256: e05f94d21a932fba5b09b9b13d99df776b155d3bc792c0e294451df9ffe1ba25  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 306
+  uri: https://deb.debian.org/debian/pool/main/libx/libx11/libx11-xcb1_1.8.12-1_amd64.deb
+  apt_local_filename: libx11-xcb1_2%3a1.8.12-1_amd64.deb
+  apt_uri_hash: MD5Sum:4b35848e6933d3c1dcde949ef8c070b4  # pragma: allowlist secret - public source or artifact digest
+  depends: libx11-6 (= 2:1.8.12-1)
+- package: libx264-164
+  version: 2:0.164.3108+git31e19f9-2+b1
+  architecture: amd64
+  source_package: x264
+  source_version: 2:0.164.3108+git31e19f9-2
+  filename: pool/main/x/x264/libx264-164_0.164.3108+git31e19f9-2+b1_amd64.deb
+  size_bytes: 558464
+  sha256: 325c90dc0888be316c8979b94aee546d223d4edf03b30927d1e9d431f67e33b2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1918
+  uri: https://deb.debian.org/debian/pool/main/x/x264/libx264-164_0.164.3108%2bgit31e19f9-2%2bb1_amd64.deb
+  apt_local_filename: libx264-164_2%3a0.164.3108+git31e19f9-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:c847c6f125d66999d62a4f0ea906229d  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+- package: libx265-215
+  version: 4.1-2
+  architecture: amd64
+  source_package: x265
+  source_version: 4.1-2
+  filename: pool/main/x/x265/libx265-215_4.1-2_amd64.deb
+  size_bytes: 1236592
+  sha256: 4bb075b465dbc136b0c5050b956432ea7e443a16d592aa89ef28bcaf4b0ad734  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 16788
+  uri: https://deb.debian.org/debian/pool/main/x/x265/libx265-215_4.1-2_amd64.deb
+  apt_local_filename: libx265-215_4.1-2_amd64.deb
+  apt_uri_hash: MD5Sum:2f1bd5eb56ec1faa915d76f0d746c8e2  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libnuma1 (>= 2.0.11), libstdc++6 (>= 4.1.1)
+- package: libxau6
+  version: 1:1.0.11-1
+  architecture: amd64
+  source_package: libxau
+  source_version: 1:1.0.11-1
+  filename: pool/main/libx/libxau/libxau6_1.0.11-1_amd64.deb
+  size_bytes: 20392
+  sha256: 689a9f0e0ba3e2c65431f864871e303ee904de69dd28abfc462663fae030227f  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 42
+  uri: https://deb.debian.org/debian/pool/main/libx/libxau/libxau6_1.0.11-1_amd64.deb
+  apt_local_filename: libxau6_1%3a1.0.11-1_amd64.deb
+  apt_uri_hash: MD5Sum:4aec39848ed84d35bdd168928d7a37a5  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.33)
+- package: libxcb-dri3-0
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-dri3-0_1.17.0-2+b1_amd64.deb
+  size_bytes: 106892
+  sha256: f446d42fb5fcebbb3e347368ba83616769fdb271d85b2f49048e337f3163d267  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 137
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-dri3-0_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-dri3-0_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:36f8da27acb0ce45dcec66c7a5db5bbe  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libxcb1 (>= 1.12)
+- package: libxcb-glx0
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-glx0_1.17.0-2+b1_amd64.deb
+  size_bytes: 122380
+  sha256: cc59a3fa1c4ce376c3a32798179950810bd7b9be9a35bc76de1f5b5e7cc3925e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 249
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-glx0_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-glx0_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:7be8d227e8bba4a66b15072095b5c350  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libxcb1
+- package: libxcb-present0
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-present0_1.17.0-2+b1_amd64.deb
+  size_bytes: 105612
+  sha256: db95ea4630c55bd7f3281cb60ccf75b1627ef2f4399e1939f8f6161e584a92fb  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 128
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-present0_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-present0_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:faf7455c8a5ae14d1334088474f06ca9  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libxcb1
+- package: libxcb-randr0
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-randr0_1.17.0-2+b1_amd64.deb
+  size_bytes: 116736
+  sha256: f5d9fe5fdf797918f81f0abf6cfd4270bd54659540cddb4da709ab7154523214  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 197
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-randr0_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-randr0_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:f85b0abba4ba40ab6cc4e900ed6ae436  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libxcb1 (>= 1.9.2)
+- package: libxcb-render0
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-render0_1.17.0-2+b1_amd64.deb
+  size_bytes: 115100
+  sha256: 7f6e36978e0f70a590fbad4042a692c70b50ca7cbcdc53fa7e9d9ab87933acc6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 181
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-render0_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-render0_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:0a56f7419e9492e35132dea644873a13  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libxcb1 (>= 1.8)
+- package: libxcb-shape0
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-shape0_1.17.0-2+b1_amd64.deb
+  size_bytes: 105624
+  sha256: eb94a643d66714929053e78ff8f38a90ce8af4ed854e3cbca0b14f8bbccc7bfc  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 128
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-shape0_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-shape0_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:8e4a29c6a554d6d139873280b98d37a4  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libxcb1
+- package: libxcb-shm0
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-shm0_1.17.0-2+b1_amd64.deb
+  size_bytes: 105284
+  sha256: d1777a813f484e89f3dcaadd1d5f2b1a13e9313b6bf70eded16d8ce743208fef  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 127
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-shm0_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-shm0_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:2cd4bb649ed04718953d9edee0746d09  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libxcb1 (>= 1.12)
+- package: libxcb-sync1
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-sync1_1.17.0-2+b1_amd64.deb
+  size_bytes: 108688
+  sha256: 0ce4770ed1505be9ddc6473045e4662d062aff2f3077ee684265f01cfb543559  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 150
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-sync1_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-sync1_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:8a09019f592e618eba82acb4e86cccc9  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libxcb1
+- package: libxcb-xfixes0
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb-xfixes0_1.17.0-2+b1_amd64.deb
+  size_bytes: 109288
+  sha256: f9c1aafc18bf9e4662e34bbaf3bb00f1f4e8c2fc1dd786fdfb6cb9cb6c64fae7  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 152
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb-xfixes0_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb-xfixes0_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:2edb431d6ebcebbdaab224f97a2aedc2  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libxcb1
+- package: libxcb1
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb1_1.17.0-2+b1_amd64.deb
+  size_bytes: 144340
+  sha256: 5c222a72d11b866447da31693254f738430726e3e065a384e82687b2fd2f978b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 301
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb1_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb1_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:ab87e347ccb5ae730863b6989ea47b34  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libxau6 (>= 1:1.0.9), libxdmcp6
+- package: libxcursor1
+  version: 1:1.2.3-1
+  architecture: amd64
+  source_package: libxcursor
+  source_version: 1:1.2.3-1
+  filename: pool/main/libx/libxcursor/libxcursor1_1.2.3-1_amd64.deb
+  size_bytes: 39732
+  sha256: bb0dbf58b804faaa74ed9efdae61c4b14bb0b4855680798f63e5ca6a4954976b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 81
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcursor/libxcursor1_1.2.3-1_amd64.deb
+  apt_local_filename: libxcursor1_1%3a1.2.3-1_amd64.deb
+  apt_uri_hash: MD5Sum:078436cdd0ee333685887e20ab431015  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libx11-6 (>= 2:1.4.99.1), libxfixes3, libxrender1
+- package: libxdmcp6
+  version: 1:1.1.5-1
+  architecture: amd64
+  source_package: libxdmcp
+  source_version: 1:1.1.5-1
+  filename: pool/main/libx/libxdmcp/libxdmcp6_1.1.5-1_amd64.deb
+  size_bytes: 27756
+  sha256: 0740dc760916b2008b45417a42a8fd7dd5de370fb57d31373f15034cda8acf0b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 59
+  uri: https://deb.debian.org/debian/pool/main/libx/libxdmcp/libxdmcp6_1.1.5-1_amd64.deb
+  apt_local_filename: libxdmcp6_1%3a1.1.5-1_amd64.deb
+  apt_uri_hash: MD5Sum:94f9ea6d11adfdd4fa1469e8648f08ff  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.36)
+- package: libxext6
+  version: 2:1.3.4-1+b3
+  architecture: amd64
+  source_package: libxext
+  source_version: 2:1.3.4-1
+  filename: pool/main/libx/libxext/libxext6_1.3.4-1+b3_amd64.deb
+  size_bytes: 50448
+  sha256: fc618ec40465e5ce48622606299cb47833efc3fb235ba15543b81f850722f443  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 129
+  uri: https://deb.debian.org/debian/pool/main/libx/libxext/libxext6_1.3.4-1%2bb3_amd64.deb
+  apt_local_filename: libxext6_2%3a1.3.4-1+b3_amd64.deb
+  apt_uri_hash: MD5Sum:5c21b254e638c96f172728b5fb816ef8  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libx11-6 (>= 2:1.6.0)
+- package: libxfixes3
+  version: 1:6.0.0-2+b4
+  architecture: amd64
+  source_package: libxfixes
+  source_version: 1:6.0.0-2
+  filename: pool/main/libx/libxfixes/libxfixes3_6.0.0-2+b4_amd64.deb
+  size_bytes: 20228
+  sha256: 3fdd95d86d8e9d63e11f52070935c8f9f912c36aa3b17338d969f7685f3ed4fb  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 55
+  uri: https://deb.debian.org/debian/pool/main/libx/libxfixes/libxfixes3_6.0.0-2%2bb4_amd64.deb
+  apt_local_filename: libxfixes3_1%3a6.0.0-2+b4_amd64.deb
+  apt_uri_hash: MD5Sum:c6365019eca68a1f1da0583e8dd2c916  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libx11-6 (>= 2:1.6.0)
+- package: libxi6
+  version: 2:1.8.2-1
+  architecture: amd64
+  source_package: libxi
+  source_version: 2:1.8.2-1
+  filename: pool/main/libx/libxi/libxi6_1.8.2-1_amd64.deb
+  size_bytes: 78896
+  sha256: 093d0903f35bb7a9f6815180ee040e6951fecf9b66c128cd72f064710210606e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 143
+  uri: https://deb.debian.org/debian/pool/main/libx/libxi/libxi6_1.8.2-1_amd64.deb
+  apt_local_filename: libxi6_2%3a1.8.2-1_amd64.deb
+  apt_uri_hash: MD5Sum:aa90ab417cada6c7b98bd3bd62bf60af  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libx11-6 (>= 2:1.6.0), libxext6
+- package: libxkbcommon0
+  version: 1.7.0-2
+  architecture: amd64
+  source_package: libxkbcommon
+  source_version: 1.7.0-2
+  filename: pool/main/libx/libxkbcommon/libxkbcommon0_1.7.0-2_amd64.deb
+  size_bytes: 112700
+  sha256: f75ee544f55acc6a271debfab3ea4ae0458afc89d81cfe1a71137e07d4895b86  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 317
+  uri: https://deb.debian.org/debian/pool/main/libx/libxkbcommon/libxkbcommon0_1.7.0-2_amd64.deb
+  apt_local_filename: libxkbcommon0_1.7.0-2_amd64.deb
+  apt_uri_hash: MD5Sum:d39cb40622b6ec6d3bff7c40536e10a3  # pragma: allowlist secret - public source or artifact digest
+  depends: xkb-data, libc6 (>= 2.38)
+- package: libxml2
+  version: 2.12.7+dfsg+really2.9.14-2.1+deb13u3
+  architecture: amd64
+  source_package: libxml2
+  source_version: 2.12.7+dfsg+really2.9.14-2.1+deb13u3
+  filename: pool/main/libx/libxml2/libxml2_2.12.7+dfsg+really2.9.14-2.1+deb13u3_amd64.deb
+  size_bytes: 699724
+  sha256: e0c6b63ce4602a036a526f60fe5e6c1586710688058d98fc1001b9b3147b7efd  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1916
+  uri: https://deb.debian.org/debian/pool/main/libx/libxml2/libxml2_2.12.7%2bdfsg%2breally2.9.14-2.1%2bdeb13u3_amd64.deb
+  apt_local_filename: libxml2_2.12.7+dfsg+really2.9.14-2.1+deb13u3_amd64.deb
+  apt_uri_hash: MD5Sum:381b30ad5e8669318c82153f776a0e40  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), liblzma5 (>= 5.1.1alpha+20120614), zlib1g (>= 1:1.2.3.4)
+  conflicts: w3c-dtd-xhtml
+- package: libxrandr2
+  version: 2:1.5.4-1+b3
+  architecture: amd64
+  source_package: libxrandr
+  source_version: 2:1.5.4-1
+  filename: pool/main/libx/libxrandr/libxrandr2_1.5.4-1+b3_amd64.deb
+  size_bytes: 36312
+  sha256: 11e3490de93a8bbee3daba719cb8e1325a26fb3c125525c34bdcb7deb05eb9b2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 85
+  uri: https://deb.debian.org/debian/pool/main/libx/libxrandr/libxrandr2_1.5.4-1%2bb3_amd64.deb
+  apt_local_filename: libxrandr2_2%3a1.5.4-1+b3_amd64.deb
+  apt_uri_hash: MD5Sum:8e8011a0428fa68750d3eab1673066ac  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libx11-6 (>= 2:1.6.0), libxext6, libxrender1
+- package: libxrender1
+  version: 1:0.9.12-1
+  architecture: amd64
+  source_package: libxrender
+  source_version: 1:0.9.12-1
+  filename: pool/main/libx/libxrender/libxrender1_0.9.12-1_amd64.deb
+  size_bytes: 27896
+  sha256: 9d042dfd5e613be1e02e6ddd0c5c4adef19c5eb08f6db838c2eba672c496dca4  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 72
+  uri: https://deb.debian.org/debian/pool/main/libx/libxrender/libxrender1_0.9.12-1_amd64.deb
+  apt_local_filename: libxrender1_1%3a0.9.12-1_amd64.deb
+  apt_uri_hash: MD5Sum:ac7b3037243f273fda29a1d78fef7eec  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libx11-6 (>= 2:1.6.0)
+- package: libxshmfence1
+  version: 1.3.3-1
+  architecture: amd64
+  source_package: libxshmfence
+  source_version: 1.3.3-1
+  filename: pool/main/libx/libxshmfence/libxshmfence1_1.3.3-1_amd64.deb
+  size_bytes: 10884
+  sha256: 7b339e9e5b2349723d35af4df89bcc7aa456bbdf8ba1754358f9b44c3fe1f964  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 36
+  uri: https://deb.debian.org/debian/pool/main/libx/libxshmfence/libxshmfence1_1.3.3-1_amd64.deb
+  apt_local_filename: libxshmfence1_1.3.3-1_amd64.deb
+  apt_uri_hash: MD5Sum:5960dbe12a2b1a278dca22453be659b6  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+- package: libxss1
+  version: 1:1.2.3-1+b3
+  architecture: amd64
+  source_package: libxss
+  source_version: 1:1.2.3-1
+  filename: pool/main/libx/libxss/libxss1_1.2.3-1+b3_amd64.deb
+  size_bytes: 16984
+  sha256: 302d4a97800429fa0d67ae2e0e8e3adc1228b12d25d3d3cca6c9d24eeff40a6c  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 42
+  uri: https://deb.debian.org/debian/pool/main/libx/libxss/libxss1_1.2.3-1%2bb3_amd64.deb
+  apt_local_filename: libxss1_1%3a1.2.3-1+b3_amd64.deb
+  apt_uri_hash: MD5Sum:e18aba2877c280367f0c321b239e7d26  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libx11-6 (>= 2:1.4.99.1), libxext6, x11-common
+- package: libxv1
+  version: 2:1.0.11-1.1+b3
+  architecture: amd64
+  source_package: libxv
+  source_version: 2:1.0.11-1.1
+  filename: pool/main/libx/libxv/libxv1_1.0.11-1.1+b3_amd64.deb
+  size_bytes: 23356
+  sha256: e19f6bdcd20c1c28fefea29f0a95c33232dd5f0d26e0079675ac8ba4af4eda07  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 52
+  uri: https://deb.debian.org/debian/pool/main/libx/libxv/libxv1_1.0.11-1.1%2bb3_amd64.deb
+  apt_local_filename: libxv1_2%3a1.0.11-1.1+b3_amd64.deb
+  apt_uri_hash: MD5Sum:9e7a79c2c924c7cd3d304853264612ec  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14), libx11-6 (>= 2:1.6.0), libxext6
+- package: libxvidcore4
+  version: 2:1.3.7-1+b2
+  architecture: amd64
+  source_package: xvidcore
+  source_version: 2:1.3.7-1
+  filename: pool/main/x/xvidcore/libxvidcore4_1.3.7-1+b2_amd64.deb
+  size_bytes: 251532
+  sha256: a3ea54e60cbc13dcd5f4a64c5635c52701274ae52baa9902d87ad742af4e4977  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 752
+  uri: https://deb.debian.org/debian/pool/main/x/xvidcore/libxvidcore4_1.3.7-1%2bb2_amd64.deb
+  apt_local_filename: libxvidcore4_2%3a1.3.7-1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:4aa9aca75ab3d5e4c06778649e1b9ad5  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libxxf86vm1
+  version: 1:1.1.4-1+b4
+  architecture: amd64
+  source_package: libxxf86vm
+  source_version: 1:1.1.4-1
+  filename: pool/main/libx/libxxf86vm/libxxf86vm1_1.1.4-1+b4_amd64.deb
+  size_bytes: 19320
+  sha256: f9f8487e536293e7ecf91fe7feb14e97e02a3aa652e207c661442dce775d3b14  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 48
+  uri: https://deb.debian.org/debian/pool/main/libx/libxxf86vm/libxxf86vm1_1.1.4-1%2bb4_amd64.deb
+  apt_local_filename: libxxf86vm1_1%3a1.1.4-1+b4_amd64.deb
+  apt_uri_hash: MD5Sum:db85cd6bd42d89ccc1027b4846c10295  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libx11-6 (>= 2:1.6.0), libxext6
+- package: libz3-4
+  version: 4.13.3-1
+  architecture: amd64
+  source_package: z3
+  source_version: 4.13.3-1
+  filename: pool/main/z/z3/libz3-4_4.13.3-1_amd64.deb
+  size_bytes: 8560036
+  sha256: 71383373523ef62d47eccf660cf6535c3febcbb3f88e54cb7a43124014b57359  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 27142
+  uri: https://deb.debian.org/debian/pool/main/z/z3/libz3-4_4.13.3-1_amd64.deb
+  apt_local_filename: libz3-4_4.13.3-1_amd64.deb
+  apt_uri_hash: MD5Sum:1c9abad2a783eb84b1898e06fd260f82  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libgcc-s1 (>= 3.4), libstdc++6 (>= 14)
+  breaks: libz3-dev (<< 4.4.1)
+  replaces: libz3-dev (<< 4.4.1)
+- package: libzimg2
+  version: 3.0.5+ds1-1+b2
+  architecture: amd64
+  source_package: zimg
+  source_version: 3.0.5+ds1-1
+  filename: pool/main/z/zimg/libzimg2_3.0.5+ds1-1+b2_amd64.deb
+  size_bytes: 243752
+  sha256: d021b92ec5d647565db6b67e92a7e06e16b35ae6046c0f36d454a0cff88bbd50  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 881
+  uri: https://deb.debian.org/debian/pool/main/z/zimg/libzimg2_3.0.5%2bds1-1%2bb2_amd64.deb
+  apt_local_filename: libzimg2_3.0.5+ds1-1+b2_amd64.deb
+  apt_uri_hash: MD5Sum:16fdd1d8ee417b3b34bab63e6ebe741d  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.32), libgcc-s1 (>= 3.0), libstdc++6 (>= 14)
+- package: libzix-0-0
+  version: 0.6.2-1
+  architecture: amd64
+  source_package: zix
+  source_version: 0.6.2-1
+  filename: pool/main/z/zix/libzix-0-0_0.6.2-1_amd64.deb
+  size_bytes: 23088
+  sha256: 896d3b244020120b17a21ded38508582ee861ffa90fc0fb0fd539e27698a96b6  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 75
+  uri: https://deb.debian.org/debian/pool/main/z/zix/libzix-0-0_0.6.2-1_amd64.deb
+  apt_local_filename: libzix-0-0_0.6.2-1_amd64.deb
+  apt_uri_hash: MD5Sum:ef3e9f3f75fe273c0d54217253d4bd86  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+- package: libzmq5
+  version: 4.3.5-1+b3
+  architecture: amd64
+  source_package: zeromq3
+  source_version: 4.3.5-1
+  filename: pool/main/z/zeromq3/libzmq5_4.3.5-1+b3_amd64.deb
+  size_bytes: 283476
+  sha256: 82348834b94ae5288dd1dde1c6a59488d30e3ee97fd4183c0b60ed79c3ab0b57  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 843
+  uri: https://deb.debian.org/debian/pool/main/z/zeromq3/libzmq5_4.3.5-1%2bb3_amd64.deb
+  apt_local_filename: libzmq5_4.3.5-1+b3_amd64.deb
+  apt_uri_hash: MD5Sum:10ace5f8fc2e1abfbc8c06196f6cfd99  # pragma: allowlist secret - public source or artifact digest
+  depends: libbsd0 (>= 0.0), libc6 (>= 2.38), libgcc-s1 (>= 3.0), libgssapi-krb5-2 (>= 1.17), libnorm1t64 (>= 1.5r6),
+    libpgm-5.3-0t64 (>= 5.1.116~dfsg), libsodium23 (>= 1.0.3), libstdc++6 (>= 12)
+- package: libzvbi-common
+  version: 0.2.44-1
+  architecture: all
+  source_package: zvbi
+  source_version: 0.2.44-1
+  filename: pool/main/z/zvbi/libzvbi-common_0.2.44-1_all.deb
+  size_bytes: 71436
+  sha256: 98ab88223df2380c79d048c6bd276449c64603eef4e43aa99d52406877ebee59  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 192
+  uri: https://deb.debian.org/debian/pool/main/z/zvbi/libzvbi-common_0.2.44-1_all.deb
+  apt_local_filename: libzvbi-common_0.2.44-1_all.deb
+  apt_uri_hash: MD5Sum:abaa34c8080100c24eb716e63d67c3aa  # pragma: allowlist secret - public source or artifact digest
+  replaces: libzvbi-0.1 (<= 0.2.1-3)
+- package: libzvbi0t64
+  version: 0.2.44-1
+  architecture: amd64
+  source_package: zvbi
+  source_version: 0.2.44-1
+  filename: pool/main/z/zvbi/libzvbi0t64_0.2.44-1_amd64.deb
+  size_bytes: 278492
+  sha256: ff9b1227f8812b4d51d24130bfeb436a3cc3159410d507cb370f6908e9059112  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 744
+  uri: https://deb.debian.org/debian/pool/main/z/zvbi/libzvbi0t64_0.2.44-1_amd64.deb
+  apt_local_filename: libzvbi0t64_0.2.44-1_amd64.deb
+  apt_uri_hash: MD5Sum:db577be5617782a5c66435350467fb1f  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libpng16-16t64 (>= 1.6.46), libzvbi-common (= 0.2.44-1)
+  provides: libzvbi0 (= 0.2.44-1)
+  breaks: libzvbi0 (<< 0.2.44-1)
+  replaces: libzvbi-0.1 (<= 0.2.1-3), libzvbi0
+- package: mesa-libgallium
+  version: 25.0.7-2+deb13u1
+  architecture: amd64
+  source_package: mesa
+  source_version: 25.0.7-2+deb13u1
+  filename: pool/main/m/mesa/mesa-libgallium_25.0.7-2+deb13u1_amd64.deb
+  size_bytes: 9630224
+  sha256: 3e610f29321cdcc61337c86e6b4031ff60f0c9915fe19e6a862ac06480620ff4  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 41615
+  uri: https://deb.debian.org/debian/pool/main/m/mesa/mesa-libgallium_25.0.7-2%2bdeb13u1_amd64.deb
+  apt_local_filename: mesa-libgallium_25.0.7-2+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:b0e449b27b77918abfb89d1de90c8cc8  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libdrm-amdgpu1 (>= 2.4.121), libdrm-intel1 (>= 2.4.121), libdrm2 (>= 2.4.121), libelf1t64
+    (>= 0.142), libexpat1 (>= 2.0.1), libgcc-s1 (>= 3.4), libllvm19 (>= 1:19.1.0), libsensors5 (>= 1:3.5.0), libstdc++6
+    (>= 11), libx11-xcb1, libxcb-dri3-0 (>= 1.13), libxcb-present0, libxcb-randr0, libxcb-sync1, libxcb-xfixes0,
+    libxcb1 (>= 1.9.2), libxshmfence1, libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4)
+  provides: libglapi-mesa
+- package: ocl-icd-libopencl1
+  version: 2.3.3-1
+  architecture: amd64
+  source_package: ocl-icd
+  source_version: 2.3.3-1
+  filename: pool/main/o/ocl-icd/ocl-icd-libopencl1_2.3.3-1_amd64.deb
+  size_bytes: 42896
+  sha256: 99dfd409ae92505ee56742feea4e82a1e052818c5b0036ee618a371b5e28c9d1  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 161
+  uri: https://deb.debian.org/debian/pool/main/o/ocl-icd/ocl-icd-libopencl1_2.3.3-1_amd64.deb
+  apt_local_filename: ocl-icd-libopencl1_2.3.3-1_amd64.deb
+  apt_uri_hash: MD5Sum:b80867cdf7a40cf127e39d30e2b1ee88  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+  provides: libopencl-1.1-1, libopencl-1.2-1, libopencl-2.0-1, libopencl-2.1-1, libopencl-2.2-1, libopencl-3.0-1,
+    libopencl1
+  conflicts: amd-app, libopencl1, nvidia-libopencl1-dev
+  replaces: amd-app, libopencl1, nvidia-libopencl1-dev
+- package: shared-mime-info
+  version: 2.4-5+b2
+  architecture: amd64
+  source_package: shared-mime-info
+  source_version: 2.4-5
+  filename: pool/main/s/shared-mime-info/shared-mime-info_2.4-5+b2_amd64.deb
+  size_bytes: 759952
+  sha256: d7d061df29326b0ca6b273ac9332168659ff1562659f0a33609657a143dd7881  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 5143
+  uri: https://deb.debian.org/debian/pool/main/s/shared-mime-info/shared-mime-info_2.4-5%2bb2_amd64.deb
+  apt_local_filename: shared-mime-info_2.4-5+b2_amd64.deb
+  apt_uri_hash: MD5Sum:eb14bdac3ec58b10fe4c8138deb484f2  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libglib2.0-0t64 (>= 2.76.0), libstdc++6 (>= 12), libxml2 (>= 2.7.4)
+- package: x11-common
+  version: 1:7.7+24+deb13u1
+  architecture: all
+  source_package: xorg
+  source_version: 1:7.7+24+deb13u1
+  filename: pool/main/x/xorg/x11-common_7.7+24+deb13u1_all.deb
+  size_bytes: 216864
+  sha256: 57a981938506b26dc552f19cafeaa8c04e9b59dc7508509151f8507a9d4e5f24  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 275
+  uri: https://deb.debian.org/debian/pool/main/x/xorg/x11-common_7.7%2b24%2bdeb13u1_all.deb
+  apt_local_filename: x11-common_1%3a7.7+24+deb13u1_all.deb
+  apt_uri_hash: MD5Sum:42a54bbde764cb159b09a596ce8ac685  # pragma: allowlist secret - public source or artifact digest
+  depends: lsb-base
+- package: xkb-data
+  version: 2.42-1
+  architecture: all
+  source_package: xkeyboard-config
+  source_version: 2.42-1
+  filename: pool/main/x/xkeyboard-config/xkb-data_2.42-1_all.deb
+  size_bytes: 789736
+  sha256: 196ff18533382f64e057ea49df2bb486bd4275a4cc0917361edb560b8756dada  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 6911
+  uri: https://deb.debian.org/debian/pool/main/x/xkeyboard-config/xkb-data_2.42-1_all.deb
+  apt_local_filename: xkb-data_2.42-1_all.deb
+  apt_uri_hash: MD5Sum:41cd184e1d171bc57537a464e50bf049  # pragma: allowlist secret - public source or artifact digest
+  breaks: x11-xkb-utils (<< 7.7+5)
+proposed_package_count: 205
+base_package_count: 87
+proposed_download_bytes: 133190124
+proposed_installed_bytes_estimate: 466388992
+simulation_summary:
+- 0 upgraded, 205 newly installed, 0 to remove and 7 not upgraded.
+binaries_acquired: false
+installation: false
+decoder_executed: false
+license_security_review: pending for exact proposal; no media clearance

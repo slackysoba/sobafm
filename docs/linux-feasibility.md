@@ -210,12 +210,16 @@ are separate from this memory calculation.
 
 ## Decoder supply and source obligations
 
-Documentation and package metadata were checked on 2026-10-27. No package,
-source archive, audio fixture or restricted file was acquired or hashed.
+Documentation and package metadata were initially checked on 2026-10-27 without
+acquiring packages. The subsequent [signed metadata result](../evaluations/linux_resource/results/2026-10-27-debian-metadata.yaml)
+resolves 205 proposed binary additions on the pinned base. See the linked
+[startup preparation](../evaluations/linux_resource/decoder-startup.md) for later
+acquisition status. No source archive, audio fixture or restricted file was
+acquired or hashed.
 
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
-| Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Candidate for the one experiment, pending exact dependency manifest, security triage and source obligations. |
+| Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Signed dependency proposal resolved; actual installed binary binding remains pending. |
 | Debian stable `mpg123`, `1.32.10-1+deb13u1` at review time | Maintained package on both targets; MP3-focused upstream is LGPL 2.1. Upstream 1.33.7 includes further fixes, so the stable package requires a backport/security comparison. | Not selected: narrowing input formats and checking a second decoder would expand this experiment. No claim that its smaller package proves lower memory use. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
@@ -416,6 +420,7 @@ acceptance evidence exists; the larger-cap alternative is outside the approval.
 
 The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
 tests one supplemental DATA/STACK-limit candidate with `-version` and no input.
-Its signed dependency-resolution, supply/security review and native execution
-remain not run. It keeps the whole-service ledger unchanged and can reject a
+Its signed dependency resolution is complete. The narrow private no-input
+assessment does not qualify untrusted audio; actual installed binary binding and
+native execution remain pending. It keeps the whole-service ledger unchanged and can reject a
 startup configuration; success alone cannot establish PCM coverage or Q3.

@@ -1,7 +1,8 @@
 # Stock FFmpeg startup check preparation
 
-Issue: [#7](https://github.com/slackysoba/sobafm/issues/7). Status: **prepared;
-metadata resolution, binary acquisition, image build and native startup not run**.
+Issue: [#7](https://github.com/slackysoba/sobafm/issues/7). Status: **signed binary
+metadata resolved; binary acquisition incomplete after transport failures;
+no result image or native startup**.
 This is one supplemental-limit rejection check within ADR 0001, not a new product
 cap or a Q3 pass. No fixture, audio, provider, credentials or Discord input exists.
 
@@ -45,12 +46,64 @@ hard per-thread ceiling. No sampled RSS or startup success fills this gap.
 
 ## Supply gate before acquisition or build
 
-The exact transitive binary closure is **unresolved**. Preparing commands is not
-the same as running APT or qualifying that closure. Independent coordinator review
-must first authorize the metadata-only step below. It neither downloads `.deb`
-files nor installs or executes a decoder. After it runs, review the exact result
-before binary acquisition/build; any unresolved applicable security or
-source-access issue stops dependent execution. Do not request a blanket waiver.
+The exact proposed transitive binary closure is **resolved and reviewed for the
+recorded bounded assembly attempts**. The [selected result](results/2026-10-27-debian-metadata.yaml) records
+authenticated metadata, 205 additions, zero upgrades/removals and the retained
+manifest hash. During that metadata-only phase, no `.deb` files were downloaded,
+installed or executed. The subsequent assembly attempts below acquired some
+binaries but did not produce a complete verified archive set or result image.
+Actual installed-binary binding remains a gate before native execution. This
+metadata result does not qualify native startup or audio.
+
+The first metadata attempt failed closed when APT could not create its signature
+verification temporary file on the read-only root. The reviewed correction put
+`TMPDIR` and empty APT configuration directories inside the existing bounded
+private tmpfs; authentication, resource and time limits were unchanged. The second
+attempt authenticated all three release records and completed in 25.954 seconds.
+Both containers were observed stopped with PID zero, removed normally and verified
+absent. Both attempts' exact scripts and receipts are retained; cleanup debt is zero.
+
+The base contains 87 packages. The 205 proposed additions total 133,190,124 binary
+download bytes and an estimated 466,388,992 installed bytes. These are APT planning
+figures, not measured runtime memory or installed disk usage. All selected binary
+records are amd64/all from Debian main; no development/debug/source package was
+selected. Five print-URI rows omit a legacy digest, while every selected Packages
+record supplies SHA256. The full hash manifest, not URI text alone, binds the set.
+The [complete public proposal](results/2026-10-27-debian-package-proposal.yaml)
+is a faithful YAML representation of the retained JSON: decoded data equality
+was checked, and the result record distinguishes both serialization hashes.
+Its historical pending-review fields describe the metadata step, not the later
+coordinator release. It contains public package/source/image identities only.
+
+### Acquisition outcome
+
+The [assembly attempts](results/2026-10-27-debian-build.yaml) used the pinned base,
+all 205 exact versions/hashes and ordinary APT. The first stopped before binary
+download because a generated package-pin text file had CRLF endings, which the
+Linux shell passed as part of each version. Its exact inputs were preserved. The
+reviewed correction wrote LF explicitly and checked the raw bytes before APT;
+it changed no package, base, authentication rule or resource limit.
+
+The corrected attempt passed the base and exact transaction checks, then acquired
+some binaries. Repeated HTTPS connection failures, including TLS unexpected EOF,
+prevented completion; the 240-second download deadline returned exit 124. The
+outer build returned failure normally after 269.328 seconds. The full archive
+verification and network-disabled installation stages did not run. No output
+image/tag resulted. One final, explicitly released transport retry used the
+identical corrected context and limits. It also stopped at download exit 124
+after 275.515 seconds overall; no direct TLS error was reported in that attempt
+before the deadline. Acquisition then stopped with no further retry.
+
+No decoder was invoked, and neither a startup rejection nor a resource-feasibility
+result was measured. All three attempts have explicit completed BuildKit
+solve/step failure evidence, so no uncertain active-build ownership remains;
+client exit alone would not establish that. Selected receipts and scoped cache
+observations are retained. No cleanup or pruning was performed.
+
+The immediate next gate is a complete authenticated acquisition of the unchanged
+approved binary set, followed by actual installed inventory/ELF binding review.
+This transport outcome does not invalidate the signed metadata evidence or
+justify changing the runtime cap, decoder or source-access restriction.
 
 Use only Debian's signed binary repositories for trixie, trixie-updates and
 trixie-security, with the existing base's Debian archive keyring. No `deb-src`,
@@ -67,7 +120,7 @@ generation with decoder startup fit. It changes no product cap and supplies no
 runtime evidence: the actual decoder startup remains exactly 90,177,536 group
 bytes plus DATA 12,000,000 and STACK 524,288, with no tuning.
 Permit network only for signed metadata retrieval, use private bounded writable
-APT lists/cache storage, and mount one new empty project-owned evidence directory.
+APT lists/cache storage, and capture bounded output outside the container.
 Run as UID/GID 1000.
 Do not reuse a host APT cache or modify its sources. Stop if metadata cannot fit
 its preparation allocation or authenticate; do not raise either limit implicitly.
@@ -93,9 +146,11 @@ apt-get --print-uris --download-only --yes --no-install-recommends --no-remove \
 ```
 
 `--print-uris` reports acquisition locations instead of fetching package files;
-`--simulate` reports changes without applying them. Wrap update in a 45-second
-timeout and each subsequent call in 20 seconds, with a 120-second outer bound
-including capture/cleanup. Cap total output at 5 MB; stop on overflow. Retain
+`--simulate` reports changes without applying them. The executed procedure bounded
+update to 35 seconds and other calls to 20 seconds, inside a 55-second container
+budget and a 120-second host budget including capture/cleanup. The child stdout
+cap was 4 MB, host selected output cap 5 MB and retained evidence allocation 10 MB.
+Stop on overflow. Retain
 errors, exact command/options, APT version, signed InRelease identities/digests
 and authentication result. [APT command semantics](https://manpages.debian.org/trixie/apt/apt-get.8.en.html).
 
@@ -166,6 +221,28 @@ Untrusted-audio testing and Q3 remain uncleared.
 [MOV](https://security-tracker.debian.org/tracker/CVE-2026-107678),
 [MACE6](https://security-tracker.debian.org/tracker/CVE-2026-66039),
 [CLI leak classification](https://security-tracker.debian.org/tracker/CVE-2026-30999).
+
+The resolved base includes glibc `2.41-12+deb13u4` and OpenSSL
+`3.5.7-1~deb13u2`; the added GnuTLS package is `3.8.9-3+deb13u4`.
+For the fixed private no-input action, the reviewed glibc loader findings
+CVE-2026-95818/86805 require privilege-transition conditions excluded by nonroot,
+no-new-privileges and verification of the actual executable's mode/capabilities.
+The resolver finding CVE-2026-8674 has no supplied hostname/search-domain workload;
+the fresh environment omits LOCALDOMAIN and startup has no network.
+[Loader finding](https://security-tracker.debian.org/tracker/CVE-2026-95818),
+[second loader finding](https://security-tracker.debian.org/tracker/CVE-2026-86805),
+[resolver finding](https://security-tracker.debian.org/tracker/CVE-2026-8674).
+
+OpenSSL's selected base version is still affected by CVE-2026-84784 and
+CVE-2026-84782; Debian's `u3` fixes them. Their QUIC peer-frame and DTLS
+retransmission triggers are absent from this version-only action. This is a
+specific exposure assessment, not a claim those vulnerabilities are fixed or
+permission to change the pinned base. Normal APT HTTPS acquisition is separate
+from startup and does not use QUIC/DTLS. Native initialization, actual ELF binding
+and trusted image configuration still require review before startup; no audio
+or general release clearance follows.
+[QUIC finding](https://security-tracker.debian.org/tracker/CVE-2026-84784),
+[DTLS finding](https://security-tracker.debian.org/tracker/CVE-2026-84782).
 
 ## Startup invocation and release ownership
 
