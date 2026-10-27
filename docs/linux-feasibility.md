@@ -20,17 +20,21 @@ cgroup manager, a privileged launcher and a separate worker service.
 The proposed controlled-capacity total is **98,979,840 decimal bytes**, below
 100,000,000. That is arithmetic, not proof of useful fit. The maintainer
 [approved the grouped-cap/runtime-placement interpretation and bounded proof](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6439759990).
-Runtime authority, effective namespace reachability, placement before input and
-inherited descendant containment still need demonstration. Application cgroup
-delegation is not required for this experiment; reporting cgroup v2 alone is not
-evidence that any of those runtime properties work.
+The [recorded Q1/Q2 pass](../evaluations/linux_resource/README.md#recorded-amd64-result)
+demonstrates runtime placement, effective namespace reachability, inherited
+descendant membership and deliberate memory enforcement for its exact amd64
+image/source/host. Application cgroup delegation is not required for this
+experiment. These results do not qualify the eventual application entrypoint,
+decoder image, useful fit or aggregate PCM accounting.
 
 Read-only diagnostics on 2026-10-27 established a Linux/x86_64 Docker engine with
 cgroup v2 and the cgroupfs driver, plus an x86_64 Linux contributor environment
-with Python 3.14.4. No project container, decoder, allocation probe or provider was
-executed. Native arm64, actual permissions, memory fit, cleanup, audio quality and
-release behavior are **unmeasured**. Development-host availability does not
-qualify a Linux release host.
+with Python 3.14.4. Subsequently Q1 and Q2 each passed once in the pinned image
+with Python 3.14.7. Both disposable proof containers were stopped, removed and
+verified absent after evidence capture; no cleanup debt remained. No decoder,
+audio or provider ran. Native arm64 containment, useful memory fit, decoder and
+application cancellation, audio quality and release behavior remain
+**unmeasured**. Development-host evidence does not qualify a Linux release host.
 
 ## One candidate deployment
 
@@ -312,11 +316,11 @@ failure. Do not tune limits repeatedly until a run passes.
 
 ### Initial stop-or-go proof
 
-The concrete [Q1/Q2 runner and configuration](../evaluations/linux_resource/README.md)
-use the already present pinned amd64 Python image without decoder installation
-or an image build. Q3 remains unresolved because the focused permitted evidence
-pass did not establish a native PCM capacity bound. Run reviewed Q1/Q2 independently
-once their own gates pass, then stop; Q4 remains not run behind the Q3 gate.
+The concrete [Q1/Q2 runner, configuration and results](../evaluations/linux_resource/README.md)
+used the already present pinned amd64 Python image without decoder installation
+or an image build. Q1/Q2 passed and the finite pass stopped. Q3 remains unresolved
+because the focused permitted evidence pass did not establish a native PCM
+capacity bound; Q4 remains not run behind the Q3 gate.
 
 Use a small standard-library process runner, permitted local fixtures, pipes,
 bounded buffers and a paced PCM discard sink. The runner observes the real
@@ -400,7 +404,7 @@ service. If permissions rather than fit fail, increasing memory is irrelevant:
 stop and obtain a supported native Docker target with existing adequate runtime
 permissions, not a host security or delegation change made by the agent.
 
-Next action: independently review the prepared Q1/Q2 runner and obtain coordinator
-storage/execution clearance within the approved scope. Preserve the unresolved
-Q3 native PCM bound and Q4 not-run status. Issue #7 remains open until actual
+Next action: review and preserve the Q1/Q2 result and determine a supported way
+to establish the unresolved Q3 native PCM bound. Q4 remains not run; application
+architecture acceptance is still gated. Issue #7 remains open until actual
 acceptance evidence exists; the larger-cap alternative is outside the approval.

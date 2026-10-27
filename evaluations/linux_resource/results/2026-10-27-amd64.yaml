@@ -1,0 +1,233 @@
+execution_date_utc: '2026-10-27'
+source_commit_url: https://github.com/slackysoba/sobafm/commit/a708fa370e68cefeb5de22ce4c0e54e77673ee56
+mounted_probe_digest: sha256:8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de
+image: ghcr.io/astral-sh/uv@sha256:8f4ab6a0f2cc074290ba6a136eb016350b2b6b93a2108e07b72724901ad1914f
+independent_review: https://github.com/slackysoba/sobafm/pull/10#pullrequestreview-5666254143
+target:
+  architecture: amd64
+  cross_architecture_emulation: false
+  kernel: 6.18.33.2-microsoft-standard-WSL2
+  docker_client: 29.8.0
+  docker_engine: 29.8.0
+  cgroup_version: '2'
+  cgroup_driver: cgroupfs
+  seccomp_profile: builtin
+  probe_python: 3.14.7
+scope: Ordinary runtime placement and deliberate non-audio memory enforcement only
+cases:
+- case: Q1
+  attempts: 1
+  verdict: pass
+  host_case_elapsed_seconds: 3.021
+  configuration:
+    user: 1000:1000
+    memory: 90177536
+    memory_swap: 90177536
+    pids: 64
+    nano_cpus: 2000000000
+    cgroup_namespace: private
+    network: none
+    readonly: true
+    privileged: false
+    init: true
+    cap_drop:
+    - ALL
+    security:
+    - no-new-privileges=true
+    restart: 'no'
+    log:
+      Config:
+        max-file: '2'
+        max-size: 1m
+      Type: local
+  probe_events:
+  - event: preflight
+    observation:
+      architecture: x86_64
+      controlled_capacity: 98979840
+      identity:
+        effective_capabilities: 0
+        gid: 1000
+        group: /
+        parent_pid: 1
+        pid: 7
+        seccomp: 2
+        uid: 1000
+      kernel: 6.18.33.2-microsoft-standard-WSL2
+      limits:
+        cpu.max: 200000 100000
+        memory.max: '90177536'
+        memory.swap.max: '0'
+        pids.max: '64'
+      memory_current: 28053504
+      memory_events:
+        high: 0
+        low: 0
+        max: 0
+        oom: 0
+        oom_group_kill: 0
+        oom_kill: 0
+      native_pcm_bound: unresolved; Q3 is not qualified
+      pcm_parent_and_copy_reservation: 8802304
+      probe_sha256: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source digest
+      python: 3.14.7
+      swap_current: 0
+  - case: Q1
+    descendants:
+    - effective_capabilities: 0
+      gid: 1000
+      group: /
+      parent_pid: 7
+      pid: 8
+      seccomp: 2
+      uid: 1000
+    - effective_capabilities: 0
+      gid: 1000
+      group: /
+      parent_pid: 8
+      pid: 9
+      seccomp: 2
+      uid: 1000
+    event: input_gate
+  - cleanup_debt: false
+    event: release_observation
+    leader_reaped: true
+    retained_pids: []
+  - case: Q1
+    event: result
+    observation:
+      classification: runtime_placement_observed
+    q3: 'not_run: native PCM bound unresolved'
+    q4: 'not_run: Q3 gate precedes decoder cancellation proof'
+  final_runtime:
+    running: false
+    pid: 0
+    exit: 0
+    oom_killed: false
+    status: exited
+  cleanup_debt: false
+  removed_and_absence_verified: true
+- case: Q2
+  attempts: 1
+  verdict: pass
+  host_case_elapsed_seconds: 2.756
+  configuration:
+    user: 1000:1000
+    memory: 90177536
+    memory_swap: 90177536
+    pids: 64
+    nano_cpus: 2000000000
+    cgroup_namespace: private
+    network: none
+    readonly: true
+    privileged: false
+    init: true
+    cap_drop:
+    - ALL
+    security:
+    - no-new-privileges=true
+    restart: 'no'
+    log:
+      Config:
+        max-file: '2'
+        max-size: 1m
+      Type: local
+  probe_events:
+  - event: preflight
+    observation:
+      architecture: x86_64
+      controlled_capacity: 98979840
+      identity:
+        effective_capabilities: 0
+        gid: 1000
+        group: /
+        parent_pid: 1
+        pid: 7
+        seccomp: 2
+        uid: 1000
+      kernel: 6.18.33.2-microsoft-standard-WSL2
+      limits:
+        cpu.max: 200000 100000
+        memory.max: '90177536'
+        memory.swap.max: '0'
+        pids.max: '64'
+      memory_current: 17346560
+      memory_events:
+        high: 0
+        low: 0
+        max: 0
+        oom: 0
+        oom_group_kill: 0
+        oom_kill: 0
+      native_pcm_bound: unresolved; Q3 is not qualified
+      pcm_parent_and_copy_reservation: 8802304
+      probe_sha256: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source digest
+      python: 3.14.7
+      swap_current: 0
+  - case: Q2
+    descendants:
+    - effective_capabilities: 0
+      gid: 1000
+      group: /
+      parent_pid: 7
+      pid: 8
+      seccomp: 2
+      uid: 1000
+    - effective_capabilities: 0
+      gid: 1000
+      group: /
+      parent_pid: 8
+      pid: 9
+      seccomp: 2
+      uid: 1000
+    event: input_gate
+  - cleanup_debt: false
+    event: release_observation
+    leader_reaped: true
+    retained_pids: []
+  - case: Q2
+    event: result
+    observation:
+      classification: expected_enforcement_oom
+      events_after:
+        high: 0
+        low: 0
+        max: 162
+        oom: 7
+        oom_group_kill: 0
+        oom_kill: 1
+      events_before:
+        high: 0
+        low: 0
+        max: 0
+        oom: 0
+        oom_group_kill: 0
+        oom_kill: 0
+      requested_bytes_maximum: 120000000
+      station_cleanup_claim: false
+    q3: 'not_run: native PCM bound unresolved'
+    q4: 'not_run: Q3 gate precedes decoder cancellation proof'
+  final_runtime:
+    running: false
+    pid: 0
+    exit: 0
+    oom_killed: true
+    status: exited
+  cleanup_debt: false
+  removed_and_absence_verified: true
+not_run:
+  Q3: Native decoder PCM capacity unresolved
+  Q4: Q3 gate precedes decoder cancellation proof
+  native_arm64_Q1_Q4: No native arm64 proof target in this pass
+  L1_L6: Application boundaries absent
+storage:
+  image_pulls_or_builds: 0
+  fixtures_created: 0
+  proof_containers_retained: 0
+  private_receipts_before_supervisor_archive_bytes: 28080
+  docker_storage_totals_changed_at_reported_precision: false
+limits_of_evidence:
+- No decoder, PCM bank, provider, station, voice or real media workload
+- No aggregate native PCM or useful-fit qualification
+- No release-host, eventual image/entrypoint, or arm64 containment qualification
+- Host-case timings include management and removal; no separate cleanup latency measurement

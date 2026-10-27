@@ -2,14 +2,15 @@
 
 This is the small first part of [issue #7](https://github.com/slackysoba/sobafm/issues/7).
 The [experimental interpretation](../../docs/decisions/0001-linux-resource-proposal.md)
-is approved. The runner/configuration must receive independent review before
-execution. It tests ordinary Docker placement and enforcement, not the eventual
+is approved. The runner/configuration received
+[independent review](https://github.com/slackysoba/sobafm/pull/10#pullrequestreview-5666254143)
+before the recorded execution. It tests ordinary Docker placement and enforcement, not the eventual
 application entrypoint/image or decoder fit. It adds no application modules,
 dependencies, provider adapter or station framework.
 
 ## Current boundary
 
-- Q1 and Q2 are prepared, not yet executed.
+- Q1 and Q2 passed once each on native amd64 on 2026-10-27, as recorded below.
 - Q3 remains unresolved: the focused permitted-documentation pass did not
   establish a native decoder PCM capacity bound. `-max_alloc` is a per-allocation
   setting, and memory peaks do not bound total retained PCM. No native limit
@@ -18,6 +19,16 @@ dependencies, provider adapter or station framework.
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
 - Stop after the first executed failure. A successful Q1/Q2 pass stops before Q3;
   it does not imply candidate infeasibility or authorize the larger-cap fallback.
+
+The concrete Q3 gap is a defensible aggregate native PCM bound across both decoder
+processes, including PCM-bearing decoder/resampler/output buffers and transients.
+After conservatively reserving all 8,802,304 parent/copy bytes as PCM, at most
+25,757,696 bytes remain within the independent 34,560,000-byte PCM ceiling.
+The 90,177,536-byte group cap cannot establish that smaller PCM-class bound.
+Permitted documentation or version-specific allocation evidence must reconcile
+it before useful-fit testing can qualify the candidate. Exact binary licensing
+and security checks for local decoder execution remain outstanding; this is not
+a request to waive the PCM ceiling or source-access restrictions.
 
 ## Exact first-stage candidate
 
@@ -36,7 +47,44 @@ local decoder testing; publication and untrusted-input clearance remain distinct
 The retained `ffmpeg` candidate is Debian `7:7.1.5-0+deb13u1`, not a qualified
 integration and not part of this first-stage image.
 
-## Reviewed invocation to prepare
+## Recorded amd64 result
+
+The [selected machine-readable evidence](results/2026-10-27-amd64.yaml) binds this
+pass to source `a708fa370e68cefeb5de22ce4c0e54e77673ee56`, the image digest below,
+and mounted probe SHA256
+`8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de`.
+The hash covers actual mounted bytes, including checkout line endings.
+
+| Case | Attempts | Result | Evidence |
+| --- | --- | --- | --- |
+| Q1 | 1 | Pass for runtime placement | Parent, child and grandchild had UID/GID 1000, seccomp mode 2, zero effective capabilities and the same private cgroup; exact limits were visible before release. |
+| Q2 | 1 | Pass for deliberate enforcement | `memory.events` changed from zero to `max=162`, `oom=7`, `oom_kill=1`; zero swap and successful final release were observed. |
+| Q3 | 0 | Not run; unresolved | No established native decoder PCM capacity bound. |
+| Q4 | 0 | Not run | The Q3 gate precedes decoder cancellation; helper cleanup is not a substitute. |
+
+The target was a Linux amd64 Docker engine 29.8.0, kernel
+`6.18.33.2-microsoft-standard-WSL2`, cgroup v2/cgroupfs and builtin seccomp;
+the image ran Python 3.14.7. The editor-host supervisor used the existing desktop
+Docker client with eight-second management calls, a 40-second attached-call
+bound and a 180-second total case deadline. It preserved the reviewed controls
+without changing host settings. No pull, build or fixture generation occurred.
+
+Both probes exited zero, reported the leader reaped with no retained descendants,
+and had stopped container state with PID zero. Q2's runtime OOM flag was true
+while its observer survived to report the expected enforcement result. Ownership
+was reverified, evidence captured, and only the two stopped proof containers
+were removed normally; their absence was verified. Cleanup debt was zero.
+Whole host cases took 3.021 and 2.756 seconds, including management and removal;
+these are not isolated cleanup-latency measurements. Private receipts occupied
+28,080 bytes before retaining the small host supervisor; Docker storage totals
+were unchanged at reported precision. No fixture or proof container remains.
+
+This pass establishes neither eventual application entrypoint/image behavior,
+useful decoder fit, aggregate native PCM, Q4 cancellation, native arm64 containment
+nor release readiness. The 98,979,840-byte ledger is unchanged and remains
+arithmetic until useful workloads honor all reservations. No rerun was needed.
+
+## Reviewed invocation
 
 From the repository root on a native amd64 Docker host, the intended invocation
 for Q1 is below. This text is not an execution receipt. Confirm the exact source
