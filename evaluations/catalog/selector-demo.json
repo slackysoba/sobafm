@@ -1,0 +1,279 @@
+{
+  "schema": "sobafm-catalog-1",
+  "synthetic": true,
+  "partitions": [
+    {
+      "source": "jamendo",
+      "state": "complete",
+      "note": "Synthetic 2026-10-27 prepared subset: both of two invented records; not Jamendo's catalog.",
+      "recordings": [
+        {
+          "recording_id": "demo-j-fit",
+          "title": "Synthetic Quiet Piano",
+          "primary_artist": "Synthetic Artist demo-j-fit",
+          "creators": [
+            "Synthetic Artist demo-j-fit"
+          ],
+          "provenance": "https://example.invalid/synthetic/demo-j-fit",
+          "kind": "complete",
+          "kind_evidence": "https://example.invalid/synthetic/demo-j-fit",
+          "duration_seconds": 180,
+          "availability": "available",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "solo_piano",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "low_energy",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "vocals",
+              "value": false,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "synthetic-demo-j-fit-v1",
+            "notices": [
+              "Synthetic metadata only. No music file exists; no artist permission or live availability is asserted."
+            ],
+            "license_label": null,
+            "license_url": null
+          }
+        },
+        {
+          "recording_id": "demo-j-long",
+          "title": "Synthetic Longer Weak Piano",
+          "primary_artist": "Synthetic Artist demo-j-long",
+          "creators": [
+            "Synthetic Artist demo-j-long"
+          ],
+          "provenance": "https://example.invalid/synthetic/demo-j-long",
+          "kind": "complete",
+          "kind_evidence": "https://example.invalid/synthetic/demo-j-long",
+          "duration_seconds": 1800,
+          "availability": "available",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "solo_piano",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "low_energy",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "vocals",
+              "value": false,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "synthetic-demo-j-long-v1",
+            "notices": [
+              "Synthetic metadata only. No music file exists; no artist permission or live availability is asserted."
+            ],
+            "license_label": null,
+            "license_url": null
+          }
+        }
+      ]
+    },
+    {
+      "source": "ccmixter",
+      "state": "partial",
+      "note": "Synthetic 2026-10-27 prepared subset: two of three requested records returned; third missing.",
+      "recordings": [
+        {
+          "recording_id": "demo-c-fit",
+          "title": "Synthetic Longer Quiet Piano",
+          "primary_artist": "Synthetic Artist demo-c-fit",
+          "creators": [
+            "Synthetic Artist demo-c-fit"
+          ],
+          "provenance": "https://example.invalid/synthetic/demo-c-fit",
+          "kind": "complete",
+          "kind_evidence": "https://example.invalid/synthetic/demo-c-fit",
+          "duration_seconds": 240,
+          "availability": "available",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "solo_piano",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "low_energy",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "vocals",
+              "value": false,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "synthetic-demo-c-fit-v1",
+            "notices": [
+              "Synthetic metadata only. No music file exists; no artist permission or live availability is asserted."
+            ],
+            "license_label": null,
+            "license_url": null
+          }
+        },
+        {
+          "recording_id": "demo-c-preview",
+          "title": "Synthetic Preview Must Be Excluded",
+          "primary_artist": "Synthetic Artist demo-c-preview",
+          "creators": [
+            "Synthetic Artist demo-c-preview"
+          ],
+          "provenance": "https://example.invalid/synthetic/demo-c-preview",
+          "kind": "preview",
+          "kind_evidence": "https://example.invalid/synthetic/demo-c-preview",
+          "duration_seconds": 3600,
+          "availability": "available",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "solo_piano",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "low_energy",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "vocals",
+              "value": false,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "synthetic-demo-c-preview-v1",
+            "notices": [
+              "Synthetic metadata only. No music file exists; no artist permission or live availability is asserted."
+            ],
+            "license_label": null,
+            "license_url": null
+          }
+        }
+      ]
+    },
+    {
+      "source": "fma",
+      "state": "complete",
+      "note": "Synthetic 2026-10-27 prepared subset: two invented import records; no FMA access occurred.",
+      "recordings": [
+        {
+          "recording_id": "demo-f-piano",
+          "title": "Synthetic Piano With Unknown Energy",
+          "primary_artist": "Synthetic Artist demo-f-piano",
+          "creators": [
+            "Synthetic Artist demo-f-piano"
+          ],
+          "provenance": "https://example.invalid/synthetic/demo-f-piano",
+          "kind": "complete",
+          "kind_evidence": "https://example.invalid/synthetic/demo-f-piano",
+          "duration_seconds": 600,
+          "availability": "available",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "solo_piano",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "vocals",
+              "value": false,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "synthetic-demo-f-piano-v1",
+            "notices": [
+              "Synthetic metadata only. No music file exists; no artist permission or live availability is asserted."
+            ],
+            "license_label": null,
+            "license_url": null
+          }
+        },
+        {
+          "recording_id": "demo-f-unreviewed",
+          "title": "Synthetic Unreviewed Recording",
+          "primary_artist": "Synthetic Artist demo-f-unreviewed",
+          "creators": [
+            "Synthetic Artist demo-f-unreviewed"
+          ],
+          "provenance": "https://example.invalid/synthetic/demo-f-unreviewed",
+          "kind": "complete",
+          "kind_evidence": "https://example.invalid/synthetic/demo-f-unreviewed",
+          "duration_seconds": 1200,
+          "availability": "available",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "solo_piano",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "low_energy",
+              "value": true,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            },
+            {
+              "feature": "vocals",
+              "value": false,
+              "strength": "strong",
+              "evidence": "https://example.invalid/synthetic/evidence"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "synthetic-demo-f-unreviewed-v1",
+            "notices": [
+              "Synthetic metadata only. No music file exists; no artist permission or live availability is asserted."
+            ],
+            "license_label": null,
+            "license_url": null
+          }
+        }
+      ]
+    }
+  ]
+}

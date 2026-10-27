@@ -1,6 +1,6 @@
 # Product requirements
 
-This specification defines product behavior and acceptance criteria. Candidate music sources are not qualified integrations; no listening evaluation, blanket playback permission or completed implementation is claimed.
+This specification defines product behavior and acceptance criteria. The three-source permission and prompt-selection decisions are accepted. Offline metadata selection is implemented; source integrations, audio playback and release qualification remain incomplete. No listening evaluation is claimed.
 
 ## Product and engineering intent
 
@@ -15,7 +15,7 @@ Implement the specified behaviors without importing unrelated platform code or u
 ## Scope
 
 - Linux/Docker is the only deployment target. Windows may host an editor; there is no Windows runtime, native package, compatibility layer, CI target or installation guide.
-- `/play` must demonstrate a materially better listening selection than uncurated Jamendo results through the defined catalog evaluation.
+- `/play` prioritizes complete recordings with more strongly supported prompt matches, comparing all three prepared source partitions before choosing. Length is a secondary preference. Listening comparisons are optional deferred evidence, not an implementation prerequisite.
 - Use a short outcome-based roadmap with explicit acceptance evidence.
 - Scheduled agent automation requires explicit maintainer approval.
 
@@ -23,15 +23,15 @@ Linux amd64 and native arm64 remain release targets. Build and qualify both; emu
 
 ## Music selection and catalog preparation
 
-Provide a curated, richly described selection across suitable no-fee sources. No music licensing fee does not imply unrestricted use: recordings retain ownership, permissions and attribution conditions. Source selection remains an evaluation decision; no entire catalog is assumed to provide superior quality.
+Provide a curated, richly described selection across Jamendo, ccMixter and Free Music Archive. The maintainer confirmed direct permission for these three sources with attribution, no commercialization or monetization, and donations permitted. Recording identity, complete credits, service access and permitted storage still require evidence. No entire catalog is assumed to provide superior quality.
 
 Build around a catalog prepared ahead of playback: admit eligible recordings with provenance and credits, curate their quality, retain useful descriptors, search locally, rank for request fit and variety, then retrieve audio under each source's permitted policy. Expensive analysis belongs in ingestion, not between a slash command and first audio. Keep this a small application capability, not a general data platform.
 
 ### First source evaluation
 
-Compare the same 10–20 representative requests against three small candidate sets: ordinary Jamendo results as a baseline, editorial-filtered Jamendo, and a hand-picked collection from ccMixter and FMA. Rate enjoyment and request fit separately. Also record coverage, artist variety, repetition, technical audio quality, availability and required operator effort. Do not download or play a candidate until its acquisition/use is authorized. Human listening is the acceptance evidence; no ratings are pre-filled.
+The [accepted selection decision](decisions/0002-prompt-catalog-selection.md) follows the maintainer's direction to progress without listening tests. Compare all supplied Jamendo, ccMixter and FMA metadata in one pool; never stop after a match from the first source. Report missing, partial, unavailable and empty partitions explicitly. A complete prepared snapshot is a bounded subset, not a claim to have searched a provider's entire catalog.
 
-The recommended first integrations are editorial Jamendo and complete-track ccMixter selections, subject to that evaluation and current source qualification. FMA imports are a deliberate next option where they add useful variety. Do not implement all candidates before learning which improve the product.
+Use deterministic regressions to establish selection behavior. The [earlier comparison protocol](catalog-evaluation.md) remains available for optional future human enjoyment, fit and fidelity evidence. It is deferred, supplies no invented ratings, and is not a gate for this slice. Audio acquisition, source integration and deployment retain their separate authorization and qualification requirements.
 
 | Candidate | Intended contribution | Retrieval and qualification boundary |
 | --- | --- | --- |
@@ -46,11 +46,13 @@ Do not assume Pixabay's standalone-use restrictions or video-focused NCS/other c
 
 Keep a stable source identity, recording identity, title/creators, provenance, license/notices, permitted retrieval/storage policy, availability, duration/format and curation state. Keep authored descriptors and their confidence/provenance distinguishable from source tags. Deduplicate imported recordings where identifiable.
 
-Start with editorial and human curation plus transparent ranking: request fit first, an explicit quality preference, bounded recent-track/artist penalties and reasonable exploration. Popularity is one signal, not proof of quality. A skip is weak evidence of dislike: the song may simply not fit the moment. Retain operator-approved/excluded selections in ingestion data; listener favorite/dislike controls are a later scoped enhancement, not a new command framework required for the first release.
+The initial selector ranks by most strong supported preferences, fewest contradictions, most weak supported preferences, fewest unknown preferences, then longer known duration and stable source/recording identity. Duration cannot overcome a stronger fit. Require complete recordings; reject previews, excerpts, stems, loops and sample packs rather than padding them. Duration alone never establishes completeness. Explicit duration, exact identity and exclusion constraints are hard filters; unknown or weak evidence cannot satisfy a required descriptor. Return no match when the constraints cannot be established.
+
+Preserve source-bound immutable credits and provenance. Provider/model metadata cannot approve itself: a separate trusted review binds credit completeness and access readiness to the exact metadata digest. Report supported, weak, contradicted and unknown evidence separately; metadata fit is not an enjoyment or fidelity score. Recent-history diversity and exploration belong to a later continuous-station slice. A skip is weak evidence of dislike, and favorite/dislike commands remain a later enhancement.
 
 Screen corrupt or incomplete files, unintended long silence and severe clipping separately from musical taste. Intentional lo-fi texture is not automatically a defect. Add automated instrument/vocal/tempo/energy descriptions or text/audio embeddings only if a bounded comparison demonstrates better matching that justifies dependency, compute and maintenance costs. Do not require CLAP, a vector database, GPU service or an LLM analysis call per track by default.
 
-Where an eligible exact recording exists, artist/title requests may match it. Otherwise describe the available stylistic match honestly; do not promise commercial mainstream catalog coverage. Catalog lookup must not inherit generated-music artist-imitation restrictions accidentally.
+Where an eligible exact recording exists, artist/title requests may match it. Otherwise return no exact match; do not silently substitute a stylistic match or promise mainstream catalog coverage. A separately requested stylistic search may use descriptors. Catalog lookup must not inherit generated-music artist-imitation restrictions accidentally.
 
 ### Source-specific audio storage
 
@@ -197,7 +199,7 @@ Prove behavior on the deployment target, not only through fakes.
 
 | Area | Release evidence |
 | --- | --- |
-| Music quality | Representative requests produce satisfying, available, eligible music; preserve poor matches and unavailable cases in the evaluation. |
+| Catalog selection | Deterministic evidence establishes prompt fit ordering, complete-recording preference, hard constraints and honest three-source coverage. Actual availability and file integrity require source integration evidence. Subjective enjoyment and fidelity remain unmeasured until an optional authorized listening evaluation; preserve poor matches and unavailable cases. |
 | Command/access behavior | Both modes, all controls, cooldown ownership, manager overrides and regular-listener now-playing access work as specified. |
 | Continuity | A 60-minute program has at most two seconds of total underrun under normal service conditions. Measure both applicable modes. |
 | Latency | Median request-to-audible music is at most 15 seconds for generated playback and admitted catalog play requests; measure catalog skip separately against the same target. Report admitted failures/timeouts separately. |
@@ -258,4 +260,4 @@ Catalog selection quality and variety are explicitly in scope.
 
 ## Evidence status
 
-This specification is a product contract, not release evidence. Catalog choice, source eligibility and Linux deployment feasibility remain initial evaluation tasks. Verify provider terms and material API behavior against current authoritative sources when implementing each integration.
+This specification is a product contract, not release evidence. The three-source metadata-selection strategy is accepted; recording admission, source integrations and Linux deployment feasibility still need their applicable evidence. Verify provider terms and material API behavior against current authoritative sources when implementing each integration.

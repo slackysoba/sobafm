@@ -1,10 +1,11 @@
 # Three-source metadata inventory and listening proposal
 
-Status: **metadata preparation complete; acquisition/listening not started**.
+Status: **metadata preparation complete; optional listening proposal deferred**.
 Issue: [#6](https://github.com/slackysoba/sobafm/issues/6). Observation date:
 2026-10-27. Inventory: [three-source-inventory-1](three-source-inventory.json).
 Requests: [catalog-requests-1](requests.json). No audio, ratings, source selection
-or production enablement is claimed. This document proposes the next finite run.
+or production enablement is claimed. This historical proposal is retained for
+optional future use; no listening approval is currently requested.
 
 ## Existing authority and purpose
 
@@ -19,10 +20,12 @@ requested. No other source is added.
 This preparatory inventory checks whether a small set can be identified,
 credited and acquired through the intended routes. Its hand-picked songs are
 not J0/J1 search results and cannot establish improvement over ordinary Jamendo.
-The [16-request comparison](../../docs/catalog-evaluation.md) and its unchanged
-success rule remain the later quality acceptance path. The six-recording pilot
-can reveal credit/access problems and human preferences, but cannot select a
-winning integration or satisfy #6 by itself.
+The [accepted selection decision](../../docs/decisions/0002-prompt-catalog-selection.md)
+defers listening and compares all three prepared sources by supported prompt fit.
+The [16-request comparison](../../docs/catalog-evaluation.md) and this pilot are
+optional human-quality evidence, not implementation acceptance gates. These six
+records can still identify credit/access completion work; they are not admitted
+selector inputs and do not establish successful retrieval or music quality.
 
 ## Six proposed complete recordings
 
@@ -115,8 +118,9 @@ removal. Audio and temporary buffers have no backups or exported listening clips
 
 ## Finite run proposal
 
-Proposed context: a non-commercial SobaFM selection audition by at most two human
-listeners using local headphones/speakers and complete visible credits. No
+Optional study context: a non-commercial SobaFM selection audition by at most two
+human reviewers using local headphones/speakers and complete visible credits.
+This is a study-panel size, not a two-listener Discord audience limit. No
 monetization; donations remain permitted under the existing confirmation. No
 Discord playback or provider-generated audio. A single listener gives exploratory
 evidence only. Name an evaluation/cleanup owner, reviewer, listener aliases,
@@ -125,8 +129,8 @@ equipment and a date window of at most seven days before execution.
 Freeze the reviewed inventory commit, final credit snapshots and practical
 access decisions before any audio attempt. Authorize only candidates whose
 listed prerequisites are complete; retain all six slots, including blocked ones.
-The coordinator can present this finite run for that later decision without
-asking for the source grants again. No run is authorized by merging these files.
+Revisit this proposal only if a future listening study is requested, reusing the
+existing grants. No run is authorized by merging these files.
 
 | Limit | Proposed maximum and accounting |
 | --- | --- |
@@ -161,8 +165,8 @@ independent and record source visibility, volume/equipment and any gain change.
 Report readiness, attempts, failures, heard counts and ratings per source with
 denominators of two nominated recordings and actual listeners. Unknown or
 blocked cases remain missing, not zero-rated. Keep first-attempt failures and
-do not replace a disliked/unavailable selection. The decision from this pilot
-is whether to proceed to the full comparison, repair specific credit/access
-gaps or retain no source choice yet. No material-improvement claim is possible
-from these six nonrandom identities. Issue #6 remains open for actual listening,
-the full comparison and the reviewed source/storage decision.
+do not replace a disliked/unavailable selection. A future pilot may motivate
+additional comparison or repair specific credit/access gaps. No material
+improvement claim is possible from these six nonrandom identities. This unrun
+pilot is not a gate for #6; its current acceptance is tested prompt selection,
+honest coverage and admission boundaries, aligned documentation and review.

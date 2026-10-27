@@ -1,0 +1,60 @@
+{
+  "schema": "sobafm-admission-1",
+  "reviews": [
+    {
+      "key": {
+        "source": "jamendo",
+        "recording_id": "demo-j-fit"
+      },
+      "metadata_digest": "a748fae0a228befbe0904827e8974f7d57d1ff2e4ba8a0b83e7b110c9b0d6ac6", "note": "Synthetic metadata SHA-256, not a credential. # pragma: allowlist secret",
+      "credits_complete": true,
+      "access_ready": true,
+      "synthetic": true,
+      "evidence": "https://example.invalid/synthetic/reviewer"
+    },
+    {
+      "key": {
+        "source": "jamendo",
+        "recording_id": "demo-j-long"
+      },
+      "metadata_digest": "5f957565c0d037c7bcb9e04ce2e95aa2d8b0399361beb2ad8140670eb06dd50f", "note": "Synthetic metadata SHA-256, not a credential. # pragma: allowlist secret",
+      "credits_complete": true,
+      "access_ready": true,
+      "synthetic": true,
+      "evidence": "https://example.invalid/synthetic/reviewer"
+    },
+    {
+      "key": {
+        "source": "ccmixter",
+        "recording_id": "demo-c-fit"
+      },
+      "metadata_digest": "45b5042cf6478ad1242bedbda370da4a3e79e5c26ff09a75d4b140ec02035ae8", "note": "Synthetic metadata SHA-256, not a credential. # pragma: allowlist secret",
+      "credits_complete": true,
+      "access_ready": true,
+      "synthetic": true,
+      "evidence": "https://example.invalid/synthetic/reviewer"
+    },
+    {
+      "key": {
+        "source": "ccmixter",
+        "recording_id": "demo-c-preview"
+      },
+      "metadata_digest": "a870e663facd382ccb0e2d541780798c61ff2fc9a29d20c16732b674e4c9b8f3", "note": "Synthetic metadata SHA-256, not a credential. # pragma: allowlist secret",
+      "credits_complete": true,
+      "access_ready": true,
+      "synthetic": true,
+      "evidence": "https://example.invalid/synthetic/reviewer"
+    },
+    {
+      "key": {
+        "source": "fma",
+        "recording_id": "demo-f-piano"
+      },
+      "metadata_digest": "cd1965e8169bd7ab642ab79b1b21ea8b7f78bf661ede62cbc51846e4bf031e48", "note": "Synthetic metadata SHA-256, not a credential. # pragma: allowlist secret",
+      "credits_complete": true,
+      "access_ready": true,
+      "synthetic": true,
+      "evidence": "https://example.invalid/synthetic/reviewer"
+    }
+  ]
+}
