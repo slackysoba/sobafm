@@ -59,12 +59,18 @@ Require APT authentication and validity checks; no trusted/allow-insecure,
 allow-unauthenticated, expired-metadata bypass, or changed host configuration.
 [APT trust chain](https://manpages.debian.org/trixie/apt/apt-secure.8.en.html).
 
-The metadata step is a disposable container of the same pinned base with the
-same resource/security settings. Permit network only for this signed metadata
-retrieval, use a private bounded writable directory for APT lists/cache, and
-mount one new empty project-owned evidence directory. Run as UID/GID 1000.
+The metadata step is development tooling in a disposable container of the same
+pinned base. Its memory and memory-plus-swap limits are **536,870,912 bytes**,
+with two CPUs, 64 tasks and the same nonroot/default-seccomp/no-capability
+security settings. This separate preparation budget avoids confusing APT cache
+generation with decoder startup fit. It changes no product cap and supplies no
+runtime evidence: the actual decoder startup remains exactly 90,177,536 group
+bytes plus DATA 12,000,000 and STACK 524,288, with no tuning.
+Permit network only for signed metadata retrieval, use private bounded writable
+APT lists/cache storage, and mount one new empty project-owned evidence directory.
+Run as UID/GID 1000.
 Do not reuse a host APT cache or modify its sources. Stop if metadata cannot fit
-or authenticate; do not raise the experimental limits implicitly.
+its preparation allocation or authenticate; do not raise either limit implicitly.
 
 Prepare an ordinary deb822 file in that private directory with `Types: deb`,
 `Components: main`, `Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg`,
