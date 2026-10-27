@@ -283,8 +283,11 @@ belong at actual integration boundaries when those boundaries exist.
    security exceptions before input reaches native code.
 4. Record exact image digest, source commit, architecture, native host/kernel,
    engine/runtime versions and resource settings. Secure an actual native arm64
-   host; emulation cannot stand in for it. Measure development storage before any
-   installation or image build and agree a separate experiment allowance.
+   host; emulation cannot stand in for it. Before installation or image builds,
+   measure storage and allocate an experiment allowance with the coordinator
+   within the remaining approved 10 GB project budget and 500 MB artifact limit.
+   Pause heavy work at 8 GB or below 25 GB free on the development drive. Only an
+   increase or other material new commitment needs renewed maintainer approval.
 
 Proposed initial execution ceiling: one candidate configuration, one image per
 target, one sequential pass per native architecture, at most 30 minutes per
@@ -312,9 +315,10 @@ the application.
 | Q3: useful decoder fit | Three owned synthetic compressed fixtures, 120 seconds each: MP3 CBR, MP3 VBR and FLAC; stereo/mono and 44.1/48 kHz represented. One additional 30-second overlap of two decoder processes. | Incremental valid 48 kHz stereo s16 PCM, six-second readiness within 15 seconds, known-fixture completion, both banks/copy reservations honored, no OOM. Reconcile native PCM bounds. Hash only permitted fixtures. No station, speaker or Discord output. |
 | Q4: process cancellation and release | Four controlled cases, once each: cancel during feed, cancel while stdout is backpressured, child ignores TERM, and descendant remains after leader exit. Repeat cancellation in each case. | One original three-second deadline; bounded drain, process-tree termination and reaping; release only after actual process and I/O completion. A failed deadline retains a slot/debt and blocks reuse. Use explicit synchronization, not race-inducing sleeps. |
 
-Q3's synthetic signal generation/encoding must itself be separately authorized
-as part of the reviewed harness, executed only with cleared binaries and kept
-within the agreed artifact allowance. No fixture uses `18.raw`, a source catalog
+Q3's ordinary owned synthetic fixture generation/encoding belongs to the reviewed
+bounded harness scope and needs no separate routine approval once that scope is
+authorized. Use cleared binaries within the allocated artifact allowance.
+No fixture uses `18.raw`, a source catalog
 download or a reconstructed restricted sample. Bound fixtures to 20 MB total;
 retain provenance and compact results rather than decoded output.
 
