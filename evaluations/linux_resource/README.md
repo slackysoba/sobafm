@@ -13,8 +13,10 @@ dependencies, provider adapter or station framework.
 - Q1 and Q2 passed once each on native amd64 on 2026-10-27, as recorded below.
 - Q3 remains unresolved: the focused permitted-documentation pass did not
   establish a native decoder PCM capacity bound. `-max_alloc` is a per-allocation
-  setting, and memory peaks do not bound total retained PCM. No native limit
-  workaround, custom decoder or source distribution is introduced.
+  setting, and memory peaks do not bound total retained PCM. A separate
+  [stock-decoder startup check](decoder-startup.md) is prepared for review;
+  supplemental limits are not yet an established PCM bound. No custom decoder
+  or source distribution is introduced.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
 - Stop after the first executed failure. A successful Q1/Q2 pass stops before Q3;

@@ -242,8 +242,13 @@ does not remove obligations for redistributing it inside an image. A package
 homepage or moving upstream link is not a completed source-delivery plan.
 [FFmpeg licensing guidance](https://ffmpeg.org/legal.html).
 
-The exact Debian copyright record could not be retrieved in this investigation,
-so package-specific licensing is unresolved. Before redistribution, a maintainer
+The exact Debian copyright record was retrieved in the follow-up inspection:
+default Debian binaries are GPL v2 or later; the extra libavcodec/libavfilter
+flavors are effectively GPL v3 or later. Debian reports that its packages do not
+use the unredistributable nonfree combinations. Exact transitive component
+licensing remains part of the supply gate.
+[Version-specific copyright](https://metadata.ftp-master.debian.org/changelogs//main/f/ffmpeg/ffmpeg_7.1.5-0%2Bdeb13u1_copyright).
+Before redistribution, a maintainer
 must approve and evidence a compliant source-delivery method, including who
 retains and supplies matching source and notices. The prohibition on reading,
 acquiring, hashing, reconstructing or building `fftools/ffmpeg_filter.c` and
@@ -408,3 +413,9 @@ Next action: review and preserve the Q1/Q2 result and determine a supported way
 to establish the unresolved Q3 native PCM bound. Q4 remains not run; application
 architecture acceptance is still gated. Issue #7 remains open until actual
 acceptance evidence exists; the larger-cap alternative is outside the approval.
+
+The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
+tests one supplemental DATA/STACK-limit candidate with `-version` and no input.
+Its signed dependency-resolution, supply/security review and native execution
+remain not run. It keeps the whole-service ledger unchanged and can reject a
+startup configuration; success alone cannot establish PCM coverage or Q3.
