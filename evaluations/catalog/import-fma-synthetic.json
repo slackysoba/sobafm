@@ -1,0 +1,36 @@
+{
+  "schema": "sobafm-fma-manifest-1",
+  "recordings": [
+    {
+      "source_url": "https://freemusicarchive.org/music/Synthetic_Artist/Synthetic_Album/Synthetic_Recording/",
+      "title": "Synthetic Recording",
+      "primary_artist": "Synthetic Artist",
+      "creators": [
+        {
+          "name": "Synthetic Artist",
+          "role": "Performer and composer",
+          "evidence": "https://freemusicarchive.org/music/Synthetic_Artist/Synthetic_Album/Synthetic_Recording/"
+        }
+      ],
+      "recording_kind": "complete",
+      "kind_evidence": "https://freemusicarchive.org/music/Synthetic_Artist/Synthetic_Album/Synthetic_Recording/",
+      "duration_seconds": 480,
+      "duration_evidence": {
+        "kind": "reported",
+        "url": "https://freemusicarchive.org/music/Synthetic_Artist/Synthetic_Album/Synthetic_Recording/"
+      },
+      "license": {
+        "label": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/"
+      },
+      "notices": [
+        "Invented operator manifest. No file, music, permission or actual import is asserted."
+      ],
+      "tags": [
+        "piano",
+        "instrumental"
+      ],
+      "import_status": "metadata_only"
+    }
+  ]
+}

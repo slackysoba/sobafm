@@ -120,6 +120,104 @@ The same CLI accepts reviewed real metadata with `synthetic: false`; it does
 not generate reviews or turn the earlier incomplete inventory into eligible songs.
 It performs no provider calls, audio acquisition, listening or Discord activity.
 
+## Saved source metadata imports
+
+`sobafm.catalog_import` converts bounded saved Jamendo tracks JSON, ccMixter
+`info` JSON, or an FMA operator manifest into the selector's existing snapshot
+format. It reads local files only. A successful run writes the catalog to stdout
+and a separate JSON import report to stderr; invalid input emits no catalog.
+The commands below require the normal locked Linux development setup.
+
+```sh
+uv run python -m sobafm.catalog_import ccmixter \
+  --input evaluations/catalog/import-ccmixter-observed.json \
+  --context evaluations/catalog/import-ccmixter-context.json \
+  > ccmixter-catalog.json 2> ccmixter-import-report.json
+```
+
+Use `jamendo` with the `import-jamendo-synthetic.json` and
+`import-jamendo-context.json` files, or `fma` with the corresponding FMA files.
+Supply saved real metadata and a dated context to normalize actual observations.
+Outputs contain one source partition, so the selector continues to report the
+other two as missing until their prepared partitions are supplied. No source
+request, media URL follow, audio download or admission review is generated.
+
+The context schema is `sobafm-import-context-1`. Required fields are
+`observed_at` (YYYY-MM-DD), `evidence_kind` (`observed`, `operator`, `example`,
+or `synthetic`), `scope` (a short description of the bounded request/import),
+`state` (`complete`, `partial`, `unavailable`) and `requested_ids` (an explicit
+ID list, or empty for a declared subset without nominated identities).
+`example` and `synthetic` produce `synthetic: true`; their metadata cannot reuse
+real admission reviews. A declared unavailable source omits `--input` and keeps
+its reason in `scope`. This can represent missing Jamendo application access or
+an awaited FMA operator import without fabricating an empty successful search.
+
+For ccMixter, optional `selected_files` entries specify `recording_id` and
+`file_id`. A sole file may provide its reported duration; multiple files need
+an explicit selection. Only the selected `audio/mpeg` file's `ps` is interpreted
+as `m:ss` or `h:mm:ss`. Invalid components, zero, fractions, strings pretending
+to be numeric seconds, and values above 86,400 seconds remain unknown. Selection
+of a file does not establish a complete mix, file integrity or audio readiness.
+
+| Source | Preserved mapping and limits |
+| --- | --- |
+| Jamendo | Stable `id`, name/artist/album identity, canonical `shareurl`, reported integer duration, `license_ccurl`, supplied notices and explicitly supported `musicinfo` tags. Only literal vocal/instrumental values map; empty, numeric or unknown values never imply no vocals. Speed is not converted into energy. Download/license-program flags are not admission. |
+| ccMixter | Stable `upload_id`, title/uploader/featured credits, canonical page, license, selected `file_id`, reported duration/BPM, musical user tags and provided parent identity/title/creator/page/license evidence. System/editorial/remix tags never establish completeness. Missing parent licenses or unverified upstream chains remain explicit. Nested chains that cannot be safely represented require preparation rather than truncation. |
+| FMA | The explicit `sobafm-fma-manifest-1` format in the synthetic fixture: canonical recording page or published numeric ID, supplied title and contributors with roles/evidence, recording kind and evidence, duration and reported/measured provenance, license, full notices, tags and import status. Canonical page path is the identity when no numeric ID exists. This is an operator import, never an FMA API or scraping route. |
+
+All descriptor mappings are weak source claims. Conflicting vocal/instrumental
+tags become unknown, and unsupported descriptors are reported rather than
+invented. Source links must match the record identity. Known official HTTP
+Jamendo/ccMixter/Creative Commons links are normalized to HTTPS; credentials,
+queries and fragments are rejected. License family is inferred only from a
+recognized Creative Commons host/path. Other safe supplied license links retain
+their label, or an explicitly unidentified label pending review.
+
+Credit snapshots preserve complete supplied notices within the existing bounds,
+including upstream links and the selected ccMixter file identity. Snapshot IDs
+bind the full source/recording identity, title, creators, date, evidence kind and
+credit contents. Distinct or changed credits cannot share an ID merely because
+their date or a truncated identity matches. Unsupported markup or oversized
+notices reject the row; they are never silently shortened. This does not assert
+that the supplied credits are complete. Review the original authoritative source
+and any reported gaps before creating a separate admission review.
+
+The report distinguishes returned and normalized counts, requested IDs absent
+from the response, unexpected identities, malformed rows, duplicates, unknown
+fields and values, source errors/warnings, unavailable access, empty success and
+an intentionally bounded subset. All ambiguous duplicate identities are
+quarantined, as are unexpected IDs in an explicitly nominated request. Malformed
+rows do not prevent valid independent rows from being represented, but make the
+partition partial. Raw error bodies, media URLs, credentials and unknown field
+values are not copied into diagnostics or catalog output.
+
+Each input is limited to 1,000,000 UTF-8 bytes, 256 records, 12 nested levels,
+128 fields per object and 32,768 characters per raw string. Tighter catalog,
+tag, contributor, file and notice bounds apply during normalization. Reuse the
+existing 2,000,000-byte catalog bound rather than expanding it to fit a response.
+File access and JSON errors are reported without private paths or raw input.
+
+The Jamendo and FMA fixtures are invented offline examples, not observed songs
+or completed imports. The ccMixter fixture is a selected-field projection of
+one real response observed on 2026-10-27: a two-ID request returned only 17241,
+33,199 bytes, with file 18462 reporting `3:12`; parent 15139 had no license URL.
+It retains the known missing-ID and upstream-credit gaps. No raw response,
+media URL or audio was saved. Its source contract and prior observation are in
+the [metadata checkpoint](https://github.com/slackysoba/sobafm/issues/6#issuecomment-6441724930),
+[ccMixter query documentation](https://ccmixter.org/query-api) and
+[Jamendo tracks documentation](https://developer.jamendo.com/v3.0/tracks).
+The latter's API request parameters are not proof of returned metadata values;
+live Jamendo application access remains unavailable.
+
+Every imported record starts with unknown availability (or explicit unavailable
+FMA status). Jamendo/ccMixter completeness also remains unverified; FMA preserves
+the operator's explicit kind and evidence. A claimed operator copy is not a
+verified asset. These draft snapshots cannot pass playback admission merely
+because normalization succeeded. Complete-kind/access evidence and all required
+credits must be settled separately, without requiring human listening for this
+metadata work. The observed Sunrise upstream notices remain unresolved, so no
+real admission review accompanies this slice.
+
 ## Deferred optional quality evidence
 
 This slice supplies the [fixed requests](../evaluations/catalog/requests.json),

@@ -1,0 +1,39 @@
+{
+  "headers": {
+    "status": "success",
+    "code": 0,
+    "results_count": 1,
+    "warnings": ""
+  },
+  "results": [
+    {
+      "id": "900001",
+      "name": "Synthetic Piano Piece",
+      "duration": 420,
+      "artist_id": "800001",
+      "artist_name": "Synthetic Pianist",
+      "album_id": "700001",
+      "album_name": "Synthetic Album",
+      "shareurl": "https://www.jamendo.com/track/900001",
+      "license_ccurl": "https://creativecommons.org/licenses/by/4.0/",
+      "musicinfo": {
+        "vocalinstrumental": "instrumental",
+        "acousticelectric": "acoustic",
+        "speed": "low",
+        "lang": "",
+        "tags": {
+          "genres": [
+            "jazz"
+          ],
+          "instruments": [
+            "piano"
+          ],
+          "vartags": []
+        }
+      },
+      "notices": [
+        "Invented test metadata. No music or real admission evidence."
+      ]
+    }
+  ]
+}
