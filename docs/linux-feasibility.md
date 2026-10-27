@@ -282,8 +282,11 @@ belong at actual integration boundaries when those boundaries exist.
    safe fixture provenance, and binary/source-access plan. Resolve applicable
    security exceptions before input reaches native code.
 4. Record exact image digest, source commit, architecture, native host/kernel,
-   engine/runtime versions and resource settings. Secure an actual native arm64
-   host; emulation cannot stand in for it. Before installation or image builds,
+   engine/runtime versions and resource settings for each tested target. The
+   available native amd64 target can run Q1-Q4 independently once its other gates
+   pass. Native arm64 hardware and its own results remain a separate
+   cross-platform/release gate; their absence does not block amd64 evidence.
+   Emulation cannot qualify either native target. Before installation or image builds,
    measure storage and allocate an experiment allowance with the coordinator
    within the remaining approved 10 GB project budget and 500 MB artifact limit.
    Pause heavy work at 8 GB or below 25 GB free on the development drive. Only an
