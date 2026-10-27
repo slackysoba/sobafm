@@ -1,0 +1,57 @@
+minimum_pre_commit_version: 4.7.0
+repos:
+  # All tools use the single uv-locked environment; no hook-specific installs.
+  - repo: local
+    hooks:
+      - id: ruff
+        name: Ruff lint
+        entry: uv run --locked --offline ruff check
+        language: unsupported
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: Ruff format
+        entry: uv run --locked --offline ruff format --check
+        language: unsupported
+        types_or: [python, pyi]
+      - id: pyright
+        name: Strict Pyright
+        entry: env PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --locked --offline pyright
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: markdown
+        name: Markdown
+        entry: uv run --locked --offline pymarkdown --config .pymarkdown.json scan
+        language: unsupported
+        types: [markdown]
+      - id: detect-secrets
+        name: Secret scan (offline)
+        entry: uv run --locked --offline detect-secrets-hook --no-verify
+        language: unsupported
+        # Lockfile hashes are integrity data, not credentials.
+        exclude: ^uv\.lock$
+      - id: check-yaml
+        name: YAML syntax
+        entry: uv run --locked --offline check-yaml
+        language: unsupported
+        types: [yaml]
+      - id: check-toml
+        name: TOML syntax
+        entry: uv run --locked --offline check-toml
+        language: unsupported
+        types: [toml]
+      - id: check-merge-conflict
+        name: Merge conflicts
+        entry: uv run --locked --offline check-merge-conflict
+        language: unsupported
+        types: [text]
+      - id: trailing-whitespace
+        name: Trailing whitespace
+        entry: uv run --locked --offline trailing-whitespace-fixer
+        language: unsupported
+        types: [text]
+      - id: end-of-file-fixer
+        name: Final newline
+        entry: uv run --locked --offline end-of-file-fixer
+        language: unsupported
+        types: [text]
