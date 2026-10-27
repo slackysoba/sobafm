@@ -10,7 +10,20 @@ A self-hosted Discord music bot for Linux and Docker.
 
 Specification and planning are available. Application implementation, installation packages and release qualification are not yet complete.
 
-Initial work evaluates catalog quality, establishes a feasible Linux resource configuration and creates the development toolchain. A narrow end-to-end playback implementation follows those decisions.
+Initial work evaluates catalog quality and establishes a feasible Linux resource configuration. The Python development toolchain and Linux CI are available. A narrow end-to-end playback implementation follows those decisions.
+
+## Development setup
+
+In a Linux checkout with Git and [uv 0.13.6](https://docs.astral.sh/uv/getting-started/installation/) available:
+
+```sh
+uv python install
+uv sync --locked
+uv run pre-commit run --all-files
+uv run pytest
+```
+
+This installs Python 3.14 and the locked development environment, then runs all-file checks and the offline package smoke test. No credentials or audio are needed. See [Contributing](CONTRIBUTING.md) for tool choices, updates and required checks. There is no runnable bot or operator image yet.
 
 ## Documentation
 
