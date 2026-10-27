@@ -5,6 +5,15 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
+from .decoder_startup import (
+    DATA_BYTES,
+    OUTPUT_BYTES,
+    STACK_BYTES,
+    Child,
+    capture,
+    cleanup,
+    verify_rlimits,
+)
 from .probe import (
     COPY_BYTES,
     GROUP_BYTES,
@@ -20,6 +29,70 @@ from .probe import (
 
 
 class ContractTests(unittest.TestCase):
+    def test_startup_limit_gate_rejects_missing_changed_or_duplicate_limits(self) -> None:
+        valid = (
+            f"Max data size             {DATA_BYTES} {DATA_BYTES} bytes\n"
+            f"Max stack size            {STACK_BYTES} {STACK_BYTES} bytes\n"
+        )
+        self.assertEqual(verify_rlimits(valid)["Max data size"], DATA_BYTES)
+        for text in (
+            "",
+            valid.replace(str(DATA_BYTES), "unlimited", 1),
+            valid.replace(str(STACK_BYTES), str(STACK_BYTES + 1), 1),
+            valid + valid,
+        ):
+            with self.subTest(text=text), self.assertRaises(ProbeError):
+                verify_rlimits(text)
+
+    def test_startup_output_flood_stops_at_the_reserved_capacity(self) -> None:
+        module = "evaluations.linux_resource.decoder_startup"
+        stream = bytearray(b"a" * OUTPUT_BYTES)
+        with (
+            patch(f"{module}.time.monotonic", return_value=1),
+            patch(f"{module}.select.select", return_value=([10], [], [])),
+            patch(f"{module}.os.read", return_value=b"x"),
+            self.assertRaisesRegex(ProbeError, "stream bound"),
+        ):
+            capture(Child(42, 0), {10: stream}, 2)
+        self.assertEqual(len(stream), OUTPUT_BYTES)
+
+    def test_startup_eof_does_not_release_a_live_process(self) -> None:
+        module = "evaluations.linux_resource.decoder_startup"
+        child = Child(42)
+        with (
+            patch(f"{module}.time.monotonic", side_effect=[1, 3]),
+            patch(f"{module}.select.select", return_value=([10], [], [])),
+            patch(f"{module}.os.read", return_value=b""),
+            patch(f"{module}.os.waitpid", return_value=(0, 0)),
+            self.assertRaisesRegex(ProbeError, "deadline"),
+        ):
+            capture(child, {10: bytearray()}, 2)
+        self.assertIsNone(child.exit_code)
+
+    def test_startup_reaped_leader_retains_descendant_debt_at_original_deadline(self) -> None:
+        module = "evaluations.linux_resource.decoder_startup"
+        with (
+            patch(f"{module}.time.monotonic", side_effect=[10, 14]),
+            patch(f"{module}.group_members", return_value=[43]),
+            patch(f"{module}.os.killpg"),
+        ):
+            result = cleanup(Child(42, 0), 13)
+            self.assertEqual(result.retained_pids, [43])
+            self.assertFalse(result.deadline_met)
+
+    def test_startup_late_release_clears_debt_but_never_meets_cleanup_deadline(self) -> None:
+        module = "evaluations.linux_resource.decoder_startup"
+        for times, members in (([10, 14], [[43], []]), ([10, 12.99, 13.01], [[43], []])):
+            with (
+                self.subTest(times=times),
+                patch(f"{module}.time.monotonic", side_effect=times),
+                patch(f"{module}.group_members", side_effect=members),
+                patch(f"{module}.os.killpg"),
+            ):
+                result = cleanup(Child(42, 0), 13)
+                self.assertEqual(result.retained_pids, [])
+                self.assertFalse(result.deadline_met)
+
     def test_unlimited_or_changed_kernel_limits_fail_closed(self) -> None:
         values = {
             "memory.max": str(GROUP_BYTES),

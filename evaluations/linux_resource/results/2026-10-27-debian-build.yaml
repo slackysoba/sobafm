@@ -1,0 +1,97 @@
+# Development assembly only. No result image, installation or decoder execution.
+schema_version: 1
+issue: https://github.com/slackysoba/sobafm/issues/7
+result: acquisition_incomplete_transport_failure
+prepared_harness_commit: d1d728bfde50b6e6a0fe1d5aa5a6f16e9047b456  # pragma: allowlist secret - public source digest
+checkout_commit_during_build: 9b1d161b9a25b11d707ffcff87f6aea9afd57820  # pragma: allowlist secret - public source digest
+harness_mounted_or_executed: false
+base_image: ghcr.io/astral-sh/uv@sha256:8f4ab6a0f2cc074290ba6a136eb016350b2b6b93a2108e07b72724901ad1914f
+target: linux_amd64
+package_count: 205
+selected_manifest_sha256: 9f9067a8a502336db70adb7013bf0577847626ff45b5c17813f56637538b9b3a  # pragma: allowlist secret - public artifact digest
+dockerfile_sha256: 163bbc297b04d0ee42999d8009267e36083d24f83b5d7cd1477001f0f7487d65  # pragma: allowlist secret - public artifact digest
+limits:
+  individual_apt_command_seconds: 240
+  build_wall_and_observation_seconds_per_attempt: 600
+  captured_build_log_bytes_per_attempt: 8000000
+  selected_evidence_allocation_bytes: 10000000
+  incremental_build_disk_ceiling_bytes: 2000000000
+  apt_retries: 0
+  install_network: none
+  runtime_memory_limits_apply_to_build: false
+attempts:
+  - attempt: 1
+    result: generated_pin_line_ending_error
+    build_exit: 1
+    apt_step_exit: 100
+    elapsed_seconds: 27.656
+    log_bytes: 23332
+    log_sha256: 187edc02e885f35d0bbcb48b23a25b649974d7975619743cf81f9b1b033a92d1  # pragma: allowlist secret - public artifact digest
+    supervisor_sha256: a084b2369666d3a39df5cd5e07a5eeb66fc6237e749fdf5f7d21e14732935d41  # pragma: allowlist secret - public artifact digest
+    pins_sha256: 70218d4fd11613d1cafa4a817388e1c346eb81da1f6d4b9300028a9d2ddbca36  # pragma: allowlist secret - public artifact digest
+    verifier_sha256: 6454ec40dc725844e717ccd0817b2d62a6b7e5ed19ff5f36f0d753512a62834f  # pragma: allowlist secret - public artifact digest
+    baseline_verified: true
+    binaries_downloaded: false
+    output_image: absent
+    active_build_ownership_debt: false
+    debt_basis: explicit_completed_daemon_solve_and_step_failure
+  - attempt: 2
+    correction: exact_lf_pin_bytes_and_pre_apt_raw_byte_assertion
+    result: incomplete_https_download_and_deadline
+    build_exit: 1
+    bounded_download_step_exit: 124
+    elapsed_seconds: 269.328
+    log_bytes: 25971
+    log_sha256: efc93a86ca55183566d74bbaf2ca7f4c3014f01add5835e07ae44f0294f32539  # pragma: allowlist secret - public artifact digest
+    supervisor_sha256: 42e40fc176bf34bcaeab863837b0db93611a1711ce94912a92be2d0f163d4626  # pragma: allowlist secret - public artifact digest
+    pins_sha256: aecd2e025b35f372f09d95036ee81bb9d10eaf5cdc8f990696a3649471740a3d  # pragma: allowlist secret - public artifact digest
+    verifier_sha256: f07921fba0a6a99c28505ae4ce0602246cee90b801058cf61af4546d09c99872  # pragma: allowlist secret - public artifact digest
+    baseline_verified: true
+    exact_transaction_verified: true
+    partial_binary_downloads: true
+    complete_archive_set_verified: false
+    installation_started: false
+    output_image: absent
+    active_build_ownership_debt: false
+    debt_basis: explicit_completed_daemon_solve_and_step_failure
+  - attempt: 3
+    authorization: one_final_bounded_transport_retry_of_identical_corrected_context
+    result: incomplete_transfer_at_download_deadline
+    build_exit: 1
+    bounded_download_step_exit: 124
+    elapsed_seconds: 275.515
+    log_bytes: 29893
+    log_sha256: 3aa22322d2748f93e084f2d6404ec5090f9c425052abb712336e70be9e144c7e  # pragma: allowlist secret - public artifact digest
+    supervisor_sha256: f9d8644452af94645e7e76e8c1319895cab20482f9da5b2cfc3fbca63a901674  # pragma: allowlist secret - public artifact digest
+    pins_sha256: aecd2e025b35f372f09d95036ee81bb9d10eaf5cdc8f990696a3649471740a3d  # pragma: allowlist secret - public artifact digest
+    verifier_sha256: f07921fba0a6a99c28505ae4ce0602246cee90b801058cf61af4546d09c99872  # pragma: allowlist secret - public artifact digest
+    baseline_verified: true
+    exact_transaction_verified: true
+    partial_binary_downloads: true
+    direct_tls_error_in_this_attempt: false
+    complete_archive_set_verified: false
+    installation_started: false
+    output_image: absent
+    active_build_ownership_debt: false
+    debt_basis: explicit_completed_daemon_solve_and_step_failure
+retention:
+  exact_all_attempt_contexts_and_supervisors_preserved: true
+  metadata_and_build_selected_receipts_bytes: 1840705
+  shared_docker_image_count_changed: false
+  shared_docker_container_count_changed: false
+  shared_docker_volume_count_changed: false
+  shared_build_cache_records_before: 53
+  shared_build_cache_records_after: 63
+  shared_build_cache_logical_gb_before: 5.485
+  shared_build_cache_logical_gb_after: 5.553
+  cache_totals_overlap_images_and_are_not_physical_growth: true
+  source_archives_or_forbidden_files_acquired: false
+  cleanup_or_pruning_performed: false
+  further_acquisition_stopped: true
+qualification:
+  actual_installed_binary_binding: unavailable
+  decoder_executed: false
+  startup_resource_verdict: none
+  q3: not_run
+  q4: not_run
+  native_arm64: not_run

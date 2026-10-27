@@ -1,0 +1,85 @@
+# Signed metadata only; no binary acquisition, installation or decoder execution.
+schema_version: 1
+issue: https://github.com/slackysoba/sobafm/issues/7
+result: metadata_only_complete_pending_acquisition_review
+executed_source_commit: d1d728bfde50b6e6a0fe1d5aa5a6f16e9047b456  # pragma: allowlist secret - public source or artifact digest
+base_image: ghcr.io/astral-sh/uv@sha256:8f4ab6a0f2cc074290ba6a136eb016350b2b6b93a2108e07b72724901ad1914f
+target: linux_amd64
+apt_version: 3.0.3
+base_package_count: 87
+keyring:
+  package_version: '2025.1'
+  sha256: 506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017  # pragma: allowlist secret - public source or artifact digest
+preparation_limits:
+  memory_bytes: 536870912
+  memory_plus_swap_bytes: 536870912
+  private_tmpfs_bytes: 268435456
+  cpus: 2
+  pids: 64
+  container_seconds: 55
+  host_total_seconds: 120
+  changes_runtime_limits: false
+attempts:
+  - attempt: 1
+    result: incomplete_signature_temporary_file_unwritable
+    container_script_sha256: 623bfadc899ff0e478c04b9bc4eaf4451eb14e320053e8394d3cfbf554c4a21c  # pragma: allowlist secret - public source or artifact digest
+    host_supervisor_sha256: 271e45529c80d22add789a657ea9d13dae7a815c977c9944b931dac82792e902  # pragma: allowlist secret - public source or artifact digest
+    signed_closure_established: false
+    stopped_pid: 0
+    removed_and_absent: true
+    cleanup_debt: false
+  - attempt: 2
+    result: metadata_only_complete
+    correction: private_tmpdir_and_existing_empty_apt_parts_directories
+    container_script_sha256: f1a3a36de0411dc6b2eea442a0c75711acfb1dfb4f406d2113fd130b40bcadaf  # pragma: allowlist secret - public source or artifact digest
+    host_supervisor_sha256: 86f9481ef5282b928771bef151cff3a95d5079468442503ff66e324ac08c04b8  # pragma: allowlist secret - public source or artifact digest
+    elapsed_seconds: 25.954
+    exit_code: 0
+    oom_killed: false
+    stopped_pid: 0
+    removed_and_absent: true
+    cleanup_debt: false
+authenticated_releases:
+  - codename: trixie
+    sha256: 0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675  # pragma: allowlist secret - public source or artifact digest
+    date_utc: '2026-09-12T07:55:41Z'
+    valid_until_field: absent
+  - codename: trixie-updates
+    sha256: 1f9c70a9c308a0a9cc550e509427bbc22f805f14f12af8f65ec3cdaa09d8fdb4  # pragma: allowlist secret - public source or artifact digest
+    date_utc: '2026-10-27T08:09:34Z'
+    valid_until_utc: '2026-11-03T08:09:34Z'
+  - codename: trixie-security
+    sha256: 4a0cc61797b432453263179f8ac471bad3a01b393a4bd2300402cd1f7afd601a  # pragma: allowlist secret - public source or artifact digest
+    date_utc: '2026-10-27T02:28:22Z'
+    valid_until_utc: '2026-11-03T02:28:22Z'
+proposed_transaction:
+  new_packages: 205
+  upgraded_packages: 0
+  removed_packages: 0
+  not_upgraded_packages: 7
+  binary_download_bytes: 133190124
+  installed_bytes_estimate: 466388992
+  ffmpeg_version: 7:7.1.5-0+deb13u1
+  ffmpeg_deb_size_bytes: 2001944
+  ffmpeg_deb_sha256: 8669bc77e55393c14e0dd257ba9a916007cb6da0e1074c9b5e1d53812024f2af  # pragma: allowlist secret - public source or artifact digest
+  full_selected_manifest_bytes: 179688
+  full_selected_manifest_sha256: 9f9067a8a502336db70adb7013bf0577847626ff45b5c17813f56637538b9b3a  # pragma: allowlist secret - public source or artifact digest
+  published_equivalent_yaml: 2026-10-27-debian-package-proposal.yaml
+  published_yaml_bytes: 170421
+  published_yaml_sha256: f9e565ff12cf180735dccefc08f350bb0a85b87f0891d4b6f650e759e7c325f8  # pragma: allowlist secret - public artifact digest
+  published_yaml_decoded_data_equals_original_json: true
+  package_sha256_records: 205
+  print_uri_rows_without_legacy_hash: 5
+  architectures: [amd64, all]
+  archive_component: main
+  development_debug_source_packages: 0
+execution_boundary:
+  binaries_acquired: false
+  packages_installed: false
+  image_built: false
+  decoder_executed: false
+  media_or_provider_activity: false
+  forbidden_source_acquired_read_or_hashed: false
+  q3: not_run
+  q4: not_run
+  native_arm64: not_run

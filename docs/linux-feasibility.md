@@ -210,12 +210,16 @@ are separate from this memory calculation.
 
 ## Decoder supply and source obligations
 
-Documentation and package metadata were checked on 2026-10-27. No package,
-source archive, audio fixture or restricted file was acquired or hashed.
+Documentation and package metadata were initially checked on 2026-10-27 without
+acquiring packages. The subsequent [signed metadata result](../evaluations/linux_resource/results/2026-10-27-debian-metadata.yaml)
+resolves 205 proposed binary additions on the pinned base. See the linked
+[startup preparation](../evaluations/linux_resource/decoder-startup.md) for later
+acquisition status. No source archive, audio fixture or restricted file was
+acquired or hashed.
 
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
-| Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Candidate for the one experiment, pending exact dependency manifest, security triage and source obligations. |
+| Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Signed dependency proposal resolved; actual installed binary binding remains pending. |
 | Debian stable `mpg123`, `1.32.10-1+deb13u1` at review time | Maintained package on both targets; MP3-focused upstream is LGPL 2.1. Upstream 1.33.7 includes further fixes, so the stable package requires a backport/security comparison. | Not selected: narrowing input formats and checking a second decoder would expand this experiment. No claim that its smaller package proves lower memory use. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
@@ -242,8 +246,13 @@ does not remove obligations for redistributing it inside an image. A package
 homepage or moving upstream link is not a completed source-delivery plan.
 [FFmpeg licensing guidance](https://ffmpeg.org/legal.html).
 
-The exact Debian copyright record could not be retrieved in this investigation,
-so package-specific licensing is unresolved. Before redistribution, a maintainer
+The exact Debian copyright record was retrieved in the follow-up inspection:
+default Debian binaries are GPL v2 or later; the extra libavcodec/libavfilter
+flavors are effectively GPL v3 or later. Debian reports that its packages do not
+use the unredistributable nonfree combinations. Exact transitive component
+licensing remains part of the supply gate.
+[Version-specific copyright](https://metadata.ftp-master.debian.org/changelogs//main/f/ffmpeg/ffmpeg_7.1.5-0%2Bdeb13u1_copyright).
+Before redistribution, a maintainer
 must approve and evidence a compliant source-delivery method, including who
 retains and supplies matching source and notices. The prohibition on reading,
 acquiring, hashing, reconstructing or building `fftools/ffmpeg_filter.c` and
@@ -408,3 +417,10 @@ Next action: review and preserve the Q1/Q2 result and determine a supported way
 to establish the unresolved Q3 native PCM bound. Q4 remains not run; application
 architecture acceptance is still gated. Issue #7 remains open until actual
 acceptance evidence exists; the larger-cap alternative is outside the approval.
+
+The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
+tests one supplemental DATA/STACK-limit candidate with `-version` and no input.
+Its signed dependency resolution is complete. The narrow private no-input
+assessment does not qualify untrusted audio; actual installed binary binding and
+native execution remain pending. It keeps the whole-service ledger unchanged and can reject a
+startup configuration; success alone cannot establish PCM coverage or Q3.
