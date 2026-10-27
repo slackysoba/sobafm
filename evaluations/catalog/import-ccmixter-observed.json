@@ -1,0 +1,37 @@
+[
+  {
+    "upload_id": 17241,
+    "upload_name": "Sunrise (unplugged)",
+    "user_name": "admiralbob77",
+    "user_real_name": "Admiral Bob",
+    "file_page_url": "https://ccmixter.org/files/admiralbob77/17241",
+    "license_name": "Attribution Noncommercial  (3.0)",
+    "license_url": "http://creativecommons.org/licenses/by-nc/3.0/",
+    "upload_tags": ",media,remix,bpm_080_085,how_i_did_it,editorial_pick,trackback,in_video,in_web,in_album,non_commercial,audio,mp3,44k,stereo,CBR,acoustic,female_vocals,",
+    "upload_extra": {
+      "usertags": "acoustic,female_vocals",
+      "featuring": "Shannon Hurley",
+      "bpm": 81,
+      "howididit": {
+        "samples": "I used the acoustic guitar and lead vocal from Shannon Hurley's \"Sunrise\", which is licensed CC NC."
+      }
+    },
+    "files": [
+      {
+        "file_id": 18462,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:12"
+        }
+      }
+    ],
+    "remix_parents": [
+      {
+        "upload_id": 15139,
+        "upload_name": "Sunrise",
+        "user_real_name": "shannonsongs",
+        "file_page_url": "https://ccmixter.org/files/shannonsongs/15139"
+      }
+    ]
+  }
+]
