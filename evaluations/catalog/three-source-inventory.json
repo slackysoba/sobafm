@@ -1,0 +1,348 @@
+{
+  "version": "three-source-inventory-1",
+  "status": "metadata-only-proposal",
+  "observed_on": "2026-10-27",
+  "request_set": "catalog-requests-1",
+  "permission": {
+    "basis": "maintainer-confirmed direct permission from each source owner to use its music in SobaFM",
+    "sources": ["jamendo", "ccmixter", "fma"],
+    "authority_url": "https://github.com/slackysoba/sobafm/issues/6#issuecomment-6441099250",
+    "conditions_url": "https://github.com/slackysoba/sobafm/issues/6#issuecomment-6440417895",
+    "conditions": ["attribution required", "no commercialization", "no monetization", "donations permitted"],
+    "private_correspondence": "not requested or published"
+  },
+  "conventions": {
+    "null": "unknown or unobserved; see the corresponding gaps, never an empty-credit approval",
+    "identity": "provider namespace plus published numeric ID, or canonical recording path where no numeric ID was exposed",
+    "credit_snapshots": "dated metadata drafts, not admitted immutable playback snapshots; preserve this revision when completing them",
+    "source_metadata": "reported facts, not measurements of an acquired recording",
+    "fit_assessment": "author: catalog-worker; metadata inference only, no prior listening or human rating",
+    "comparison_arms": "not assigned; these hand-picked identities are not ordinary or editorial API result samples"
+  },
+  "candidates": [
+    {
+      "candidate_id": "JAM-1848357",
+      "source_id": "jamendo",
+      "source_recording_id": "1848357",
+      "landing_url": "https://www.jamendo.com/track/1848357",
+      "title": "mañana será tarde",
+      "version": null,
+      "artist": {"name": "fankel", "source_artist_id": "421168"},
+      "additional_contributors": null,
+      "album": {"name": "mañana será tarde", "source_album_id": "368084"},
+      "reported_release_date": "2021-04-11",
+      "reported_duration_seconds": 272,
+      "reported_format": "official documentation example contains an mp31 stream reference; actual file and mp32 availability unverified",
+      "complete_recording_evidence": "official tracks-method example identifies an album track at position 1 with duration; full content unverified",
+      "source_tags": ["rock", "bass", "guitar", "groovy", "happy"],
+      "source_attributes": {"vocalinstrumental": "instrumental", "acousticelectric": "electric", "speed": "high"},
+      "evidence": {
+        "url": "https://developer.jamendo.com/v3.0/tracks",
+        "kind": "currently served official documentation example, not a live API response",
+        "discovery": "first of two example records; chosen because public consumer-page metadata was inaccessible",
+        "landing_read": "web retrieval reported URL inaccessible; no current track-page metadata obtained"
+      },
+      "license_notice": {
+        "label": "CC BY-NC-ND 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by-nc-nd/3.0/",
+        "basis": "license_ccurl in documentation example; current recording-page notice unverified"
+      },
+      "credit_snapshot": {
+        "id": "JAM-1848357-2026-10-27-v1",
+        "status": "incomplete-draft",
+        "display_names": ["fankel"],
+        "provider_credit": "Jamendo",
+        "upstream_credit_ids": [],
+        "copyright_or_additional_notices": null,
+        "modification_notice": "No audio acquired or modified in this slice. Preserve source version; proposed audition makes no edited file."
+      },
+      "request_mapping": {
+        "request_id": "R06",
+        "supported": ["upbeat"],
+        "contradicted": [],
+        "unknown": ["funk", "prominent bass groove"],
+        "rationale": "High speed supports upbeat; bass/groovy tags suggest potential groove but do not establish prominent bass or funk. Retain the rock-tagged weak match.",
+        "confidence": "low; documentation-example descriptors only"
+      },
+      "acquisition_plan": "jamendo-stream",
+      "status": "permission-confirmed; metadata-and-access-incomplete",
+      "gaps": ["live identity, duration, license and all supplied contributor/notices check", "registered application access and Client ID not supplied or used", "mp32 stream availability and complete-recording file unverified"],
+      "audio_acquired": false,
+      "heard": false,
+      "ratings": null
+    },
+    {
+      "candidate_id": "JAM-1880336",
+      "source_id": "jamendo",
+      "source_recording_id": "1880336",
+      "landing_url": "https://www.jamendo.com/track/1880336",
+      "title": "Queensland [ High Energy Funk Instrumental ]",
+      "title_normalization": "documentation example line breaks and repeated whitespace collapsed for display",
+      "version": null,
+      "artist": {"name": "Lofi Lopez", "source_artist_id": "540929"},
+      "additional_contributors": null,
+      "album": {"name": "Queensland [ High Energy Funk Instrumental ]", "source_album_id": "452525"},
+      "reported_release_date": "2021-08-24",
+      "reported_duration_seconds": 147,
+      "reported_format": "official documentation example contains an mp31 stream reference; actual file and mp32 availability unverified",
+      "complete_recording_evidence": "official tracks-method example identifies an album track at position 1 with duration; full content unverified",
+      "source_tags": ["funk", "groovy", "neutral"],
+      "source_attributes": {"vocalinstrumental": "instrumental", "acousticelectric": "electric", "speed": "high", "audiodownload_allowed_in_example": false},
+      "evidence": {
+        "url": "https://developer.jamendo.com/v3.0/tracks",
+        "kind": "currently served official documentation example, not a live API response",
+        "discovery": "second of two example records; no editorial status or live relevance rank inferred",
+        "landing_read": "web retrieval reported URL inaccessible; no current track-page metadata obtained"
+      },
+      "license_notice": {
+        "label": "CC BY-NC-ND 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by-nc-nd/3.0/",
+        "basis": "license_ccurl in documentation example; current recording-page notice unverified"
+      },
+      "credit_snapshot": {
+        "id": "JAM-1880336-2026-10-27-v1",
+        "status": "incomplete-draft",
+        "display_names": ["Lofi Lopez"],
+        "provider_credit": "Jamendo",
+        "upstream_credit_ids": [],
+        "copyright_or_additional_notices": null,
+        "modification_notice": "No audio acquired or modified in this slice. Preserve source version; proposed audition makes no edited file."
+      },
+      "request_mapping": {
+        "request_id": "R06",
+        "supported": ["funk", "upbeat"],
+        "contradicted": [],
+        "unknown": ["prominent bass groove"],
+        "rationale": "Title and genre/speed support funk and upbeat; groovy does not identify a bass part.",
+        "confidence": "low; documentation-example descriptors only"
+      },
+      "acquisition_plan": "jamendo-stream",
+      "status": "permission-confirmed; metadata-and-access-incomplete",
+      "gaps": ["live identity, duration, license and all supplied contributor/notices check", "registered application access and Client ID not supplied or used", "mp32 stream availability unverified; no download-endpoint workaround for the example's false download flag"],
+      "audio_acquired": false,
+      "heard": false,
+      "ratings": null
+    },
+    {
+      "candidate_id": "CCM-17241",
+      "source_id": "ccmixter",
+      "source_recording_id": "17241",
+      "landing_url": "https://ccmixter.org/files/admiralbob77/17241",
+      "title": "Sunrise (unplugged)",
+      "version": "unplugged",
+      "artist": {"name": "Admiral Bob", "source_artist_id": "admiralbob77"},
+      "additional_contributors": ["Shannon Hurley (featured); upstream account shannonsongs"],
+      "album": null,
+      "reported_release_date": "2008-10-18",
+      "reported_duration_seconds": 192,
+      "reported_format": "mp3, 44k, stereo, CBR tags; bitrate and file size unknown",
+      "complete_recording_evidence": "complete unplugged remix with duration and editorial pick; one linked upstream work, not an isolated vocal/stem selection",
+      "source_tags": ["remix", "editorial_pick", "acoustic", "female_vocals"],
+      "source_attributes": {"bpm": 81},
+      "evidence": {
+        "url": "https://ccmixter.org/files/admiralbob77/17241",
+        "kind": "direct public recording page",
+        "discovery": "editorial/all-time list at https://ccmixter.org/view/media/picks; no personal prior listening",
+        "landing_read": "readable; audio was not requested"
+      },
+      "license_notice": {"label": "CC BY-NC 3.0 Unported", "url": "https://creativecommons.org/licenses/by-nc/3.0/", "basis": "recording-page license link, not site footer"},
+      "credit_snapshot": {
+        "id": "CCM-17241-2026-10-27-v1",
+        "status": "incomplete-draft",
+        "display_names": ["Admiral Bob", "Shannon Hurley (shannonsongs)"],
+        "provider_credit": "ccMixter",
+        "upstream_credit_ids": ["CCM-UP-15139"],
+        "copyright_or_additional_notices": null,
+        "modification_notice": "Source is an unplugged remix incorporating Sunrise. No audio acquired or modified by SobaFM."
+      },
+      "request_mapping": {
+        "request_id": "R04",
+        "supported": ["acoustic", "sung vocals"],
+        "contradicted": [],
+        "unknown": ["folk", "relaxed"],
+        "rationale": "Acoustic/vocal tags and editorial description of voices, guitar and mandolin suggest this request; genre and perceived relaxation remain unconfirmed.",
+        "confidence": "medium for instrumentation/vocals, low for mood"
+      },
+      "acquisition_plan": "ccmixter-temporary-copy",
+      "status": "permission-confirmed; upstream-notices-incomplete",
+      "gaps": ["upstream Sunrise page unavailable; its license/notices and any further credit chain unknown", "complete mix file selector, size and exact encoding unverified", "complete safe credit rendering and reviewer acceptance pending"],
+      "audio_acquired": false,
+      "heard": false,
+      "ratings": null
+    },
+    {
+      "candidate_id": "CCM-70993",
+      "source_id": "ccmixter",
+      "source_recording_id": "70993",
+      "landing_url": "https://ccmixter.org/files/AntSurvila/70993",
+      "title": "WILD WINDSTEPS",
+      "version": null,
+      "artist": {"name": "Ant.Survila", "source_artist_id": "AntSurvila"},
+      "additional_contributors": ["Dan_Mantau (featured)", "Lisa DeBenedictis / DeBenedictis (upstream chain; exact contribution to this instrumental unverified)"],
+      "album": null,
+      "reported_release_date": "2026-07-04",
+      "reported_duration_seconds": 129,
+      "reported_format": "mp3, 44k, stereo, VBR tags; bitrate and file size unknown",
+      "complete_recording_evidence": "editorial pick describes a cinematic instrumental built from guitar stems; selected item is the complete remix, not those stems",
+      "source_tags": ["remix", "editorial_pick", "guitar", "instrumental", "synthesizer", "piano", "ambient"],
+      "source_attributes": {"bpm": 105},
+      "evidence": {
+        "url": "https://ccmixter.org/files/AntSurvila/70993",
+        "kind": "direct public recording page",
+        "discovery": "editorial list at https://ccmixter.org/view/media/picks; no personal prior listening",
+        "landing_read": "readable; audio was not requested"
+      },
+      "license_notice": {"label": "CC BY-NC 3.0 Unported", "url": "https://creativecommons.org/licenses/by-nc/3.0/", "basis": "recording-page license link, not site footer"},
+      "credit_snapshot": {
+        "id": "CCM-70993-2026-10-27-v1",
+        "status": "draft-awaiting-completeness-review",
+        "display_names": ["Ant.Survila", "Dan_Mantau", "Lisa DeBenedictis (DeBenedictis)"],
+        "provider_credit": "ccMixter",
+        "upstream_credit_ids": ["CCM-UP-70072", "CCM-UP-25112"],
+        "copyright_or_additional_notices": "No additional notice observed in the readable recording/linked-work text; verify final file metadata before admission.",
+        "modification_notice": "Source remix uses guitar stems from Dan_Mantau's Fruitless. Retain its published upstream chain without asserting that Lisa's vocal is audible. No SobaFM audio modification."
+      },
+      "request_mapping": {
+        "request_id": "R03",
+        "supported": ["ambient", "no vocals"],
+        "contradicted": [],
+        "unknown": ["spacious and calm", "no drums"],
+        "rationale": "Ambient/instrumental tags support two checks; cinematic editorial language and BPM do not establish calm or absence of drums.",
+        "confidence": "medium for tags, low for mood/percussion"
+      },
+      "acquisition_plan": "ccmixter-temporary-copy",
+      "status": "permission-confirmed; file-and-credit-review-pending",
+      "gaps": ["complete mix file selector, size and exact encoding unverified", "review whether additional supplied notices exist and preserve full linked chain", "safe credit rendering and scoped audition approval pending"],
+      "audio_acquired": false,
+      "heard": false,
+      "ratings": null
+    },
+    {
+      "candidate_id": "FMA-NIGHT-OWL",
+      "source_id": "fma",
+      "source_recording_id": "/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+      "landing_url": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+      "title": "Night Owl",
+      "version": null,
+      "artist": {"name": "Broke For Free", "source_artist_id": "/music/Broke_For_Free/"},
+      "additional_contributors": null,
+      "album": {"name": "Directionless EP", "source_album_id": "/music/Broke_For_Free/Directionless_EP/"},
+      "reported_release_date": "2011-01-18",
+      "reported_duration_seconds": 194,
+      "reported_format": null,
+      "complete_recording_evidence": "indexed official page lists a released EP recording and duration, not a sample pack; actual complete file unverified",
+      "source_tags": ["Electronic", "Minimal Electronic"],
+      "source_attributes": {"instrumental": "No"},
+      "evidence": {
+        "url": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+        "kind": "public search-index rendering of official track page, reported crawled last month",
+        "discovery": "targeted title search and official all-time chart; chart popularity is not a quality score",
+        "landing_read": "direct read returned 403; no bypass or download attempted"
+      },
+      "license_notice": {"label": "Creative Commons Attribution License", "url": null, "basis": "indexed track-page label; version/jurisdiction and exact link not exposed"},
+      "credit_snapshot": {
+        "id": "FMA-NIGHT-OWL-2026-10-27-v1",
+        "status": "incomplete-draft",
+        "display_names": ["Broke For Free"],
+        "provider_credit": "Free Music Archive",
+        "upstream_credit_ids": [],
+        "copyright_or_additional_notices": null,
+        "modification_notice": "No audio acquired or modified; supplied additional notices not yet readable."
+      },
+      "request_mapping": {
+        "request_id": "R08",
+        "supported": ["electronic"],
+        "contradicted": ["no vocals"],
+        "unknown": ["driving pulse", "high energy"],
+        "rationale": "Retain the source's Instrumental No value as a metadata contradiction, not a listening verdict. FMA's artist guide warns that No was a default; do not silently relabel this recording.",
+        "confidence": "low; indexed genre and potentially default-valued vocal field"
+      },
+      "acquisition_plan": "fma-operator-hosted-import",
+      "status": "permission-confirmed; record-access-and-credits-incomplete",
+      "gaps": ["exact license link/version and all supplied credits/notices", "source numeric ID not exposed; canonical path used as identity", "available file format, size and manual import route", "instrumental field requires verification"],
+      "audio_acquired": false,
+      "heard": false,
+      "ratings": null
+    },
+    {
+      "candidate_id": "FMA-GYMNOPEDIE-1",
+      "source_id": "fma",
+      "source_recording_id": "/music/Kevin_MacLeod/Classical_Sampler/Gymnopedie_No_1",
+      "landing_url": "https://freemusicarchive.org/music/Kevin_MacLeod/Classical_Sampler/Gymnopedie_No_1",
+      "title": "Erik Satie: Gymnopedie No 1",
+      "version": null,
+      "artist": {"name": "Kevin MacLeod", "source_artist_id": "/music/Kevin_MacLeod/"},
+      "additional_contributors": ["Erik Satie (composition named in supplied title)"],
+      "album": {"name": "Classical Sampler", "source_album_id": "/music/Kevin_MacLeod/Classical_Sampler/"},
+      "reported_release_date": "2011-07-15",
+      "reported_duration_seconds": 187,
+      "reported_format": null,
+      "complete_recording_evidence": "indexed official page lists a released album recording and duration; actual complete file and solo-piano instrumentation unverified",
+      "source_tags": ["Classical"],
+      "source_attributes": {"instrumental": "Yes"},
+      "evidence": {
+        "url": "https://freemusicarchive.org/music/Kevin_MacLeod/Classical_Sampler/Gymnopedie_No_1",
+        "kind": "public search-index rendering of official track page, reported crawled last month",
+        "discovery": "targeted R16 composition search after preserving the initially found No 2 mismatch",
+        "landing_read": "direct read returned 403; no bypass or download attempted"
+      },
+      "license_notice": {"label": "Creative Commons Attribution License", "url": null, "basis": "indexed track-page label; version/jurisdiction and exact link not exposed"},
+      "credit_snapshot": {
+        "id": "FMA-GYMNOPEDIE-1-2026-10-27-v1",
+        "status": "incomplete-draft",
+        "display_names": ["Kevin MacLeod", "Erik Satie"],
+        "provider_credit": "Free Music Archive",
+        "upstream_credit_ids": [],
+        "copyright_or_additional_notices": null,
+        "modification_notice": "No audio acquired or modified; no inference of recording permission from composition age."
+      },
+      "request_mapping": {
+        "request_id": "R16",
+        "supported": ["Gymnopédie No. 1 by Erik Satie", "no vocals"],
+        "contradicted": [],
+        "unknown": ["solo piano"],
+        "rationale": "Supplied title and instrumental flag support identity/no-vocals; neither proves the recording is solo piano.",
+        "confidence": "medium for named work, low for unverified arrangement"
+      },
+      "acquisition_plan": "fma-operator-hosted-import",
+      "status": "permission-confirmed; record-access-and-credits-incomplete",
+      "gaps": ["exact license link/version and all supplied credits/notices", "source numeric ID not exposed; canonical path used as identity", "available file format, size and manual import route", "performer/composer roles and solo-piano arrangement beyond page labels"],
+      "audio_acquired": false,
+      "heard": false,
+      "ratings": null
+    }
+  ],
+  "upstream_credit_records": [
+    {"id": "CCM-UP-15139", "source_recording_id": "15139", "title": "Sunrise", "creator": "Shannon Hurley / shannonsongs", "url": "https://ccmixter.org/files/shannonsongs/15139", "license_url": null, "observation": "The linked upload reports unavailable for viewing. Creator linkage comes from the parent remix. Further notices/chain unknown; retain unavailable case."},
+    {"id": "CCM-UP-70072", "source_recording_id": "70072", "title": "Fruitless", "creator": "Dan_Mantau, featuring Lisa DeBenedictis", "url": "https://ccmixter.org/files/Dan_Mantau/70072", "license_url": "https://creativecommons.org/licenses/by-nc/3.0/", "observation": "Parent remix lists this as sample source; page links Fruitless by DeBenedictis. WILD WINDSTEPS describes guitar stems, so do not assert that all upstream audio was used."},
+    {"id": "CCM-UP-25112", "source_recording_id": "25112", "title": "Fruitless", "creator": "DeBenedictis (Lisa DeBenedictis as named by Dan_Mantau)", "url": "https://ccmixter.org/files/lisadb/25112", "license_url": "https://creativecommons.org/licenses/by-nc/3.0/", "observation": "A cappella source, not a pilot audition candidate; no further Uses samples from section observed."}
+  ],
+  "retained_other_candidates": [
+    {
+      "source_id": "ccmixter",
+      "source_recording_id": "70997",
+      "title": "sandgrains",
+      "creator": "airtone; Speck samples and Jeris vocal",
+      "url": "https://ccmixter.org/files/airtone/70997",
+      "reported_duration_seconds": 251,
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "reason_not_nominated": "Complete editorial remix but male-vocals tag contradicts R03's no-vocals check; retain the inspected case. No audio heard.",
+      "upstream_evidence": [
+        {"url": "https://ccmixter.org/files/VJ_Memes/61357", "title": "Butterfly Woke", "creator": "Jeris, featuring airtone", "license_url": "https://creativecommons.org/licenses/by/3.0/", "note": "Names Chuang Tzu, Samuel Taylor Coleridge and William Blake as inspirations; credits retained without copying lyrics. Links the airtone source below."},
+        {"url": "https://ccmixter.org/files/airtone/59501", "title": "disEnchantment - instrumental", "creator": "airtone", "license_url": "https://creativecommons.org/licenses/by/3.0/", "note": "Instrumental version with stems; no further Uses samples from section observed."},
+        {"url": "https://ccmixter.org/files/speck/69442", "title": "A Long Dark Tunnel From Which There May Be No Egress", "creator": "Speck", "license_url": "https://creativecommons.org/licenses/by-nc/4.0/", "note": "Sample/stem source, not a pilot audition selection."},
+        {"url": "https://ccmixter.org/files/speck/69556", "title": "Long Forgotten Spring", "creator": "Speck", "license_url": "https://creativecommons.org/licenses/by-nc/4.0/", "note": "Sample/stem source, not a pilot audition selection."}
+      ]
+    },
+    {
+      "source_id": "fma",
+      "source_recording_id": "/music/Kevin_MacLeod/Classical_Sampler/Gymnopedie_No_2/",
+      "title": "Erik Satie: Gymnopedie No 2",
+      "creator": "Kevin MacLeod; Erik Satie named in title",
+      "url": "https://freemusicarchive.org/music/Kevin_MacLeod/Classical_Sampler/Gymnopedie_No_2/",
+      "reported_duration_seconds": 159,
+      "license_url": null,
+      "reason_not_nominated": "Indexed official page labels a released classical instrumental with Creative Commons Attribution License, exact version unknown. No 2 contradicts R16's No 1 identity. Direct read returned 403; no audio heard."
+    }
+  ]
+}
