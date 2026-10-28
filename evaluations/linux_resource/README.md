@@ -18,6 +18,15 @@ dependencies, provider adapter or station framework.
   and image. Its fixed supplemental-limit candidate was [rejected at loader startup](decoder-supply.md).
   Supplemental limits are not yet an established PCM bound. No custom decoder
   or source distribution is introduced.
+  A subsequent [pinned mpg123 supply and startup check](mpg123-proposal.md) preserves
+  the base and passes the fixed no-input command under the unchanged limits.
+  Aggregate PCM qualification across all required cases remains pending.
+  A distinct fixed AS 12,524,288 startup variant also passed once after independent
+  review; neither startup establishes useful decode or aggregate PCM fit.
+  The [owned decode confirmation](mpg123-fixture-plan.md#corrected-confirmation)
+  passed exact output, six-second readiness and clean release after a narrow
+  diagnostic correction. The first incomplete run is preserved; other Q3
+  cases remain unqualified.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
 - Stop after the first executed failure. A successful Q1/Q2 pass stops before Q3;
@@ -29,9 +38,10 @@ After conservatively reserving all 8,802,304 parent/copy bytes as PCM, at most
 25,757,696 bytes remain within the independent 34,560,000-byte PCM ceiling.
 The 90,177,536-byte group cap cannot establish that smaller PCM-class bound.
 Permitted documentation or version-specific allocation evidence must reconcile
-it before useful-fit testing can qualify the candidate. Exact binary licensing
-and security checks for local decoder execution remain outstanding; this is not
-a request to waive the PCM ceiling or source-access restrictions.
+it before useful-fit testing can qualify the candidate. The mpg123 result binds
+its exact local binary assessment, source-derived address-space scope and one
+owned workload. It does not waive the PCM ceiling, source-access restrictions
+or remaining qualification cases.
 
 ## Exact first-stage candidate
 

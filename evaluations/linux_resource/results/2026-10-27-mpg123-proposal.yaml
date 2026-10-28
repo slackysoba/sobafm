@@ -1,0 +1,1231 @@
+classification: signed_metadata_proposal_pending_acquisition_review
+source_commit: 882ae080abe10eef02a2966e66388ac4043c2a4b  # pragma: allowlist secret - public source or artifact digest
+image: ghcr.io/astral-sh/uv@sha256:8f4ab6a0f2cc074290ba6a136eb016350b2b6b93a2108e07b72724901ad1914f  # pragma: allowlist secret - public source or artifact digest
+apt_version: 3.0.3
+target: amd64
+base_keyring_sha256: 506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017  # pragma: allowlist secret - public source or artifact digest
+inrelease:
+- name: deb.debian.org_debian_dists_forky_InRelease
+  sha256: 958915393cba5c8dd800c796bdcaedc6563fe225e37d504fddf159d6b609a66d  # pragma: allowlist secret - public source or artifact digest
+  Suite: testing
+  Codename: forky
+  Date: Wed, 28 Oct 2026 02:08:46 UTC
+  Valid-Until: Wed, 04 Nov 2026 02:08:46 UTC
+- name: security.debian.org_debian-security_dists_trixie-security_InRelease
+  sha256: e7fa27c6347540f93dc90c68b4361e02148fc15bdd516a816d6f56449c3c3baf  # pragma: allowlist secret - public source or artifact digest
+  Suite: stable-security
+  Codename: trixie-security
+  Date: Tue, 27 Oct 2026 21:13:57 UTC
+  Valid-Until: Tue, 03 Nov 2026 21:13:57 UTC
+- name: deb.debian.org_debian_dists_trixie-updates_InRelease
+  sha256: cf3d4c7445f1a05665426e54ae62254614a8e739ea7c519efca5cc757b5a4aa2  # pragma: allowlist secret - public source or artifact digest
+  Suite: stable-updates
+  Codename: trixie-updates
+  Date: Wed, 28 Oct 2026 02:08:46 UTC
+  Valid-Until: Wed, 04 Nov 2026 02:08:46 UTC
+- name: deb.debian.org_debian_dists_trixie_InRelease
+  sha256: 0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675  # pragma: allowlist secret - public source or artifact digest
+  Suite: stable
+  Codename: trixie
+  Date: Sat, 12 Sep 2026 07:55:41 UTC
+base_packages:
+- package: adduser
+  version: '3.152'
+  architecture: all
+  source_package: adduser
+  source_version: '3.152'
+- package: apt
+  version: 3.0.3
+  architecture: amd64
+  source_package: apt
+  source_version: 3.0.3
+- package: base-files
+  version: 13.8+deb13u7
+  architecture: amd64
+  source_package: base-files
+  source_version: 13.8+deb13u7
+- package: base-passwd
+  version: 3.6.7
+  architecture: amd64
+  source_package: base-passwd
+  source_version: 3.6.7
+- package: bash
+  version: 5.2.37-2+b10
+  architecture: amd64
+  source_package: bash
+  source_version: 5.2.37-2
+- package: bsdutils
+  version: 1:2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: ca-certificates
+  version: '20250419'
+  architecture: all
+  source_package: ca-certificates
+  source_version: '20250419'
+- package: coreutils
+  version: 9.7-3
+  architecture: amd64
+  source_package: coreutils
+  source_version: 9.7-3
+- package: dash
+  version: 0.5.12-12
+  architecture: amd64
+  source_package: dash
+  source_version: 0.5.12-12
+- package: debconf
+  version: 1.5.91
+  architecture: all
+  source_package: debconf
+  source_version: 1.5.91
+- package: debian-archive-keyring
+  version: '2025.1'
+  architecture: all
+  source_package: debian-archive-keyring
+  source_version: '2025.1'
+- package: debianutils
+  version: 5.23.2
+  architecture: amd64
+  source_package: debianutils
+  source_version: 5.23.2
+- package: diffutils
+  version: 1:3.10-4
+  architecture: amd64
+  source_package: diffutils
+  source_version: 1:3.10-4
+- package: dpkg
+  version: 1.22.22
+  architecture: amd64
+  source_package: dpkg
+  source_version: 1.22.22
+- package: findutils
+  version: 4.10.0-3
+  architecture: amd64
+  source_package: findutils
+  source_version: 4.10.0-3
+- package: gcc-14-base:amd64
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: grep
+  version: 3.11-4
+  architecture: amd64
+  source_package: grep
+  source_version: 3.11-4
+- package: gzip
+  version: 1.13-1+deb13u1
+  architecture: amd64
+  source_package: gzip
+  source_version: 1.13-1+deb13u1
+- package: hostname
+  version: '3.25'
+  architecture: amd64
+  source_package: hostname
+  source_version: '3.25'
+- package: init-system-helpers
+  version: 1.69~deb13u1
+  architecture: all
+  source_package: init-system-helpers
+  source_version: 1.69~deb13u1
+- package: libacl1:amd64
+  version: 2.3.2-2+b1
+  architecture: amd64
+  source_package: acl
+  source_version: 2.3.2-2
+- package: libapt-pkg7.0:amd64
+  version: 3.0.3
+  architecture: amd64
+  source_package: apt
+  source_version: 3.0.3
+- package: libattr1:amd64
+  version: 1:2.5.2-3
+  architecture: amd64
+  source_package: attr
+  source_version: 1:2.5.2-3
+- package: libaudit-common
+  version: 1:4.0.2-2+deb13u1
+  architecture: all
+  source_package: audit
+  source_version: 1:4.0.2-2+deb13u1
+- package: libaudit1:amd64
+  version: 1:4.0.2-2+deb13u1
+  architecture: amd64
+  source_package: audit
+  source_version: 1:4.0.2-2+deb13u1
+- package: libblkid1:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libbsd0:amd64
+  version: 0.12.2-2
+  architecture: amd64
+  source_package: libbsd
+  source_version: 0.12.2-2
+- package: libbz2-1.0:amd64
+  version: 1.0.8-6
+  architecture: amd64
+  source_package: bzip2
+  source_version: 1.0.8-6
+- package: libc-bin
+  version: 2.41-12+deb13u4
+  architecture: amd64
+  source_package: glibc
+  source_version: 2.41-12+deb13u4
+- package: libc6:amd64
+  version: 2.41-12+deb13u4
+  architecture: amd64
+  source_package: glibc
+  source_version: 2.41-12+deb13u4
+- package: libcap-ng0:amd64
+  version: 0.8.5-4+b1
+  architecture: amd64
+  source_package: libcap-ng
+  source_version: 0.8.5-4
+- package: libcap2:amd64
+  version: 1:2.75-10+deb13u1+b3
+  architecture: amd64
+  source_package: libcap2
+  source_version: 1:2.75-10+deb13u1
+- package: libcrypt1:amd64
+  version: 1:4.4.38-1
+  architecture: amd64
+  source_package: libxcrypt
+  source_version: 1:4.4.38-1
+- package: libdb5.3t64:amd64
+  version: 5.3.28+dfsg2-9
+  architecture: amd64
+  source_package: db5.3
+  source_version: 5.3.28+dfsg2-9
+- package: libdebconfclient0:amd64
+  version: '0.280'
+  architecture: amd64
+  source_package: cdebconf
+  source_version: '0.280'
+- package: libffi8:amd64
+  version: 3.4.8-2
+  architecture: amd64
+  source_package: libffi
+  source_version: 3.4.8-2
+- package: libgcc-s1:amd64
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: libgdbm6t64:amd64
+  version: 1.24-2
+  architecture: amd64
+  source_package: gdbm
+  source_version: 1.24-2
+- package: libgmp10:amd64
+  version: 2:6.3.0+dfsg-3
+  architecture: amd64
+  source_package: gmp
+  source_version: 2:6.3.0+dfsg-3
+- package: libhogweed6t64:amd64
+  version: 3.10.1-1
+  architecture: amd64
+  source_package: nettle
+  source_version: 3.10.1-1
+- package: liblastlog2-2:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: liblz4-1:amd64
+  version: 1.10.0-4
+  architecture: amd64
+  source_package: lz4
+  source_version: 1.10.0-4
+- package: liblzma5:amd64
+  version: 5.8.1-1+deb13u1
+  architecture: amd64
+  source_package: xz-utils
+  source_version: 5.8.1-1+deb13u1
+- package: libmd0:amd64
+  version: 1.1.0-2+b1
+  architecture: amd64
+  source_package: libmd
+  source_version: 1.1.0-2
+- package: libmount1:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libncursesw6:amd64
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: libnettle8t64:amd64
+  version: 3.10.1-1
+  architecture: amd64
+  source_package: nettle
+  source_version: 3.10.1-1
+- package: libpam-modules:amd64
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam-modules-bin
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam-runtime
+  version: 1.7.0-5
+  architecture: all
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam0g:amd64
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpcre2-8-0:amd64
+  version: 10.46-1~deb13u2
+  architecture: amd64
+  source_package: pcre2
+  source_version: 10.46-1~deb13u2
+- package: libreadline8t64:amd64
+  version: 8.2-6
+  architecture: amd64
+  source_package: readline
+  source_version: 8.2-6
+- package: libseccomp2:amd64
+  version: 2.6.0-2
+  architecture: amd64
+  source_package: libseccomp
+  source_version: 2.6.0-2
+- package: libselinux1:amd64
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libselinux
+  source_version: 3.8.1-1
+- package: libsemanage-common
+  version: 3.8.1-1
+  architecture: all
+  source_package: libsemanage
+  source_version: 3.8.1-1
+- package: libsemanage2:amd64
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libsemanage
+  source_version: 3.8.1-1
+- package: libsepol2:amd64
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libsepol
+  source_version: 3.8.1-1
+- package: libsmartcols1:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libsqlite3-0:amd64
+  version: 3.46.1-7+deb13u2
+  architecture: amd64
+  source_package: sqlite3
+  source_version: 3.46.1-7+deb13u2
+- package: libssl3t64:amd64
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: libstdc++6:amd64
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: libsystemd0:amd64
+  version: 257.13-1~deb13u1
+  architecture: amd64
+  source_package: systemd
+  source_version: 257.13-1~deb13u1
+- package: libtinfo6:amd64
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: libudev1:amd64
+  version: 257.13-1~deb13u1
+  architecture: amd64
+  source_package: systemd
+  source_version: 257.13-1~deb13u1
+- package: libuuid1:amd64
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libxxhash0:amd64
+  version: 0.8.3-2
+  architecture: amd64
+  source_package: xxhash
+  source_version: 0.8.3-2
+- package: libzstd1:amd64
+  version: 1.5.7+dfsg-1
+  architecture: amd64
+  source_package: libzstd
+  source_version: 1.5.7+dfsg-1
+- package: login
+  version: 1:4.16.0-2+really2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: login.defs
+  version: 1:4.17.4-2
+  architecture: all
+  source_package: shadow
+  source_version: 1:4.17.4-2
+- package: mawk
+  version: 1.3.4.20250131-1
+  architecture: amd64
+  source_package: mawk
+  source_version: 1.3.4.20250131-1
+- package: mount
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: ncurses-base
+  version: 6.5+20250216-2
+  architecture: all
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: ncurses-bin
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: netbase
+  version: '6.5'
+  architecture: all
+  source_package: netbase
+  source_version: '6.5'
+- package: openssl
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: openssl-provider-legacy
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: passwd
+  version: 1:4.17.4-2
+  architecture: amd64
+  source_package: shadow
+  source_version: 1:4.17.4-2
+- package: perl-base
+  version: 5.40.1-6+deb13u1
+  architecture: amd64
+  source_package: perl
+  source_version: 5.40.1-6+deb13u1
+- package: readline-common
+  version: 8.2-6
+  architecture: all
+  source_package: readline
+  source_version: 8.2-6
+- package: sed
+  version: 4.9-2+deb13u1
+  architecture: amd64
+  source_package: sed
+  source_version: 4.9-2+deb13u1
+- package: sqv
+  version: 1.3.0-3+b2
+  architecture: amd64
+  source_package: rust-sequoia-sqv
+  source_version: 1.3.0-3
+- package: sysvinit-utils
+  version: 3.14-4
+  architecture: amd64
+  source_package: sysvinit
+  source_version: 3.14-4
+- package: tar
+  version: 1.35+dfsg-3.1
+  architecture: amd64
+  source_package: tar
+  source_version: 1.35+dfsg-3.1
+- package: tzdata
+  version: 2026c-0+deb13u1
+  architecture: all
+  source_package: tzdata
+  source_version: 2026c-0+deb13u1
+- package: util-linux
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: zlib1g:amd64
+  version: 1:1.3.dfsg+really1.3.1-1+b1
+  architecture: amd64
+  source_package: zlib
+  source_version: 1:1.3.dfsg+really1.3.1-1
+family_pins:
+  libmpg123-0t64: 1.33.7-1
+  libout123-0t64: 1.33.7-1
+  libsyn123-0t64: 1.33.7-1
+  mpg123: 1.33.7-1
+candidate_suite: forky
+configurations:
+- name: debian.sources
+  content: 'Types: deb
+
+    URIs: https://deb.debian.org/debian
+
+    Suites: trixie trixie-updates
+
+    Components: main
+
+    Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+
+    Types: deb
+
+    URIs: https://security.debian.org/debian-security
+
+    Suites: trixie-security
+
+    Components: main
+
+    Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+
+    Types: deb
+
+    URIs: https://deb.debian.org/debian
+
+    Suites: forky
+
+    Components: main
+
+    Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+    '
+- name: preferences
+  content: 'Package: mpg123 libmpg123-0t64 libout123-0t64 libsyn123-0t64
+
+    Pin: release n=forky
+
+    Pin-Priority: 500
+
+
+    Package: *
+
+    Pin: release n=forky
+
+    Pin-Priority: -1
+
+    '
+- name: apt.conf
+  content: 'Dir::Etc::main "/dev/null";
+
+    Dir::Etc::parts "/plan/empty-parts";
+
+    Dir::Etc::sourcelist "/plan/debian.sources";
+
+    Dir::Etc::sourceparts "/plan/empty-parts";
+
+    Dir::Etc::preferences "/plan/preferences";
+
+    Dir::Etc::preferencesparts "/plan/empty-parts";
+
+    Dir::State::lists "/plan/lists";
+
+    Dir::State::status "/var/lib/dpkg/status";
+
+    Dir::Cache "/plan/cache";
+
+    Dir::Cache::archives "/plan/cache/archives";
+
+    Dir::Cache::pkgcache "";
+
+    Dir::Cache::srcpkgcache "";
+
+    Dir::Log "/plan";
+
+    Debug::NoLocking "true";
+
+    Acquire::Languages "none";
+
+    Acquire::Retries "0";
+
+    Acquire::http::Timeout "15";
+
+    Acquire::https::Timeout "15";
+
+    Acquire::AllowInsecureRepositories "false";
+
+    Acquire::AllowDowngradeToInsecureRepositories "false";
+
+    Acquire::Check-Valid-Until "true";
+
+    APT::Get::AllowUnauthenticated "false";
+
+    '
+proposed_packages:
+- package: libasound2-data
+  version: 1.2.14-1+deb13u1
+  architecture: all
+  source_package: alsa-lib
+  source_version: 1.2.14-1+deb13u1
+  filename: pool/main/a/alsa-lib/libasound2-data_1.2.14-1+deb13u1_all.deb
+  size_bytes: 21188
+  sha256: 04688afdff3769c0f685541daed7b2f6f0cb946799ddf1d5847ddf11fe245559  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 197
+  uri: https://deb.debian.org/debian/pool/main/a/alsa-lib/libasound2-data_1.2.14-1%2bdeb13u1_all.deb
+  apt_local_filename: libasound2-data_1.2.14-1+deb13u1_all.deb
+  apt_uri_hash: MD5Sum:3ff33adf1c4821f8ad7cd8f427a1c905  # pragma: allowlist secret - public source or artifact digest
+  breaks: libasound2t64 (<< 1.2.14-1+deb13u1)
+  replaces: libasound2t64 (<< 1.2.14-1+deb13u1)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libasound2t64
+  version: 1.2.14-1+deb13u1
+  architecture: amd64
+  source_package: alsa-lib
+  source_version: 1.2.14-1+deb13u1
+  filename: pool/main/a/alsa-lib/libasound2t64_1.2.14-1+deb13u1_amd64.deb
+  size_bytes: 380896
+  sha256: 5495496142d57e5ad6d581ac5456ec3c87f872c109a2bfb815d154b673eebc67  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1265
+  uri: https://deb.debian.org/debian/pool/main/a/alsa-lib/libasound2t64_1.2.14-1%2bdeb13u1_amd64.deb
+  apt_local_filename: libasound2t64_1.2.14-1+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:e1004bd73f203a8a5b25be22c5b358cf  # pragma: allowlist secret - public source or artifact digest
+  depends: libasound2-data (>= 1.2.14-1+deb13u1), libc6 (>= 2.38)
+  provides: libasound2 (= 1.2.14-1+deb13u1)
+  breaks: alsa-utils (<< 1.2.1), libasound2 (<< 1.2.14-1+deb13u1)
+  replaces: libasound2
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libasyncns0
+  version: 0.8-6+b5
+  architecture: amd64
+  source_package: libasyncns
+  source_version: 0.8-6
+  filename: pool/main/liba/libasyncns/libasyncns0_0.8-6+b5_amd64.deb
+  size_bytes: 12028
+  sha256: e7958777b0e3586349c57ac759a95b68f80d28e5bd1c4225705198b39b436115  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 39
+  uri: https://deb.debian.org/debian/pool/main/liba/libasyncns/libasyncns0_0.8-6%2bb5_amd64.deb
+  apt_local_filename: libasyncns0_0.8-6+b5_amd64.deb
+  apt_uri_hash: MD5Sum:c4868c175574e6ec20cb7af66803aca2  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libdbus-1-3
+  version: 1.16.2-2
+  architecture: amd64
+  source_package: dbus
+  source_version: 1.16.2-2
+  filename: pool/main/d/dbus/libdbus-1-3_1.16.2-2_amd64.deb
+  size_bytes: 177904
+  sha256: bbcb711daff7e104b5f80f9b05475b6142674bfe65518a36a56e96a91068a3f5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 445
+  uri: https://deb.debian.org/debian/pool/main/d/dbus/libdbus-1-3_1.16.2-2_amd64.deb
+  apt_local_filename: libdbus-1-3_1.16.2-2_amd64.deb
+  apt_uri_hash: MD5Sum:686cab55ea673c13d19531883c4860eb  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libsystemd0
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libflac14
+  version: 1.5.0+ds-2
+  architecture: amd64
+  source_package: flac
+  source_version: 1.5.0+ds-2
+  filename: pool/main/f/flac/libflac14_1.5.0+ds-2_amd64.deb
+  size_bytes: 209588
+  sha256: 658b9f77d35638caf75dfaea4f6d5cde196104d5662f0776e23d7cc450bd4cb5  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 479
+  uri: https://deb.debian.org/debian/pool/main/f/flac/libflac14_1.5.0%2bds-2_amd64.deb
+  apt_local_filename: libflac14_1.5.0+ds-2_amd64.deb
+  apt_uri_hash: MD5Sum:c28ba8931f9ee1bc8a4ea89ee095195b  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34), libogg0 (>= 1.1.0)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libjack-jackd2-0
+  version: 1.9.22~dfsg-4
+  architecture: amd64
+  source_package: jackd2
+  source_version: 1.9.22~dfsg-4
+  filename: pool/main/j/jackd2/libjack-jackd2-0_1.9.22~dfsg-4_amd64.deb
+  size_bytes: 286512
+  sha256: 64ec8d64ae0149bfa17b43d414cc8ae9032a27f76123864d185b275681666c45  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1165
+  uri: https://deb.debian.org/debian/pool/main/j/jackd2/libjack-jackd2-0_1.9.22%7edfsg-4_amd64.deb
+  apt_local_filename: libjack-jackd2-0_1.9.22~dfsg-4_amd64.deb
+  apt_uri_hash: MD5Sum:9dad0ffeead02ad36e8a9331d7f7d930  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libdb5.3t64, libgcc-s1 (>= 3.0), libopus0 (>= 1.3.1-2~), libsamplerate0 (>= 0.1.7),
+    libstdc++6 (>= 14)
+  provides: libjack-0.116, libjack-0.125
+  conflicts: libjack-0.116, libjack-0.125, libjack0
+  replaces: libjack-0.116, libjack-0.125
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libmp3lame0
+  version: 3.100-6+b3
+  architecture: amd64
+  source_package: lame
+  source_version: 3.100-6
+  filename: pool/main/l/lame/libmp3lame0_3.100-6+b3_amd64.deb
+  size_bytes: 362660
+  sha256: 3867319c9fbbc8cc25f2d1dc1d75d13548c84c37fa709c1ac9ca02ac051b63ab  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 548
+  uri: https://deb.debian.org/debian/pool/main/l/lame/libmp3lame0_3.100-6%2bb3_amd64.deb
+  apt_local_filename: libmp3lame0_3.100-6+b3_amd64.deb
+  apt_uri_hash: MD5Sum:488959c443889726e46be619e0bcb2d8  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libmpg123-0t64
+  version: 1.33.7-1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.33.7-1
+  filename: pool/main/m/mpg123/libmpg123-0t64_1.33.7-1_amd64.deb
+  size_bytes: 154156
+  sha256: 7bc1e1da16d5acbdf43ce5db1726b3aa060463244b881a78e6627b7b7f9ca9fe  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 401
+  uri: https://deb.debian.org/debian/pool/main/m/mpg123/libmpg123-0t64_1.33.7-1_amd64.deb
+  apt_local_filename: libmpg123-0t64_1.33.7-1_amd64.deb
+  apt_uri_hash: MD5Sum:b9f160acd424fe6c932568ec6175272f  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38)
+  provides: libmpg123-0 (= 1.33.7-1)
+  breaks: libmpg123-0 (<< 1.33.7-1)
+  replaces: libmpg123-0
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: -1
+      uri: https://deb.debian.org/debian
+      suite_component: forky/main
+      index_architecture: amd64
+- package: libogg0
+  version: 1.3.5-3+b2
+  architecture: amd64
+  source_package: libogg
+  source_version: 1.3.5-3
+  filename: pool/main/libo/libogg/libogg0_1.3.5-3+b2_amd64.deb
+  size_bytes: 23812
+  sha256: 911aec914f5bda0788164ff8068b682537378bf8d407b1d6c1b377522f96b83b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 62
+  uri: https://deb.debian.org/debian/pool/main/libo/libogg/libogg0_1.3.5-3%2bb2_amd64.deb
+  apt_local_filename: libogg0_1.3.5-3+b2_amd64.deb
+  apt_uri_hash: MD5Sum:67b028052107849a5983e6ef1244360d  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libopenal-data
+  version: 1:1.24.2-1
+  architecture: all
+  source_package: openal-soft
+  source_version: 1:1.24.2-1
+  filename: pool/main/o/openal-soft/libopenal-data_1.24.2-1_all.deb
+  size_bytes: 167780
+  sha256: 003fb223f6ccd387adc28357021c243c604591806afb84dc46e906b911d8de38  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 260
+  uri: https://deb.debian.org/debian/pool/main/o/openal-soft/libopenal-data_1.24.2-1_all.deb
+  apt_local_filename: libopenal-data_1%3a1.24.2-1_all.deb
+  apt_uri_hash: MD5Sum:2eee097a09a8bed1e0b9b21e1fe66be4  # pragma: allowlist secret - public source or artifact digest
+  breaks: libopenal1 (<< 1:1.14-5)
+  replaces: libopenal1 (<< 1:1.14-5)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libopenal1
+  version: 1:1.24.2-1
+  architecture: amd64
+  source_package: openal-soft
+  source_version: 1:1.24.2-1
+  filename: pool/main/o/openal-soft/libopenal1_1.24.2-1_amd64.deb
+  size_bytes: 637304
+  sha256: 7b888c0854bdf8e61fb000aa2816ea5ed76cf52da85dba94e463cce5e182662d  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1574
+  uri: https://deb.debian.org/debian/pool/main/o/openal-soft/libopenal1_1.24.2-1_amd64.deb
+  apt_local_filename: libopenal1_1%3a1.24.2-1_amd64.deb
+  apt_uri_hash: MD5Sum:8de3b1e37550961606830b9a21981247  # pragma: allowlist secret - public source or artifact digest
+  depends: libopenal-data (= 1:1.24.2-1), libc6 (>= 2.38), libgcc-s1 (>= 4.0), libstdc++6 (>= 14)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libopus0
+  version: 1.5.2-2
+  architecture: amd64
+  source_package: opus
+  source_version: 1.5.2-2
+  filename: pool/main/o/opus/libopus0_1.5.2-2_amd64.deb
+  size_bytes: 2851932
+  sha256: 794056db33d71b2ac4bd8b5a4eb23b627bcb8a49d123c33b6e841a996253a067  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 3494
+  uri: https://deb.debian.org/debian/pool/main/o/opus/libopus0_1.5.2-2_amd64.deb
+  apt_local_filename: libopus0_1.5.2-2_amd64.deb
+  apt_uri_hash: MD5Sum:938057fb1163ba46da50f7f7c5efd5a6  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libout123-0t64
+  version: 1.33.7-1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.33.7-1
+  filename: pool/main/m/mpg123/libout123-0t64_1.33.7-1_amd64.deb
+  size_bytes: 32016
+  sha256: 6b4e4c6e46c3197efc7722f91bdc3a5813250223421ffa288a52dac2d0a5a1b9  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 96
+  uri: https://deb.debian.org/debian/pool/main/m/mpg123/libout123-0t64_1.33.7-1_amd64.deb
+  apt_local_filename: libout123-0t64_1.33.7-1_amd64.deb
+  apt_uri_hash: MD5Sum:c613a618bee8e40311aa21b736f6bc66  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.34)
+  provides: libout123-0 (= 1.33.7-1)
+  breaks: libout123-0 (<< 1.33.7-1)
+  replaces: libout123-0
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: -1
+      uri: https://deb.debian.org/debian
+      suite_component: forky/main
+      index_architecture: amd64
+- package: libportaudio2
+  version: 19.6.0-1.2+b3
+  architecture: amd64
+  source_package: portaudio19
+  source_version: 19.6.0-1.2
+  filename: pool/main/p/portaudio19/libportaudio2_19.6.0-1.2+b3_amd64.deb
+  size_bytes: 64768
+  sha256: e254c833aadd342807898e53f6c587910b68aa0cefea05c3ae8e2d504fa7df6d  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 208
+  uri: https://deb.debian.org/debian/pool/main/p/portaudio19/libportaudio2_19.6.0-1.2%2bb3_amd64.deb
+  apt_local_filename: libportaudio2_19.6.0-1.2+b3_amd64.deb
+  apt_uri_hash: MD5Sum:e2a6f12d3e933fb39dbd1f4bc7af75e0  # pragma: allowlist secret - public source or artifact digest
+  depends: libasound2t64 (>= 1.0.16), libc6 (>= 2.34), libjack-jackd2-0 (>= 1.9.10+20150825) | libjack-0.125
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libpulse0
+  version: 17.0+dfsg1-2+b1
+  architecture: amd64
+  source_package: pulseaudio
+  source_version: 17.0+dfsg1-2
+  filename: pool/main/p/pulseaudio/libpulse0_17.0+dfsg1-2+b1_amd64.deb
+  size_bytes: 275632
+  sha256: 786aca79119cb249562708fd24dcdf817604cfe75bbfcb8cda3464042e17f40e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 973
+  uri: https://deb.debian.org/debian/pool/main/p/pulseaudio/libpulse0_17.0%2bdfsg1-2%2bb1_amd64.deb
+  apt_local_filename: libpulse0_17.0+dfsg1-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:23a6e757fa15d2a47adf70b08d212280  # pragma: allowlist secret - public source or artifact digest
+  depends: libasyncns0 (>= 0.3), libc6 (>= 2.38), libdbus-1-3 (>= 1.10), libsndfile1 (>= 1.0.20), libsystemd0, libx11-6,
+    libx11-xcb1, libxcb1
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libsamplerate0
+  version: 0.2.2-4+b2
+  architecture: amd64
+  source_package: libsamplerate
+  source_version: 0.2.2-4
+  filename: pool/main/libs/libsamplerate/libsamplerate0_0.2.2-4+b2_amd64.deb
+  size_bytes: 950084
+  sha256: 2665417fa996c1e249dbaa65c32305ac666e5ae865fad0f109b629935ec0bd18  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1494
+  uri: https://deb.debian.org/debian/pool/main/libs/libsamplerate/libsamplerate0_0.2.2-4%2bb2_amd64.deb
+  apt_local_filename: libsamplerate0_0.2.2-4+b2_amd64.deb
+  apt_uri_hash: MD5Sum:a469c5c19f43bfc2e150f2039fa5563f  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.14)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libsndfile1
+  version: 1.2.2-2+deb13u1
+  architecture: amd64
+  source_package: libsndfile
+  source_version: 1.2.2-2+deb13u1
+  filename: pool/main/libs/libsndfile/libsndfile1_1.2.2-2+deb13u1_amd64.deb
+  size_bytes: 199172
+  sha256: d92263a045554e6f39c6b1c2ee4cca44a3248d9b9339301ff195969bf84b75eb  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 595
+  uri: https://deb.debian.org/debian/pool/main/libs/libsndfile/libsndfile1_1.2.2-2%2bdeb13u1_amd64.deb
+  apt_local_filename: libsndfile1_1.2.2-2+deb13u1_amd64.deb
+  apt_uri_hash: MD5Sum:e2588b28bc4004bdf820bd84c1281981  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libflac14 (>= 1.5.0), libmp3lame0 (>= 3.100), libmpg123-0t64 (>= 1.28.0), libogg0 (>=
+    1.3.0), libopus0 (>= 1.1), libvorbis0a (>= 1.2.3), libvorbisenc2 (>= 1.1.2)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libsyn123-0t64
+  version: 1.33.7-1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.33.7-1
+  filename: pool/main/m/mpg123/libsyn123-0t64_1.33.7-1_amd64.deb
+  size_bytes: 97888
+  sha256: 857156d91020cc61dd3e313f9c05b57c0b42cc21575aac08dd18c32b68c9658e  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 240
+  uri: https://deb.debian.org/debian/pool/main/m/mpg123/libsyn123-0t64_1.33.7-1_amd64.deb
+  apt_local_filename: libsyn123-0t64_1.33.7-1_amd64.deb
+  apt_uri_hash: MD5Sum:336a682f9fcf0ae4982411b2516f8749  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29)
+  provides: libsyn123-0 (= 1.33.7-1)
+  breaks: libsyn123-0 (<< 1.33.7-1)
+  replaces: libsyn123-0
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: -1
+      uri: https://deb.debian.org/debian
+      suite_component: forky/main
+      index_architecture: amd64
+- package: libvorbis0a
+  version: 1.3.7-3
+  architecture: amd64
+  source_package: libvorbis
+  source_version: 1.3.7-3
+  filename: pool/main/libv/libvorbis/libvorbis0a_1.3.7-3_amd64.deb
+  size_bytes: 89960
+  sha256: 0465f7f602f7b00965e58e7273b5876060ab7946f0452a9f95d979046932cc42  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 208
+  uri: https://deb.debian.org/debian/pool/main/libv/libvorbis/libvorbis0a_1.3.7-3_amd64.deb
+  apt_local_filename: libvorbis0a_1.3.7-3_amd64.deb
+  apt_uri_hash: MD5Sum:847fa3ce164022557c69fca9621284cd  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.29), libogg0 (>= 1.1.0)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libvorbisenc2
+  version: 1.3.7-3
+  architecture: amd64
+  source_package: libvorbis
+  source_version: 1.3.7-3
+  filename: pool/main/libv/libvorbis/libvorbisenc2_1.3.7-3_amd64.deb
+  size_bytes: 75432
+  sha256: 5fbbf06a5b196235aa2753cd12bbe7f843328571d368f15b1c337578e29f73a2  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 698
+  uri: https://deb.debian.org/debian/pool/main/libv/libvorbis/libvorbisenc2_1.3.7-3_amd64.deb
+  apt_local_filename: libvorbisenc2_1.3.7-3_amd64.deb
+  apt_uri_hash: MD5Sum:a497095e426d92d21c05915487617076  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.4), libvorbis0a (= 1.3.7-3)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libx11-6
+  version: 2:1.8.12-1
+  architecture: amd64
+  source_package: libx11
+  source_version: 2:1.8.12-1
+  filename: pool/main/libx/libx11/libx11-6_1.8.12-1_amd64.deb
+  size_bytes: 815292
+  sha256: b5a3fd3bf8c8fd0364bfb9bea00dcba7fc301229bd02dded084632d31f5b0fb3  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1638
+  uri: https://deb.debian.org/debian/pool/main/libx/libx11/libx11-6_1.8.12-1_amd64.deb
+  apt_local_filename: libx11-6_2%3a1.8.12-1_amd64.deb
+  apt_uri_hash: MD5Sum:723fec07f977145e0ed2c6ff8048a69d  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libxcb1 (>= 1.11.1), libx11-data
+  breaks: libx11-xcb1 (<< 2:1.7.0-2)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libx11-data
+  version: 2:1.8.12-1
+  architecture: all
+  source_package: libx11
+  source_version: 2:1.8.12-1
+  filename: pool/main/libx/libx11/libx11-data_1.8.12-1_all.deb
+  size_bytes: 343072
+  sha256: c54f87069888f80ba4da586da6147d74c7598ccdd8b90906dbc4271fa414c738  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 1576
+  uri: https://deb.debian.org/debian/pool/main/libx/libx11/libx11-data_1.8.12-1_all.deb
+  apt_local_filename: libx11-data_2%3a1.8.12-1_all.deb
+  apt_uri_hash: MD5Sum:1c54a8670f2640f5cf999c5da9d5f88c  # pragma: allowlist secret - public source or artifact digest
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libx11-xcb1
+  version: 2:1.8.12-1
+  architecture: amd64
+  source_package: libx11
+  source_version: 2:1.8.12-1
+  filename: pool/main/libx/libx11/libx11-xcb1_1.8.12-1_amd64.deb
+  size_bytes: 247128
+  sha256: e05f94d21a932fba5b09b9b13d99df776b155d3bc792c0e294451df9ffe1ba25  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 306
+  uri: https://deb.debian.org/debian/pool/main/libx/libx11/libx11-xcb1_1.8.12-1_amd64.deb
+  apt_local_filename: libx11-xcb1_2%3a1.8.12-1_amd64.deb
+  apt_uri_hash: MD5Sum:4b35848e6933d3c1dcde949ef8c070b4  # pragma: allowlist secret - public source or artifact digest
+  depends: libx11-6 (= 2:1.8.12-1)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libxau6
+  version: 1:1.0.11-1
+  architecture: amd64
+  source_package: libxau
+  source_version: 1:1.0.11-1
+  filename: pool/main/libx/libxau/libxau6_1.0.11-1_amd64.deb
+  size_bytes: 20392
+  sha256: 689a9f0e0ba3e2c65431f864871e303ee904de69dd28abfc462663fae030227f  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 42
+  uri: https://deb.debian.org/debian/pool/main/libx/libxau/libxau6_1.0.11-1_amd64.deb
+  apt_local_filename: libxau6_1%3a1.0.11-1_amd64.deb
+  apt_uri_hash: MD5Sum:4aec39848ed84d35bdd168928d7a37a5  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.33)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libxcb1
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+  filename: pool/main/libx/libxcb/libxcb1_1.17.0-2+b1_amd64.deb
+  size_bytes: 144340
+  sha256: 5c222a72d11b866447da31693254f738430726e3e065a384e82687b2fd2f978b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 301
+  uri: https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb1_1.17.0-2%2bb1_amd64.deb
+  apt_local_filename: libxcb1_1.17.0-2+b1_amd64.deb
+  apt_uri_hash: MD5Sum:ab87e347ccb5ae730863b6989ea47b34  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.38), libxau6 (>= 1:1.0.9), libxdmcp6
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: libxdmcp6
+  version: 1:1.1.5-1
+  architecture: amd64
+  source_package: libxdmcp
+  source_version: 1:1.1.5-1
+  filename: pool/main/libx/libxdmcp/libxdmcp6_1.1.5-1_amd64.deb
+  size_bytes: 27756
+  sha256: 0740dc760916b2008b45417a42a8fd7dd5de370fb57d31373f15034cda8acf0b  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 59
+  uri: https://deb.debian.org/debian/pool/main/libx/libxdmcp/libxdmcp6_1.1.5-1_amd64.deb
+  apt_local_filename: libxdmcp6_1%3a1.1.5-1_amd64.deb
+  apt_uri_hash: MD5Sum:94f9ea6d11adfdd4fa1469e8648f08ff  # pragma: allowlist secret - public source or artifact digest
+  depends: libc6 (>= 2.36)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: 500
+      uri: https://deb.debian.org/debian
+      suite_component: trixie/main
+      index_architecture: amd64
+- package: mpg123
+  version: 1.33.7-1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.33.7-1
+  filename: pool/main/m/mpg123/mpg123_1.33.7-1_amd64.deb
+  size_bytes: 210920
+  sha256: 89a29be2734f2f572aa9ece3140a77134b8ed1aae1a047f8cebc80437c8a542d  # pragma: allowlist secret - public source or artifact digest
+  installed_size_kib_estimate: 561
+  uri: https://deb.debian.org/debian/pool/main/m/mpg123/mpg123_1.33.7-1_amd64.deb
+  apt_local_filename: mpg123_1.33.7-1_amd64.deb
+  apt_uri_hash: MD5Sum:eb218fc436d6cb467c4214bb56a777c6  # pragma: allowlist secret - public source or artifact digest
+  depends: libasound2t64 (>= 1.0.16), libc6 (>= 2.38), libjack-jackd2-0 (>= 1.9.10+20150825) | libjack-0.125, libmpg123-0t64
+    (>= 1.32.3), libopenal1 (>= 1.14), libout123-0t64 (>= 1.32.3), libportaudio2 (>= 19+svn20101113), libpulse0
+    (>= 0.99.1), libsyn123-0t64 (>= 1.32.3)
+  breaks: mpg321 (<< 0.3.2-6~)
+  authenticated_policy:
+    priority: 500
+    origins:
+    - priority: -1
+      uri: https://deb.debian.org/debian
+      suite_component: forky/main
+      index_architecture: amd64
+proposed_package_count: 27
+base_package_count: 87
+proposed_download_bytes: 8879612
+proposed_installed_bytes_estimate: 19378176
+simulation_summary:
+- 0 upgraded, 27 newly installed, 0 to remove and 7 not upgraded.
+binaries_acquired: false
+installation: false
+decoder_executed: false
+license_security_review: pending for exact proposal; no media clearance
+previous_verified_cache_eligible_names:
+- libasound2-data
+- libasound2t64
+- libasyncns0
+- libdbus-1-3
+- libogg0
+- libflac14
+- libopus0
+- libsamplerate0
+- libjack-jackd2-0
+- libmp3lame0
+- libopenal-data
+- libopenal1
+- libvorbis0a
+- libvorbisenc2
+- libsndfile1
+- libxau6
+- libxdmcp6
+- libxcb1
+- libx11-data
+- libx11-6
+- libx11-xcb1
+- libpulse0
+new_or_changed_package_names:
+- libmpg123-0t64
+- libout123-0t64
+- libportaudio2
+- libsyn123-0t64
+- mpg123
+cache_payloads_read_or_copied: false
+schema_version: 1
+issue: https://github.com/slackysoba/sobafm/issues/7
+execution_date_utc: '2026-10-28'
+execution_date_america_los_angeles: '2026-10-27'
+provenance:
+  retained_json_sha256: 013f66eec047c8d0b12e09e6e22edee7e8fbf1fdfbfa8b74981e552b8e9a455b  # pragma: allowlist secret - public source or artifact digest
+  metadata_stdout_sha256: 5b2e0fdb7cb3da43f275858c3abd197cbc9d12e6669becfd6823526d21d5e924  # pragma: allowlist secret - public source or artifact digest
+  metadata_stdout_bytes: 558815
+  container_script_sha256: b57b14c53362e6a0782dc639e7574eb306cfd4a75c6ea4727de031935c0bc207  # pragma: allowlist secret - public source or artifact digest
+  operator_script_sha256: b0508a6f3472aafa3e6f9f4db66a965da7c284685db3dbc21b5292a429c79571  # pragma: allowlist secret - public source or artifact digest
+  base_inventory_stdout_sha256: 5c5c19729c69907b1a421fd695db0c937b1e2308e49a20037bde0dbd1ad5cd34  # pragma: allowlist secret - public source or artifact digest
+metadata_operation:
+  classification: metadata_only_complete_pending_review
+  elapsed_seconds: 41.14
+  container_exit: 0
+  oom_killed: false
+  stopped_pid: 0
+  removed_and_absent: true
+  cleanup_debt: false
+  user: 1000:1000
+  default_seccomp: true
+  capabilities_dropped: ALL
+  no_new_privileges: true
+  read_only_root: true
+  private_cgroup_namespace: true
+  development_memory_bytes: 536870912
+  development_swap_bytes: 0
+  private_noexec_tmpfs_bytes: 268435456
+  pids: 64
+  cpus: 2
+  container_seconds: 210
+  operation_seconds: 240
+  ownership_cleanup_seconds: 60
+  stdout_bytes_cap: 3900000
+  operator_output_bytes_cap: 4000000
+  selected_evidence_bytes_cap: 5000000
+  incremental_storage_bytes_cap: 500000000
+  network: bridge; official HTTPS metadata only
+review_delta:
+  unchanged_base_packages: 87
+  exact_previous_cache_matches: 22
+  exact_previous_cache_match_bytes: 8319864
+  new_or_changed_packages: 5
+  new_or_changed_archive_bytes: 559748
+  new_source_versions:
+  - mpg123 1.33.7-1
+  - portaudio19 19.6.0-1.2
+  mpg123_copyright_url: https://metadata.ftp-master.debian.org/changelogs/main/m/mpg123/mpg123_1.33.7-1_copyright
+  mpg123_copyright_sha256: 851d4968a562c748774e29d1ea65d8d2083c4da43d267ed1905659e81cfb16b2  # pragma: allowlist secret - public source or artifact digest
+  mpg123_changelog_url: https://metadata.ftp-master.debian.org/changelogs/main/m/mpg123/mpg123_1.33.7-1_changelog
+  mpg123_changelog_sha256: 19dbfb7e74dcfdf860557e8c98000db5a968a5f13d82f146d512473d4a4c1060  # pragma: allowlist secret - public source or artifact digest
+  portaudio_copyright_url: https://metadata.ftp-master.debian.org/changelogs/main/p/portaudio19/portaudio19_19.6.0-1.2_copyright
+  portaudio_copyright_sha256: a61ed92bedc10050411c5aa00896201f437647912844a965ac8882ce52522e86  # pragma: allowlist secret - public source or artifact digest
+  portaudio_tracker_url: https://security-tracker.debian.org/tracker/source-package/portaudio19
+  portaudio_tracker_sha256: c2124e66a70cfc4bc1a8efd02e02379599be73bf494aea5aa29c847df3855c31  # pragma: allowlist secret - public source or artifact digest
+  binary_acquisition_review: pending; no acquisition authority conveyed by this record
+  installed_elf_and_notice_binding: not_performed
+  mpg123_native_execution: not_performed
+  q3_q4_native_arm64: not_qualified

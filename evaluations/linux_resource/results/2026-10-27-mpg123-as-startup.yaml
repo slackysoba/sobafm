@@ -1,0 +1,116 @@
+schema_version: 1
+issue: https://github.com/slackysoba/sobafm/issues/7
+execution_date_america_los_angeles: '2026-10-27'
+execution_date_utc: '2026-10-28'
+result: mpg123_as_startup_only_pass
+attempts: 1
+source_commit: 1ef24b65c570f85b81da928d4d43965fe28b55c9  # pragma: allowlist secret - public source or artifact digest
+image_id: sha256:e3ff7b02740b55f52735b17afc9846d151f86bf7395341f5d53f7d3dbb235cfc  # pragma: allowlist secret - public source or artifact digest
+prior_supply_and_data_stack_result: 2026-10-27-mpg123-startup.yaml
+operator_sha256: 3e6530e20a29af92c82fb6ea13824e51359fa947f3ee23413e3bd9af4c5d0386  # pragma: allowlist secret - public source or artifact digest
+harness_sha256:
+  probe.py: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source or artifact digest
+  decoder_startup.py: c31f32a228abaca0449988b1b63a1c2e017f620c10e0366c38dcc6a0ac349720  # pragma: allowlist secret - public source or artifact digest
+preflight:
+  architecture: x86_64
+  controlled_capacity: 98979840
+  identity:
+    effective_capabilities: 0
+    gid: 1000
+    group: /
+    parent_pid: 1
+    pid: 7
+    seccomp: 2
+    uid: 1000
+  kernel: 6.18.33.2-microsoft-standard-WSL2
+  limits:
+    cpu.max: 200000 100000
+    memory.max: '90177536'
+    memory.swap.max: '0'
+    pids.max: '64'
+  memory_current: 15745024
+  memory_events:
+    high: 0
+    low: 0
+    max: 0
+    oom: 0
+    oom_group_kill: 0
+    oom_kill: 0
+  native_pcm_bound: unresolved; Q3 is not qualified
+  pcm_parent_and_copy_reservation: 8802304
+  probe_sha256: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source or artifact digest
+  python: 3.14.7
+  swap_current: 0
+exec_gate:
+  event: startup_exec_gate
+  input: none
+  limit_profile: data-stack-as
+  pid: 8
+  rlimits:
+    Max address space: 12524288
+    Max data size: 12000000
+    Max stack size: 524288
+startup_result:
+  argv:
+  - /usr/bin/mpg123
+  - --version
+  cleanup_deadline_met: true
+  cleanup_debt: false
+  decoder: mpg123
+  decoder_sha256: 62ef82208722eda0fedd39de0ced0d8e3a8450d129760152ea16d075651f0a91  # pragma: allowlist secret - public source or artifact digest
+  event: startup_result
+  exec_failed: false
+  exec_gate_released: true
+  exit_code: 0
+  failure: null
+  leader_reaped: true
+  limit_profile: data-stack-as
+  q3: 'not_run: aggregate native PCM coverage unresolved'
+  q4: not_run
+  retained_pids: []
+  rlimits:
+    Max address space: 12524288
+    Max data size: 12000000
+    Max stack size: 524288
+  verdict: startup_only_pass
+  stdout: 'mpg123 1.33.7
+
+    '
+  stderr: ''
+raw_output_sha256: 1c9e1f1a5a09437a1d51c91ef4f3768a0b7164de5da75a431988367d39f8df60  # pragma: allowlist secret - public source or artifact digest
+outer_elapsed_seconds: 6.109
+container:
+  user: 1000:1000
+  memory: 90177536
+  memory_swap: 90177536
+  pids: 64
+  nano_cpus: 2000000000
+  cgroup_namespace: private
+  network: none
+  readonly: true
+  privileged: false
+  init: true
+  cap_drop:
+  - ALL
+  security:
+  - no-new-privileges=true
+  restart: 'no'
+  tmpfs: null
+  running: false
+  pid: 0
+  exit: 0
+  oom_killed: false
+removed_and_absent: true
+external_cleanup_debt: false
+qualification:
+  startup_only: passed
+  useful_decode: not_run
+  aggregate_native_pcm_bound: conditional source-derived accounting; not integrated or qualified
+  q3: not_qualified
+  q4: not_run
+  native_arm64_runtime: not_run
+  input: none
+  original_data_stack_and_group_limits_changed: false
+  added_stricter_limit: hard and soft RLIMIT_AS=12524288
+  retry_or_limit_tuning: false
+  kernel_special_mappings: explicit scope exclusion, no numeric allowance established or spent
