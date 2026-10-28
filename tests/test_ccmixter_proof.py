@@ -400,6 +400,67 @@ def valid_info() -> bytes:
     return json.dumps([row]).encode()
 
 
+def html_metadata(index: bytes = b"302614073") -> bytes:
+    return (
+        b"<p>credit=owned; source=owned; license=owned; access=owned</p>\r\n"
+        b'<div class="hide" style="font-size:1px;">\r\n\r\n'
+        b'<a href="/emails/indexe.php?index='
+        + index
+        + b'" rel="nofollow" id="__cnt_st">&nbsp;</a>\r\n\r\n</div>\r\n'
+        b"<footer>notice=owned</footer>"
+    )
+
+
+@pytest.mark.parametrize("name", ["mix_page", "parent_page", "root_page", "terms", "about"])
+@pytest.mark.parametrize("index", [b"0", b"9", b"302614073", b"1923285184", b"0000000000"])
+def test_html_fingerprint_changes_only_reviewed_decimal_value(name: str, index: bytes) -> None:
+    assert (
+        proof.metadata_fingerprint(name, html_metadata(index))
+        == hashlib.sha256(html_metadata(b"0")).hexdigest()
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"no marker",
+        html_metadata() * 2,
+        html_metadata(b""),
+        html_metadata(b"12345678901"),
+        html_metadata(b"-1"),
+        html_metadata(b"+1"),
+        html_metadata(b"1 2"),
+        html_metadata(b"1&amp;2"),
+        html_metadata("１２".encode()),
+        html_metadata().replace(b'class="hide"', b'class="visible"'),
+        html_metadata().replace(b"font-size:1px;", b"font-size:2px;"),
+        html_metadata().replace(b'rel="nofollow"', b'rel="follow"'),
+        html_metadata().replace(b'id="__cnt_st"', b'id="other"'),
+        html_metadata().replace(b"/emails/indexe.php", b"/other/indexe.php"),
+        html_metadata().replace(b"?index=", b"?changed="),
+        html_metadata().replace(b"<a href=", b'<a title="extra" href='),
+        html_metadata().replace(b"&nbsp;", b"notice"),
+        html_metadata().replace(b"\r\n", b"\n"),
+        html_metadata() + b'<a id="__cnt_st">malformed duplicate</a>',
+        html_metadata() + b'<a href="/emails/indexe.php">duplicate route</a>',
+    ],
+)
+def test_html_fingerprint_rejects_missing_duplicate_or_altered_markers(body: bytes) -> None:
+    with pytest.raises(proof.ProofError, match="metadata_marker_invalid"):
+        proof.metadata_fingerprint("mix_page", body)
+
+
+def test_info_fingerprint_is_byte_exact_even_for_marker_like_content() -> None:
+    body = json.dumps({"description": html_metadata().decode()}).encode()
+    changed = body.replace(b"302614073", b"1923285184")
+    assert proof.metadata_fingerprint("info", body) == hashlib.sha256(body).hexdigest()
+    assert proof.metadata_fingerprint("info", changed) != proof.metadata_fingerprint("info", body)
+    with pytest.raises(proof.ProofError, match="invalid_fingerprint_input"):
+        proof.metadata_fingerprint("other", body)
+    with pytest.raises(proof.ProofError, match="invalid_fingerprint_input"):
+        proof.metadata_fingerprint("info", b"x" * (proof.METADATA_CAP + 1))
+
+
 @pytest.mark.parametrize("change", ["route", "size", "chain", "license", "identity", "duplicate"])
 def test_current_mix_conflicts_fail_closed(change: str) -> None:
     proof.validate_info(valid_info(), CATALOG)
@@ -426,7 +487,8 @@ def test_review_binds_exact_candidate_six_responses_and_window() -> None:
     digest = metadata_digest(candidate.partitions[0].recordings[0])
     fingerprints = {name: hashlib.sha256(name.encode()).hexdigest() for name in proof.METADATA}
     data: dict[str, object] = {
-        "schema": "sobafm-source-proof-review-1",
+        "schema": "sobafm-source-proof-review-2",
+        "fingerprint_policy": proof.FINGERPRINT_POLICY,
         "candidate_digest": digest,
         "responses": fingerprints,
         "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
@@ -439,31 +501,113 @@ def test_review_binds_exact_candidate_six_responses_and_window() -> None:
         {"expires_at": "2000-01-01T00:00:00+00:00"},
         {"responses": {}},
         {"approved": True},
+        {"schema": "sobafm-source-proof-review-1"},
+        {"fingerprint_policy": "ignore-all-html"},
+        {"fingerprint_policy": None},
     )
     for changes in variations:
         with pytest.raises(proof.ProofError):
             proof.review_manifest(json.dumps(data | changes).encode(), digest)
+    legacy = {key: value for key, value in data.items() if key != "fingerprint_policy"}
+    legacy["schema"] = "sobafm-source-proof-review-1"
+    with pytest.raises(proof.ProofError, match="invalid_review"):
+        proof.review_manifest(json.dumps(legacy).encode(), digest)
+    duplicate = json.dumps(data).replace(
+        '"fingerprint_policy":', '"fingerprint_policy": "ignore-all-html", "fingerprint_policy":'
+    )
+    with pytest.raises(proof.ProofError, match="duplicate_json_key"):
+        proof.review_manifest(duplicate.encode(), digest)
 
 
-def test_changed_metadata_cannot_reach_media_get(tmp_path: Path) -> None:
+@pytest.mark.parametrize("field", [b"credit", b"source", b"license", b"access", b"notice"])
+def test_changed_metadata_cannot_reach_media_get(tmp_path: Path, field: bytes) -> None:
     owner = proof.RequestOwner(tmp_path)
     calls: list[proof.Request] = []
+    body = html_metadata(b"1923285184").replace(field + b"=owned", field + b"=changed")
+    raw_sha256 = hashlib.sha256(body).hexdigest()
+    expected = proof.metadata_fingerprint("mix_page", html_metadata())
 
     def start(request: proof.Request) -> None:
         calls.append(request)
-        (tmp_path / "body").write_bytes(b"changed notice")
+        (tmp_path / "body").write_bytes(body)
 
-    result = proof.Transfer("transferred", 14, 14, None, True, 200)
+    result = proof.Transfer("transferred", len(body), len(body), raw_sha256, True, 200)
     try:
         with (
             patch.object(owner, "start", side_effect=start),
             patch.object(owner, "wait", return_value=result),
             pytest.raises(proof.ProofError, match="metadata_changed"),
         ):
-            proof.run_proof(owner, CATALOG, {name: "0" * 64 for name in proof.METADATA})
+            proof.run_proof(owner, CATALOG, {name: expected for name in proof.METADATA})
         assert len(calls) == 1 and not calls[0].media
+        entry = owner.request_evidence[0]
+        assert entry["sha256"] == raw_sha256
+        assert entry["received"] == entry["stored"] == len(body)
+        assert entry["comparison_sha256"] != expected and entry["review_match"] is False
+        assert entry["fingerprint_policy"] == proof.FINGERPRINT_POLICY
     finally:
         (tmp_path / "body").unlink(missing_ok=True)
+        assert owner.close()
+
+
+@pytest.mark.parametrize("changed_info", [False, True])
+def test_metadata_policy_preserves_raw_evidence_and_media_gate(
+    tmp_path: Path, changed_info: bool
+) -> None:
+    owner = proof.RequestOwner(tmp_path)
+    calls: list[proof.Request] = []
+    baseline = {
+        name: valid_info() if name == "info" else html_metadata() for name in proof.METADATA
+    }
+    fingerprints = {name: proof.metadata_fingerprint(name, body) for name, body in baseline.items()}
+
+    def start(request: proof.Request) -> None:
+        calls.append(request)
+        body = b"owned non-audio fixture" if request.media else html_metadata(b"1923285184")
+        if request.url == proof.METADATA["info"]:
+            body = baseline["info"] + (b" " if changed_info else b"")
+        (tmp_path / "body").write_bytes(body)
+
+    def wait(_cancel_fd: int | None = None) -> proof.Transfer:
+        body = (tmp_path / "body").read_bytes()
+        return proof.Transfer(
+            "transferred", len(body), len(body), hashlib.sha256(body).hexdigest(), True, 200
+        )
+
+    def cleanup() -> bool:
+        (tmp_path / "body").unlink(missing_ok=True)
+        return True
+
+    try:
+        with (
+            patch.object(owner, "start", side_effect=start),
+            patch.object(owner, "wait", side_effect=wait),
+            patch.object(owner, "cleanup", side_effect=cleanup),
+        ):
+            if changed_info:
+                with pytest.raises(proof.ProofError, match="metadata_changed"):
+                    proof.run_proof(owner, CATALOG, fingerprints)
+                assert len(calls) == 4 and not any(request.media for request in calls)
+                entry = owner.request_evidence[-1]
+                assert entry["request"] == "info" and entry["review_match"] is False
+                assert entry["sha256"] == entry["comparison_sha256"] != fingerprints["info"]
+                return
+            assert proof.run_proof(owner, CATALOG, fingerprints).verdict == "transferred"
+        assert len(calls) == 7 and sum(request.media for request in calls) == 1
+        assert calls[-1].url == proof.MEDIA
+        for entry in owner.request_evidence[:-1]:
+            name = cast(str, entry["request"])
+            assert (
+                entry["comparison_sha256"] == fingerprints[name] and entry["review_match"] is True
+            )
+            assert entry["fingerprint_policy"] == proof.FINGERPRINT_POLICY
+            if name == "info":
+                assert entry["sha256"] == entry["comparison_sha256"]
+            else:
+                assert entry["sha256"] == hashlib.sha256(html_metadata(b"1923285184")).hexdigest()
+                assert entry["received"] == entry["stored"] == len(html_metadata(b"1923285184"))
+                assert entry["sha256"] != entry["comparison_sha256"]
+    finally:
         assert owner.close()
 
 
