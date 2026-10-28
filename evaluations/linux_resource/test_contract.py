@@ -1,5 +1,6 @@
 """Offline parser/contract checks; no fork, decoder, Docker or provider use."""
 
+import struct
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -19,6 +20,13 @@ from .decoder_startup import (
     valid_version_output,
     verify_rlimits,
 )
+from .owned_mp3_fixture import (
+    CHUNK_BYTES,
+    FIXTURE_BYTES,
+    SAMPLE_FRAMES,
+    fill_pcm,
+    verify_file_limits,
+)
 from .probe import (
     COPY_BYTES,
     GROUP_BYTES,
@@ -34,6 +42,38 @@ from .probe import (
 
 
 class ContractTests(unittest.TestCase):
+    def test_owned_generator_has_exact_boundary_and_continuous_stereo_signal(self) -> None:
+        buffer = bytearray(CHUNK_BYTES)
+        self.assertEqual(fill_pcm(0, buffer), CHUNK_BYTES)
+        self.assertEqual(struct.unpack_from("<hh", buffer), (-8000, -7500))
+        self.assertEqual(struct.unpack_from("<hh", buffer, 100 * 4), (8000, 2500))
+        first_frame = CHUNK_BYTES // 4
+        self.assertEqual(fill_pcm(first_frame, buffer), CHUNK_BYTES)
+        self.assertNotEqual(struct.unpack_from("<hh", buffer), (-8000, -7500))
+        self.assertEqual(fill_pcm(SAMPLE_FRAMES - 1, buffer), 4)
+        self.assertEqual(struct.unpack_from("<hh", buffer), (-7840, -7400))
+        self.assertEqual(fill_pcm(SAMPLE_FRAMES, buffer), 0)
+        for frame in (-1, SAMPLE_FRAMES + 1):
+            with self.subTest(frame=frame), self.assertRaises(ValueError):
+                fill_pcm(frame, buffer)
+        with self.assertRaises(ValueError):
+            fill_pcm(0, bytearray(CHUNK_BYTES + 1))
+
+    def test_owned_encoder_file_limit_gate_rejects_missing_or_widened_limits(self) -> None:
+        valid = (
+            f"Max file size             {FIXTURE_BYTES} {FIXTURE_BYTES} bytes\n"
+            "Max core file size        0 0 bytes\n"
+        )
+        self.assertEqual(verify_file_limits(valid)["Max file size"], FIXTURE_BYTES)
+        for text in (
+            "",
+            valid + valid,
+            valid.replace(str(FIXTURE_BYTES), "unlimited", 1),
+            valid.replace("0 0 bytes", "0 unlimited bytes"),
+        ):
+            with self.subTest(text=text), self.assertRaises(ProbeError):
+                verify_file_limits(text)
+
     def test_startup_unreviewed_target_fails_before_file_access_or_fork(self) -> None:
         module = "evaluations.linux_resource.decoder_startup"
         with patch(f"{module}.Path") as path, patch(f"{module}.os.fork") as fork:

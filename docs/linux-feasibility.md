@@ -112,6 +112,9 @@ not give a process-tree aggregate cap. `RLIMIT_RSS`, sampled RSS, baseline
 subtraction and library-specific single-allocation limits do not replace the
 required guarantee.
 [Linux resource limits](https://man7.org/linux/man-pages/man2/getrlimit.2.html).
+The later mpg123 candidate uses AS as a supplemental bound on ordinary mapped
+native PCM, with explicit process-count ownership and exclusions; it retains
+the whole-service cgroup and does not replace its process-tree accounting.
 
 ## Capacity ownership and admission
 
@@ -431,7 +434,7 @@ remain outstanding.
 The [follow-up mpg123 result](../evaluations/linux_resource/mpg123-proposal.md)
 establishes authenticated supply and a no-input startup pass with the unchanged
 base and numeric limits. It supplies no useful decode or aggregate PCM evidence.
-Its separately prepared hard/soft AS 12,524,288 startup variant retains the
+Its separately reviewed hard/soft AS 12,524,288 startup variant retains the
 original DATA/STACK and group limits. The source-derived ordinary-mapping scope,
-special-map exclusions and conditional PCM arithmetic are recorded there; no
-execution or useful-fit result for the AS variant is claimed.
+special-map exclusions and conditional PCM arithmetic are recorded there. That
+variant also passed one no-input startup; useful fit remains untested.

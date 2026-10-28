@@ -6,7 +6,7 @@ The [complete proposal and selected operation evidence](results/2026-10-27-mpg12
 record all 27 proposed additions and the unchanged 87-package base. This follows
 the [fixed FFmpeg startup rejection](decoder-supply.md). The completed mpg123 run
 changes no numeric limit, PCM requirement or supported-input requirement. A
-distinct, stricter address-space startup variant is prepared below, not executed.
+distinct, stricter address-space startup variant also passed as recorded below.
 
 ## Resolved transaction
 
@@ -156,16 +156,17 @@ external cleanup debt are zero. The outer operation took 7.125 seconds, includin
 container setup and observation; this is not a decoder latency measurement.
 The [selected result](results/2026-10-27-mpg123-startup.yaml) preserves the actual
 inventory, native hashes, preflight, gate, result and separate build/startup source
-bindings. No second startup run, limit tuning or audio followed.
+bindings. The DATA/STACK-only startup was not repeated, and no audio followed
+that operation; the separately reviewed AS variant is recorded below.
 
 This is a startup-only pass. Metadata preparation, assembly, startup and later
 documentation checks have distinct source bindings. None is silently rebound to
 another commit or architecture. The existing failed FFmpeg candidate remains
 valid historical evidence.
 
-## Stricter address-space startup preparation
+## Stricter address-space startup
 
-The next reviewed preparation adds hard and soft **RLIMIT_AS 12,524,288 bytes**
+The separately reviewed candidate adds hard and soft **RLIMIT_AS 12,524,288 bytes**
 to the existing DATA 12,000,000 and STACK 524,288 limits. This is a distinct
 candidate: the passing DATA/STACK receipt above did not set or test AS. The
 fixed `--mpg123-address-space-limit` flag selects it; there is no configurable
@@ -190,6 +191,21 @@ retains its 90-second operation plus 90-second ownership-cleanup bounds, 250 KB
 output and 500 KB selected evidence. It must verify source/harness hashes and
 exact image/ELF identities, preserve the separate receipt, and stop after this
 one result. Neither another run nor limit tuning follows automatically.
+
+The one released AS run **passed** at source
+`1ef24b65c570f85b81da928d4d43965fe28b55c9`, with harness SHA256
+`c31f32a228abaca0449988b1b63a1c2e017f620c10e0366c38dcc6a0ac349720`.
+The image and executable identities remained those recorded above. The gate
+verified all three hard/soft limits and recorded `data-stack-as`; the native child
+exited zero, printed the expected version line and produced no stderr. There was
+no setup/exec failure. The leader was reaped, no descendants remained and the
+original cleanup deadline was met. The container stopped with PID zero and no
+OOM kill, was removed normally and verified absent. Both cleanup debts are zero.
+Outer elapsed time was 6.109 seconds, including container setup and observation.
+The [separate selected AS result](results/2026-10-27-mpg123-as-startup.yaml)
+preserves the actual preflight, gate, output and ownership verdict.
+No retry, numeric tuning or input followed. Raw output SHA256 is
+`1c9e1f1a5a09437a1d51c91ef4f3768a0b7164de5da75a431988367d39f8df60`.
 
 ### Source-derived scope of the candidate
 
@@ -236,10 +252,11 @@ does not spend rounding slack. The whole-service controlled ledger remains
 
 ## Next bounded gate
 
-Independently review the exact committed variant and operator invocation, then
-release one no-input AS startup check. No AS result exists yet. If it starts,
-prepare the bounded owned-fixture proof with the remaining input, mapping,
-completion and release conditions explicitly enforced.
+Prepare and independently review the bounded owned-fixture proof with the
+remaining input, mapping, completion and release conditions explicitly enforced.
+The AS startup pass establishes no useful decode or PCM qualification.
+The [first owned MP3 plan](mpg123-fixture-plan.md) keeps this next observation
+narrow and preserves the remaining Q3/Q4 cases.
 
 The source audit identifies the supported NtoM resampling mode as a possible
 resource-probe path that avoids the fine resampler's extra buffers and an inferred
