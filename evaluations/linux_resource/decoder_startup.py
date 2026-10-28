@@ -1,4 +1,4 @@
-"""Opt-in, no-input FFmpeg startup check; never a PCM or Q3 qualification."""
+"""Opt-in, fixed no-input decoder startup; never a PCM or Q3 qualification."""
 
 from __future__ import annotations
 
@@ -22,10 +22,28 @@ STACK_BYTES = 524_288
 OUTPUT_BYTES = 16_384  # Each stream; encoded result still fits emit's 64 KiB limit.
 STARTUP_SECONDS = 10.0
 CLEANUP_SECONDS = 3.0
-EXECUTABLE = "/usr/bin/ffmpeg"
-ARGV = [EXECUTABLE, "-nostdin", "-version"]
 CHILD_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "HOME": "/nonexistent"}
-VERSION_PREFIX = b"ffmpeg version 7.1.5-0+deb13u1 "
+
+
+def startup_argv(decoder: str) -> tuple[str, ...]:
+    """Only the two independently reviewed, fixed version commands are eligible."""
+    if decoder == "ffmpeg":
+        return ("/usr/bin/ffmpeg", "-nostdin", "-version")
+    if decoder == "mpg123":
+        return ("/usr/bin/mpg123", "--version")
+    raise ProbeError("unsupported fixed decoder startup")
+
+
+def valid_version_output(decoder: str, stdout: bytes) -> bool:
+    if decoder == "ffmpeg":
+        return (
+            stdout.startswith(b"ffmpeg version 7.1.5-0+deb13u1 ")
+            and b"configuration:" in stdout
+            and b"--enable-nonfree" not in stdout
+        )
+    if decoder == "mpg123":
+        return stdout.splitlines()[:1] == [b"mpg123 1.33.7"]
+    return False
 
 
 def verify_rlimits(text: str) -> dict[str, int]:
@@ -128,7 +146,9 @@ def cleanup(child: Child, deadline: float) -> CleanupResult:
     return CleanupResult(False, group_members(child.pid))
 
 
-def child_exec(ready: int, gate: int, out: int, err: int, close_fds: list[int]) -> None:
+def child_exec(
+    ready: int, gate: int, out: int, err: int, close_fds: list[int], argv: tuple[str, ...]
+) -> None:
     """Only the single-threaded fork child changes limits; no preexec callback."""
     try:
         os.setsid()
@@ -147,7 +167,7 @@ def child_exec(ready: int, gate: int, out: int, err: int, close_fds: list[int]) 
         if os.read(gate, 1) != b"x":
             os._exit(125)
         os.close(gate)
-        os.execve(EXECUTABLE, ARGV, CHILD_ENV)
+        os.execve(argv[0], argv, CHILD_ENV)
     except BaseException:
         # Setting a limit below the launcher's existing mappings does not reclaim
         # them. Failure here is setup/exec failure, not a decoder fit measurement.
@@ -175,12 +195,13 @@ def capture(child: Child, streams: dict[int, bytearray], deadline: float) -> Non
                 raise ProbeError("startup output exceeded its stream bound")
 
 
-def run_startup(expected_digest: str) -> dict[str, object]:
+def run_startup(expected_digest: str, decoder: str = "ffmpeg") -> dict[str, object]:
+    argv = startup_argv(decoder)
     if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
         raise ProbeError("an approved executable SHA256 is required")
     if len(list(Path("/proc/self/task").iterdir())) != 1:
         raise ProbeError("the fork launcher must have exactly one thread")
-    with Path(EXECUTABLE).open("rb") as executable:
+    with Path(argv[0]).open("rb") as executable:
         digest = hashlib.file_digest(executable, "sha256").hexdigest()
     if digest != expected_digest:
         raise ProbeError("installed executable differs from the approved supply receipt")
@@ -203,7 +224,7 @@ def run_startup(expected_digest: str) -> dict[str, object]:
     try:
         pid = os.fork()
         if pid == 0:
-            child_exec(ready_w, gate_r, out_w, err_w, fds)
+            child_exec(ready_w, gate_r, out_w, err_w, fds, argv)
             os._exit(125)
         child = Child(pid)
         for fd in (ready_w, gate_r, out_w, err_w):
@@ -222,7 +243,7 @@ def run_startup(expected_digest: str) -> dict[str, object]:
         os.close(gate_w)
         fds.remove(gate_w)
         capture(child, {out_r: stdout, err_r: stderr}, deadline)
-        # close-on-exec pipe: an E distinguishes launcher/exec failure from FFmpeg.
+        # close-on-exec pipe: an E distinguishes launcher/exec failure from the decoder.
         if not select.select([ready_r], [], [], 0)[0]:
             raise ProbeError("exec acknowledgement pipe remains owned")
         exec_failed = os.read(ready_r, 2) != b""
@@ -245,8 +266,7 @@ def run_startup(expected_digest: str) -> dict[str, object]:
                 os.close(fd)
 
     exit_code = child.exit_code if child is not None else None
-    valid_version = stdout.startswith(VERSION_PREFIX) and b"configuration:" in stdout
-    valid_version = valid_version and b"--enable-nonfree" not in stdout
+    valid_version = valid_version_output(decoder, bytes(stdout))
     if debt or failure or not released or exec_failed:
         verdict = "incomplete"
     elif exit_code != 0:
@@ -262,7 +282,9 @@ def run_startup(expected_digest: str) -> dict[str, object]:
         "failure": failure,
         "exec_gate_released": released,
         "exec_failed": exec_failed,
-        "ffmpeg_sha256": digest,
+        "decoder": decoder,
+        "argv": list(argv),
+        "decoder_sha256": digest,
         "rlimits": limits,
         "exit_code": exit_code,
         "stdout_base64": base64.b64encode(stdout).decode("ascii"),
@@ -279,11 +301,15 @@ def run_startup(expected_digest: str) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute-owned-startup", action="store_true", required=True)
-    parser.add_argument("--expected-ffmpeg-sha256", required=True)
+    expected = parser.add_mutually_exclusive_group(required=True)
+    expected.add_argument("--expected-ffmpeg-sha256")
+    expected.add_argument("--expected-mpg123-sha256")
     args = parser.parse_args()
     try:
         emit({"event": "startup_preflight", "observation": observe()})
-        result = run_startup(str(args.expected_ffmpeg_sha256))
+        decoder = "mpg123" if args.expected_mpg123_sha256 is not None else "ffmpeg"
+        digest = args.expected_mpg123_sha256 if decoder == "mpg123" else args.expected_ffmpeg_sha256
+        result = run_startup(str(digest), decoder)
         emit(result)
         return 0 if result["verdict"] == "startup_only_pass" else 1
     except (OSError, ProbeError, ValueError) as error:

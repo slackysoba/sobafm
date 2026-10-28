@@ -1,7 +1,7 @@
 # Pinned mpg123 metadata proposal
 
 Issue [#7](https://github.com/slackysoba/sobafm/issues/7). Status: **authenticated
-metadata complete; acquisition, installed binding and native execution pending**.
+metadata and binary assembly complete; installed binding review and native execution pending**.
 The [complete proposal and selected operation evidence](results/2026-10-27-mpg123-proposal.yaml)
 record all 27 proposed additions and the unchanged 87-package base. This follows
 the [fixed FFmpeg startup rejection](decoder-supply.md); it changes no numeric
@@ -136,3 +136,14 @@ version or an unexpected transaction rather than substituting another package.
 No mpg123 startup or useful workload has run. Any MP3 result would remain partial:
 FLAC, aggregate PCM coverage, Q4 cleanup, native arm64 and real source/Discord
 acceptance remain outstanding. The existing product guarantees still apply.
+
+The subsequent released acquisition verified all 27 archives: 22 existing files
+were rehashed and hardlinked, and the five new files all completed on their first
+HTTPS HTTP/1.1 attempt. Offline assembly completed in 12.672 seconds at source
+`f293738d9d5f42b861e3f4c0e8ae38b6c4848476`, with no active build debt. The actual image
+is `sha256:e3ff7b02740b55f52735b17afc9846d151f86bf7395341f5d53f7d3dbb235cfc`,
+Linux amd64, final user 1000:1000, logical size 287,470,219 bytes. Its 114-package
+inventory exactly matched the proposal plus base; the binding contains 691 ELF
+path records and all 114 copyright notices. A never-started receipt container
+was removed and verified absent. The binary-binding review remains a gate before
+invoking the fixed `/usr/bin/mpg123 --version` check under the unchanged limits.

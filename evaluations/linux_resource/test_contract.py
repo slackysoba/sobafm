@@ -12,6 +12,9 @@ from .decoder_startup import (
     Child,
     capture,
     cleanup,
+    run_startup,
+    startup_argv,
+    valid_version_output,
     verify_rlimits,
 )
 from .probe import (
@@ -29,6 +32,36 @@ from .probe import (
 
 
 class ContractTests(unittest.TestCase):
+    def test_startup_unreviewed_target_fails_before_file_access_or_fork(self) -> None:
+        module = "evaluations.linux_resource.decoder_startup"
+        with patch(f"{module}.Path") as path, patch(f"{module}.os.fork") as fork:
+            with self.assertRaisesRegex(ProbeError, "unsupported fixed"):
+                run_startup("0" * 64, "/usr/bin/arbitrary")
+            path.assert_not_called()
+            fork.assert_not_called()
+
+    def test_startup_fixed_commands_have_no_media_or_device_argument(self) -> None:
+        self.assertEqual(startup_argv("ffmpeg"), ("/usr/bin/ffmpeg", "-nostdin", "-version"))
+        self.assertEqual(startup_argv("mpg123"), ("/usr/bin/mpg123", "--version"))
+
+    def test_startup_wrong_version_or_decoder_output_never_passes(self) -> None:
+        self.assertTrue(valid_version_output("mpg123", b"mpg123 1.33.7\n"))
+        for output in (
+            b"mpg123 1.32.10\n",
+            b"mpg123 1.33.70\n",
+            b"prefix mpg123 1.33.7\n",
+            b"ffmpeg version 7.1.5-0+deb13u1 configuration: --enable-gpl\n",
+            b"",
+        ):
+            with self.subTest(output=output):
+                self.assertFalse(valid_version_output("mpg123", output))
+        self.assertFalse(valid_version_output("ffmpeg", b"mpg123 1.33.7\n"))
+        self.assertFalse(
+            valid_version_output(
+                "ffmpeg", b"ffmpeg version 7.1.5-0+deb13u1 configuration: --enable-nonfree\n"
+            )
+        )
+
     def test_startup_limit_gate_rejects_missing_changed_or_duplicate_limits(self) -> None:
         valid = (
             f"Max data size             {DATA_BYTES} {DATA_BYTES} bytes\n"

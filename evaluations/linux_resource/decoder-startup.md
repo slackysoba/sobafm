@@ -7,6 +7,14 @@ attempts below remain historical evidence; no limits were increased.
 This is one supplemental-limit rejection check within ADR 0001, not a new product
 cap or a Q3 pass. No fixture, audio, provider, credentials or Discord input exists.
 
+The harness also supports the separately reviewed [mpg123 follow-up](mpg123-proposal.md):
+`--expected-mpg123-sha256` selects only `/usr/bin/mpg123 --version`, while the
+existing FFmpeg flag retains its original fixed command. Exactly one flag is
+required. Both paths keep the same exec gate, limits, stream bounds and cleanup
+ownership; results identify the decoder, fixed arguments and executable hash.
+The current harness does not accept an arbitrary command or media arguments.
+Historical result schemas and source hashes remain tied to their original runs.
+
 ## Question and fixed configuration
 
 Can stock Debian `ffmpeg=7:7.1.5-0+deb13u1` start and print `-version` after
