@@ -1,0 +1,159 @@
+[
+  {
+    "upload_id": 70993,
+    "upload_name": "WILD WINDSTEPS",
+    "user_name": "AntSurvila",
+    "user_real_name": "Ant.Survila",
+    "file_page_url": "https://ccmixter.org/files/AntSurvila/70993",
+    "license_name": "Attribution Noncommercial  (3.0)",
+    "license_url": "http://creativecommons.org/licenses/by-nc/3.0/",
+    "upload_tags": ",media,secret_mixter,remix,mixtermorphosis,bpm_105_110,editorial_pick,non_commercial,audio,mp3,44k,stereo,VBR,guitar,instrumental,synthesizer,piano,ambient,",
+    "upload_extra": {
+      "usertags": "guitar,instrumental,synthesizer,piano,ambient",
+      "featuring": "Dan_Mantau",
+      "bpm": 105
+    },
+    "files": [
+      {
+        "file_id": 129564,
+        "file_upload": 70993,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "2:09"
+        }
+      }
+    ],
+    "remix_parents": [
+      {
+        "upload_id": 70072,
+        "file_page_url": "https://ccmixter.org/files/Dan_Mantau/70072",
+        "upload_name": "Fruitless",
+        "artist_page_url": "https://ccmixter.org/people/Dan_Mantau",
+        "user_real_name": "Dan_Mantau"
+      }
+    ]
+  },
+  {
+    "upload_id": 70072,
+    "upload_name": "Fruitless",
+    "user_name": "Dan_Mantau",
+    "user_real_name": "Dan_Mantau",
+    "file_page_url": "https://ccmixter.org/files/Dan_Mantau/70072",
+    "license_name": "Attribution Noncommercial  (3.0)",
+    "license_url": "http://creativecommons.org/licenses/by-nc/3.0/",
+    "upload_tags": ",media,remix,bpm_105_110,non_commercial,audio,mp3,44k,stereo,CBR,female_vocals,drums,guitar,bass,rhodes,cello,",
+    "upload_extra": {
+      "usertags": "female_vocals,drums,guitar,bass,rhodes,cello",
+      "featuring": "Lisa DeBenedictis",
+      "bpm": 105
+    },
+    "files": [
+      {
+        "file_id": 125900,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:26"
+        }
+      },
+      {
+        "file_id": 125901,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125902,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125903,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125904,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125905,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125906,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125907,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      }
+    ],
+    "remix_parents": [
+      {
+        "upload_id": 25112,
+        "file_page_url": "https://ccmixter.org/files/lisadb/25112",
+        "upload_name": "Fruitless",
+        "artist_page_url": "https://ccmixter.org/people/lisadb",
+        "user_real_name": "DeBenedictis"
+      }
+    ]
+  },
+  {
+    "upload_id": 25112,
+    "upload_name": "Fruitless",
+    "user_name": "lisadb",
+    "user_real_name": "DeBenedictis",
+    "file_page_url": "https://ccmixter.org/files/lisadb/25112",
+    "license_name": "Attribution Noncommercial  (3.0)",
+    "license_url": "http://creativecommons.org/licenses/by-nc/3.0/",
+    "upload_tags": "acappella,media,bpm_095_100,featured,female_vocals,non_commercial,audio,mp3,44k,stereo,CBR",
+    "upload_extra": {
+      "usertags": "female_vocals",
+      "featuring": "",
+      "bpm": 96
+    },
+    "files": [
+      {
+        "file_id": 29325,
+        "file_upload": 25112,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:51"
+        }
+      },
+      {
+        "file_id": 29326,
+        "file_upload": 25112,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:51"
+        }
+      }
+    ]
+  }
+]

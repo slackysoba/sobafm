@@ -1,0 +1,75 @@
+{
+  "schema": "sobafm-catalog-1",
+  "synthetic": false,
+  "partitions": [
+    {
+      "source": "ccmixter",
+      "state": "complete",
+      "note": "One nominated recording, source-bound preparation dated 2026-10-27; complete describes this one-record subset. Public route identified; file unacquired, availability unknown, no admission review. See ccmixter-playback-candidate.md.",
+      "recordings": [
+        {
+          "recording_id": "70993",
+          "title": "WILD WINDSTEPS",
+          "primary_artist": "Ant.Survila",
+          "creators": [
+            "Ant.Survila",
+            "Dan_Mantau",
+            "Lisa DeBenedictis",
+            "DeBenedictis"
+          ],
+          "provenance": "https://ccmixter.org/files/AntSurvila/70993",
+          "kind": "complete",
+          "kind_evidence": "https://ccmixter.org/files/AntSurvila/70993",
+          "duration_seconds": 129,
+          "availability": "unknown",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "guitar",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://ccmixter.org/files/AntSurvila/70993"
+            },
+            {
+              "feature": "vocals",
+              "value": false,
+              "strength": "weak",
+              "evidence": "https://ccmixter.org/files/AntSurvila/70993"
+            },
+            {
+              "feature": "piano",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://ccmixter.org/files/AntSurvila/70993"
+            },
+            {
+              "feature": "ambient",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://ccmixter.org/files/AntSurvila/70993"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "ccmixter-70993-2026-10-27-preparation-1",
+            "license_label": "Attribution Noncommercial (3.0)",
+            "license_url": "https://creativecommons.org/licenses/by-nc/3.0/",
+            "notices": [
+              "Provider: ccMixter. WILD WINDSTEPS by Ant.Survila (uploader AntSurvila), 2026. Featuring Dan_Mantau. Source: https://ccmixter.org/files/AntSurvila/70993",
+              "Source file identity: 129564. Published filename: AntSurvila_-_WILD_WINDSTEPS.mp3. Reported duration: 2:09; reported size: 4693829 bytes. These are source metadata, not file measurements.",
+              "Supplied mix description: had fun with guitar stems; bottom text.",
+              "Uses samples from Fruitless by Dan_Mantau, 2025, featuring Lisa DeBenedictis. Source: https://ccmixter.org/files/Dan_Mantau/70072 . License: https://creativecommons.org/licenses/by-nc/3.0/",
+              "Supplied Dan_Mantau description: Country Rock; Thanks to Lisa for the pella !",
+              "Dan_Mantau lists Fruitless by DeBenedictis (uploader lisadb), 2010, as its source: https://ccmixter.org/files/lisadb/25112 . License: https://creativecommons.org/licenses/by-nc/3.0/",
+              "Lisa DeBenedictis is the name supplied by Dan_Mantau; the linked source displays DeBenedictis. Both names are retained. That source is an a cappella, not this playback candidate.",
+              "The published chain is 70993 -> 70072 -> 25112. WILD WINDSTEPS identifies guitar stems and is described as instrumental. Retaining the upstream credit does not assert that Lisa DeBenedictis vocals are audible in this mix.",
+              "Each of the three recording pages supplies Attribution Noncommercial (3.0), CC BY-NC 3.0 Unported. License and warranty terms: https://creativecommons.org/licenses/by-nc/3.0/legalcode . No additional recording-specific copyright or warranty notice was observed on these pages.",
+              "No further Uses samples from section was observed on the DeBenedictis source page. Its info response omits remix_parents; the page observation, not that omission, bounds this supplied-chain review.",
+              "SobaFM preparation has not acquired or modified audio. The proposed proof uses a temporary unchanged MP3 and technical conversion to stereo signed 16-bit PCM at 48 kHz, without expressive edits. Record actual conversion when performed."
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
