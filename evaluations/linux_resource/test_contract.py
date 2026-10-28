@@ -1,5 +1,7 @@
 """Offline parser/contract checks; no fork, decoder, Docker or provider use."""
 
+import hashlib
+import io
 import struct
 import unittest
 from contextlib import ExitStack
@@ -19,6 +21,16 @@ from .decoder_startup import (
     startup_argv,
     valid_version_output,
     verify_rlimits,
+)
+from .owned_mp3_decode import (
+    BANNER,
+    MAPPED_ELF,
+    load_fixture_snapshot,
+    parse_maps,
+    receive_banner,
+    stopped_native_gate,
+    validate_diagnostics,
+    verify_core_limit,
 )
 from .owned_mp3_fixture import (
     CHUNK_BYTES,
@@ -42,6 +54,109 @@ from .probe import (
 
 
 class ContractTests(unittest.TestCase):
+    def test_native_mapping_gate_rejects_unreviewed_backing_and_special_writes(self) -> None:
+        lines = [
+            f"{0x10000 + i * 4096:x}-{0x11000 + i * 4096:x} r-xp 00000000 08:01 {i + 1} {name}"
+            for i, name in enumerate(MAPPED_ELF)
+        ]
+        lines += [
+            "20000-21000 rw-p 00000000 00:00 0 [heap]",
+            "21000-22000 r--p 00000000 00:00 0 [vvar]",
+            "22000-23000 r-xp 00000000 00:00 0 [vdso]",
+            "23000-24000 --xp 00000000 00:00 0 [vsyscall]",
+        ]
+        valid = "\n".join(lines)
+        parsed = parse_maps(valid)
+        self.assertFalse(parsed["sampled_pcm_proof"])
+        self.assertEqual(parsed["special_bytes_observed"], 3 * 4096)
+        for text in (
+            valid.replace("r--p", "rw-p"),
+            valid.replace("rw-p", "rw-s"),
+            valid.replace("[heap]", "/unreviewed/pcm"),
+            valid.replace("[heap]", "[anon:shared]"),
+            valid.replace("r-xp", "rwxp", 1),
+            "\n".join(lines[1:]),
+            valid + "\n20000-21000 rw-p 00000000 00:00 0 [heap]",
+            valid + "\n30000-1000000 rw-p 00000000 00:00 0",
+        ):
+            with self.subTest(text=text), self.assertRaises(ProbeError):
+                parse_maps(text)
+
+    def test_zero_exit_cannot_substitute_for_decoder_completion_diagnostics(self) -> None:
+        valid = BANNER + (
+            b"\nPlaying MPEG stream 1 of 1: - ...\n\n"
+            b"MPEG 1.0 L III cbr128 48000 j-s\n\n"
+            b"[2:00] Decoding of - finished.\n"
+        )
+        validate_diagnostics(valid)
+        for value in (
+            valid + b"error: bad frame\n",
+            valid.replace(b"48000", b"44100"),
+            valid.replace(b"[2:00] Decoding of - finished.\n", b""),
+            valid + b"[2:00] Decoding of - finished.\n",
+        ):
+            with self.subTest(value=value), self.assertRaises(ProbeError):
+                validate_diagnostics(value)
+
+    def test_native_banner_reader_never_consumes_following_diagnostics(self) -> None:
+        module = "evaluations.linux_resource.owned_mp3_decode"
+        with (
+            patch.object(Child, "reap"),
+            patch(f"{module}.time.monotonic", return_value=1),
+            patch(f"{module}.select.select", return_value=([11], [], [])),
+            patch(f"{module}.os.read", return_value=BANNER) as read,
+        ):
+            self.assertEqual(receive_banner(Child(42), 10, 11, 2), BANNER)
+            read.assert_called_once_with(11, len(BANNER))
+        with (
+            patch.object(Child, "reap"),
+            patch(f"{module}.time.monotonic", return_value=1),
+            patch(f"{module}.select.select", return_value=([10], [], [])),
+            patch(f"{module}.os.read") as read,
+            self.assertRaisesRegex(ProbeError, "before the input gate"),
+        ):
+            receive_banner(Child(42), 10, 11, 2)
+        read.assert_not_called()
+
+    def test_changed_stopped_identity_cannot_reach_mapping_or_input_admission(self) -> None:
+        module = "evaluations.linux_resource.owned_mp3_decode"
+        with (
+            patch(f"{module}.os.kill"),
+            patch(f"{module}.time.monotonic", return_value=1),
+            patch(f"{module}.os.waitpid", return_value=(42, 0)),
+            patch(f"{module}.os.WIFSTOPPED", return_value=True),
+            patch(f"{module}.read_start_identity", return_value=("T", 999)),
+            patch(f"{module}.parse_maps") as maps,
+            self.assertRaisesRegex(ProbeError, "start/stopped identity"),
+        ):
+            stopped_native_gate(Child(42), 123, 2)
+        maps.assert_not_called()
+        for text in (
+            "",
+            "Max core file size 0 unlimited bytes\n",
+            "Max core file size 0 0 bytes\nMax core file size 0 0 bytes\n",
+        ):
+            with self.subTest(text=text), self.assertRaises(ProbeError):
+                verify_core_limit(text)
+        verify_core_limit("Max core file size 0 0 bytes\n")
+
+    def test_owned_compressed_snapshot_requires_exact_length_and_digest(self) -> None:
+        module = "evaluations.linux_resource.owned_mp3_decode"
+        for payload in (b"abc", b"ab", b"abcd", b"abd"):
+            with (
+                self.subTest(payload=payload),
+                patch(f"{module}.FIXTURE_BYTES", 3),
+                patch(f"{module}.FIXTURE_SHA256", hashlib.sha256(b"abc").hexdigest()),
+                patch.object(Path, "open", return_value=io.BytesIO(payload)),
+                memoryview(bytearray(16)) as copy_view,
+            ):
+                if payload == b"abc":
+                    load_fixture_snapshot(copy_view)
+                    self.assertEqual(copy_view[:3], b"abc")
+                else:
+                    with self.assertRaises(ProbeError):
+                        load_fixture_snapshot(copy_view)
+
     def test_owned_generator_has_exact_boundary_and_continuous_stereo_signal(self) -> None:
         buffer = bytearray(CHUNK_BYTES)
         self.assertEqual(fill_pcm(0, buffer), CHUNK_BYTES)

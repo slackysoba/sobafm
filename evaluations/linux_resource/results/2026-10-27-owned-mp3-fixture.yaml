@@ -1,0 +1,120 @@
+schema_version: 1
+issue: https://github.com/slackysoba/sobafm/issues/7
+execution_date_america_los_angeles: '2026-10-27'
+execution_date_utc: '2026-10-28'
+result: owned_fixture_generated
+attempts: 1
+source_commit: 9935b16e142171100820103315f86e521d825aff  # pragma: allowlist secret - public source or artifact digest
+image_id: sha256:f214f61096a8823a587859e4ce87616f25a63f77b37e659c79ef8757a6cef76c  # pragma: allowlist secret - public source or artifact digest
+operator_sha256: 208d10e4636b0386d184be5311e99448174bbdb3270b9ceadb40e0df59b239f8  # pragma: allowlist secret - public source or artifact digest
+harness_sha256:
+  probe.py: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source or artifact digest
+  decoder_startup.py: c31f32a228abaca0449988b1b63a1c2e017f620c10e0366c38dcc6a0ac349720  # pragma: allowlist secret - public source or artifact digest
+  owned_mp3_fixture.py: 25e113d8f427c23ac56ef98ea77ccf6513bd2e4d4b4e0519d342410b0cbcc1ab  # pragma: allowlist secret - public source or artifact digest
+exec_gate:
+  event: fixture_exec_gate
+  input: owned_integer_pcm
+  rlimits:
+    Max core file size: 0
+    Max file size: 2500000
+generation_result:
+  argv:
+  - /usr/bin/ffmpeg
+  - -nostdin
+  - -hide_banner
+  - -loglevel
+  - error
+  - -n
+  - -fflags
+  - +bitexact
+  - -f
+  - s16le
+  - -ar
+  - '48000'
+  - -ac
+  - '2'
+  - -i
+  - pipe:0
+  - -map
+  - 0:a:0
+  - -map_metadata
+  - '-1'
+  - -c:a
+  - libmp3lame
+  - -threads:a
+  - '1'
+  - -b:a
+  - '128000'
+  - -flags:a
+  - +bitexact
+  - -write_xing
+  - '1'
+  - -id3v2_version
+  - '0'
+  - -f
+  - mp3
+  - /fixtures/owned-cbr-48000-stereo-120s.mp3
+  cleanup_deadline_met: true
+  cleanup_debt: false
+  elapsed_seconds: 6.434854349005036
+  encoder_sha256: e8a8d46f5225f3062cec7c07fb145d58ae73c603cb740dcd5bad34bfb54e455a  # pragma: allowlist secret - public source or artifact digest
+  event: owned_fixture_result
+  exec_failed: false
+  exec_gate_released: true
+  exit_code: 0
+  expected_sample_frames: 5760000
+  failure: null
+  fixture_bytes: 1920768
+  fixture_name: owned-cbr-48000-stereo-120s.mp3
+  fixture_sha256: 1a431c03098d8be79a522a3b1f64a8182445a8bf6c009f54c1b3bb1f6dad044d  # pragma: allowlist secret - public source or artifact digest
+  leader_reaped: true
+  raw_bytes_accepted: 23040000
+  raw_bytes_generated: 23040000
+  raw_sha256: 0feb0dec8b6eb253893680342a58d1abb37727ef0da8f8aace849608ff41fa54  # pragma: allowlist secret - public source or artifact digest
+  retained_pids: []
+  runtime_fit: not_tested
+  stderr_bytes: 0
+  stderr_preview: ''
+  stderr_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  # pragma: allowlist secret - public source or artifact digest
+  verdict: fixture_generated
+raw_output_sha256: 5650413dbd42b2dd944f4ba3e56f8c37fa3a40200372b28d9bf383de26ce056e  # pragma: allowlist secret - public source or artifact digest
+outer_elapsed_seconds: 10.031
+container:
+  user: 1000:1000
+  memory: 536870912
+  memory_swap: 536870912
+  pids: 64
+  nano_cpus: 2000000000
+  cgroup_namespace: private
+  network: none
+  readonly: true
+  privileged: false
+  init: true
+  cap_drop:
+  - ALL
+  security:
+  - no-new-privileges=true
+  restart: 'no'
+  tmpfs: null
+  running: false
+  pid: 0
+  exit: 0
+  oom_killed: false
+mount_scope:
+  evaluation_sources: read_only
+  fresh_owned_fixture_directory: writable
+removed_and_absent: true
+external_cleanup_debt: false
+qualification:
+  development_fixture_generation: passed
+  decoded: false
+  runtime_memory_fit: not_tested
+  gapless_sample_count: hypothesis_not_yet_validated
+  q3: not_qualified
+  q4: not_run
+  native_arm64_runtime: not_run
+  input: owned_integer_triangle_pcm_only
+  raw_audio_stored: false
+  listening_source_provider_or_discord_activity: false
+  restricted_source_or_sample_access: false
+  image_publication: false
