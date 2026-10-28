@@ -219,7 +219,7 @@ acquired or hashed.
 
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
-| Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Signed dependency proposal resolved; actual installed binary binding remains pending. |
+| Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Exact binary set acquired and installed offline; binding reviewed. The fixed supplemental DATA/STACK candidate failed loader startup on amd64. |
 | Debian stable `mpg123`, `1.32.10-1+deb13u1` at review time | Maintained package on both targets; MP3-focused upstream is LGPL 2.1. Upstream 1.33.7 includes further fixes, so the stable package requires a backport/security comparison. | Not selected: narrowing input formats and checking a second decoder would expand this experiment. No claim that its smaller package proves lower memory use. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
@@ -420,7 +420,10 @@ acceptance evidence exists; the larger-cap alternative is outside the approval.
 
 The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
 tests one supplemental DATA/STACK-limit candidate with `-version` and no input.
-Its signed dependency resolution is complete. The narrow private no-input
-assessment does not qualify untrusted audio; actual installed binary binding and
-native execution remain pending. It keeps the whole-service ledger unchanged and can reject a
-startup configuration; success alone cannot establish PCM coverage or Q3.
+Its signed dependency resolution and actual installed-binary review are complete.
+The [recorded recovery and startup result](../evaluations/linux_resource/decoder-supply.md)
+shows exit 127 at a shared-library mapping failure under the fixed DATA/STACK
+candidate, with verified cleanup. That candidate is rejected; no memory tuning
+or audio followed. The whole-service ledger is unchanged. This does not establish
+overall-budget infeasibility or PCM coverage; Q3/Q4 and alternative assessment
+remain outstanding.

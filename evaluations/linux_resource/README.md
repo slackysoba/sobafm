@@ -14,9 +14,9 @@ dependencies, provider adapter or station framework.
 - Q3 remains unresolved: the focused permitted-documentation pass did not
   establish a native decoder PCM capacity bound. `-max_alloc` is a per-allocation
   setting, and memory peaks do not bound total retained PCM. A separate
-  [stock-decoder startup check](decoder-startup.md) has resolved its signed binary
-  package proposal; actual installed binary binding and startup remain pending.
-  supplemental limits are not yet an established PCM bound. No custom decoder
+  [stock-decoder startup check](decoder-startup.md) now has a verified binary set
+  and image. Its fixed supplemental-limit candidate was [rejected at loader startup](decoder-supply.md).
+  Supplemental limits are not yet an established PCM bound. No custom decoder
   or source distribution is introduced.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
