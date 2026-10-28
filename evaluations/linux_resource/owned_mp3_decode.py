@@ -397,6 +397,10 @@ def decode_fixture() -> dict[str, object]:
         emit({"event": "decode_native_gate", "observation": native_gate})
         # No PCM existed at fork. Full pools are now physically allocated and remain prepaid.
         buffers = [bytearray(BANK_BYTES), bytearray(BANK_BYTES), bytearray(COPY_BYTES)]
+        # Exercise every page of the full prepaid capacity before admitting input.
+        for index in range(len(buffers)):
+            for offset in range(0, len(buffers[index]), 4096):
+                buffers[index][offset] = 1
         views = [memoryview(buffer) for buffer in buffers]
         bank_view, _, copy_view = views
         phase = "fixture_snapshot"

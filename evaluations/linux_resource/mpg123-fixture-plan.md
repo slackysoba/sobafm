@@ -125,7 +125,8 @@ address spaces, including descendants and debt, are admissible across the proof.
 The 64-task group limit does not implement that admission rule.
 
 Allocate the existing two 2,304,000-byte banks and 4,194,304-byte copy reserve
-only after the stopped native identity gate, and retain them for the check. Before
+only after the stopped native identity gate, touch every page to exercise the
+full prepaid allocation, and retain them for the check. Before
 resuming or feeding, snapshot the entire 1,920,768-byte compressed fixture into
 the copy reserve using reads no larger than 65,536 bytes, then verify its exact
 length and SHA256. Subsequent host-file changes cannot alter this admitted
