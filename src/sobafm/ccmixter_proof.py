@@ -37,6 +37,14 @@ METADATA = {
     "terms": HOST + "/terms",
     "about": HOST + "/about",
 }
+FINGERPRINT_POLICY = "ccmixter-hidden-index-v1"
+_HIDDEN_PREFIX = (
+    b'<div class="hide" style="font-size:1px;">\r\n\r\n<a href="/emails/indexe.php?index='
+)
+_HIDDEN_SUFFIX = b'" rel="nofollow" id="__cnt_st">&nbsp;</a>\r\n\r\n</div>'
+_HIDDEN_INDEX = re.compile(
+    re.escape(_HIDDEN_PREFIX) + rb"([0-9]{1,10})" + re.escape(_HIDDEN_SUFFIX)
+)
 BODY_CAP = 10_000_000
 METADATA_CAP = 500_000
 RUN_SECONDS = 600.0
@@ -433,14 +441,42 @@ def _json(data: bytes) -> object:
     return cast(object, json.loads(data, object_pairs_hook=unique))
 
 
+def metadata_fingerprint(name: str, body: bytes) -> str:
+    """Hash all bytes except the reviewed HTML marker's bounded decimal value."""
+    if name not in METADATA or len(body) > METADATA_CAP:
+        raise ProofError("invalid_fingerprint_input")
+    if name == "info":
+        return hashlib.sha256(body).hexdigest()
+    if body.count(b"__cnt_st") != 1 or body.count(b"/emails/indexe.php") != 1:
+        raise ProofError("metadata_marker_invalid")
+    marker = _HIDDEN_INDEX.search(body)
+    if marker is None:
+        raise ProofError("metadata_marker_invalid")
+    start, end = marker.span(1)
+    # No HTML parsing, whitespace changes, URL following or source-chosen exclusions.
+    digest = hashlib.sha256(body[:start])
+    digest.update(b"0")
+    digest.update(body[end:])
+    return digest.hexdigest()
+
+
 def review_manifest(data: bytes, candidate_digest: str) -> dict[str, str]:
     review = _object(_json(data))
-    if set(review) != {"schema", "candidate_digest", "responses", "expires_at", "review_reference"}:
+    if set(review) != {
+        "schema",
+        "fingerprint_policy",
+        "candidate_digest",
+        "responses",
+        "expires_at",
+        "review_reference",
+    }:
         raise ProofError("invalid_review")
     if (
-        review["schema"] != "sobafm-source-proof-review-1"
-        or review["candidate_digest"] != candidate_digest
+        review["schema"] != "sobafm-source-proof-review-2"
+        or review["fingerprint_policy"] != FINGERPRINT_POLICY
     ):
+        raise ProofError("review_policy_conflict")
+    if review["candidate_digest"] != candidate_digest:
         raise ProofError("review_candidate_conflict")
     reference = review["review_reference"]
     if (
@@ -531,17 +567,22 @@ def run_proof(
         owner.start(Request(url, METADATA_CAP))
         try:
             result = owner.wait(cancel_fd)
-            owner.request_evidence.append(
-                {
-                    "request": name,
-                    **asdict(result),
-                    "review_match": result.sha256 == fingerprints[name],
-                }
-            )
+            evidence: dict[str, object] = {
+                "request": name,
+                **asdict(result),
+                "fingerprint_policy": FINGERPRINT_POLICY,
+                "comparison_sha256": None,
+                "review_match": False,
+            }
+            owner.request_evidence.append(evidence)
             if result.verdict != "transferred":
                 raise ProofError(result.verdict)
             body = bounded_read(owner.directory / "body", METADATA_CAP)
-            if hashlib.sha256(body).hexdigest() != fingerprints[name]:
+            comparison = metadata_fingerprint(name, body)
+            evidence.update(
+                comparison_sha256=comparison, review_match=comparison == fingerprints[name]
+            )
+            if comparison != fingerprints[name]:
                 raise ProofError("metadata_changed")
             if name == "info":
                 validate_info(body, catalog_directory)
@@ -594,7 +635,8 @@ def main() -> None:
     signal.signal(signal.SIGTERM, cancel)
     signal.signal(signal.SIGINT, cancel)
     evidence: dict[str, object] = {
-        "schema": "sobafm-source-proof-result-1",
+        "schema": "sobafm-source-proof-result-2",
+        "fingerprint_policy": FINGERPRINT_POLICY,
         "started_at": datetime.now(UTC).isoformat(),
         "transport": "not_started",
         "decode": "pending",

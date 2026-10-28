@@ -3,8 +3,10 @@
 Issue [#19](https://github.com/slackysoba/sobafm/issues/19) implements the
 [candidate's finite source contract](ccmixter-playback-candidate.md#proposed-finite-source-proof).
 This is an opt-in Linux evaluation, with no production source integration,
-decoder, new dependency, catalog admission or playback. No live result is
-recorded here. Human listening remains deferred.
+decoder, new dependency, catalog admission or playback. Source qualification
+remains incomplete; the observed metadata rejection below motivates the
+comparison correction in [#21](https://github.com/slackysoba/sobafm/issues/21).
+Human listening remains deferred.
 
 ## Implemented boundary
 
@@ -58,17 +60,18 @@ The run requires an operator-controlled JSON manifest with this exact shape:
 
 ```json
 {
-  "schema": "sobafm-source-proof-review-1",
+  "schema": "sobafm-source-proof-review-2",
+  "fingerprint_policy": "ccmixter-hidden-index-v1",
   "candidate_digest": "REPLACE_WITH_METADATA_DIGEST",
   "expires_at": "REPLACE_WITH_UTC_WINDOW_END",
   "review_reference": "https://github.com/slackysoba/sobafm/issues/19#issuecomment-REPLACE",
   "responses": {
-    "mix_page": "REPLACE_WITH_SHA256",
-    "parent_page": "REPLACE_WITH_SHA256",
-    "root_page": "REPLACE_WITH_SHA256",
-    "info": "REPLACE_WITH_SHA256",
-    "terms": "REPLACE_WITH_SHA256",
-    "about": "REPLACE_WITH_SHA256"
+    "mix_page": "REPLACE_WITH_COMPARISON_SHA256",
+    "parent_page": "REPLACE_WITH_COMPARISON_SHA256",
+    "root_page": "REPLACE_WITH_COMPARISON_SHA256",
+    "info": "REPLACE_WITH_RAW_SHA256",
+    "terms": "REPLACE_WITH_COMPARISON_SHA256",
+    "about": "REPLACE_WITH_COMPARISON_SHA256"
   }
 }
 ```
@@ -80,8 +83,10 @@ storage checkpoint and one window ending at most ten minutes after invocation.
 Use `metadata_digest()` on the prepared recording from the existing catalog
 parser. No admission review is produced or changed.
 
-Derive response hashes from the exact saved, reviewed, unencoded UTF-8 bodies
-for the six URLs in `METADATA`. Review the three supplied credit pages, their
+Derive comparison hashes with `metadata_fingerprint(name, body)` from the exact
+saved, reviewed, unencoded bodies for the six names/URLs in `METADATA`. Retain
+the original bodies, byte sizes and raw SHA-256 separately; do not rewrite
+those baselines with normalized content. Review the three supplied credit pages, their
 complete chain and license/notice statements, the current terms/access pages,
 and the exact info record against the candidate document. Check the single
 file's `download_url` and numeric `file_rawsize` fields against the stated
@@ -93,19 +98,58 @@ new metadata. Do not use provider-generated approval fields. The preserved
 3,624-byte info response from the candidate preparation confirms
 `file_rawsize: 4693829`; `file_filesize` is only display text (`" (4.48MB)"`).
 
-This exact-body comparison is a conservative safeguard for **one finite
-proof**, not the intended long-term ingestion policy. It also detects changes
-outside known fields without an HTML scraper that could silently discard a
-new notice. Dynamic page content may cause a safe rejection. A mismatch means
-**changed metadata requiring review**, not a finding that rights were revoked.
-The receipt retains only request name, digest, count and verdict. It does not
-export response bodies or fetch media after a mismatch. Acquiring/reviewing a
-new baseline needs its own applicable bounded metadata scope; do not add
-unmetered requests to this run to make the comparison pass.
+### Explicit fingerprint policy
+
+The first live invocation that actually started stopped before media access
+because the selected page's raw fingerprint changed. A separately authorized
+metadata capture found exactly one difference from its preserved baseline:
+the decimal query value in a hidden `a#__cnt_st` nofollow link changed from
+nine to ten digits. Substituting that value alone made the complete bodies
+byte-identical, including attribution, upstream source, license and access
+statements. All five saved HTML baselines contain the same fixed marker shape.
+The earlier failed response body was deleted during required cleanup, so this
+capture does not reconstruct that unavailable response. The link's purpose is
+not inferred and the client never follows it.
+
+Policy `ccmixter-hidden-index-v1` applies only to the five fixed HTML routes:
+`mix_page`, `parent_page`, `root_page`, `terms` and `about`. Each body must contain
+exactly one `__cnt_st` token and one `/emails/indexe.php` occurrence, within this
+exact byte context (`\r\n` denotes literal CRLF; `DIGITS` is 1–10 ASCII decimal
+digits):
+
+```text
+<div class="hide" style="font-size:1px;">\r\n\r\n<a href="/emails/indexe.php?index=DIGITS" rel="nofollow" id="__cnt_st">&nbsp;</a>\r\n\r\n</div>
+```
+
+Replace only that digit span with the single ASCII byte `0` for SHA-256
+comparison. Every other byte, including whitespace, attribute order, route,
+hidden context and all notices, remains hashed unchanged. Missing, duplicate,
+malformed or altered markers fail closed. There is no general HTML parsing,
+whitespace cleanup, attribute sorting or source-selected exclusion list.
+`info` is always byte-exact SHA-256, even if its JSON strings resemble the HTML
+marker. Source data cannot select another policy or approve itself.
+
+The trusted manifest must explicitly use schema `sobafm-source-proof-review-2`
+and this exact policy identifier. Legacy schema 1, missing/unknown policies,
+duplicate keys and extra fields are rejected, so an old raw-body manifest
+cannot silently acquire normalized comparison semantics. After merge, a new
+candidate-bound manifest and concrete execution review are required; this
+change neither refreshes an existing baseline nor authorizes a live retry.
+
+This remains a conservative safeguard for **one finite proof**, not a general
+ingestion policy. Any other changed byte causes a safe rejection, including
+new or changed credits, chain links, licenses or access statements. A mismatch
+means **changed metadata requiring review**, not a finding that rights were
+revoked. Result schema `sobafm-source-proof-result-2` retains raw `sha256`,
+`received` and `stored` values separately from `comparison_sha256`,
+`fingerprint_policy` and `review_match`. Failed transfers or invalid markers
+have no computed comparison digest. Receipts do not export response bodies or
+fetch media after a mismatch. Acquiring/reviewing a new baseline needs its own
+applicable bounded metadata scope; never add requests to make a comparison pass.
 
 The info response also passes the existing importer and an exact comparison
 with the saved projection: title, uploader, reported format/duration, license,
-file identity and direct parent must remain unchanged. All three page/policy
+file identity and direct parent must remain unchanged. All five HTML page/policy
 fingerprints must match before media access. The immutable prepared candidate
 and trusted catalog-review boundary remain unchanged and unadmitted.
 
@@ -137,7 +181,7 @@ docker create --name sobafm-source-proof-19 --pull=never --init --restart=no \
   --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges=true \
   --read-only --cgroupns=private --network=bridge \
   --memory=90177536 --memory-swap=90177536 --pids-limit=16 --cpus=2 \
-  --log-driver=local --log-opt=max-size=100000 --log-opt=max-file=1 \
+  --log-driver=local --log-opt=max-size=100000 --log-opt=max-file=1 --log-opt=compress=false \
   --tmpfs /run/sobafm-source-proof:rw,noexec,nosuid,nodev,size=10000000,mode=0700,uid=1000,gid=1000 \
   --mount "type=bind,source=$PWD/src,target=/proofsrc,readonly" \
   --mount "type=bind,source=$PWD/evaluations/catalog,target=/catalog,readonly" \
@@ -205,7 +249,10 @@ Ordinary `uv run pytest` includes only owned local HTTP bodies and deterministic
 process/failure schedules. It tests caps, truncation, status/framing/content
 conflicts, stalls, cancellation, delivered-but-live ownership, original cleanup
 deadlines, late release, removal failure, metadata changes and unchanged catalog
-rejection. These fixtures are deliberately not audio and do not establish a
+rejection. Fingerprint regressions accept only the bounded numeric variation,
+preserve raw evidence, keep JSON byte-exact and reject policy ambiguity,
+changed notices and malformed/duplicate marker contexts. These fixtures are
+deliberately not audio and do not establish a
 live access pass, listening quality, decoder correctness or Linux containment.
 Run locked sync, all-file pre-commit and the complete offline suite before
 push; bind CI and independent review to the actual PR commit.
