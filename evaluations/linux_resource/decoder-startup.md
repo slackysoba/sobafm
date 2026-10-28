@@ -1,8 +1,9 @@
 # Stock FFmpeg startup check preparation
 
-Issue: [#7](https://github.com/slackysoba/sobafm/issues/7). Status: **signed binary
-metadata resolved; binary acquisition incomplete after transport failures;
-no result image or native startup**.
+Issue: [#7](https://github.com/slackysoba/sobafm/issues/7). Current status: **binary
+supply recovered; exact image/binding reviewed; fixed no-input startup rejected**.
+See [recovery and actual startup evidence](decoder-supply.md). The initial supply
+attempts below remain historical evidence; no limits were increased.
 This is one supplemental-limit rejection check within ADR 0001, not a new product
 cap or a Q3 pass. No fixture, audio, provider, credentials or Discord input exists.
 
@@ -50,10 +51,11 @@ The exact proposed transitive binary closure is **resolved and reviewed for the
 recorded bounded assembly attempts**. The [selected result](results/2026-10-27-debian-metadata.yaml) records
 authenticated metadata, 205 additions, zero upgrades/removals and the retained
 manifest hash. During that metadata-only phase, no `.deb` files were downloaded,
-installed or executed. The subsequent assembly attempts below acquired some
+installed or executed. The initial assembly attempts below acquired some
 binaries but did not produce a complete verified archive set or result image.
-Actual installed-binary binding remains a gate before native execution. This
-metadata result does not qualify native startup or audio.
+The later [retained-cache recovery](decoder-supply.md) verified the unchanged full
+set, installed it offline, and passed actual binary-binding review before the
+recorded startup rejection. Metadata alone does not qualify startup or audio.
 
 The first metadata attempt failed closed when APT could not create its signature
 verification temporary file on the read-only root. The reviewed correction put
@@ -100,10 +102,10 @@ solve/step failure evidence, so no uncertain active-build ownership remains;
 client exit alone would not establish that. Selected receipts and scoped cache
 observations are retained. No cleanup or pruning was performed.
 
-The immediate next gate is a complete authenticated acquisition of the unchanged
-approved binary set, followed by actual installed inventory/ELF binding review.
-This transport outcome does not invalidate the signed metadata evidence or
-justify changing the runtime cap, decoder or source-access restriction.
+That supply gate was subsequently cleared by the [recovery procedure](decoder-supply.md).
+The transport outcome did not invalidate the signed metadata evidence or justify
+changing the runtime cap or source-access restriction. The fixed supplemental
+DATA/STACK candidate then failed its no-input startup check; no audio followed.
 
 Use only Debian's signed binary repositories for trixie, trixie-updates and
 trixie-security, with the existing base's Debian archive keyring. No `deb-src`,
