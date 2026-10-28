@@ -416,10 +416,11 @@ service. If permissions rather than fit fail, increasing memory is irrelevant:
 stop and obtain a supported native Docker target with existing adequate runtime
 permissions, not a host security or delegation change made by the agent.
 
-Next action: review and preserve the Q1/Q2 result and determine a supported way
-to establish the unresolved Q3 native PCM bound. Q4 remains not run; application
-architecture acceptance is still gated. Issue #7 remains open until actual
-acceptance evidence exists; the larger-cap alternative is outside the approval.
+Next action: complete the remaining Q3 format/rate/channel cases within the
+source-derived mapped/backing scope established below, then qualify Q4 release
+behavior. Q4 remains not run; application architecture acceptance is still
+gated. Issue #7 remains open until actual acceptance evidence exists; the
+larger-cap alternative is outside the approval.
 
 The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
 tests one supplemental DATA/STACK-limit candidate with `-version` and no input.
@@ -443,4 +444,9 @@ observed exact output, readiness and clean release but retained an incomplete
 verdict after its diagnostic matcher rejected two expected messages. One
 [corrected confirmation](../evaluations/linux_resource/mpg123-fixture-plan.md#corrected-confirmation)
 subsequently passed under the same limits. This does not reclassify the first run
-or establish the remaining Q3/Q4 cases.
+or establish the remaining Q3/Q4 cases. One subsequent
+[retained-fixture overlap](../evaluations/linux_resource/mpg123-overlap-plan.md#recorded-overlap-result)
+passed with two admitted decoders live for 30.016542233 seconds, independent
+readiness and complete output, both original cleanup deadlines met and no
+retained resource debt. Other Q3 formats/rates/channels and native arm64 remain
+unqualified; no playback architecture adoption follows from these narrow cases.

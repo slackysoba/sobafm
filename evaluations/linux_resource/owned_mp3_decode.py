@@ -266,7 +266,15 @@ def receive_banner(child: Child, stdout: int, stderr: int, deadline: float) -> b
     return data
 
 
-def stopped_native_gate(child: Child, start_ticks: int, deadline: float) -> dict[str, object]:
+def stopped_native_gate(
+    child: Child,
+    start_ticks: int,
+    deadline: float,
+    admitted_pids: frozenset[int] | None = None,
+) -> dict[str, object]:
+    expected = admitted_pids if admitted_pids is not None else frozenset({child.pid})
+    if child.pid not in expected or not 1 <= len(expected) <= 2 or min(expected) <= 0:
+        raise ProbeError("invalid fixed decoder admission inventory")
     os.kill(child.pid, signal.SIGSTOP)
     while time.monotonic() < deadline:
         pid, status = os.waitpid(child.pid, os.WNOHANG | os.WUNTRACED)
@@ -283,7 +291,7 @@ def stopped_native_gate(child: Child, start_ticks: int, deadline: float) -> dict
     root = Path(f"/proc/{child.pid}")
     if os.readlink(root / "exe") != ARGV[0] or len(list((root / "task").iterdir())) != 1:
         raise ProbeError("native executable or thread identity differs")
-    if native_processes() != {child.pid} or group_members(child.pid) != [child.pid]:
+    if frozenset(native_processes()) != expected or group_members(child.pid) != [child.pid]:
         raise ProbeError("unexpected retained native address space")
     limits = verify_child(child.pid, True)
     verify_core_limit(read_text(root / "limits"))

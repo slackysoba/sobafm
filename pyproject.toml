@@ -40,6 +40,10 @@ pythonPlatform = "Linux"
 typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "evaluations/linux_resource/test_contract.py"]
+testpaths = [
+    "tests",
+    "evaluations/linux_resource/test_contract.py",
+    "evaluations/linux_resource/test_overlap_contract.py",
+]
 addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers"]
 filterwarnings = ["error"]

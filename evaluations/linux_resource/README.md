@@ -11,37 +11,37 @@ dependencies, provider adapter or station framework.
 ## Current boundary
 
 - Q1 and Q2 passed once each on native amd64 on 2026-10-27, as recorded below.
-- Q3 remains unresolved: the focused permitted-documentation pass did not
-  establish a native decoder PCM capacity bound. `-max_alloc` is a per-allocation
-  setting, and memory peaks do not bound total retained PCM. A separate
-  [stock-decoder startup check](decoder-startup.md) now has a verified binary set
-  and image. Its fixed supplemental-limit candidate was [rejected at loader startup](decoder-supply.md).
-  Supplemental limits are not yet an established PCM bound. No custom decoder
-  or source distribution is introduced.
-  A subsequent [pinned mpg123 supply and startup check](mpg123-proposal.md) preserves
-  the base and passes the fixed no-input command under the unchanged limits.
-  Aggregate PCM qualification across all required cases remains pending.
-  A distinct fixed AS 12,524,288 startup variant also passed once after independent
-  review; neither startup establishes useful decode or aggregate PCM fit.
-  The [owned decode confirmation](mpg123-fixture-plan.md#corrected-confirmation)
-  passed exact output, six-second readiness and clean release after a narrow
-  diagnostic correction. The first incomplete run is preserved; other Q3
-  cases remain unqualified.
+- Q3 is partially exercised. The pinned mpg123 path has a
+  [source-derived address-space scope and PCM reconciliation](mpg123-proposal.md#source-derived-scope-of-the-candidate),
+  verified native input gates and one passing
+  [owned MP3 confirmation](mpg123-fixture-plan.md#corrected-confirmation) on amd64.
+  This covers the exact command and mapped/backing scope, with AS 12,524,288
+  per admitted native address space and the full parent PCM/copy reservation.
+  A [two-decoder overlap](mpg123-overlap-plan.md#recorded-overlap-result) then
+  passed once using the retained fixture, with a measured 30-second interval,
+  independent readiness/full completion and both original cleanup deadlines met.
+  Other formats/rates/channels remain unqualified.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
-- Stop after the first executed failure. A successful Q1/Q2 pass stops before Q3;
-  it does not imply candidate infeasibility or authorize the larger-cap fallback.
+- Every concrete native case needs independent review. Stop after its first
+  failure and preserve the observation before preparing a correction; no case
+  authorizes an automatic retry or the larger-cap fallback.
 
-The concrete Q3 gap is a defensible aggregate native PCM bound across both decoder
-processes, including PCM-bearing decoder/resampler/output buffers and transients.
-After conservatively reserving all 8,802,304 parent/copy bytes as PCM, at most
-25,757,696 bytes remain within the independent 34,560,000-byte PCM ceiling.
-The 90,177,536-byte group cap cannot establish that smaller PCM-class bound.
-Permitted documentation or version-specific allocation evidence must reconcile
-it before useful-fit testing can qualify the candidate. The mpg123 result binds
-its exact local binary assessment, source-derived address-space scope and one
-owned workload. It does not waive the PCM ceiling, source-access restrictions
-or remaining qualification cases.
+The current conditional PCM arithmetic is
+`2 * 12,524,288 + 8,802,304 = 33,850,880` bytes. The first owned case exercised
+one decoder, while reserving two address spaces; the subsequent overlap exercised
+both admitted processes. Remaining Q3 work must exercise the required formats
+without violating the mapped/backing
+scope, payload ownership or useful-fit criteria. The full 90,177,536-byte group
+cap remains a separate controlled-capacity boundary; it does not itself establish
+the smaller PCM bound.
+
+The original Q1/Q2 stage below could not establish native decoder PCM capacity.
+The later fixed FFmpeg DATA/STACK startup candidate was
+[rejected at loader startup](decoder-supply.md); `-max_alloc` and sampled peaks
+were never aggregate PCM proofs. Those historical results remain unchanged.
+The subsequent mpg123 evidence does not waive source-access restrictions or
+remaining qualification cases and introduces no custom decoder distribution.
 
 ## Exact first-stage candidate
 
