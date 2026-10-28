@@ -223,7 +223,7 @@ acquired or hashed.
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
 | Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Exact binary set acquired and installed offline; binding reviewed. The fixed supplemental DATA/STACK candidate failed loader startup on amd64. |
-| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | [Supply, binding and fixed no-input startup completed](../evaluations/linux_resource/mpg123-proposal.md) under unchanged limits. Useful decode and PCM qualification remain pending; MP3 evidence would not remove FLAC or other qualification requirements. |
+| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | [Supply, startup and one owned MP3 decode completed](../evaluations/linux_resource/mpg123-proposal.md) under unchanged limits. Other Q3 cases and Q4 remain pending; this MP3 evidence does not remove FLAC or other qualification requirements. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
 [amd64 file list](https://packages.debian.org/trixie/amd64/ffmpeg/filelist),
@@ -440,5 +440,7 @@ special-map exclusions and conditional PCM arithmetic are recorded there. That
 variant also passed one no-input startup. The subsequent
 [first owned decode](../evaluations/linux_resource/mpg123-fixture-plan.md#first-decode-observation-and-diagnostic-correction)
 observed exact output, readiness and clean release but retained an incomplete
-verdict after its diagnostic matcher rejected two expected messages. The narrow
-matcher correction does not reclassify that run or establish Q3 qualification.
+verdict after its diagnostic matcher rejected two expected messages. One
+[corrected confirmation](../evaluations/linux_resource/mpg123-fixture-plan.md#corrected-confirmation)
+subsequently passed under the same limits. This does not reclassify the first run
+or establish the remaining Q3/Q4 cases.

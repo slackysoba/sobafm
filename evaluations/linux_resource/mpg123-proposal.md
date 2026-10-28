@@ -1,8 +1,8 @@
 # Pinned mpg123 supply and startup
 
 Issue [#7](https://github.com/slackysoba/sobafm/issues/7). Status: **authenticated
-metadata, binary binding and no-input startup complete; first owned decode incomplete,
-Q3/Q4 pending**.
+metadata, binary binding, no-input startup and one owned MP3 decode complete;
+remaining Q3/Q4 cases pending**.
 The [complete proposal and selected operation evidence](results/2026-10-27-mpg123-proposal.yaml)
 record all 27 proposed additions and the unchanged 87-package base. This follows
 the [fixed FFmpeg startup rejection](decoder-supply.md). The completed mpg123 run
@@ -37,7 +37,8 @@ requires authorization and rechecking each complete file's size and hash.
 The complete proposal totals **8,879,612 archive bytes** and **19,378,176 bytes of
 declared Installed-Size**. The latter is a packaging estimate, not an image size
 or runtime memory measurement. Declared dependency compatibility with the pinned
-base is established; actual loader/runtime compatibility remains untested.
+base was established at the metadata stage; the later source-bound startup and
+owned-workload results below establish their narrower observed compatibility.
 
 ## Isolation and authentication
 
@@ -115,7 +116,7 @@ proposal; this permits evidence reuse without transferring the previous FFmpeg
 invocation's exposure assessment to a different program. The pinned base's known
 security findings remain recorded in the [earlier narrow assessment](decoder-startup.md#licensing-and-no-input-security-assessment).
 Actual executable/library identities, constructors, output modules, notices and
-the precise future command require review before execution. The official newer
+the precise command required the separate review recorded below before execution. The official newer
 package lists `/usr/bin/mpg123` and output modules; a stable wrapper name must not
 be assumed. [Published file list](https://packages.debian.org/forky/amd64/mpg123/filelist).
 
@@ -229,7 +230,7 @@ path; they are an explicit scope exclusion. No numeric special-map allowance has
 been established or spent. The ELF loader installs vDSO after replacing the old
 image, so `/proc/exe` changing or a close-on-exec pipe reaching EOF alone does not
 prove all exec setup finished. The completed native `--version` output and
-termination can establish startup; future input admission needs a source-backed
+termination can establish startup; input admission needs a source-backed
 native user-code boundary plus actual mapping/limit identity evidence.
 [Special mapping setup](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-6.18.33.2/arch/x86/entry/vdso/vma.c),
 [exec lifecycle](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-6.18.33.2/fs/exec.c),
@@ -237,7 +238,7 @@ native user-code boundary plus actual mapping/limit identity evidence.
 
 AS bounds mapped extents, not entire backing objects or kernel I/O storage.
 Kernel pipes, parent copies, unmapped retained file/memfd/SysV pages and other
-processes still require explicit reservations or exclusion. For a future fixed
+processes still require explicit reservations or exclusion. For the fixed
 raw-stdout path, source review must exclude PCM files/shared backing and output
 helpers, account pipes/copies, and retain at most **two decoder address spaces**,
 including forked descendants and cleanup debt. A 64-task limit is not that
@@ -255,16 +256,17 @@ does not spend rounding slack. The whole-service controlled ledger remains
 
 The first independently reviewed owned-fixture run observed exact output,
 readiness and clean release, but remained incomplete because its diagnostic
-matcher rejected two expected messages. Review the narrow diagnostic correction
-and exact confirmation procedure before another execution.
+matcher rejected two expected messages. One separately reviewed confirmation
+passed after that narrow correction, with all capacities unchanged.
 The AS startup pass establishes no useful decode or PCM qualification.
-The [first owned MP3 plan](mpg123-fixture-plan.md) keeps this next observation
-narrow and preserves the remaining Q3/Q4 cases.
+The [first owned MP3 result](mpg123-fixture-plan.md#corrected-confirmation) binds
+that useful-fit result and preserves the remaining Q3/Q4 cases. Each subsequent
+native case needs its concrete reviewed procedure before execution.
 
 The source audit identifies the supported NtoM resampling mode as a possible
 resource-probe path that avoids the fine resampler's extra buffers and an inferred
 allocation-failure cleanup defect. It does not approve NtoM for music fidelity or
-authorize a resampler run. A successful process exit alone must not be treated
+authorize new resampling cases. A successful process exit alone must not be treated
 as complete audio: the inspected CLI can exit zero after a decoding error.
 [Version-specific options](https://scm.orgis.org/mpg123/tags/1.33.7/man1/mpg123.1),
 [audio path](https://scm.orgis.org/mpg123/tags/1.33.7/src/audio.c),

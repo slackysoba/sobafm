@@ -1,7 +1,7 @@
 # First owned MP3 useful-fit check
 
-Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **First decode incomplete:
-exact counts and clean release observed, diagnostic expectations corrected.** This narrows the observation
+Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **One corrected confirmation passed;
+the first incomplete run is preserved.** This narrows the observation
 to one of Q3's originally planned owned 120-second MP3 fixtures. It does not
 replace the remaining VBR, 44.1 kHz, mono, overlap, FLAC, Q4 or native arm64 cases.
 The [separate AS startup](mpg123-proposal.md#stricter-address-space-startup) passed;
@@ -205,5 +205,28 @@ observed format line. Its regression uses the exact retained stderr digest
 and rejects missing/repeated encoding notes, changed encoding/rate/mode/bitrate
 labels, unknown errors and missing/repeated completion. Counts, capacities,
 command and deadlines are unchanged. The original incomplete result is not
-reclassified. One corrected confirmation remains subject to exact review and
-release; no further Q3/Q4 case is implied.
+reclassified. The exact corrected procedure received independent review and
+release before the confirmation below; no further Q3/Q4 case is implied.
+
+## Corrected confirmation
+
+One confirmation passed at source
+`e0d54f1c5ec16808994138645f05c642c68ba78f` with the same image, executable,
+fixture, capacities, command and deadlines. Its
+[selected receipt](results/2026-10-28-owned-mp3-decode-confirmation.yaml)
+records the [exact release](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6463734379).
+All 1,920,768 input bytes were accepted, and exactly 23,040,000 PCM bytes were
+counted with the same output digest as the original run. It buffered 1,167,360
+bytes at 0.045589 seconds, passed the source-bound diagnostic policy and exited
+zero. Workload time was 0.278480 seconds; external operation time was 4.250 seconds.
+The stopped native input gate and full prepaid allocations preceded input.
+No memory event or swap use occurred. The leader was reaped, payload views
+released and the original three-second cleanup deadline met with no retained
+PID or debt. The stopped container had PID zero and no OOM flag; normal removal
+and absence were verified. No listening or PCM export occurred.
+
+This qualifies only this owned 48 kHz stereo constant-bitrate fixture on native
+amd64. It exercises one decoder while reserving capacity for two; it does not
+establish overlap, remaining Q3 formats/rates/channels, Q4 cancellation, native
+arm64, fidelity or application/release readiness. The original diagnostic
+failure remains immutable, with its actual source and harness binding.
