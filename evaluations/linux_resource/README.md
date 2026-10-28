@@ -18,9 +18,11 @@ dependencies, provider adapter or station framework.
   and image. Its fixed supplemental-limit candidate was [rejected at loader startup](decoder-supply.md).
   Supplemental limits are not yet an established PCM bound. No custom decoder
   or source distribution is introduced.
-  A subsequent [pinned mpg123 metadata proposal](mpg123-proposal.md) resolves four
-  newer family packages and stable dependencies without changing the base;
-  acquisition and native execution remain pending.
+  A subsequent [pinned mpg123 supply and startup check](mpg123-proposal.md) preserves
+  the base and passes the fixed no-input command under the unchanged limits.
+  Useful decode and aggregate PCM qualification remain pending.
+  A distinct fixed AS 12,524,288 startup variant is prepared for independent
+  review; the completed pass does not establish that added limit or useful fit.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
 - Stop after the first executed failure. A successful Q1/Q2 pass stops before Q3;

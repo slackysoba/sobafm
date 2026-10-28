@@ -6,10 +6,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from .decoder_startup import (
+    ADDRESS_SPACE_BYTES,
     DATA_BYTES,
     OUTPUT_BYTES,
     STACK_BYTES,
     Child,
+    CleanupResult,
     capture,
     cleanup,
     run_startup,
@@ -43,6 +45,78 @@ class ContractTests(unittest.TestCase):
     def test_startup_fixed_commands_have_no_media_or_device_argument(self) -> None:
         self.assertEqual(startup_argv("ffmpeg"), ("/usr/bin/ffmpeg", "-nostdin", "-version"))
         self.assertEqual(startup_argv("mpg123"), ("/usr/bin/mpg123", "--version"))
+
+    def test_address_space_variant_rejects_other_decoder_before_file_access(self) -> None:
+        module = "evaluations.linux_resource.decoder_startup"
+        with patch(f"{module}.Path") as path, patch(f"{module}.os.fork") as fork:
+            with self.assertRaisesRegex(ProbeError, "requires mpg123"):
+                run_startup("0" * 64, "ffmpeg", address_space_limit=True)
+            path.assert_not_called()
+            fork.assert_not_called()
+
+    def test_address_space_gate_rejects_missing_changed_unlimited_or_duplicate_limit(self) -> None:
+        original = (
+            f"Max data size             {DATA_BYTES} {DATA_BYTES} bytes\n"
+            f"Max stack size            {STACK_BYTES} {STACK_BYTES} bytes\n"
+        )
+        address_space = (
+            f"Max address space         {ADDRESS_SPACE_BYTES} {ADDRESS_SPACE_BYTES} bytes\n"
+        )
+        self.assertEqual(
+            verify_rlimits(original + address_space, True)["Max address space"], ADDRESS_SPACE_BYTES
+        )
+        for text in (
+            original,
+            original + address_space.replace(str(ADDRESS_SPACE_BYTES), "unlimited", 1),
+            original
+            + address_space.replace(str(ADDRESS_SPACE_BYTES), str(ADDRESS_SPACE_BYTES + 1)),
+            original + address_space.replace(f"{ADDRESS_SPACE_BYTES} bytes", "unlimited bytes"),
+            original + address_space + address_space,
+        ):
+            with self.subTest(text=text), self.assertRaises(ProbeError):
+                verify_rlimits(text, True)
+
+    def test_address_space_failure_never_releases_exec_gate(self) -> None:
+        module = "evaluations.linux_resource.decoder_startup"
+        original = (
+            f"Max data size             {DATA_BYTES} {DATA_BYTES} bytes\n"
+            f"Max stack size            {STACK_BYTES} {STACK_BYTES} bytes\n"
+        )
+
+        def release(child: Child, deadline: float) -> CleanupResult:
+            child.exit_code = 0
+            return CleanupResult(True, [])
+
+        for extra in ("", f"Max address space {ADDRESS_SPACE_BYTES} unlimited bytes\n"):
+
+            def verify(
+                pid: int, address_space_limit: bool, text: str = original + extra
+            ) -> dict[str, int]:
+                self.assertEqual(pid, 42)
+                self.assertTrue(address_space_limit)
+                return verify_rlimits(text, address_space_limit)
+
+            with (
+                self.subTest(extra=extra),
+                patch(f"{module}.Path") as path,
+                patch(f"{module}.hashlib.file_digest") as digest,
+                patch(f"{module}.os.pipe", side_effect=[(10, 11), (12, 13), (14, 15), (16, 17)]),
+                patch(f"{module}.os.fork", return_value=42),
+                patch(f"{module}.os.close"),
+                patch(f"{module}.os.write") as write,
+                patch(f"{module}.os.read", return_value=b"R"),
+                patch(f"{module}.select.select", return_value=([10], [], [])),
+                patch(f"{module}.verify_child", side_effect=verify),
+                patch(f"{module}.cleanup", side_effect=release),
+            ):
+                path.return_value.iterdir.return_value = [Path("/unused")]
+                digest.return_value.hexdigest.return_value = "0" * 64
+                result = run_startup("0" * 64, "mpg123", address_space_limit=True)
+                self.assertEqual(result["verdict"], "incomplete")
+                self.assertFalse(result["exec_gate_released"])
+                self.assertEqual(result["argv"], ["/usr/bin/mpg123", "--version"])
+                self.assertEqual(result["limit_profile"], "data-stack-as")
+                write.assert_not_called()
 
     def test_startup_wrong_version_or_decoder_output_never_passes(self) -> None:
         self.assertTrue(valid_version_output("mpg123", b"mpg123 1.33.7\n"))

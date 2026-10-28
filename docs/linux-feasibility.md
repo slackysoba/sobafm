@@ -220,7 +220,7 @@ acquired or hashed.
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
 | Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Exact binary set acquired and installed offline; binding reviewed. The fixed supplemental DATA/STACK candidate failed loader startup on amd64. |
-| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | [Metadata proposal complete](../evaluations/linux_resource/mpg123-proposal.md); acquisition, installed binding and execution pending. MP3 evidence would be partial and would not remove FLAC or other qualification requirements. |
+| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | [Supply, binding and fixed no-input startup completed](../evaluations/linux_resource/mpg123-proposal.md) under unchanged limits. Useful decode and PCM qualification remain pending; MP3 evidence would not remove FLAC or other qualification requirements. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
 [amd64 file list](https://packages.debian.org/trixie/amd64/ffmpeg/filelist),
@@ -428,6 +428,10 @@ or audio followed. The whole-service ledger is unchanged. This does not establis
 overall-budget infeasibility or PCM coverage; Q3/Q4 and alternative assessment
 remain outstanding.
 
-The [follow-up mpg123 proposal](../evaluations/linux_resource/mpg123-proposal.md)
-establishes authenticated dependency compatibility with the unchanged base.
-It supplies no native startup or memory-fit evidence and changes no numeric cap.
+The [follow-up mpg123 result](../evaluations/linux_resource/mpg123-proposal.md)
+establishes authenticated supply and a no-input startup pass with the unchanged
+base and numeric limits. It supplies no useful decode or aggregate PCM evidence.
+Its separately prepared hard/soft AS 12,524,288 startup variant retains the
+original DATA/STACK and group limits. The source-derived ordinary-mapping scope,
+special-map exclusions and conditional PCM arithmetic are recorded there; no
+execution or useful-fit result for the AS variant is claimed.

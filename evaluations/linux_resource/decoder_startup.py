@@ -19,6 +19,7 @@ from .probe import Identity, ProbeError, emit, observe, proc_fields, read_text, 
 
 DATA_BYTES = 12_000_000
 STACK_BYTES = 524_288
+ADDRESS_SPACE_BYTES = 12_524_288
 OUTPUT_BYTES = 16_384  # Each stream; encoded result still fits emit's 64 KiB limit.
 STARTUP_SECONDS = 10.0
 CLEANUP_SECONDS = 3.0
@@ -46,8 +47,10 @@ def valid_version_output(decoder: str, stdout: bytes) -> bool:
     return False
 
 
-def verify_rlimits(text: str) -> dict[str, int]:
+def verify_rlimits(text: str, address_space_limit: bool = False) -> dict[str, int]:
     expected = {"Max data size": DATA_BYTES, "Max stack size": STACK_BYTES}
+    if address_space_limit:
+        expected["Max address space"] = ADDRESS_SPACE_BYTES
     found: dict[str, int] = {}
     for line in text.splitlines():
         for name, value in expected.items():
@@ -61,7 +64,7 @@ def verify_rlimits(text: str) -> dict[str, int]:
     return found
 
 
-def verify_child(pid: int) -> dict[str, int]:
+def verify_child(pid: int, address_space_limit: bool = False) -> dict[str, int]:
     root = Path(f"/proc/{pid}")
     status = proc_fields(read_text(root / "status"))
     group = read_text(root / "cgroup").strip()
@@ -77,7 +80,7 @@ def verify_child(pid: int) -> dict[str, int]:
         int(status["CapEff"], 16),
     )
     validate_identity(item, "/")
-    return verify_rlimits(read_text(root / "limits"))
+    return verify_rlimits(read_text(root / "limits"), address_space_limit)
 
 
 def group_members(pgid: int) -> list[int]:
@@ -147,7 +150,13 @@ def cleanup(child: Child, deadline: float) -> CleanupResult:
 
 
 def child_exec(
-    ready: int, gate: int, out: int, err: int, close_fds: list[int], argv: tuple[str, ...]
+    ready: int,
+    gate: int,
+    out: int,
+    err: int,
+    close_fds: list[int],
+    argv: tuple[str, ...],
+    address_space_limit: bool,
 ) -> None:
     """Only the single-threaded fork child changes limits; no preexec callback."""
     try:
@@ -162,6 +171,8 @@ def child_exec(
                 os.close(fd)
         resource.setrlimit(resource.RLIMIT_STACK, (STACK_BYTES, STACK_BYTES))
         resource.setrlimit(resource.RLIMIT_DATA, (DATA_BYTES, DATA_BYTES))
+        if address_space_limit:
+            resource.setrlimit(resource.RLIMIT_AS, (ADDRESS_SPACE_BYTES, ADDRESS_SPACE_BYTES))
         # The parent reads this child's actual /proc limits while exec is gated.
         os.write(ready, b"R")
         if os.read(gate, 1) != b"x":
@@ -195,8 +206,13 @@ def capture(child: Child, streams: dict[int, bytearray], deadline: float) -> Non
                 raise ProbeError("startup output exceeded its stream bound")
 
 
-def run_startup(expected_digest: str, decoder: str = "ffmpeg") -> dict[str, object]:
+def run_startup(
+    expected_digest: str, decoder: str = "ffmpeg", *, address_space_limit: bool = False
+) -> dict[str, object]:
     argv = startup_argv(decoder)
+    if address_space_limit and decoder != "mpg123":
+        raise ProbeError("the fixed address-space variant requires mpg123")
+    profile = "data-stack-as" if address_space_limit else "data-stack"
     if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
         raise ProbeError("an approved executable SHA256 is required")
     if len(list(Path("/proc/self/task").iterdir())) != 1:
@@ -224,7 +240,7 @@ def run_startup(expected_digest: str, decoder: str = "ffmpeg") -> dict[str, obje
     try:
         pid = os.fork()
         if pid == 0:
-            child_exec(ready_w, gate_r, out_w, err_w, fds, argv)
+            child_exec(ready_w, gate_r, out_w, err_w, fds, argv, address_space_limit)
             os._exit(125)
         child = Child(pid)
         for fd in (ready_w, gate_r, out_w, err_w):
@@ -235,8 +251,16 @@ def run_startup(expected_digest: str, decoder: str = "ffmpeg") -> dict[str, obje
             raise ProbeError("limit-setup handshake timed out")
         if os.read(ready_r, 1) != b"R":
             raise ProbeError("limit setup failed before decoder exec")
-        limits = verify_child(pid)
-        emit({"event": "startup_exec_gate", "pid": pid, "rlimits": limits, "input": "none"})
+        limits = verify_child(pid, address_space_limit)
+        emit(
+            {
+                "event": "startup_exec_gate",
+                "pid": pid,
+                "limit_profile": profile,
+                "rlimits": limits,
+                "input": "none",
+            }
+        )
         if os.write(gate_w, b"x") != 1:
             raise ProbeError("short exec-gate write")
         released = True
@@ -285,6 +309,7 @@ def run_startup(expected_digest: str, decoder: str = "ffmpeg") -> dict[str, obje
         "decoder": decoder,
         "argv": list(argv),
         "decoder_sha256": digest,
+        "limit_profile": profile,
         "rlimits": limits,
         "exit_code": exit_code,
         "stdout_base64": base64.b64encode(stdout).decode("ascii"),
@@ -304,12 +329,19 @@ def main() -> int:
     expected = parser.add_mutually_exclusive_group(required=True)
     expected.add_argument("--expected-ffmpeg-sha256")
     expected.add_argument("--expected-mpg123-sha256")
+    parser.add_argument(
+        "--mpg123-address-space-limit",
+        action="store_true",
+        help="add the distinct fixed 12,524,288-byte hard/soft AS limit; mpg123 only",
+    )
     args = parser.parse_args()
     try:
         emit({"event": "startup_preflight", "observation": observe()})
         decoder = "mpg123" if args.expected_mpg123_sha256 is not None else "ffmpeg"
         digest = args.expected_mpg123_sha256 if decoder == "mpg123" else args.expected_ffmpeg_sha256
-        result = run_startup(str(digest), decoder)
+        result = run_startup(
+            str(digest), decoder, address_space_limit=args.mpg123_address_space_limit
+        )
         emit(result)
         return 0 if result["verdict"] == "startup_only_pass" else 1
     except (OSError, ProbeError, ValueError) as error:

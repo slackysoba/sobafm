@@ -1,0 +1,816 @@
+schema_version: 1
+issue: https://github.com/slackysoba/sobafm/issues/7
+execution_date_america_los_angeles: '2026-10-27'
+execution_date_utc: '2026-10-28'
+result: mpg123_startup_only_pass
+proposal:
+  public_manifest: 2026-10-27-mpg123-proposal.yaml
+  retained_json_sha256: 013f66eec047c8d0b12e09e6e22edee7e8fbf1fdfbfa8b74981e552b8e9a455b  # pragma: allowlist secret - public source or artifact digest
+  versions_or_hashes_changed: false
+acquisition:
+  verified_archives: 27
+  archive_bytes: 8879612
+  prior_cache_files_rehashed_and_hardlinked: 22
+  shared_cache_bytes: 8319864
+  new_downloads: 5
+  new_download_bytes: 559748
+  all_transfers_first_attempt_http200_tls_verified: true
+  protocol: HTTPS HTTP/1.1
+  active_downloads: 0
+  receipt_sha256: 91bf85bd21c4a136fc872c5a817ec7e28ade187e3710a47201790bd0590e70f1  # pragma: allowlist secret - public source or artifact digest
+  executed_script_sha256: d0aa1597c92ff473d4817f3ab0bfbccadf6e54987a876d66c879da2c93085b73  # pragma: allowlist secret - public source or artifact digest
+build:
+  source_commit: f293738d9d5f42b861e3f4c0e8ae38b6c4848476  # pragma: allowlist secret - public source or artifact digest
+  base_image: ghcr.io/astral-sh/uv@sha256:8f4ab6a0f2cc074290ba6a136eb016350b2b6b93a2108e07b72724901ad1914f  # pragma: allowlist secret - public source or artifact digest
+  image_id: sha256:e3ff7b02740b55f52735b17afc9846d151f86bf7395341f5d53f7d3dbb235cfc  # pragma: allowlist secret - public source or artifact digest
+  os: linux
+  architecture: amd64
+  final_user: 1000:1000
+  logical_image_bytes: 287470219
+  network: none
+  ordinary_apt_local_archives: true
+  apt_no_download: true
+  exact_transaction_and_installed_inventory_verified: true
+  elapsed_seconds: 12.672
+  exit_code: 0
+  dockerfile_sha256: 6eacf961a6b875f6010705bf254c4dacca0c972047dd03bdce21e3aeb998d8c8  # pragma: allowlist secret - public source or artifact digest
+  verifier_sha256: aeb3604d013d05d35c5e6f7c8e3bd0aebabe6249a950b3ac8e056c7d4b086c56  # pragma: allowlist secret - public source or artifact digest
+  supervisor_sha256: 3b6410545978121567c9763e96e604842323c33a80020df85ddca95725948e7a  # pragma: allowlist secret - public source or artifact digest
+  log_sha256: 503852897cf8c304b5128987f2aace9c5d8fbc834a15ca48087db0fa6129828b  # pragma: allowlist secret - public source or artifact digest
+  log_bytes: 11579
+  active_build_ownership_debt: false
+  image_published: false
+  inherited_oci_license_label_is_not_combined_license_claim: true
+binding:
+  package_count: 114
+  exact_proposal_plus_base_match: true
+  elf_path_records: 691
+  copyright_notice_records: 114
+  missing_notices: 0
+  full_binding_sha256: 23abd7d61a1d5381e6e8415804534085afd48d0511e0c4503e547a01218ff141  # pragma: allowlist secret - public source or artifact digest
+  installed_inventory_sha256: 8ed781eb9a3ccc2a3b6ccfd6aa29012935028eaa363c5d0e6947fdaa3fe32bc7  # pragma: allowlist secret - public source or artifact digest
+  selected_native_files:
+  - path: /usr/bin/mpg123
+    sha256: 62ef82208722eda0fedd39de0ced0d8e3a8450d129760152ea16d075651f0a91  # pragma: allowlist secret - public source or artifact digest
+    size: 187632
+    mode: 0o755
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+    sha256: c8438e4fde1934e61c88311633f00949ff645d5c04cdb8671fa3d78164d2f307  # pragma: allowlist secret - public source or artifact digest
+    size: 225672
+    mode: 0o755
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/libc.so.6
+    sha256: 9792e3cbb541c8f44c7acf5f14f4022ea62998ecc787d326bed4d8b6547dfd92  # pragma: allowlist secret - public source or artifact digest
+    size: 1995216
+    mode: 0o755
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/libm.so.6
+    sha256: 6d567d53e895273ca14a1f9dc164fc6c8d39aed2f60aa46a733c2784228915f3  # pragma: allowlist secret - public source or artifact digest
+    size: 977112
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/libmpg123.so.0.49.4
+    sha256: aa51a519374ae04a75914f3d011db1b3c7a99d089443e6d25043055465c050c8  # pragma: allowlist secret - public source or artifact digest
+    size: 385240
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/libout123.so.0.5.2
+    sha256: 38af2e5aa2cf16f9230b1de9434dc92bc80b27bc0d2b22e5588435b2330a5a93  # pragma: allowlist secret - public source or artifact digest
+    size: 76312
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/libportaudio.so.2.0.0
+    sha256: 2821db70ef73c909d20adc0650174b42f60557166181f2e423e8e997724bd95c  # pragma: allowlist secret - public source or artifact digest
+    size: 191936
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/libsyn123.so.0.2.3
+    sha256: 16b29c3d037522390e8d71c3b8904c90fb760509284d9279f3dd775b8a8afa55  # pragma: allowlist secret - public source or artifact digest
+    size: 223544
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/mpg123/output_alsa.so
+    sha256: 2812115e50af89a5b8aa30e63ea2174413b14d44864d218b4a3a0d2076d835ed  # pragma: allowlist secret - public source or artifact digest
+    size: 22936
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/mpg123/output_dummy.so
+    sha256: a07ca15206d24a2bba73873e2a7f88afa9a02366581f4db64a38bb2aab772ac0  # pragma: allowlist secret - public source or artifact digest
+    size: 14456
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/mpg123/output_jack.so
+    sha256: cc9134be3ba9788171d4f16a9a1c45b88e41f3a39c3121cfcab1e1fa7a946644  # pragma: allowlist secret - public source or artifact digest
+    size: 22936
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/mpg123/output_openal.so
+    sha256: 2dbc1ea81e9e9dcf223506f4f4a59afb8a3e6685494655d92376ef5429f42d71  # pragma: allowlist secret - public source or artifact digest
+    size: 14616
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/mpg123/output_oss.so
+    sha256: 5cebcb1a5b674e648d41ee6639ab597cbbe7f0aa2b2f0f005a512e4a8e952bfc  # pragma: allowlist secret - public source or artifact digest
+    size: 14520
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/mpg123/output_portaudio.so
+    sha256: 1aa1d32ca7925ab87157a95a8fcc63b4880450e747b373d2d49cbc720de73b4d  # pragma: allowlist secret - public source or artifact digest
+    size: 14552
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  - path: /usr/lib/x86_64-linux-gnu/mpg123/output_pulse.so
+    sha256: a0049e8af5ae951c8e426815099c53adea95d0da37ec37cd66300cbf40d427bf  # pragma: allowlist secret - public source or artifact digest
+    size: 14648
+    mode: 0o644
+    uid: 0
+    gid: 0
+    file_capability: false
+  receipt_container_never_started: true
+  receipt_container_removed_and_absent: true
+startup:
+  source_commit: 4071d187b5f21abe4c62ccb24e8453ae8f28c600  # pragma: allowlist secret - public source or artifact digest
+  image_id: sha256:e3ff7b02740b55f52735b17afc9846d151f86bf7395341f5d53f7d3dbb235cfc  # pragma: allowlist secret - public source or artifact digest
+  address_space_limit: not_set_or_tested_in_this_run
+  operator_sha256: ced7cde66e5d6ed7d8db495b5f4b8269af78e8b0010f2b2e5f4a6aeca9d52f0f  # pragma: allowlist secret - public source or artifact digest
+  harness_sha256:
+    probe.py: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source or artifact digest
+    decoder_startup.py: ad4c851674804076df38bc7acc31b425a5282428e766a22adc38a53b325a7599  # pragma: allowlist secret - public source or artifact digest
+  preflight:
+    architecture: x86_64
+    controlled_capacity: 98979840
+    identity:
+      effective_capabilities: 0
+      gid: 1000
+      group: /
+      parent_pid: 1
+      pid: 7
+      seccomp: 2
+      uid: 1000
+    kernel: 6.18.33.2-microsoft-standard-WSL2
+    limits:
+      cpu.max: 200000 100000
+      memory.max: '90177536'
+      memory.swap.max: '0'
+      pids.max: '64'
+    memory_current: 15806464
+    memory_events:
+      high: 0
+      low: 0
+      max: 0
+      oom: 0
+      oom_group_kill: 0
+      oom_kill: 0
+    native_pcm_bound: unresolved; Q3 is not qualified
+    pcm_parent_and_copy_reservation: 8802304
+    probe_sha256: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source or artifact digest
+    python: 3.14.7
+    swap_current: 0
+  exec_gate:
+    event: startup_exec_gate
+    input: none
+    pid: 8
+    rlimits:
+      Max data size: 12000000
+      Max stack size: 524288
+  result:
+    argv:
+    - /usr/bin/mpg123
+    - --version
+    cleanup_deadline_met: true
+    cleanup_debt: false
+    decoder: mpg123
+    decoder_sha256: 62ef82208722eda0fedd39de0ced0d8e3a8450d129760152ea16d075651f0a91  # pragma: allowlist secret - public source or artifact digest
+    event: startup_result
+    exec_failed: false
+    exec_gate_released: true
+    exit_code: 0
+    failure: null
+    leader_reaped: true
+    q3: 'not_run: aggregate native PCM coverage unresolved'
+    q4: not_run
+    retained_pids: []
+    rlimits:
+      Max data size: 12000000
+      Max stack size: 524288
+    verdict: startup_only_pass
+    stdout: 'mpg123 1.33.7
+
+      '
+    stderr: ''
+  outer_elapsed_seconds: 7.125
+  container_oom_killed: false
+  stopped_pid: 0
+  removed_and_absent: true
+  external_cleanup_debt: false
+  raw_output_sha256: 2ed0646ab0dbfc5c2f9ee94a57b68df072af21c4cbb326029ecef9aa4e1b7879  # pragma: allowlist secret - public source or artifact digest
+qualification:
+  startup_only: passed
+  useful_decode: not_run
+  aggregate_native_pcm_bound: unresolved
+  q3: not_qualified
+  q4: not_run
+  native_arm64_runtime: not_run
+  audio_provider_or_discord: false
+  forbidden_source_access: false
+  numeric_limits_changed: false
+installed_packages:
+- package: adduser
+  version: '3.152'
+  architecture: all
+  source_package: adduser
+  source_version: '3.152'
+- package: apt
+  version: 3.0.3
+  architecture: amd64
+  source_package: apt
+  source_version: 3.0.3
+- package: base-files
+  version: 13.8+deb13u7
+  architecture: amd64
+  source_package: base-files
+  source_version: 13.8+deb13u7
+- package: base-passwd
+  version: 3.6.7
+  architecture: amd64
+  source_package: base-passwd
+  source_version: 3.6.7
+- package: bash
+  version: 5.2.37-2+b10
+  architecture: amd64
+  source_package: bash
+  source_version: 5.2.37-2
+- package: bsdutils
+  version: 1:2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: ca-certificates
+  version: '20250419'
+  architecture: all
+  source_package: ca-certificates
+  source_version: '20250419'
+- package: coreutils
+  version: 9.7-3
+  architecture: amd64
+  source_package: coreutils
+  source_version: 9.7-3
+- package: dash
+  version: 0.5.12-12
+  architecture: amd64
+  source_package: dash
+  source_version: 0.5.12-12
+- package: debconf
+  version: 1.5.91
+  architecture: all
+  source_package: debconf
+  source_version: 1.5.91
+- package: debian-archive-keyring
+  version: '2025.1'
+  architecture: all
+  source_package: debian-archive-keyring
+  source_version: '2025.1'
+- package: debianutils
+  version: 5.23.2
+  architecture: amd64
+  source_package: debianutils
+  source_version: 5.23.2
+- package: diffutils
+  version: 1:3.10-4
+  architecture: amd64
+  source_package: diffutils
+  source_version: 1:3.10-4
+- package: dpkg
+  version: 1.22.22
+  architecture: amd64
+  source_package: dpkg
+  source_version: 1.22.22
+- package: findutils
+  version: 4.10.0-3
+  architecture: amd64
+  source_package: findutils
+  source_version: 4.10.0-3
+- package: gcc-14-base
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: grep
+  version: 3.11-4
+  architecture: amd64
+  source_package: grep
+  source_version: 3.11-4
+- package: gzip
+  version: 1.13-1+deb13u1
+  architecture: amd64
+  source_package: gzip
+  source_version: 1.13-1+deb13u1
+- package: hostname
+  version: '3.25'
+  architecture: amd64
+  source_package: hostname
+  source_version: '3.25'
+- package: init-system-helpers
+  version: 1.69~deb13u1
+  architecture: all
+  source_package: init-system-helpers
+  source_version: 1.69~deb13u1
+- package: libacl1
+  version: 2.3.2-2+b1
+  architecture: amd64
+  source_package: acl
+  source_version: 2.3.2-2
+- package: libapt-pkg7.0
+  version: 3.0.3
+  architecture: amd64
+  source_package: apt
+  source_version: 3.0.3
+- package: libasound2-data
+  version: 1.2.14-1+deb13u1
+  architecture: all
+  source_package: alsa-lib
+  source_version: 1.2.14-1+deb13u1
+- package: libasound2t64
+  version: 1.2.14-1+deb13u1
+  architecture: amd64
+  source_package: alsa-lib
+  source_version: 1.2.14-1+deb13u1
+- package: libasyncns0
+  version: 0.8-6+b5
+  architecture: amd64
+  source_package: libasyncns
+  source_version: 0.8-6
+- package: libattr1
+  version: 1:2.5.2-3
+  architecture: amd64
+  source_package: attr
+  source_version: 1:2.5.2-3
+- package: libaudit-common
+  version: 1:4.0.2-2+deb13u1
+  architecture: all
+  source_package: audit
+  source_version: 1:4.0.2-2+deb13u1
+- package: libaudit1
+  version: 1:4.0.2-2+deb13u1
+  architecture: amd64
+  source_package: audit
+  source_version: 1:4.0.2-2+deb13u1
+- package: libblkid1
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libbsd0
+  version: 0.12.2-2
+  architecture: amd64
+  source_package: libbsd
+  source_version: 0.12.2-2
+- package: libbz2-1.0
+  version: 1.0.8-6
+  architecture: amd64
+  source_package: bzip2
+  source_version: 1.0.8-6
+- package: libc-bin
+  version: 2.41-12+deb13u4
+  architecture: amd64
+  source_package: glibc
+  source_version: 2.41-12+deb13u4
+- package: libc6
+  version: 2.41-12+deb13u4
+  architecture: amd64
+  source_package: glibc
+  source_version: 2.41-12+deb13u4
+- package: libcap-ng0
+  version: 0.8.5-4+b1
+  architecture: amd64
+  source_package: libcap-ng
+  source_version: 0.8.5-4
+- package: libcap2
+  version: 1:2.75-10+deb13u1+b3
+  architecture: amd64
+  source_package: libcap2
+  source_version: 1:2.75-10+deb13u1
+- package: libcrypt1
+  version: 1:4.4.38-1
+  architecture: amd64
+  source_package: libxcrypt
+  source_version: 1:4.4.38-1
+- package: libdb5.3t64
+  version: 5.3.28+dfsg2-9
+  architecture: amd64
+  source_package: db5.3
+  source_version: 5.3.28+dfsg2-9
+- package: libdbus-1-3
+  version: 1.16.2-2
+  architecture: amd64
+  source_package: dbus
+  source_version: 1.16.2-2
+- package: libdebconfclient0
+  version: '0.280'
+  architecture: amd64
+  source_package: cdebconf
+  source_version: '0.280'
+- package: libffi8
+  version: 3.4.8-2
+  architecture: amd64
+  source_package: libffi
+  source_version: 3.4.8-2
+- package: libflac14
+  version: 1.5.0+ds-2
+  architecture: amd64
+  source_package: flac
+  source_version: 1.5.0+ds-2
+- package: libgcc-s1
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: libgdbm6t64
+  version: 1.24-2
+  architecture: amd64
+  source_package: gdbm
+  source_version: 1.24-2
+- package: libgmp10
+  version: 2:6.3.0+dfsg-3
+  architecture: amd64
+  source_package: gmp
+  source_version: 2:6.3.0+dfsg-3
+- package: libhogweed6t64
+  version: 3.10.1-1
+  architecture: amd64
+  source_package: nettle
+  source_version: 3.10.1-1
+- package: libjack-jackd2-0
+  version: 1.9.22~dfsg-4
+  architecture: amd64
+  source_package: jackd2
+  source_version: 1.9.22~dfsg-4
+- package: liblastlog2-2
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: liblz4-1
+  version: 1.10.0-4
+  architecture: amd64
+  source_package: lz4
+  source_version: 1.10.0-4
+- package: liblzma5
+  version: 5.8.1-1+deb13u1
+  architecture: amd64
+  source_package: xz-utils
+  source_version: 5.8.1-1+deb13u1
+- package: libmd0
+  version: 1.1.0-2+b1
+  architecture: amd64
+  source_package: libmd
+  source_version: 1.1.0-2
+- package: libmount1
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libmp3lame0
+  version: 3.100-6+b3
+  architecture: amd64
+  source_package: lame
+  source_version: 3.100-6
+- package: libmpg123-0t64
+  version: 1.33.7-1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.33.7-1
+- package: libncursesw6
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: libnettle8t64
+  version: 3.10.1-1
+  architecture: amd64
+  source_package: nettle
+  source_version: 3.10.1-1
+- package: libogg0
+  version: 1.3.5-3+b2
+  architecture: amd64
+  source_package: libogg
+  source_version: 1.3.5-3
+- package: libopenal-data
+  version: 1:1.24.2-1
+  architecture: all
+  source_package: openal-soft
+  source_version: 1:1.24.2-1
+- package: libopenal1
+  version: 1:1.24.2-1
+  architecture: amd64
+  source_package: openal-soft
+  source_version: 1:1.24.2-1
+- package: libopus0
+  version: 1.5.2-2
+  architecture: amd64
+  source_package: opus
+  source_version: 1.5.2-2
+- package: libout123-0t64
+  version: 1.33.7-1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.33.7-1
+- package: libpam-modules
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam-modules-bin
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam-runtime
+  version: 1.7.0-5
+  architecture: all
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpam0g
+  version: 1.7.0-5
+  architecture: amd64
+  source_package: pam
+  source_version: 1.7.0-5
+- package: libpcre2-8-0
+  version: 10.46-1~deb13u2
+  architecture: amd64
+  source_package: pcre2
+  source_version: 10.46-1~deb13u2
+- package: libportaudio2
+  version: 19.6.0-1.2+b3
+  architecture: amd64
+  source_package: portaudio19
+  source_version: 19.6.0-1.2
+- package: libpulse0
+  version: 17.0+dfsg1-2+b1
+  architecture: amd64
+  source_package: pulseaudio
+  source_version: 17.0+dfsg1-2
+- package: libreadline8t64
+  version: 8.2-6
+  architecture: amd64
+  source_package: readline
+  source_version: 8.2-6
+- package: libsamplerate0
+  version: 0.2.2-4+b2
+  architecture: amd64
+  source_package: libsamplerate
+  source_version: 0.2.2-4
+- package: libseccomp2
+  version: 2.6.0-2
+  architecture: amd64
+  source_package: libseccomp
+  source_version: 2.6.0-2
+- package: libselinux1
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libselinux
+  source_version: 3.8.1-1
+- package: libsemanage-common
+  version: 3.8.1-1
+  architecture: all
+  source_package: libsemanage
+  source_version: 3.8.1-1
+- package: libsemanage2
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libsemanage
+  source_version: 3.8.1-1
+- package: libsepol2
+  version: 3.8.1-1
+  architecture: amd64
+  source_package: libsepol
+  source_version: 3.8.1-1
+- package: libsmartcols1
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libsndfile1
+  version: 1.2.2-2+deb13u1
+  architecture: amd64
+  source_package: libsndfile
+  source_version: 1.2.2-2+deb13u1
+- package: libsqlite3-0
+  version: 3.46.1-7+deb13u2
+  architecture: amd64
+  source_package: sqlite3
+  source_version: 3.46.1-7+deb13u2
+- package: libssl3t64
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: libstdc++6
+  version: 14.2.0-19
+  architecture: amd64
+  source_package: gcc-14
+  source_version: 14.2.0-19
+- package: libsyn123-0t64
+  version: 1.33.7-1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.33.7-1
+- package: libsystemd0
+  version: 257.13-1~deb13u1
+  architecture: amd64
+  source_package: systemd
+  source_version: 257.13-1~deb13u1
+- package: libtinfo6
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: libudev1
+  version: 257.13-1~deb13u1
+  architecture: amd64
+  source_package: systemd
+  source_version: 257.13-1~deb13u1
+- package: libuuid1
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: libvorbis0a
+  version: 1.3.7-3
+  architecture: amd64
+  source_package: libvorbis
+  source_version: 1.3.7-3
+- package: libvorbisenc2
+  version: 1.3.7-3
+  architecture: amd64
+  source_package: libvorbis
+  source_version: 1.3.7-3
+- package: libx11-6
+  version: 2:1.8.12-1
+  architecture: amd64
+  source_package: libx11
+  source_version: 2:1.8.12-1
+- package: libx11-data
+  version: 2:1.8.12-1
+  architecture: all
+  source_package: libx11
+  source_version: 2:1.8.12-1
+- package: libx11-xcb1
+  version: 2:1.8.12-1
+  architecture: amd64
+  source_package: libx11
+  source_version: 2:1.8.12-1
+- package: libxau6
+  version: 1:1.0.11-1
+  architecture: amd64
+  source_package: libxau
+  source_version: 1:1.0.11-1
+- package: libxcb1
+  version: 1.17.0-2+b1
+  architecture: amd64
+  source_package: libxcb
+  source_version: 1.17.0-2
+- package: libxdmcp6
+  version: 1:1.1.5-1
+  architecture: amd64
+  source_package: libxdmcp
+  source_version: 1:1.1.5-1
+- package: libxxhash0
+  version: 0.8.3-2
+  architecture: amd64
+  source_package: xxhash
+  source_version: 0.8.3-2
+- package: libzstd1
+  version: 1.5.7+dfsg-1
+  architecture: amd64
+  source_package: libzstd
+  source_version: 1.5.7+dfsg-1
+- package: login
+  version: 1:4.16.0-2+really2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: login.defs
+  version: 1:4.17.4-2
+  architecture: all
+  source_package: shadow
+  source_version: 1:4.17.4-2
+- package: mawk
+  version: 1.3.4.20250131-1
+  architecture: amd64
+  source_package: mawk
+  source_version: 1.3.4.20250131-1
+- package: mount
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: mpg123
+  version: 1.33.7-1
+  architecture: amd64
+  source_package: mpg123
+  source_version: 1.33.7-1
+- package: ncurses-base
+  version: 6.5+20250216-2
+  architecture: all
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: ncurses-bin
+  version: 6.5+20250216-2
+  architecture: amd64
+  source_package: ncurses
+  source_version: 6.5+20250216-2
+- package: netbase
+  version: '6.5'
+  architecture: all
+  source_package: netbase
+  source_version: '6.5'
+- package: openssl
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: openssl-provider-legacy
+  version: 3.5.7-1~deb13u2
+  architecture: amd64
+  source_package: openssl
+  source_version: 3.5.7-1~deb13u2
+- package: passwd
+  version: 1:4.17.4-2
+  architecture: amd64
+  source_package: shadow
+  source_version: 1:4.17.4-2
+- package: perl-base
+  version: 5.40.1-6+deb13u1
+  architecture: amd64
+  source_package: perl
+  source_version: 5.40.1-6+deb13u1
+- package: readline-common
+  version: 8.2-6
+  architecture: all
+  source_package: readline
+  source_version: 8.2-6
+- package: sed
+  version: 4.9-2+deb13u1
+  architecture: amd64
+  source_package: sed
+  source_version: 4.9-2+deb13u1
+- package: sqv
+  version: 1.3.0-3+b2
+  architecture: amd64
+  source_package: rust-sequoia-sqv
+  source_version: 1.3.0-3
+- package: sysvinit-utils
+  version: 3.14-4
+  architecture: amd64
+  source_package: sysvinit
+  source_version: 3.14-4
+- package: tar
+  version: 1.35+dfsg-3.1
+  architecture: amd64
+  source_package: tar
+  source_version: 1.35+dfsg-3.1
+- package: tzdata
+  version: 2026c-0+deb13u1
+  architecture: all
+  source_package: tzdata
+  source_version: 2026c-0+deb13u1
+- package: util-linux
+  version: 2.41.5-0+deb13u1
+  architecture: amd64
+  source_package: util-linux
+  source_version: 2.41.5-0+deb13u1
+- package: zlib1g
+  version: 1:1.3.dfsg+really1.3.1-1+b1
+  architecture: amd64
+  source_package: zlib
+  source_version: 1:1.3.dfsg+really1.3.1-1
