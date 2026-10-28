@@ -1,7 +1,7 @@
 # Retained-fixture two-decoder overlap
 
-Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **Preparation only; no
-overlap execution claimed.** The completed
+Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **One retained-fixture
+overlap passed on native amd64**, as recorded below. The completed
 [single-decoder confirmation](mpg123-fixture-plan.md#corrected-confirmation)
 is reused as unchanged evidence. This next Q3 case uses the same owned compressed
 fixture, image, executable, command, numeric capacities and security settings.
@@ -71,14 +71,23 @@ unexpected process debt. Late release remains a failed deadline even if the
 process subsequently disappears. Release requires both leaders reaped, no
 retained processes or descriptors, and all payload references released.
 
-The external operator must pin the committed sources and exact image/ELF/fixture,
+The external operator pins the committed sources and exact image/ELF/fixture,
 mount only evaluation sources and the single fixture read-only, and use a fresh
-container name and evidence directory. Its existing 180-second operation,
-165-second attached-call and 60-second external ownership-cleanup limits remain.
-Selected output is bounded to 500 KB and the operation evidence to 800 KB,
-leaving room for source changes and a compact selected result in the 1 MB slice.
-Normal removal
-and verified absence apply only to the positively owned stopped container.
+container name and evidence directory. The operation limit is 180 seconds and
+the attached-call limit is 165 seconds. First termination, failure or cancellation
+starts one external three-second cleanup deadline covering the original CLI,
+reader joins, stop, inspection, removal and verified absence. Repeated cancellation
+cannot reset it. Late actual release clears debt but cannot restore a passing
+verdict. Uncertain creation retains ownership; bounded management recovery may
+continue after the deadline without another workload launch. A 240-second
+retention backstop reports failure rather than abandoning owned resources.
+
+Selected output is bounded to 500,000 bytes and operation evidence, including
+executed source snapshots, to 700,000 bytes. Docker's local log configuration is
+verified before start: `max-size=32768`, `max-file=1`, `compress=false`. Source,
+preparation, logs and the compact public result remain within the 1 MB slice.
+Normal removal and verified absence apply only to the positively owned stopped
+container.
 
 Deterministic offline regressions cover a failed second fork/native gate,
 cross-child descriptor closure, one stalled bank, circular capacity and frame
@@ -87,4 +96,35 @@ retained second child across forced termination and the original deadline.
 They use explicit fake-clock/event outcomes and execute no native command.
 Concrete independent review and release are required before one overlap attempt.
 No automatic retry, new fixture, additional format, Q4 or native arm64 execution
-follows from this preparation or a future pass.
+follows from this case.
+
+## Recorded overlap result
+
+The [reviewed release](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6465226505)
+authorized one attempt using source `188081e56839bd92239f0b23e668b219c6cc136b`.
+The [selected result](results/2026-10-28-owned-mp3-overlap.yaml) binds the actual
+mounted source bytes, exact retained image/ELF/fixture and executed operator.
+The earlier operator proposal was corrected before execution and never ran.
+Eight offline operator regressions additionally checked original-deadline
+identity, repeated cancellation, late release, uncertain creation/removal,
+retained CLI/readers and the required log configuration.
+
+Both decoders passed their stopped native gates before parent PCM allocation.
+Each reached 1,179,648 buffered bytes in less than 0.076 seconds from its fork.
+They remained live through a measured 30.016542233-second interval, with exactly
+5,760,000 bytes drained per bank at the required clock schedule. Each bank's
+high-water mark was its 2,304,000-byte capacity.
+
+Both then completed the same 1,920,768-byte compressed fixture, producing and
+draining exactly 23,040,000 PCM bytes each. Their PCM and 330-byte diagnostic
+hashes matched the single-decoder confirmation. Both exited zero and were reaped.
+Memory event deltas and swap were zero, payload references were released and no
+process or descriptor debt remained. Native and external original three-second
+cleanup deadlines were met; the stopped container had PID zero, was removed
+normally and was confirmed absent. Total outer elapsed time was 34.218 seconds.
+
+The retained operation evidence occupies 131,101 bytes. No decoded audio was
+stored, no new image or fixture was created, and there was no listening, source
+audio, provider or Discord activity. This establishes the retained MP3 overlap
+case on the recorded amd64 target. Other Q3 formats/rates/channels, Q4, native
+arm64, fidelity, application playback and release readiness remain unqualified.

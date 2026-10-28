@@ -17,8 +17,10 @@ dependencies, provider adapter or station framework.
   [owned MP3 confirmation](mpg123-fixture-plan.md#corrected-confirmation) on amd64.
   This covers the exact command and mapped/backing scope, with AS 12,524,288
   per admitted native address space and the full parent PCM/copy reservation.
-  Other formats/rates/channels and actual two-decoder overlap remain unqualified.
-  The [overlap preparation](mpg123-overlap-plan.md) reuses the retained fixture.
+  A [two-decoder overlap](mpg123-overlap-plan.md#recorded-overlap-result) then
+  passed once using the retained fixture, with a measured 30-second interval,
+  independent readiness/full completion and both original cleanup deadlines met.
+  Other formats/rates/channels remain unqualified.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
 - Every concrete native case needs independent review. Stop after its first
@@ -27,8 +29,9 @@ dependencies, provider adapter or station framework.
 
 The current conditional PCM arithmetic is
 `2 * 12,524,288 + 8,802,304 = 33,850,880` bytes. The first owned case exercised
-one decoder, while reserving two address spaces. Remaining Q3 work must exercise
-both admitted processes and required formats without violating the mapped/backing
+one decoder, while reserving two address spaces; the subsequent overlap exercised
+both admitted processes. Remaining Q3 work must exercise the required formats
+without violating the mapped/backing
 scope, payload ownership or useful-fit criteria. The full 90,177,536-byte group
 cap remains a separate controlled-capacity boundary; it does not itself establish
 the smaller PCM bound.
