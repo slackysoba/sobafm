@@ -23,6 +23,10 @@ dependencies, provider adapter or station framework.
   Useful decode and aggregate PCM qualification remain pending.
   A distinct fixed AS 12,524,288 startup variant also passed once after independent
   review; neither startup establishes useful decode or aggregate PCM fit.
+  The [first owned decode](mpg123-fixture-plan.md#first-decode-observation-and-diagnostic-correction)
+  observed exact output, six-second readiness and clean release, but remained
+  incomplete because its diagnostic expectations were wrong. A narrow matcher
+  correction preserves that failed receipt; Q3 remains unqualified.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
 - Stop after the first executed failure. A successful Q1/Q2 pass stops before Q3;

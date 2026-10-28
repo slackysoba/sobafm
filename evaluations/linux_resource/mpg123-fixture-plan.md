@@ -1,11 +1,11 @@
 # First owned MP3 useful-fit check
 
-Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **Owned fixture generated;
-decoding remains preparation only.** This narrows the next observation
+Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **First decode incomplete:
+exact counts and clean release observed, diagnostic expectations corrected.** This narrows the observation
 to one of Q3's originally planned owned 120-second MP3 fixtures. It does not
 replace the remaining VBR, 44.1 kHz, mono, overlap, FLAC, Q4 or native arm64 cases.
 The [separate AS startup](mpg123-proposal.md#stricter-address-space-startup) passed;
-its source and image binding remain separate from future input execution.
+its source and image binding remain separate from input execution.
 
 ## Owned fixture and development operation
 
@@ -68,7 +68,8 @@ with no stderr. It was reaped with no descendants or cleanup debt within the
 original deadline. The container stopped with PID zero and no OOM kill, then was
 removed normally and verified absent. Encoding plus in-container observation
 took 6.435 seconds; the outer operation took 10.031 seconds. No decode or listening
-followed. Gapless output length remains a hypothesis to test, not inferred success.
+followed at the generation stage. The subsequent first decode below observed the
+exact hypothesized gapless output length, while retaining an incomplete verdict.
 The [selected generation receipt](results/2026-10-27-owned-mp3-fixture.yaml)
 preserves the command, source/image bindings, counts, hashes and release evidence.
 
@@ -148,8 +149,9 @@ time, total time and diagnostics. Transfer completion, decoder exit, exact known
 PCM count and bounded diagnostic policy are distinct predicates; exit zero
 alone never proves complete audio. Establish and review the exact expected
 banner/progress/completion diagnostics before accepting any output result. The
-harness requires the fixed banner, one playing line, one MPEG 1 Layer III CBR
-128 kbit/s 48 kHz stereo/joint-stereo line and one completion line; only blank
+harness requires the fixed banner, one `Note: forcing output encoding s16`,
+one playing line, the exact `MPEG 1.0 L III vbr 48000 j-s` line for this fixture,
+and one completion line; only blank
 lines and one bounded directory line may accompany them. Unknown diagnostics,
 repeated markers or a format change fail even with exit zero.
 [Compact native format output](https://scm.orgis.org/mpg123/tags/1.33.7/src/common.c).
@@ -170,3 +172,38 @@ safe evidence directory to 1 MB. PCM is never emitted in that output. Preserve
 failure and partial evidence; remove only the positively owned, stopped container
 normally and verify absence. No automatic retry, limit tuning or continuation
 to other native cases follows this one observation.
+
+## First decode observation and diagnostic correction
+
+The single released run at source
+`4661132db02caf1c0cc7a912436b4a2f10fe1901` remains **incomplete** in the
+[selected original receipt](results/2026-10-28-owned-mp3-decode-first.yaml).
+It accepted all 1,920,768 compressed bytes and produced exactly 23,040,000 PCM
+bytes with decoder exit zero. It held 1,155,072 ready bytes at 0.068161 seconds,
+after the verified stopped native gate and full prepaid pool allocation.
+The one native process had 4,448,256 ordinary mapped bytes at that gate; that
+observation is not a peak or a substitute for the enforced AS bound. No memory
+event or swap use occurred. Reaping, payload release and the original cleanup
+deadline succeeded; the external owner removed the stopped container and
+verified absence. No PCM was stored or played.
+
+The original matcher rejected the expected encoding note and the `vbr` format
+label. The fixed `--encoding s16` option prints that note in
+[audio.c, lines 392-395](https://scm.orgis.org/mpg123/tags/1.33.7/src/audio.c).
+A subsequent read-only scan of the unchanged hash-bound fixture found 5,002
+consecutive 384-byte MPEG 1 Layer III frames through exact EOF, all with
+128 kbit/s, 48 kHz and no padding bit: one stereo Info frame and 5,001
+joint-stereo audio frames. Its `Lavf lame` extension has method nibble zero,
+which mpg123 maps to `MPG123_VBR` even after an Info marker in
+[parse.c, lines 315-330](https://scm.orgis.org/mpg123/tags/1.33.7/src/libmpg123/parse.c).
+This diagnostic therefore does not establish variable frame bitrate. The
+5,001 advertised audio frames, less 576 samples of delay and 576 of padding,
+give the independently known 5,760,000 sample frames.
+
+The narrow matcher correction requires exactly one encoding note and the
+observed format line. Its regression uses the exact retained stderr digest
+and rejects missing/repeated encoding notes, changed encoding/rate/mode/bitrate
+labels, unknown errors and missing/repeated completion. Counts, capacities,
+command and deadlines are unchanged. The original incomplete result is not
+reclassified. One corrected confirmation remains subject to exact review and
+release; no further Q3/Q4 case is implied.

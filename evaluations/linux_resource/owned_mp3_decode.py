@@ -169,22 +169,26 @@ def parse_maps(text: str) -> dict[str, object]:
 def validate_diagnostics(data: bytes) -> None:
     if not data.startswith(BANNER):
         raise ProbeError("native banner differs")
-    counts = {"directory": 0, "playing": 0, "format": 0, "complete": 0}
+    counts = {"directory": 0, "encoding": 0, "playing": 0, "format": 0, "complete": 0}
     for line in data[len(BANNER) :].decode("ascii").splitlines():
         if not line:
             continue
         if line.startswith("Directory: ") and len(line) <= 256:
             counts["directory"] += 1
+        elif line == "Note: forcing output encoding s16":
+            counts["encoding"] += 1
         elif line == "Playing MPEG stream 1 of 1: - ...":
             counts["playing"] += 1
-        elif re.fullmatch(r"MPEG 1\.0 L III cbr128 48000 (stereo|j-s)", line):
+        # This fixture's Info extension has method 0, which mpg123 labels VBR.
+        # Its independently inspected frame headers remain constant 128 kbit/s.
+        elif line == "MPEG 1.0 L III vbr 48000 j-s":
             counts["format"] += 1
         elif re.fullmatch(r"\[[0-9]+:[0-5][0-9]\] Decoding of - finished\.", line):
             counts["complete"] += 1
         else:
             raise ProbeError("unexpected native diagnostic; preserve without accepting completion")
     if counts["directory"] > 1 or any(
-        counts[name] != 1 for name in ("playing", "format", "complete")
+        counts[name] != 1 for name in ("encoding", "playing", "format", "complete")
     ):
         raise ProbeError("missing or repeated native format/completion evidence")
 

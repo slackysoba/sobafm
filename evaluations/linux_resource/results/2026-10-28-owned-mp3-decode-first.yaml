@@ -1,0 +1,345 @@
+schema_version: 1
+issue: https://github.com/slackysoba/sobafm/issues/7
+execution_date_america_los_angeles: '2026-10-28'
+execution_date_utc: '2026-10-28'
+result: incomplete
+attempt: 1
+source_commit: 4661132db02caf1c0cc7a912436b4a2f10fe1901  # pragma: allowlist secret - public source or artifact digest
+image_id: sha256:e3ff7b02740b55f52735b17afc9846d151f86bf7395341f5d53f7d3dbb235cfc  # pragma: allowlist secret - public source or artifact digest
+operator_sha256: c36fa109b5dce6d59d85bd167bba2aefca3154eb9348d68bf8d8f5564f505b1f  # pragma: allowlist secret - public source or artifact digest
+harness_sha256:
+  probe.py: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source or artifact digest
+  decoder_startup.py: c31f32a228abaca0449988b1b63a1c2e017f620c10e0366c38dcc6a0ac349720  # pragma: allowlist secret - public source or artifact digest
+  owned_mp3_decode.py: 917115d5bf5bbf2aecfd340f597dac4ef4c0779f283afbec1039b9c348db915e  # pragma: allowlist secret - public source or artifact digest
+preflight:
+  event: owned_decode_preflight
+  observation:
+    architecture: x86_64
+    controlled_capacity: 98979840
+    identity:
+      effective_capabilities: 0
+      gid: 1000
+      group: /
+      parent_pid: 1
+      pid: 7
+      seccomp: 2
+      uid: 1000
+    kernel: 6.18.33.2-microsoft-standard-WSL2
+    limits:
+      cpu.max: 200000 100000
+      memory.max: '90177536'
+      memory.swap.max: '0'
+      pids.max: '64'
+    memory_current: 16158720
+    memory_events:
+      high: 0
+      low: 0
+      max: 0
+      oom: 0
+      oom_group_kill: 0
+      oom_kill: 0
+    native_pcm_bound: unresolved; Q3 is not qualified
+    pcm_parent_and_copy_reservation: 8802304
+    probe_sha256: 8fb662183acae70b4decaa5478c40e58c407a7a6c9c60c09e5c24d9e407963de  # pragma: allowlist secret - public source or artifact digest
+    python: 3.14.7
+    swap_current: 0
+exec_gate:
+  event: decode_exec_gate
+  input_bytes: 0
+  parent_pcm_allocated: false
+  rlimits:
+    Max address space: 12524288
+    Max core file size: 0
+    Max data size: 12000000
+    Max stack size: 524288
+input_gate:
+  copy_capacity: 4194304
+  event: decode_input_gate
+  fixture_bytes: 1920768
+  fixture_sha256: 1a431c03098d8be79a522a3b1f64a8182445a8bf6c009f54c1b3bb1f6dad044d  # pragma: allowlist secret - public source or artifact digest
+  native_address_spaces: 1
+  pcm_bank_capacity: 4608000
+  pcm_capacity_with_two_reserved_address_spaces: 33850880
+decode_result:
+  argv:
+  - /usr/bin/mpg123
+  - --no-control
+  - --no-visual
+  - --buffer
+  - '0'
+  - --stdout
+  - --rate
+  - '48000'
+  - --stereo
+  - --encoding
+  - s16
+  - --resample
+  - ntom
+  - --no-resync
+  - '-'
+  cleanup_deadline_met: true
+  cleanup_debt: false
+  copy_capacity: 4194304
+  decoder_sha256: 62ef82208722eda0fedd39de0ced0d8e3a8450d129760152ea16d075651f0a91  # pragma: allowlist secret - public source or artifact digest
+  elapsed_seconds: 0.28599912198842503
+  event: owned_decode_result
+  exec_failed: false
+  exec_gate_released: true
+  exit_code: 0
+  failure: unexpected native diagnostic; preserve without accepting completion
+  fixture_bytes_accepted: 1920768
+  fixture_sha256: 1a431c03098d8be79a522a3b1f64a8182445a8bf6c009f54c1b3bb1f6dad044d  # pragma: allowlist secret - public source or artifact digest
+  leader_reaped: true
+  listening: false
+  memory_event_delta:
+    high: 0
+    low: 0
+    max: 0
+    oom: 0
+    oom_group_kill: 0
+    oom_kill: 0
+  native_arm64: not_run
+  native_gate:
+    input_bytes: 0
+    mappings:
+      maps_sha256: adefa44af01c2135f750a34f749b105d139273ad21f1c4e58294eb6ec4047499  # pragma: allowlist secret - public source or artifact digest
+      ordinary_bytes_observed: 4448256
+      records:
+      - bytes: 28672
+        path: /usr/bin/mpg123
+        permissions: r--p
+      - bytes: 102400
+        path: /usr/bin/mpg123
+        permissions: r-xp
+      - bytes: 40960
+        path: /usr/bin/mpg123
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/bin/mpg123
+        permissions: r--p
+      - bytes: 12288
+        path: /usr/bin/mpg123
+        permissions: rw-p
+      - bytes: 135168
+        path: '[heap]'
+        permissions: rw-p
+      - bytes: 12288
+        path: anonymous
+        permissions: rw-p
+      - bytes: 163840
+        path: /usr/lib/x86_64-linux-gnu/libc.so.6
+        permissions: r--p
+      - bytes: 1454080
+        path: /usr/lib/x86_64-linux-gnu/libc.so.6
+        permissions: r-xp
+      - bytes: 352256
+        path: /usr/lib/x86_64-linux-gnu/libc.so.6
+        permissions: r--p
+      - bytes: 16384
+        path: /usr/lib/x86_64-linux-gnu/libc.so.6
+        permissions: r--p
+      - bytes: 8192
+        path: /usr/lib/x86_64-linux-gnu/libc.so.6
+        permissions: rw-p
+      - bytes: 61440
+        path: anonymous
+        permissions: rw-p
+      - bytes: 69632
+        path: /usr/lib/x86_64-linux-gnu/libm.so.6
+        permissions: r--p
+      - bytes: 512000
+        path: /usr/lib/x86_64-linux-gnu/libm.so.6
+        permissions: r-xp
+      - bytes: 393216
+        path: /usr/lib/x86_64-linux-gnu/libm.so.6
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/libm.so.6
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/libm.so.6
+        permissions: rw-p
+      - bytes: 8192
+        path: /usr/lib/x86_64-linux-gnu/libsyn123.so.0.2.3
+        permissions: r--p
+      - bytes: 200704
+        path: /usr/lib/x86_64-linux-gnu/libsyn123.so.0.2.3
+        permissions: r-xp
+      - bytes: 12288
+        path: /usr/lib/x86_64-linux-gnu/libsyn123.so.0.2.3
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/libsyn123.so.0.2.3
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/libsyn123.so.0.2.3
+        permissions: rw-p
+      - bytes: 12288
+        path: /usr/lib/x86_64-linux-gnu/libout123.so.0.5.2
+        permissions: r--p
+      - bytes: 45056
+        path: /usr/lib/x86_64-linux-gnu/libout123.so.0.5.2
+        permissions: r-xp
+      - bytes: 16384
+        path: /usr/lib/x86_64-linux-gnu/libout123.so.0.5.2
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/libout123.so.0.5.2
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/libout123.so.0.5.2
+        permissions: rw-p
+      - bytes: 24576
+        path: /usr/lib/x86_64-linux-gnu/libmpg123.so.0.49.4
+        permissions: r--p
+      - bytes: 241664
+        path: /usr/lib/x86_64-linux-gnu/libmpg123.so.0.49.4
+        permissions: r-xp
+      - bytes: 114688
+        path: /usr/lib/x86_64-linux-gnu/libmpg123.so.0.49.4
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/libmpg123.so.0.49.4
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/libmpg123.so.0.49.4
+        permissions: rw-p
+      - bytes: 8192
+        path: anonymous
+        permissions: rw-p
+      - bytes: 16384
+        path: '[vvar]'
+        permissions: r--p
+      - bytes: 8192
+        path: '[vvar_vclock]'
+        permissions: r--p
+      - bytes: 8192
+        path: '[vdso]'
+        permissions: r-xp
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+        permissions: r--p
+      - bytes: 163840
+        path: /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+        permissions: r-xp
+      - bytes: 45056
+        path: /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+        permissions: r--p
+      - bytes: 8192
+        path: /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+        permissions: r--p
+      - bytes: 4096
+        path: /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+        permissions: rw-p
+      - bytes: 4096
+        path: anonymous
+        permissions: rw-p
+      - bytes: 135168
+        path: '[stack]'
+        permissions: rw-p
+      sampled_pcm_proof: false
+      special_bytes_observed: 32768
+      special_scope: kernel code/time only; no numeric PCM allowance
+    native_address_spaces: 1
+    pid: 8
+    rlimits:
+      Max address space: 12524288
+      Max core file size: 0
+      Max data size: 12000000
+      Max stack size: 524288
+    start_ticks: 24430395
+    state: stopped
+  native_input_gate_released: true
+  parent_payload_views_released: true
+  pcm_bank_capacity: 4608000
+  pcm_output_bytes: 23040000
+  pcm_output_sha256: ce1390078e09a1b06bcb10d64515886ce4d865456346d7be1b70e455703062df  # pragma: allowlist secret - public source or artifact digest
+  phase: decode
+  q3: partial one-fixture result only; other cases remain unqualified
+  q4: not_run
+  ready_buffered_bytes: 1155072
+  ready_seconds: 0.068161149014486
+  retained_pids: []
+  stderr_bytes: 330
+  stderr_preview: "High Performance MPEG 1.0/2.0/2.5 Audio Player for Layers 1, 2 and 3\n\tversion 1.33.7; written\
+    \ and copyright by Michael Hipp and others\n\tfree software (LGPL) without any warranty but with best wishes\n\
+    Note: forcing output encoding s16\n\nPlaying MPEG stream 1 of 1: - ...\n\nMPEG 1.0 L III vbr 48000 j-s\n\n[2:00]\
+    \ Decoding of - finished.\n"
+  stderr_sha256: 89ce0e191822d248b7d04094fcc75b33cc297114de167fd79b4ed7681a9c8e77  # pragma: allowlist secret - public source or artifact digest
+  swap_current: '0'
+  verdict: incomplete
+raw_output_sha256: a5ce68385dfe2ae0659d3207ebf770861f9dafce469eca90efefc13cd398b8bf  # pragma: allowlist secret - public source or artifact digest
+outer_elapsed_seconds: 4.125
+container:
+  user: 1000:1000
+  memory: 90177536
+  memory_swap: 90177536
+  pids: 64
+  nano_cpus: 2000000000
+  cgroup_namespace: private
+  network: none
+  readonly: true
+  privileged: false
+  init: true
+  cap_drop:
+  - ALL
+  security:
+  - no-new-privileges=true
+  restart: 'no'
+  tmpfs: null
+  running: false
+  pid: 0
+  exit: 1
+  oom_killed: false
+mount_scope:
+  evaluation_sources: read_only
+  single_owned_fixture: read_only
+removed_and_absent: true
+external_cleanup_debt: false
+subsequent_read_only_diagnosis:
+  header_inspection:
+    fixture_sha256: 1a431c03098d8be79a522a3b1f64a8182445a8bf6c009f54c1b3bb1f6dad044d  # pragma: allowlist secret - public source or artifact digest
+    bytes: 1920768
+    frame_count_including_info: 5002
+    audio_frames_advertised: 5001
+    bytes_advertised: 1920768
+    all_frame_headers:
+      mpeg_version: 1
+      layer: 3
+      bitrate_kbps: 128
+      rate: 48000
+      padding_bit: 0
+      frame_bytes: 384
+    channel_mode_counts:
+      '0': 1
+      '1': 5001
+    info_marker: Info
+    flags: 15
+    encoder_tag: Lavf lame
+    lame_vbr_method: 0
+    encoder_delay: 576
+    encoder_padding: 576
+    known_samples_after_delay_padding: 5760000
+    decoded: false
+    mutated: false
+  sources:
+  - url: https://scm.orgis.org/mpg123/tags/1.33.7/src/audio.c
+    sha256: 2106d81f8c8801d1bfca856f78c952327fb960cdd7b6141f4b7f07ceccccc6f6  # pragma: allowlist secret - public source or artifact digest
+    lines: 392-395
+    finding: Fixed --encoding s16 produces the unanticipated encoding note.
+  - url: https://scm.orgis.org/mpg123/tags/1.33.7/src/libmpg123/parse.c
+    sha256: 049248de98add383eba89ebc0c4b244f28507a3a46b89cd94b5a97709c5c3364  # pragma: allowlist secret - public source or artifact digest
+    lines: 315-330
+    finding: Info extension method 0 is classified MPG123_VBR; this label does not prove variable frame bitrate.
+  original_verdict_changed: false
+qualification:
+  known_pcm_count: observed_exact
+  readiness_and_clean_release: observed
+  diagnostic_policy: rejected_actual_note_and_vbr_label
+  q3: not_qualified
+  q4: not_run
+  native_arm64_runtime: not_run
+  raw_audio_stored: false
+  listening_source_provider_or_discord_activity: false
+  restricted_source_or_sample_access: false
+  image_publication: false

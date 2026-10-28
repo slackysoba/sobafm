@@ -437,4 +437,8 @@ base and numeric limits. It supplies no useful decode or aggregate PCM evidence.
 Its separately reviewed hard/soft AS 12,524,288 startup variant retains the
 original DATA/STACK and group limits. The source-derived ordinary-mapping scope,
 special-map exclusions and conditional PCM arithmetic are recorded there. That
-variant also passed one no-input startup; useful fit remains untested.
+variant also passed one no-input startup. The subsequent
+[first owned decode](../evaluations/linux_resource/mpg123-fixture-plan.md#first-decode-observation-and-diagnostic-correction)
+observed exact output, readiness and clean release but retained an incomplete
+verdict after its diagnostic matcher rejected two expected messages. The narrow
+matcher correction does not reclassify that run or establish Q3 qualification.

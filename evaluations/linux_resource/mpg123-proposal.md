@@ -1,7 +1,8 @@
 # Pinned mpg123 supply and startup
 
 Issue [#7](https://github.com/slackysoba/sobafm/issues/7). Status: **authenticated
-metadata, binary binding and no-input startup complete; useful decode and Q3/Q4 pending**.
+metadata, binary binding and no-input startup complete; first owned decode incomplete,
+Q3/Q4 pending**.
 The [complete proposal and selected operation evidence](results/2026-10-27-mpg123-proposal.yaml)
 record all 27 proposed additions and the unchanged 87-package base. This follows
 the [fixed FFmpeg startup rejection](decoder-supply.md). The completed mpg123 run
@@ -252,8 +253,10 @@ does not spend rounding slack. The whole-service controlled ledger remains
 
 ## Next bounded gate
 
-Prepare and independently review the bounded owned-fixture proof with the
-remaining input, mapping, completion and release conditions explicitly enforced.
+The first independently reviewed owned-fixture run observed exact output,
+readiness and clean release, but remained incomplete because its diagnostic
+matcher rejected two expected messages. Review the narrow diagnostic correction
+and exact confirmation procedure before another execution.
 The AS startup pass establishes no useful decode or PCM qualification.
 The [first owned MP3 plan](mpg123-fixture-plan.md) keeps this next observation
 narrow and preserves the remaining Q3/Q4 cases.
@@ -268,6 +271,7 @@ as complete audio: the inspected CLI can exit zero after a decoding error.
 [resampler allocation and cleanup](https://scm.orgis.org/mpg123/tags/1.33.7/src/libsyn123/resample.c),
 [CLI completion](https://scm.orgis.org/mpg123/tags/1.33.7/src/mpg123.c).
 
-No useful mpg123 workload has run. Any MP3 result would remain partial: FLAC,
+The [first owned decode receipt](results/2026-10-28-owned-mp3-decode-first.yaml)
+preserves that incomplete verdict and actual observations. Any MP3 result remains partial: FLAC,
 aggregate PCM coverage, Q4 cleanup, native arm64 and real source/Discord acceptance
 remain outstanding. The existing product guarantees still apply.

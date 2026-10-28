@@ -84,13 +84,24 @@ class ContractTests(unittest.TestCase):
 
     def test_zero_exit_cannot_substitute_for_decoder_completion_diagnostics(self) -> None:
         valid = BANNER + (
-            b"\nPlaying MPEG stream 1 of 1: - ...\n\n"
-            b"MPEG 1.0 L III cbr128 48000 j-s\n\n"
+            b"Note: forcing output encoding s16\n\nPlaying MPEG stream 1 of 1: - ...\n\n"
+            b"MPEG 1.0 L III vbr 48000 j-s\n\n"
             b"[2:00] Decoding of - finished.\n"
+        )
+        # Exact retained stderr from the first owned decode, not an invented success log.
+        self.assertEqual(
+            hashlib.sha256(valid).hexdigest(),
+            # pragma: allowlist nextline secret
+            "89ce0e191822d248b7d04094fcc75b33cc297114de167fd79b4ed7681a9c8e77",
         )
         validate_diagnostics(valid)
         for value in (
             valid + b"error: bad frame\n",
+            valid.replace(b"Note: forcing output encoding s16\n", b""),
+            valid + b"Note: forcing output encoding s16\n",
+            valid.replace(b"encoding s16", b"encoding f32"),
+            valid.replace(b"vbr", b"cbr128"),
+            valid.replace(b"j-s", b"mono"),
             valid.replace(b"48000", b"44100"),
             valid.replace(b"[2:00] Decoding of - finished.\n", b""),
             valid + b"[2:00] Decoding of - finished.\n",
