@@ -150,6 +150,12 @@ native arm64 qualification and the ordinary-listener credit UI retain their
 separate requirements. Success here would support one fixed source-side proof,
 not station reliability or a general temporary-download policy for other sources.
 
+The [first source-proof component](source-proof.md) implements a narrower
+transport-only evaluation with no retries. It requires separately reviewed
+metadata fingerprints and explicit live invocation, and leaves file integrity,
+decoding, embedded notices and admission pending. Its owned fixtures and local
+tests do not constitute a live proof or release the execution gates above.
+
 ## Research accounting and preserved limitations
 
 Only **three unique recording records** were examined for this preparation.
