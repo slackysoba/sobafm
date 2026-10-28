@@ -173,6 +173,53 @@ def test_observed_ccmixter_preserves_partial_batch_and_incomplete_credits() -> N
     assert result.report.admission_reviews_created == 0
 
 
+def test_prepared_ccmixter_chain_preserves_imported_facts_without_self_admission() -> None:
+    result = normalize(
+        Source.CCMIXTER,
+        fixture("ccmixter-playback-observed"),
+        context("ccmixter-playback"),
+    )
+    assert result.report.returned == result.report.normalized == 3
+    assert result.report.missing_ids == () and result.report.state == "complete"
+    imported = {r.key.recording_id: r for r in result.catalog.partitions[0].recordings}
+    assert set(imported) == {"70993", "70072", "25112"}
+    for record in imported.values():
+        assert record.kind == "unknown" and record.availability == "unknown"
+        assert record.credits is not None
+        assert record.credits.license_url == "https://creativecommons.org/licenses/by-nc/3.0/"
+    assert result.report.records[0].source_file_id == "129564"
+    assert result.report.records[0].reported_bpm == 105
+    assert result.report.admission_reviews_created == 0
+    assert imported["70072"].duration_seconds is None
+    assert imported["25112"].duration_seconds is None
+
+    prepared = parse_catalog(
+        (FIXTURES / "ccmixter-playback-candidate.json").read_text(encoding="utf-8")
+    )
+    assert not prepared.synthetic and len(prepared.partitions) == 1
+    assert len(prepared.partitions[0].recordings) == 1
+    candidate = prepared.partitions[0].recordings[0]
+    raw_mix = imported["70993"]
+    assert candidate.key == raw_mix.key
+    assert candidate.title == raw_mix.title and candidate.primary_artist == raw_mix.primary_artist
+    assert candidate.provenance == raw_mix.provenance
+    assert candidate.duration_seconds == raw_mix.duration_seconds == 129
+    assert candidate.facts == raw_mix.facts
+    assert candidate.kind == "complete" and candidate.availability == "unknown"
+    assert set(candidate.creators) == {
+        "Ant.Survila",
+        "Dan_Mantau",
+        "Lisa DeBenedictis",
+        "DeBenedictis",
+    }
+    assert candidate.credits is not None
+    notices = " ".join(candidate.credits.notices)
+    for required in ("129564", "70072", "25112", "4693829", "a cappella", "instrumental"):
+        assert required in notices
+    selection = select(prepared, parse_query({"title": "WILD WINDSTEPS"}), ())
+    assert not selection.matches
+
+
 def test_multiple_files_require_explicit_selection_and_do_not_infer_duration() -> None:
     files = [
         {"file_id": 1, "file_format_info": {"mime_type": "audio/mpeg", "ps": "3:12"}},

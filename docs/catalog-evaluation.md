@@ -122,6 +122,13 @@ It performs no provider calls, audio acquisition, listening or Discord activity.
 
 ## Saved source metadata imports
 
+The [first ccMixter playback candidate](../evaluations/catalog/ccmixter-playback-candidate.md)
+now resolves WILD WINDSTEPS (70993), its exact published MP3 file and complete
+supplied upstream credit chain. Its dated prepared catalog remains unadmitted
+with unknown file availability. The source-bound record includes a finite
+temporary acquisition/validation proposal; no audio has been acquired or heard.
+The earlier incomplete observations below are preserved as historical evidence.
+
 `sobafm.catalog_import` converts bounded saved Jamendo tracks JSON, ccMixter
 `info` JSON, or an FMA operator manifest into the selector's existing snapshot
 format. It reads local files only. A successful run writes the catalog to stdout
