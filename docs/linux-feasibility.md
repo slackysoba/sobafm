@@ -220,7 +220,7 @@ acquired or hashed.
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
 | Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Exact binary set acquired and installed offline; binding reviewed. The fixed supplemental DATA/STACK candidate failed loader startup on amd64. |
-| Debian stable `mpg123`, `1.32.10-1+deb13u1` at review time | Maintained package on both targets; MP3-focused upstream is LGPL 2.1. Upstream 1.33.7 includes further fixes, so the stable package requires a backport/security comparison. | Not selected: narrowing input formats and checking a second decoder would expand this experiment. No claim that its smaller package proves lower memory use. |
+| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | [Metadata proposal complete](../evaluations/linux_resource/mpg123-proposal.md); acquisition, installed binding and execution pending. MP3 evidence would be partial and would not remove FLAC or other qualification requirements. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
 [amd64 file list](https://packages.debian.org/trixie/amd64/ffmpeg/filelist),
@@ -427,3 +427,7 @@ candidate, with verified cleanup. That candidate is rejected; no memory tuning
 or audio followed. The whole-service ledger is unchanged. This does not establish
 overall-budget infeasibility or PCM coverage; Q3/Q4 and alternative assessment
 remain outstanding.
+
+The [follow-up mpg123 proposal](../evaluations/linux_resource/mpg123-proposal.md)
+establishes authenticated dependency compatibility with the unchanged base.
+It supplies no native startup or memory-fit evidence and changes no numeric cap.
