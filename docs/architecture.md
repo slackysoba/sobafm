@@ -20,6 +20,8 @@ The separate `ccmixter_proof.py` evaluation uses two closed typed recording defi
 
 The audio callback consumes prepared PCM without blocking. Producers and cleanup retain explicit ownership across cancellation. Capacity admission includes retained work and cleanup debt. Prove the chosen Linux enforcement configuration before depending on it throughout the application.
 
+The separate Linux-only `fma_intake.py` evaluation owns one explicitly supplied local Night Owl copy in one private destination slot. It binds the current unadmitted catalog digest, download notices, exact file identity/hash and original acquisition/expiry before destination mutation. Its retained I/O thread keeps the pending copy until explicit cleanup or absolute expiry, with debt until actual I/O and deletion settle. Recovery reconciles the original owned slot without recopying or renewing expiry. It adds no network access, decoding or admission decision. Only synthetic offline execution is covered so far; see the [operator workflow and recovery boundary](../evaluations/catalog/fma-local-intake.md).
+
 ## Decisions to establish first
 
 - Source-specific acquisition/storage implementations for the accepted three-source pool, with complete recording credits and access evidence.

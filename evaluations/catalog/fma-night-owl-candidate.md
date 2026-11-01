@@ -60,7 +60,14 @@ No audio MIME or file length was advertised. No body was read, redirect followed
 retry attempted or GET fallback made; the command owner released with no cleanup
 debt. The [public outcome](https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552729791)
 records a consumed attempt and **unestablished anonymous audio access**.
-Actual GET behavior remains unobserved; this is not provider-wide unavailability.
+The later [accepted single GET](https://github.com/slackysoba/sobafm/issues/1#issuecomment-6556442342)
+at **2026-11-01 09:56:51.809867 UTC** also returned 302, `text/html`, redirecting
+to login. No body API was called or plaintext body bytes delivered; kernel/TLS
+buffering is not claimed zero. No redirect, retry, authentication or fallback
+followed. The child and reader/pipes settled with no debt. Its cleanup clock never
+started, so this establishes no three-second cleanup bound. Anonymous audio
+access remains unestablished; this is not provider-wide unavailability. The dated
+catalog/evidence snapshot above remains unchanged.
 
 Accepted preparation for one operator-hosted evaluation copy is limited to
 **20,000,000 bytes / seven days**, with exact file identity/integrity, acquisition
@@ -68,6 +75,11 @@ time, absolute expiry and accountable cleanup ownership still required before
 intake. No file was acquired or quarantine created. This acceptance releases no
 import, playback or expansion of the existing **150-second / 28,800,000-byte PCM**
 decoder case; the source's reported 194 seconds exceed that case.
+
+Issue [#40](https://github.com/slackysoba/sobafm/issues/40) supplies an opt-in
+[bounded local intake owner](fma-local-intake.md), tested with synthetic files.
+A later real run still needs an exact operator-supplied file and concrete released
+scope. A successful pending copy creates no admission review or access-ready claim.
 
 ## Reproduce the unadmitted snapshot
 
