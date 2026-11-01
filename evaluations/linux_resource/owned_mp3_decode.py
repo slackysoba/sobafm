@@ -11,6 +11,7 @@ import select
 import signal
 import stat
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,7 @@ class DecodeFixture:
     output_copy_offset: int
     format_line: str
     mono_output: bool = False
+    pcm_sha256: str | None = None
 
 
 def cbr_fixture() -> DecodeFixture:
@@ -130,6 +132,9 @@ def validate_fixture_partitions(fixture: DecodeFixture) -> None:
         or not re.fullmatch(r"[0-9a-f]{64}", fixture.sha256)
         or fixture.pcm_bytes < READY_BYTES
         or fixture.pcm_bytes % 4
+        or (
+            fixture.pcm_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", fixture.pcm_sha256)
+        )
         or not 0 < READY_BYTES <= BANK_BYTES
         or 2 * BANK_BYTES != PCM_BYTES
     ):
@@ -146,9 +151,10 @@ def verify_core_limit(text: str) -> None:
         raise ProbeError("decoder hard/soft core limits differ")
 
 
-def parse_maps(text: str) -> dict[str, object]:
+def parse_maps(text: str, decoder: NativeDecoder | None = None) -> dict[str, object]:
     """Closed file/backing scope; observed lengths are evidence, not a sampled PCM bound."""
     records: list[dict[str, object]] = []
+    mapped_elf = dict(decoder.mapped_elf) if decoder is not None else MAPPED_ELF
     files: set[str] = set()
     ordinary = special = 0
     previous_end = 0
@@ -183,7 +189,7 @@ def parse_maps(text: str) -> dict[str, object]:
             special += size
         else:
             ordinary += size
-            if name in MAPPED_ELF:
+            if name in mapped_elf:
                 if int(inode) == 0:
                     raise ProbeError("mapped ELF lacks a file identity")
                 files.add(name)
@@ -193,7 +199,7 @@ def parse_maps(text: str) -> dict[str, object]:
             else:
                 raise ProbeError("native mapping lies outside the reviewed file/backing scope")
         records.append({"path": name or "anonymous", "permissions": perms, "bytes": size})
-    if files != set(MAPPED_ELF) or not records or ordinary > ADDRESS_SPACE_BYTES:
+    if files != set(mapped_elf) or not records or ordinary > ADDRESS_SPACE_BYTES:
         raise ProbeError("native mapping inventory or ordinary extent differs")
     return {
         "records": records,
@@ -248,8 +254,36 @@ def native_processes() -> set[int]:
     return pids - {1, os.getpid()}
 
 
-def verify_native_files() -> None:
-    for name, expected in MAPPED_ELF.items():
+@dataclass(frozen=True)
+class NativeDecoder:
+    """Fixed reviewed decoder values; no discovery, provider registry or external configuration."""
+
+    argv: tuple[str, ...]
+    banner: bytes
+    mapped_elf: tuple[tuple[str, str], ...]
+    diagnostics: Callable[[bytes, str], None]
+
+    def __post_init__(self) -> None:
+        names = [name for name, _ in self.mapped_elf]
+        if (
+            not self.argv
+            or self.argv[0] not in names
+            or not self.banner
+            or len(self.banner) > STDERR_BYTES
+            or len(names) != len(set(names))
+            or any(
+                not name.startswith("/") or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                for name, digest in self.mapped_elf
+            )
+        ):
+            raise ProbeError("incomplete fixed native decoder binding")
+
+
+MPG123 = NativeDecoder(ARGV, BANNER, tuple(MAPPED_ELF.items()), validate_diagnostics)
+
+
+def verify_native_files(decoder: NativeDecoder | None = None) -> None:
+    for name, expected in decoder.mapped_elf if decoder is not None else MAPPED_ELF.items():
         path = Path(name)
         info = path.stat()
         if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
@@ -260,7 +294,13 @@ def verify_native_files() -> None:
 
 
 def decoder_child(
-    stdin: int, stdout: int, stderr: int, ready: int, gate: int, fds: list[int]
+    stdin: int,
+    stdout: int,
+    stderr: int,
+    ready: int,
+    gate: int,
+    fds: list[int],
+    decoder: NativeDecoder | None = None,
 ) -> None:
     try:
         os.setsid()
@@ -277,16 +317,24 @@ def decoder_child(
         if os.read(gate, 1) != b"x":
             os._exit(125)
         os.close(gate)
-        os.execve(ARGV[0], ARGV, CHILD_ENV)
+        argv = decoder.argv if decoder is not None else ARGV
+        os.execve(argv[0], argv, CHILD_ENV)
     except BaseException:
         with suppress(OSError):
             os.write(ready, b"E")
         os._exit(125)
 
 
-def receive_banner(child: Child, stdout: int, stderr: int, deadline: float) -> bytearray:
+def receive_banner(
+    child: Child,
+    stdout: int,
+    stderr: int,
+    deadline: float,
+    decoder: NativeDecoder | None = None,
+) -> bytearray:
+    banner = decoder.banner if decoder is not None else BANNER
     data = bytearray()
-    while len(data) < len(BANNER):
+    while len(data) < len(banner):
         child.reap()
         remaining = deadline - time.monotonic()
         if remaining <= 0 or child.exit_code is not None:
@@ -295,11 +343,11 @@ def receive_banner(child: Child, stdout: int, stderr: int, deadline: float) -> b
         if stdout in readable:
             raise ProbeError("native stdout activity or closure before the input gate")
         if stderr in readable:
-            part = os.read(stderr, len(BANNER) - len(data))
+            part = os.read(stderr, len(banner) - len(data))
             if not part:
                 raise ProbeError("native stderr closed before the banner")
             data.extend(part)
-            if not BANNER.startswith(data):
+            if not banner.startswith(data):
                 raise ProbeError("unexpected output before native-main input boundary")
     return data
 
@@ -309,6 +357,7 @@ def stopped_native_gate(
     start_ticks: int,
     deadline: float,
     admitted_pids: frozenset[int] | None = None,
+    decoder: NativeDecoder | None = None,
 ) -> dict[str, object]:
     expected = admitted_pids if admitted_pids is not None else frozenset({child.pid})
     if child.pid not in expected or not 1 <= len(expected) <= 2 or min(expected) <= 0:
@@ -327,13 +376,14 @@ def stopped_native_gate(
     if read_start_identity(child.pid) != ("T", start_ticks):
         raise ProbeError("native PID/start/stopped identity differs")
     root = Path(f"/proc/{child.pid}")
-    if os.readlink(root / "exe") != ARGV[0] or len(list((root / "task").iterdir())) != 1:
+    argv = decoder.argv if decoder is not None else ARGV
+    if os.readlink(root / "exe") != argv[0] or len(list((root / "task").iterdir())) != 1:
         raise ProbeError("native executable or thread identity differs")
     if frozenset(native_processes()) != expected or group_members(child.pid) != [child.pid]:
         raise ProbeError("unexpected retained native address space")
     limits = verify_child(child.pid, True)
     verify_core_limit(read_text(root / "limits"))
-    mappings = parse_maps(read_text(root / "maps"))
+    mappings = parse_maps(read_text(root / "maps"), decoder)
     if time.monotonic() >= deadline:
         raise ProbeError("native identity observation exceeded preparation deadline")
     return {
@@ -367,7 +417,12 @@ def load_fixture_snapshot(copy_view: memoryview, fixture: DecodeFixture | None =
             raise ProbeError("owned compressed snapshot differs from generation receipt")
 
 
-def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
+def decode_fixture(
+    fixture: DecodeFixture | None = None,
+    *,
+    decoder: NativeDecoder = MPG123,
+    validate_input: Callable[[memoryview], None] | None = None,
+) -> dict[str, object]:
     fixture = fixture or cbr_fixture()
     validate_fixture_partitions(fixture)
     if (
@@ -378,7 +433,7 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
         raise ProbeError("fresh single-threaded native-amd64 proof process required")
     if read_text(Path("/proc/sys/kernel/core_pattern")).strip() != "core":
         raise ProbeError("core routing differs; no host setting will be changed")
-    verify_native_files()
+    verify_native_files(decoder)
     before_events = counters(read_text(Path("/sys/fs/cgroup/memory.events")))
     fds: list[int] = []
     child = Child(0)
@@ -394,6 +449,7 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
     failure: str | None = None
     phase = "exec_setup"
     exec_released = input_released = exec_failed = False
+    input_complete = stdout_eof = stderr_eof = False
     debt = True
     cleanup_met = False
     retained: list[int] = []
@@ -416,7 +472,7 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
         fds.extend((gate_r, gate_w))
         pid = os.fork()
         if pid == 0:
-            decoder_child(in_r, out_w, err_w, ready_w, gate_r, fds)
+            decoder_child(in_r, out_w, err_w, ready_w, gate_r, fds, decoder)
             os._exit(125)
         child.pid = pid
         for fd in (in_r, out_w, err_w, ready_w, gate_r):
@@ -444,8 +500,8 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
         os.close(gate_w)
         fds.remove(gate_w)
         phase = "native_main_gate"
-        stderr = receive_banner(child, out_r, err_r, prepare_deadline)
-        native_gate = stopped_native_gate(child, start_ticks, prepare_deadline)
+        stderr = receive_banner(child, out_r, err_r, prepare_deadline, decoder)
+        native_gate = stopped_native_gate(child, start_ticks, prepare_deadline, decoder=decoder)
         emit({"event": "decode_native_gate", "observation": native_gate})
         # No PCM existed at fork. Full pools are now physically allocated and remain prepaid.
         buffers = [bytearray(BANK_BYTES), bytearray(BANK_BYTES), bytearray(COPY_BYTES)]
@@ -457,6 +513,9 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
         bank_view, _, copy_view = views
         phase = "fixture_snapshot"
         load_fixture_snapshot(copy_view, fixture)
+        if validate_input is not None:
+            with copy_view[: fixture.file_bytes] as compressed:
+                validate_input(compressed)
         input_view = copy_view[: fixture.file_bytes].toreadonly()
         output_view = copy_view[
             fixture.output_copy_offset : fixture.output_copy_offset + CHUNK_BYTES
@@ -516,6 +575,7 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
                 part = os.read(err_r, min(4096, STDERR_BYTES - len(stderr) + 1))
                 if not part:
                     error_open = False
+                    stderr_eof = True
                 room = STDERR_BYTES - len(stderr)
                 stderr.extend(part[:room])
                 if len(part) > room:
@@ -526,6 +586,7 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
                     amount = os.readv(out_r, [destination])
                 if amount == 0:
                     output_open = False
+                    stdout_eof = True
                 else:
                     output_count += amount
                     if output_count > fixture.pcm_bytes:
@@ -563,6 +624,7 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
                     os.close(in_w)
                     fds.remove(in_w)
                     input_open = False
+                    input_complete = True
         if not select.select([ready_r], [], [], 0)[0]:
             raise ProbeError("decoder exec acknowledgement remains owned")
         exec_failed = os.read(ready_r, 2) != b""
@@ -570,9 +632,11 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
             raise ProbeError("decoder or exec did not finish successfully")
         if output_count != fixture.pcm_bytes or output_count % 4:
             raise ProbeError("decoded PCM differs from the known complete fixture count")
+        if fixture.pcm_sha256 is not None and pcm_hash.hexdigest() != fixture.pcm_sha256:
+            raise ProbeError("decoded PCM differs from the original owned hash")
         if mono_check is not None:
             mono_check.finish(fixture.pcm_bytes // 4)
-        validate_diagnostics(bytes(stderr), fixture.format_line)
+        decoder.diagnostics(bytes(stderr), fixture.format_line)
         if time.monotonic() > workload_deadline:
             raise ProbeError("completion evidence arrived after the workload deadline")
     except (OSError, ProbeError, ValueError) as error:
@@ -624,7 +688,11 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
         and ready_seconds is not None
         and ready_seconds <= PREPARE_SECONDS
         and input_count == fixture.file_bytes
+        and input_complete
+        and stdout_eof
+        and stderr_eof
         and output_count == fixture.pcm_bytes
+        and (fixture.pcm_sha256 is None or pcm_digest == fixture.pcm_sha256)
         and (mono_check is None or mono_check.finished and not mono_check.failed)
         and events.get("oom") == 0
         and events.get("oom_kill") == 0
@@ -635,10 +703,13 @@ def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
         "verdict": "owned_fixture_decode_pass" if passed else "incomplete",
         "failure": failure,
         "phase": phase,
-        "argv": list(ARGV),
-        "decoder_sha256": MAPPED_ELF[ARGV[0]],
+        "argv": list(decoder.argv),
+        "decoder_sha256": dict(decoder.mapped_elf)[decoder.argv[0]],
         "fixture_sha256": fixture.sha256,
         "fixture_bytes_accepted": input_count,
+        "input_complete": input_complete,
+        "stdout_eof": stdout_eof,
+        "stderr_eof": stderr_eof,
         "exec_gate_released": exec_released,
         "native_input_gate_released": input_released,
         "exec_failed": exec_failed,

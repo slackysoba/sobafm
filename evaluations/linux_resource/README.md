@@ -23,6 +23,9 @@ dependencies, provider adapter or station framework.
   The [owned VBR 44.1 kHz mono case](mpg123-vbr-plan.md#recorded-decode) also
   passed once, with exact header-derived output count, identical output
   channels, readiness and both cleanup deadlines under the same limits.
+  The [owned FLAC preparation](flac-fixture-plan.md) adds offline metadata,
+  admission and lossless-completion contracts; its execution bindings remain
+  unset and no FLAC generation/startup/decode result is claimed.
   Remaining cases and listening quality are still unqualified.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.

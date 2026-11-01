@@ -45,6 +45,7 @@ testpaths = [
     "evaluations/linux_resource/test_contract.py",
     "evaluations/linux_resource/test_overlap_contract.py",
     "evaluations/linux_resource/test_vbr_contract.py",
+    "evaluations/linux_resource/test_flac_contract.py",
     "evaluations/linux_resource/test_cancel_contract.py",
     "evaluations/linux_resource/test_topology_contract.py",
     "evaluations/linux_resource/test_arm64_runner_preflight.py",
