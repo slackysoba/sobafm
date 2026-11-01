@@ -1,0 +1,43 @@
+{
+  "schema": "sobafm-fma-manifest-1",
+  "recordings": [
+    {
+      "source_url": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+      "title": "Night Owl",
+      "primary_artist": "Broke For Free",
+      "creators": [
+        {
+          "name": "Broke For Free",
+          "role": "Artist as supplied",
+          "evidence": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/"
+        }
+      ],
+      "recording_kind": "complete",
+      "kind_evidence": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+      "duration_seconds": 194,
+      "duration_evidence": {
+        "kind": "reported",
+        "url": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/"
+      },
+      "license": {
+        "label": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/"
+      },
+      "notices": [
+        "Album: Directionless EP; source-reported release date: 2011-01-18.",
+        "Official download dialog requires song title, artist name, source (Free Music Archive) and license type (CC BY).",
+        "Recording Track info states Instrumental: No; AI generated?: No. Generic artist biography wording does not establish recording vocals or override Instrumental: No.",
+        "Complete recording, artist overview and linked FMA biography pages supplied no additional recording contributor names or attribution terms. Composer is unknown; embedded audio notices remain unobserved.",
+        "Existing maintainer-confirmed source permission requires attribution, no commercialization and no monetization; donations permitted. Authority and conditions: fma-night-owl-evidence.json, permission.",
+        "FMA policy requires permitted operator-hosted copies; no direct FMA playback/hotlinking. Policy and preparation limits: fma-night-owl-evidence.json, hosting_policy.",
+        "The released 2026-11-01 UTC HEAD returned 302 to /login without a body read or redirect follow; actual GET behavior is unobserved. No audio or operator copy is available. Access evidence: fma-night-owl-evidence.json, head_observation.",
+        "Metadata preparation only. No audio modification, decoding, playback or admission is asserted. Reported duration is not actual complete-file validation."
+      ],
+      "tags": [
+        "Electronic",
+        "Minimal Electronic"
+      ],
+      "import_status": "metadata_only"
+    }
+  ]
+}

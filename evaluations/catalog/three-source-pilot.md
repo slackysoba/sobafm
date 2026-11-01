@@ -7,6 +7,11 @@ Requests: [catalog-requests-1](requests.json). No audio, ratings, source selecti
 or production enablement is claimed. This historical proposal is retained for
 optional future use; no listening approval is currently requested.
 
+The table and inventory below preserve the **2026-10-27** observations. The
+[dated Night Owl follow-up](fma-night-owl-candidate.md) resolves its web-notice
+and exact-license gaps using later evidence; audio access and admission remain
+unestablished. The other historical entries are not requalified by that work.
+
 ## Existing authority and purpose
 
 The maintainer has confirmed direct permission from the owners of Jamendo,

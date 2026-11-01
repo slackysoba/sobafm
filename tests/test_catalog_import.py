@@ -1,5 +1,6 @@
 """Offline import behavior; real observations are separated from invented fixtures."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -9,7 +10,15 @@ from typing import cast
 
 import pytest
 
-from sobafm.catalog import CatalogInputError, Feature, Source, parse_catalog, parse_query, select
+from sobafm.catalog import (
+    CatalogInputError,
+    Feature,
+    Source,
+    metadata_digest,
+    parse_catalog,
+    parse_query,
+    select,
+)
 from sobafm.catalog_import import (
     MAX_IMPORT_BYTES,
     ImportContext,
@@ -353,6 +362,77 @@ def test_fma_operator_manifest_preserves_credits_evidence_and_remains_unadmitted
     assert not select(result.catalog, parse_query({"title": record.title}), ()).matches
     serialized = json.dumps(catalog_document(result.catalog))
     assert parse_catalog(serialized) == result.catalog
+
+
+def test_observed_fma_night_owl_reproduces_credits_without_inventing_access_or_vocals() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-m",
+            "sobafm.catalog_import",
+            "fma",
+            "--input",
+            str(FIXTURES / "import-fma-night-owl-observed.json"),
+            "--context",
+            str(FIXTURES / "import-fma-night-owl-context.json"),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+    assert completed.stdout == (FIXTURES / "fma-night-owl-catalog.json").read_text("utf-8")
+    assert completed.stderr == (FIXTURES / "fma-night-owl-import-report.json").read_text("utf-8")
+    catalog = parse_catalog(completed.stdout)
+    assert not catalog.synthetic and len(catalog.partitions) == 1
+    partition = catalog.partitions[0]
+    assert partition.source == Source.FMA and partition.state == "complete"
+    assert len(partition.recordings) == 1
+    record = partition.recordings[0]
+    assert record.key.recording_id == (
+        "/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl"
+    )
+    assert record.title == "Night Owl" and record.creators == ("Broke For Free",)
+    assert record.kind == "complete" and record.duration_seconds == 194
+    assert record.availability == "unknown" and record.composer is None
+    assert [(fact.feature, fact.value, fact.strength) for fact in record.facts] == [
+        (Feature.ELECTRONIC, True, "weak")
+    ]
+    assert record.credits is not None
+    assert record.credits.license_url == "https://creativecommons.org/licenses/by/3.0/"
+    assert any("Instrumental: No" in notice for notice in record.credits.notices)
+    assert any("song title, artist name, source" in notice for notice in record.credits.notices)
+    assert any("embedded audio notices remain unobserved" in n for n in record.credits.notices)
+    report = cast(dict[str, object], json.loads(completed.stderr))
+    assert report["admission_reviews_created"] == 0
+    rows = cast(list[dict[str, object]], report["records"])
+    assert rows[0]["issues"] == [
+        "credits_require_review",
+        "operator_asset_and_access_unverified",
+        "unmapped_descriptor",
+    ]
+    evidence = cast(
+        dict[str, object], json.loads((FIXTURES / "fma-night-owl-evidence.json").read_text("utf-8"))
+    )
+    projection = cast(dict[str, object], evidence["projection"])
+    assert metadata_digest(record) == projection["metadata_digest"]
+    for artifact in cast(list[dict[str, str]], projection["artifacts"]):
+        assert (
+            hashlib.sha256((FIXTURES / artifact["file"]).read_bytes()).hexdigest()
+            == artifact["sha256"]
+        )
+    selection = select(catalog, parse_query({"title": "Night Owl"}), ())
+    assert not selection.matches
+    assert selection.rejected[0].reasons == (
+        "availability metadata is unknown",
+        "no trusted admission review",
+    )
+    assert [(c.source, c.state, c.provided, c.admitted) for c in selection.coverage] == [
+        (Source.JAMENDO, "missing", 0, 0),
+        (Source.CCMIXTER, "missing", 0, 0),
+        (Source.FMA, "complete", 1, 0),
+    ]
 
 
 def test_snapshot_identity_binds_full_source_identity_and_changed_credits() -> None:
