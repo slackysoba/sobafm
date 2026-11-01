@@ -7,15 +7,29 @@ separate. Q3, Q4, native arm64 and release qualification remain incomplete.
 
 ## Execution gates
 
-`owned_mp3_fixture.FLAC_ENCODER_REVIEW` and `owned_flac_decode.BINDING` are unset.
-Both FLAC entrypoints reject before filesystem observation, allocation or fork.
-Command-line execution flags cannot supply or override a review. A subsequent
-reviewed source change must bind the actual evidence; synthetic unit-test values
-are never execution configuration.
+`owned_mp3_fixture.FLAC_ENCODER_REVIEW` now binds the independently
+[accepted narrow encoder/muxer source review](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553937600).
+Its handoff SHA256 is
+`9f8800b616ea63b7ae01c58a77dad35026dd86725b63e1c68cbcff566be271b9`.
+The corrected recipe and existing limits are unchanged. Installed route
+availability, actual finalization, output size and whole-process fit remain
+unproven; source review is not an execution result or permission to retry.
 
-Before generation, review the retained FFmpeg binary's native FLAC encoder and
-muxer route. Its earlier MP3 success does not establish availability or clearance
-of this changed route. Before decoding, complete the separately owned metadata
+Generation still requires independent review and concrete release of one external
+owner bound to the final committed source, retained encoder image/executable and
+library evidence, current native amd64/core/engine/security target, fixed argv and
+fresh owned output path. Admit all normal and final evidence capacity and measure
+project/shared Docker and development storage before release. Preserve the
+original three-second cleanup deadline across command, reader and container
+settlement; an uncertain create/remove outcome retains ownership. No automatic
+retry, cap increase, image build or raw PCM file is included.
+
+`owned_flac_decode.BINDING` remains unset and rejects before filesystem
+observation, allocation or fork. Command-line flags cannot supply a decoder
+review. A subsequent reviewed source change must bind the actual evidence;
+synthetic unit-test values are never execution configuration.
+
+Before decoding, complete the separately owned metadata
 recovery, linked ELF/initializer/loader inspection, actual compiled version-pointer
 binding and authenticated single-package installation/image binding. Require the
 final source, image, full installed ELF inventory, target and exact operator to

@@ -51,8 +51,10 @@ CBR = FixtureRecipe(48000, 2, False, Path("/fixtures/owned-cbr-48000-stereo-120s
 VBR = FixtureRecipe(44100, 1, True, Path("/fixtures/owned-vbr-44100-mono-120s.mp3"))
 FLAC = FixtureRecipe(48000, 2, False, Path("/fixtures/owned-48000-stereo-120s.flac"), "flac")
 RECIPES = {"cbr-48000-stereo": CBR, "vbr-44100-mono": VBR, "flac-48000-stereo": FLAC}
-# A subsequent reviewed change must bind the retained encoder's FLAC codec/muxer route.
-FLAC_ENCODER_REVIEW: str | None = None
+# Accepted narrow source review; the concrete external one-shot operator still needs release.
+FLAC_ENCODER_REVIEW: str | None = (
+    "https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553937600"
+)
 SAMPLE_FRAMES = CBR.sample_frames
 RAW_BYTES = CBR.raw_bytes
 
