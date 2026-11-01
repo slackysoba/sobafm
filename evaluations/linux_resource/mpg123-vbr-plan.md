@@ -1,7 +1,7 @@
 # Owned VBR MP3 at 44.1 kHz mono
 
-Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **Preparation only; no
-VBR fixture generation or decoding has run.** Reuse the passing retained CBR
+Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **Owned VBR generation
+passed once; native decoding is pending separate review.** Reuse the retained CBR
 and [two-decoder overlap](mpg123-overlap-plan.md#recorded-overlap-result) evidence.
 This slice supplies the remaining MP3 bitrate/rate/channel case from Q3. It
 does not include FLAC, Q4, source audio, provider/Discord activity, listening,
@@ -108,11 +108,32 @@ or 23,039,448 bytes. These header values are examples until observed. The result
 is 138 frames below the ideal 5,760,000; this follows from converter quantization
 and is not a completion tolerance or a fidelity claim.
 
+## Recorded generation
+
+The [single released attempt](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6551496133)
+on 2026-10-31 passed at source
+`735a7f1a7921eb304bdce168b4da727bcf30b50b`. The
+[selected original result](results/2026-10-31-owned-vbr-fixture.yaml) records the
+916,598-byte file, hash
+`ceec82e5c69025593e17afe0d8f327036258f2afc93bbbbc961a87eba507595e`, and all
+5,292,000 input samples accepted. Independent full header inspection found
+4,595 audio frames, delay 576, padding 864 and nine audio-frame bitrates from
+48 to 256 kbit/s. Thus the example count above is now bound to the generated
+file: 5,759,862 output frames or 23,039,448 bytes, still unobserved by decoding.
+
+Native generation took 8.452437 seconds; the outer operation took 19.75 seconds.
+Exit was zero, diagnostics were empty, payload views were released, both
+original cleanup deadlines were met and no PID, descriptor or CLI debt remained.
+The stopped container had no OOM and was removed with full-ID absence verified.
+The retained fixture and raw evidence total 997,850 bytes. This is development
+fixture preparation only, with no runtime memory-fit or listening claim.
+
 ## Separate decoder release
 
-Successful generation does not launch a decoder. First bind its actual hash,
-size, header-derived exact output count and the decoder procedure to committed
-sources; obtain independent review of that exact procedure. Reuse the retained
+Successful generation does not launch a decoder. The
+[fixed entry point](owned_mp3_vbr_decode.py) binds the actual hash, size and
+header-derived exact count above. Commit and independently review that source
+and the exact decoder procedure before release. Reuse the retained
 mpg123 image, fixed command, executable/loader closure, stopped native input
 gate, AS/DATA/STACK limits and 90,177,536-byte whole-group cap from the passing
 single-decoder case. No limit tuning or new binary is included.

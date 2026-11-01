@@ -21,8 +21,8 @@ dependencies, provider adapter or station framework.
   passed once using the retained fixture, with a measured 30-second interval,
   independent readiness/full completion and both original cleanup deadlines met.
   Other formats/rates/channels remain unqualified.
-  The next [owned VBR 44.1 kHz mono case](mpg123-vbr-plan.md) is preparation
-  only; its fixture and decoder procedures require separate concrete review.
+  The next [owned VBR 44.1 kHz mono case](mpg123-vbr-plan.md) has a generated,
+  inspected owned fixture; its native decoder procedure awaits separate review.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
 - Every concrete native case needs independent review. Stop after its first
