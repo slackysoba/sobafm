@@ -1,4 +1,4 @@
-"""Opt-in generation of one fixed, owned MP3 fixture; not a runtime-fit test."""
+"""Opt-in generation of one closed owned fixture; not a runtime-fit test."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 from .decoder_startup import CHILD_ENV, Child, cleanup
+from .flac_contract import RAW_SHA256, inspect_fixture
 from .mp3_vbr_contract import inspect_vbr_fixture
 from .probe import Identity, ProbeError, emit, proc_fields, read_text, validate_identity
 
@@ -35,6 +36,7 @@ class FixtureRecipe:
     channels: Literal[1, 2]
     vbr: bool
     path: Path
+    codec: Literal["mp3", "flac"] = "mp3"
 
     @property
     def sample_frames(self) -> int:
@@ -47,14 +49,17 @@ class FixtureRecipe:
 
 CBR = FixtureRecipe(48000, 2, False, Path("/fixtures/owned-cbr-48000-stereo-120s.mp3"))
 VBR = FixtureRecipe(44100, 1, True, Path("/fixtures/owned-vbr-44100-mono-120s.mp3"))
-RECIPES = {"cbr-48000-stereo": CBR, "vbr-44100-mono": VBR}
+FLAC = FixtureRecipe(48000, 2, False, Path("/fixtures/owned-48000-stereo-120s.flac"), "flac")
+RECIPES = {"cbr-48000-stereo": CBR, "vbr-44100-mono": VBR, "flac-48000-stereo": FLAC}
+# A subsequent reviewed change must bind the retained encoder's FLAC codec/muxer route.
+FLAC_ENCODER_REVIEW: str | None = None
 SAMPLE_FRAMES = CBR.sample_frames
 RAW_BYTES = CBR.raw_bytes
 
 
 def encoder_argv(recipe: FixtureRecipe) -> tuple[str, ...]:
-    if recipe not in (CBR, VBR):
-        raise ValueError("only the two reviewed owned fixture recipes are supported")
+    if recipe not in (CBR, VBR, FLAC):
+        raise ValueError("only the three closed owned fixture recipes are supported")
     return (
         "/usr/bin/ffmpeg",
         "-nostdin",
@@ -72,30 +77,28 @@ def encoder_argv(recipe: FixtureRecipe) -> tuple[str, ...]:
         str(recipe.channels),
         "-i",
         "pipe:0",
+        *(("-fflags", "+bitexact") if recipe == FLAC else ()),
         "-map",
         "0:a:0",
         "-map_metadata",
         "-1",
         "-c:a",
-        "libmp3lame",
+        "flac" if recipe == FLAC else "libmp3lame",
         "-threads:a",
         "1",
-        *(("-q:a", "4") if recipe.vbr else ("-b:a", "128000")),
+        *(() if recipe == FLAC else (("-q:a", "4") if recipe.vbr else ("-b:a", "128000"))),
         "-flags:a",
         "+bitexact",
-        "-write_xing",
-        "1",
-        "-id3v2_version",
-        "0",
+        *(() if recipe == FLAC else ("-write_xing", "1", "-id3v2_version", "0")),
         "-f",
-        "mp3",
+        recipe.codec,
         str(recipe.path),
     )
 
 
 def fill_pcm(first_frame: int, buffer: bytearray, recipe: FixtureRecipe = CBR) -> int:
     """Fill the caller-owned buffer; integer triangles require no random or floating state."""
-    if recipe not in (CBR, VBR):
+    if recipe not in (CBR, VBR, FLAC):
         raise ValueError("unreviewed fixture recipe")
     if not 0 <= first_frame <= recipe.sample_frames or len(buffer) != CHUNK_BYTES:
         raise ValueError("invalid fixed generator position or buffer")
@@ -188,6 +191,8 @@ def exec_encoder(
 
 
 def generate_fixture(recipe: FixtureRecipe = CBR) -> dict[str, object]:
+    if recipe == FLAC and FLAC_ENCODER_REVIEW is None:
+        raise ProbeError("FLAC encoder/muxer execution review is not bound")
     argv = encoder_argv(recipe)
     fixture = recipe.path
     if fixture.exists() or not fixture.parent.is_dir():
@@ -203,6 +208,7 @@ def generate_fixture(recipe: FixtureRecipe = CBR) -> dict[str, object]:
     view: memoryview | None = None
     stderr = bytearray()
     raw_hash = hashlib.sha256()
+    raw_md5 = hashlib.md5(usedforsecurity=False)
     accepted = generated = 0
     failure: str | None = None
     released = exec_failed = False
@@ -257,6 +263,7 @@ def generate_fixture(recipe: FixtureRecipe = CBR) -> dict[str, object]:
                 if count:
                     with view[:count] as payload:
                         raw_hash.update(payload)
+                        raw_md5.update(payload)
                     generated += count
                 else:
                     os.close(in_w)
@@ -337,6 +344,11 @@ def generate_fixture(recipe: FixtureRecipe = CBR) -> dict[str, object]:
                 raise ProbeError("owned fixture changed after encoder completion")
             if recipe == VBR:
                 header_shape = asdict(inspect_vbr_fixture(compressed))
+            elif recipe == FLAC:
+                if raw_hash.hexdigest() != RAW_SHA256:
+                    raise ProbeError("FLAC raw generation differs from the retained CBR recipe")
+                with memoryview(compressed) as payload:
+                    header_shape = asdict(inspect_fixture(payload, raw_md5.hexdigest()))
             fixture_hash = hashlib.sha256(compressed).hexdigest()
         except (OSError, ProbeError, ValueError) as error:
             passed = False
@@ -352,10 +364,15 @@ def generate_fixture(recipe: FixtureRecipe = CBR) -> dict[str, object]:
         "raw_bytes_generated": generated,
         "raw_bytes_accepted": accepted,
         "raw_sha256": raw_hash.hexdigest(),
+        "raw_md5": raw_md5.hexdigest(),
         "expected_sample_frames": recipe.sample_frames,
         "sample_rate": recipe.rate,
         "channels": recipe.channels,
-        "encoding": "vbr_quality_4" if recipe.vbr else "cbr_128k",
+        "encoding": "flac_lossless"
+        if recipe == FLAC
+        else "vbr_quality_4"
+        if recipe.vbr
+        else "cbr_128k",
         "header_shape": header_shape,
         "fixture_name": fixture.name,
         "fixture_bytes": size,
