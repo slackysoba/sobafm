@@ -26,6 +26,9 @@ dependencies, provider adapter or station framework.
   Remaining cases and listening quality are still unqualified.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
+  The [prepared direct-decoder cancellation slice](mpg123-cancellation-plan.md)
+  implements the feed and stdout-backpressure cases with offline ownership
+  regressions. Native execution and the two process-topology cases remain pending.
 - Every concrete native case needs independent review. Stop after its first
   failure and preserve the observation before preparing a correction; no case
   authorizes an automatic retry or the larger-cap fallback.
@@ -211,9 +214,10 @@ Never export full inspect/environment output, credentials or arbitrary host data
 
 ## Offline validation
 
-The contract tests exercise fail-closed parsing and descendant security checks
-without spawning processes or using Docker. Ordinary pytest collection names
-this one offline test file explicitly; it does not collect native evaluations.
+The contract tests exercise fail-closed parsing, descendant security checks,
+decoder ownership and cancellation schedules without spawning native workloads
+or using Docker. Ordinary pytest collection names the offline contract files
+explicitly; it does not collect native evaluations.
 They can also be run independently:
 
 ```sh
