@@ -23,20 +23,14 @@ from types import FrameType
 from typing import cast
 from urllib.parse import urlsplit
 
-from sobafm.catalog import Source, metadata_digest, parse_catalog
-from sobafm.catalog_import import normalize, parse_context
+from sobafm.catalog import Recording, Source, metadata_digest, parse_catalog
+from sobafm.catalog_import import ImportContext, normalize, parse_context
+from sobafm.ccmixter_cases import CASES, WILD_WINDSTEPS, ProofCase, proof_case
 
-HOST = "https://ccmixter.org"
-MEDIA = HOST + "/content/AntSurvila/AntSurvila_-_WILD_WINDSTEPS.mp3"
-EXPECTED_BYTES = 4_693_829
-METADATA = {
-    "mix_page": HOST + "/files/AntSurvila/70993",
-    "parent_page": HOST + "/files/Dan_Mantau/70072",
-    "root_page": HOST + "/files/lisadb/25112",
-    "info": HOST + "/api/query?f=json&dataview=info&ids=70993&limit=1",
-    "terms": HOST + "/terms",
-    "about": HOST + "/about",
-}
+# The default and these public constants continue to identify the original case.
+MEDIA = WILD_WINDSTEPS.media_url
+EXPECTED_BYTES = WILD_WINDSTEPS.expected_bytes
+METADATA = {route.name: route.url for route in WILD_WINDSTEPS.metadata}
 FINGERPRINT_POLICY = "ccmixter-hidden-index-v1"
 _HIDDEN_PREFIX = (
     b'<div class="hide" style="font-size:1px;">\r\n\r\n<a href="/emails/indexe.php?index='
@@ -66,13 +60,15 @@ class Request:
     inactivity_seconds: float = 20.0
     absolute_seconds: float = 120.0
     loopback: bool = False
+    case_id: str = WILD_WINDSTEPS.case_id
 
     def validate(self) -> None:
+        case = proof_case(self.case_id)
         parsed = urlsplit(self.url)
         if self.loopback:
             valid = parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
         else:
-            valid = self.url in (*METADATA.values(), MEDIA)
+            valid = self.url in (*(route.url for route in case.metadata), case.media_url)
         if not valid or parsed.username or parsed.password or parsed.fragment:
             raise ProofError("route_rejected")
         limit = BODY_CAP if self.media else METADATA_CAP
@@ -140,7 +136,10 @@ def _headers(response: http.client.HTTPResponse, request: Request) -> int | None
             raise ProofError("advertised_size_conflict")
     content_type = _content_type(response)
     allowed = {"audio/mpeg"} if request.media else {"text/html", "application/json"}
-    if not request.media and request.url == METADATA["info"]:
+    if not request.media and any(
+        route.recording_id is not None and request.url == route.url
+        for route in proof_case(request.case_id).metadata
+    ):
         allowed.add("text/plain")
     if content_type not in allowed:
         raise ProofError("content_type_rejected")
@@ -260,7 +259,14 @@ class OwnedRequest:
 class RequestOwner:
     """A single reservation; cancellation/deadlines do not release it."""
 
-    def __init__(self, directory: Path, *, run_seconds: float = RUN_SECONDS) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        case_id: str = WILD_WINDSTEPS.case_id,
+        run_seconds: float = RUN_SECONDS,
+    ) -> None:
+        self.case = proof_case(case_id)
         if (directory / "body").exists():
             raise ProofError("unresolved_previous_file")
         self.directory = directory
@@ -277,6 +283,8 @@ class RequestOwner:
         self._closed = False
 
     def start(self, request: Request) -> None:
+        if request.case_id != self.case.case_id:
+            raise ProofError("request_case_conflict")
         request.validate()
         if self._closed or self.active is not None or (self.directory / "body").exists():
             raise ProofError("ownership_remains")
@@ -307,6 +315,7 @@ class RequestOwner:
                     "-m",
                     "sobafm.ccmixter_proof",
                     "--request-child",
+                    self.case.case_id,
                     str(counter_fd),
                     str(self.directory_fd),
                     json.dumps(asdict(request)),
@@ -456,11 +465,12 @@ def _json(data: bytes) -> object:
     return cast(object, json.loads(data, object_pairs_hook=unique))
 
 
-def metadata_fingerprint(name: str, body: bytes) -> str:
+def metadata_fingerprint(name: str, body: bytes, case: ProofCase = WILD_WINDSTEPS) -> str:
     """Hash all bytes except the reviewed HTML marker's bounded decimal value."""
-    if name not in METADATA or len(body) > METADATA_CAP:
+    route = case.route(name)
+    if route is None or len(body) > METADATA_CAP:
         raise ProofError("invalid_fingerprint_input")
-    if name == "info":
+    if route.recording_id is not None:
         return hashlib.sha256(body).hexdigest()
     if body.count(b"__cnt_st") != 1 or body.count(b"/emails/indexe.php") != 1:
         raise ProofError("metadata_marker_invalid")
@@ -475,23 +485,29 @@ def metadata_fingerprint(name: str, body: bytes) -> str:
     return digest.hexdigest()
 
 
-def review_manifest(data: bytes, candidate_digest: str) -> dict[str, str]:
+def review_manifest(
+    data: bytes, candidate_digest: str, case: ProofCase = WILD_WINDSTEPS
+) -> dict[str, str]:
     review = _object(_json(data))
-    if set(review) != {
+    legacy = review.get("schema") == "sobafm-source-proof-review-2"
+    fields = {
         "schema",
         "fingerprint_policy",
         "candidate_digest",
         "responses",
         "expires_at",
         "review_reference",
-    }:
+    }
+    if set(review) != (fields if legacy else fields | {"case_id"}):
         raise ProofError("invalid_review")
     if (
-        review["schema"] != "sobafm-source-proof-review-2"
+        review["schema"] not in {"sobafm-source-proof-review-2", "sobafm-source-proof-review-3"}
         or review["fingerprint_policy"] != FINGERPRINT_POLICY
     ):
         raise ProofError("review_policy_conflict")
-    if review["candidate_digest"] != candidate_digest:
+    if (legacy and case != WILD_WINDSTEPS) or (not legacy and review["case_id"] != case.case_id):
+        raise ProofError("review_case_conflict")
+    if review["candidate_digest"] != candidate_digest or candidate_digest != case.candidate_digest:
         raise ProofError("review_candidate_conflict")
     reference = review["review_reference"]
     if (
@@ -510,7 +526,7 @@ def review_manifest(data: bytes, candidate_digest: str) -> dict[str, str]:
     if expiry.tzinfo is None or not 0 < (expiry - datetime.now(UTC)).total_seconds() <= RUN_SECONDS:
         raise ProofError("review_expired")
     responses = _object(review["responses"])
-    if set(responses) != set(METADATA) or any(
+    if set(responses) != {route.name for route in case.metadata} or any(
         not isinstance(v, str) or re.fullmatch(r"[0-9a-f]{64}", v) is None
         for v in responses.values()
     ):
@@ -538,37 +554,121 @@ def _projection(current: object, expected: object) -> bool:
     return type(current) is type(expected) and current == expected
 
 
-def validate_info(data: bytes, catalog_directory: Path) -> None:
-    rows = _json(data)
-    expected = _json(
-        bounded_read(catalog_directory / "import-ccmixter-playback-observed.json", METADATA_CAP)
+def _indexed(value: object, key: str) -> dict[int, dict[str, object]]:
+    """Index source identities, rejecting missing, duplicate and non-integer IDs."""
+    if not isinstance(value, list):
+        raise ProofError("metadata_identity_conflict")
+    result: dict[int, dict[str, object]] = {}
+    for item in cast(list[object], value):
+        row = _object(item)
+        identity = row.get(key)
+        if type(identity) is not int or identity <= 0 or identity in result:
+            raise ProofError("metadata_identity_conflict")
+        result[identity] = row
+    return result
+
+
+def _case_inputs(
+    directory: Path, case: ProofCase
+) -> tuple[ImportContext, dict[int, dict[str, object]]]:
+    context = parse_context(bounded_read(directory / case.context_file, 10_000).decode())
+    expected = _indexed(
+        _json(bounded_read(directory / case.projection_file, METADATA_CAP)), "upload_id"
     )
     if (
-        not isinstance(rows, list)
-        or len(cast(list[object], rows)) != 1
-        or not isinstance(expected, list)
+        context.selected_files != ((str(case.recording_id), str(case.file_id)),)
+        or set(context.requested_ids) != {str(identity) for identity in case.projection_ids}
+        or context.state != "complete"
+        or context.evidence_kind != "observed"
+        or set(expected) != set(case.projection_ids)
+    ):
+        raise ProofError("catalog_case_conflict")
+    return context, expected
+
+
+def validate_catalog(directory: Path, case: ProofCase = WILD_WINDSTEPS) -> Recording:
+    """Bind the one real candidate and case inputs before reserving any resources."""
+    candidate = parse_catalog(bounded_read(directory / case.candidate_file, METADATA_CAP).decode())
+    if (
+        candidate.synthetic
+        or len(candidate.partitions) != 1
+        or len(candidate.partitions[0].recordings) != 1
+    ):
+        raise ProofError("candidate_conflict")
+    record = candidate.partitions[0].recordings[0]
+    if (
+        record.key.source != Source.CCMIXTER
+        or record.key.recording_id != str(case.recording_id)
+        or record.kind != "complete"
+        or record.availability != "unknown"
+        or metadata_digest(record) != case.candidate_digest
+    ):
+        raise ProofError("candidate_conflict")
+    _case_inputs(directory, case)
+    return record
+
+
+def validate_info(
+    data: bytes,
+    catalog_directory: Path,
+    case: ProofCase = WILD_WINDSTEPS,
+    name: str = "info",
+) -> None:
+    route = case.route(name)
+    if route is None or route.recording_id is None:
+        raise ProofError("metadata_identity_conflict")
+    rows = _indexed(_json(data), "upload_id")
+    if set(rows) != {route.recording_id}:
+        raise ProofError("metadata_identity_conflict")
+    context, expected = _case_inputs(catalog_directory, case)
+    row, baseline = rows[route.recording_id], expected[route.recording_id]
+    # Array position is not a file identity. Every supplied file still has to match
+    # the reviewed projection, including ownership, duration and MIME.
+    files, expected_files = (
+        _indexed(row.get("files"), "file_id"),
+        _indexed(baseline.get("files"), "file_id"),
+    )
+    if set(files) != set(expected_files) or not _projection(
+        {**row, "files": [files[key] for key in sorted(files)]},
+        {**baseline, "files": [expected_files[key] for key in sorted(expected_files)]},
     ):
         raise ProofError("metadata_identity_conflict")
-    row = _object(cast(list[object], rows)[0])
-    if not _projection(row, cast(list[object], expected)[0]):
-        raise ProofError("metadata_identity_conflict")
-    context = parse_context(
-        bounded_read(catalog_directory / "import-ccmixter-playback-context.json", 10_000).decode()
-    )
     imported = normalize(Source.CCMIXTER, data.decode("utf-8"), context)
-    if (
-        len(imported.catalog.partitions[0].recordings) != 1
-        or imported.report.records[0].source_file_id != "129564"
-    ):
+    records = imported.catalog.partitions[0].recordings
+    if len(records) != 1 or records[0].key.recording_id != str(route.recording_id):
         raise ProofError("metadata_import_rejected")
-    files = cast(list[object], row["files"])
-    file = _object(files[0])
+    if route.recording_id != case.recording_id:
+        # Upstream identity/credits are checked independently, never selected for playback.
+        if "remix_parents" in row and row["remix_parents"] != []:
+            raise ProofError("upstream_chain_conflict")
+        if imported.report.records[0].source_file_id is not None:
+            raise ProofError("upstream_file_selected")
+        return
+    if imported.report.records[0].source_file_id != str(case.file_id):
+        raise ProofError("metadata_import_rejected")
+    file = files[case.file_id]
     if (
-        file.get("download_url") != MEDIA
+        file.get("download_url") != case.media_url
         or type(file.get("file_rawsize")) is not int
-        or file.get("file_rawsize") != EXPECTED_BYTES
+        or file.get("file_rawsize") != case.expected_bytes
     ):
         raise ProofError("route_or_size_conflict")
+    if not _projection(
+        file,
+        {
+            "file_name": case.filename,
+            "file_nicname": "mp3",
+            "file_upload": case.recording_id,
+            "file_format_info": {
+                "mime_type": "audio/mpeg",
+                "ps": case.duration,
+                "sr": "44k",
+                "ch": "stereo",
+                "br": case.bitrate,
+            },
+        },
+    ):
+        raise ProofError("complete_mix_conflict")
 
 
 def run_proof(
@@ -577,9 +677,14 @@ def run_proof(
     fingerprints: dict[str, str],
     cancel_fd: int | None = None,
 ) -> Transfer:
-    for name, url in METADATA.items():
+    case = owner.case
+    validate_catalog(catalog_directory, case)
+    if set(fingerprints) != {route.name for route in case.metadata}:
+        raise ProofError("invalid_response_fingerprints")
+    for route in case.metadata:
+        name = route.name
         _check_cancel(cancel_fd)
-        owner.start(Request(url, METADATA_CAP))
+        owner.start(Request(route.url, METADATA_CAP, case_id=case.case_id))
         try:
             result = owner.wait(cancel_fd)
             evidence: dict[str, object] = {
@@ -593,19 +698,21 @@ def run_proof(
             if result.verdict != "transferred":
                 raise ProofError(result.verdict)
             body = bounded_read(owner.directory / "body", METADATA_CAP)
-            comparison = metadata_fingerprint(name, body)
+            comparison = metadata_fingerprint(name, body, case)
             evidence.update(
                 comparison_sha256=comparison, review_match=comparison == fingerprints[name]
             )
             if comparison != fingerprints[name]:
                 raise ProofError("metadata_changed")
-            if name == "info":
-                validate_info(body, catalog_directory)
+            if route.recording_id is not None:
+                validate_info(body, catalog_directory, case, name)
         finally:
             if not owner.cleanup() or owner.cleanup_missed:
                 raise ProofError("cleanup_failed")
     _check_cancel(cancel_fd)
-    owner.start(Request(MEDIA, BODY_CAP, EXPECTED_BYTES, media=True))
+    owner.start(
+        Request(case.media_url, BODY_CAP, case.expected_bytes, media=True, case_id=case.case_id)
+    )
     try:
         result = owner.wait(cancel_fd)
         owner.request_evidence.append({"request": "media", **asdict(result)})
@@ -623,9 +730,13 @@ def _check_cancel(cancel_fd: int | None) -> None:
 def main() -> None:
     if not sys.platform.startswith("linux"):
         raise SystemExit("Linux only")
-    if len(sys.argv) == 5 and sys.argv[1] == "--request-child":
-        counter_fd, directory_fd = int(sys.argv[2]), int(sys.argv[3])
-        request = Request(**cast(dict[str, object], json.loads(sys.argv[4])))  # type: ignore[arg-type]
+    if len(sys.argv) == 6 and sys.argv[1] == "--request-child":
+        case = proof_case(sys.argv[2])
+        request = Request(**_object(_json(sys.argv[5].encode())))  # type: ignore[arg-type]
+        if request.case_id != case.case_id:
+            raise ProofError("request_case_conflict")
+        request.validate()  # Reject cross-case routes before even mapping the owned descriptors.
+        counter_fd, directory_fd = int(sys.argv[3]), int(sys.argv[4])
         with mmap.mmap(counter_fd, 17) as counter:
             result = download(request, directory_fd, counter)
             os.close(directory_fd)
@@ -636,21 +747,26 @@ def main() -> None:
     parser.add_argument("--live-ccmixter", action="store_true", required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--catalog-directory", type=Path, required=True)
+    parser.add_argument(
+        "--case", choices=[case.case_id for case in CASES], default=WILD_WINDSTEPS.case_id
+    )
     args = parser.parse_args()
+    case = proof_case(args.case)
     # The concrete invocation supplies a private tmpfs here; no arbitrary persistent audio path.
     directory = Path("/run/sobafm-source-proof")
     owner: RequestOwner | None = None
     retention_deadline = time.monotonic() + 3600
-    cancel_read, cancel_write = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+    cancel_read: int | None = None
+    cancel_write: int | None = None
 
     def cancel(_signum: int, _frame: FrameType | None) -> None:
         with suppress(BlockingIOError):
-            os.write(cancel_write, b"x")
+            if cancel_write is not None:
+                os.write(cancel_write, b"x")
 
-    signal.signal(signal.SIGTERM, cancel)
-    signal.signal(signal.SIGINT, cancel)
     evidence: dict[str, object] = {
-        "schema": "sobafm-source-proof-result-2",
+        "schema": "sobafm-source-proof-result-3",
+        "case_id": case.case_id,
         "fingerprint_policy": FINGERPRINT_POLICY,
         "started_at": datetime.now(UTC).isoformat(),
         "transport": "not_started",
@@ -664,6 +780,15 @@ def main() -> None:
     try:
         import fcntl
 
+        # No lock, pipe, file reservation or child exists until all case inputs bind.
+        record = validate_catalog(args.catalog_directory, case)
+        evidence["candidate_digest"] = metadata_digest(record)
+        review = bounded_read(args.review, 10_000)
+        fingerprints = review_manifest(review, metadata_digest(record), case)
+        evidence["review_sha256"] = hashlib.sha256(review).hexdigest()
+        cancel_read, cancel_write = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+        signal.signal(signal.SIGTERM, cancel)
+        signal.signal(signal.SIGINT, cancel)
         if (
             directory.is_symlink()
             or directory.stat().st_uid != os.getuid()
@@ -672,23 +797,7 @@ def main() -> None:
             raise ProofError("private_directory_required")
         lock_fd = os.open(directory / "owner.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        candidate = parse_catalog(
-            bounded_read(
-                args.catalog_directory / "ccmixter-playback-candidate.json", METADATA_CAP
-            ).decode()
-        )
-        record = candidate.partitions[0].recordings[0]
-        if (
-            record.key.source != Source.CCMIXTER
-            or record.key.recording_id != "70993"
-            or record.availability != "unknown"
-        ):
-            raise ProofError("candidate_conflict")
-        evidence["candidate_digest"] = metadata_digest(record)
-        review = bounded_read(args.review, 10_000)
-        fingerprints = review_manifest(review, metadata_digest(record))
-        evidence["review_sha256"] = hashlib.sha256(review).hexdigest()
-        owner = RequestOwner(directory)
+        owner = RequestOwner(directory, case_id=case.case_id)
         expiry = datetime.fromisoformat(cast(str, _object(_json(review))["expires_at"]))
         owner.run_deadline = min(
             owner.run_deadline, time.monotonic() + (expiry - datetime.now(UTC)).total_seconds()
@@ -743,8 +852,10 @@ def main() -> None:
                 )
         if lock_fd is not None:
             os.close(lock_fd)
-        os.close(cancel_read)
-        os.close(cancel_write)
+        if cancel_read is not None:
+            os.close(cancel_read)
+        if cancel_write is not None:
+            os.close(cancel_write)
     evidence["finished_at"] = datetime.now(UTC).isoformat()
     print(json.dumps(evidence), flush=True)
     raise SystemExit(

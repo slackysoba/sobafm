@@ -1,0 +1,66 @@
+{
+  "schema": "sobafm-catalog-1",
+  "synthetic": false,
+  "partitions": [
+    {
+      "source": "ccmixter",
+      "state": "complete",
+      "note": "One nominated complete mix, observed 2026-11-01 UTC. Complete describes this one-record prepared subset. Public route identified; availability unknown, no audio acquisition or admission review.",
+      "recordings": [
+        {
+          "title": "Fruitless",
+          "primary_artist": "Dan_Mantau",
+          "creators": [
+            "Dan_Mantau",
+            "Lisa DeBenedictis",
+            "DeBenedictis"
+          ],
+          "provenance": "https://ccmixter.org/files/Dan_Mantau/70072",
+          "kind": "complete",
+          "kind_evidence": "https://ccmixter.org/files/Dan_Mantau/70072",
+          "duration_seconds": 206,
+          "availability": "unknown",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "drums",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://ccmixter.org/files/Dan_Mantau/70072"
+            },
+            {
+              "feature": "guitar",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://ccmixter.org/files/Dan_Mantau/70072"
+            },
+            {
+              "feature": "vocals",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://ccmixter.org/files/Dan_Mantau/70072"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "ccmixter-70072-2026-11-01-preparation-1",
+            "license_label": "Attribution Noncommercial (3.0)",
+            "license_url": "https://creativecommons.org/licenses/by-nc/3.0/",
+            "notices": [
+              "Provider: ccMixter. Fruitless by Dan_Mantau (uploader Dan_Mantau), 2025. Featuring Lisa DeBenedictis. Source: https://ccmixter.org/files/Dan_Mantau/70072",
+              "Source file identity: 125900. Published filename: Dan_Mantau_-_Fruitless.mp3. Reported duration: 3:26; reported size: 8232794 bytes; CBR stereo MP3, 44k. These are source metadata, not file measurements.",
+              "Supplied mix description: Country Rock. Thanks to Lisa for the pella !",
+              "Uses samples from Fruitless by DeBenedictis (uploader lisadb), 2010. Source: https://ccmixter.org/files/lisadb/25112 . License: https://creativecommons.org/licenses/by-nc/3.0/",
+              "Lisa DeBenedictis is the featured name supplied by Dan_Mantau; the linked source displays DeBenedictis. Both names are retained. No separate composer or composition identity was supplied.",
+              "The published supplied chain is 70072 -> 25112. No further Uses samples from section appears on the DeBenedictis page. Its info response omits remix_parents; the page observation, not that omission, bounds this review.",
+              "The playback candidate is complete-mix file 125900. Files 125901-125907 are separately named Drums, Bass, Guitar 1, Guitar 2, Lead guitar, Rhodes and Cello stems. The upstream Vox/Guitar files are credit evidence only; none is a playback substitute.",
+              "Both recording pages supply Attribution Noncommercial (3.0), CC BY-NC 3.0 Unported. License and warranty terms: https://creativecommons.org/licenses/by-nc/3.0/legalcode . No additional recording-specific copyright or warranty notice was observed on either page.",
+              "SobaFM has not acquired or modified audio. A future reviewed proof may temporarily acquire the unchanged MP3 and perform technical conversion to 48 kHz stereo signed 16-bit PCM. Record actual conversion only when performed."
+            ]
+          },
+          "recording_id": "70072"
+        }
+      ]
+    }
+  ]
+}

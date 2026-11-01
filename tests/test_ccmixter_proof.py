@@ -24,6 +24,7 @@ import pytest
 
 from sobafm import ccmixter_proof as proof
 from sobafm.catalog import metadata_digest, parse_catalog, parse_query, select
+from sobafm.ccmixter_cases import CASES, FRUITLESS, WILD_WINDSTEPS, MetadataRoute, ProofCase
 
 CATALOG = Path(__file__).resolve().parents[1] / "evaluations/catalog"
 # A separate process avoids forking a test runner with a server thread. The pipe
@@ -350,7 +351,7 @@ proof.main()
         command = cast(list[str], args[0])
         fds = cast(tuple[int, ...], kwargs["pass_fds"])
         return original(
-            [sys.executable, "-c", script, str(ready_write), str(gate_read), *command[-3:]],
+            [sys.executable, "-c", script, str(ready_write), str(gate_read), *command[-4:]],
             pass_fds=(*fds, ready_write, gate_read),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -402,7 +403,13 @@ def valid_info() -> bytes:
     )
     row = rows[0]
     files = cast(list[dict[str, object]], row["files"])
-    files[0].update(download_url=proof.MEDIA, file_rawsize=proof.EXPECTED_BYTES)
+    files[0].update(
+        download_url=proof.MEDIA,
+        file_rawsize=proof.EXPECTED_BYTES,
+        file_name=proof.WILD_WINDSTEPS.filename,
+        file_nicname="mp3",
+    )
+    cast(dict[str, object], files[0]["file_format_info"]).update(sr="44k", ch="stereo", br="VBR")
     return json.dumps([row]).encode()
 
 
@@ -418,13 +425,13 @@ def metadata_transfer(
     def fixture_process(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
         command = cast(list[str], args[0])
         return original_process(
-            [sys.executable, "-c", METADATA_CHILD, wire.hex(), *command[-3:]],
+            [sys.executable, "-c", METADATA_CHILD, wire.hex(), *command[-4:]],
             pass_fds=cast(tuple[int, ...], kwargs["pass_fds"]),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
 
-    owner = proof.RequestOwner(tmp_path)
+    owner = proof.RequestOwner(tmp_path, case_id=spec.case_id)
     try:
         with patch.object(proof.subprocess, "Popen", side_effect=fixture_process):
             owner.start(spec)
@@ -589,7 +596,7 @@ def test_plain_info_passes_real_transfer_and_validation_before_media(
             f"Content-Length: {len(payload)}\r\n\r\n"
         ).encode() + payload
         process = original_process(
-            [sys.executable, "-c", METADATA_CHILD, wire.hex(), *command[-3:]],
+            [sys.executable, "-c", METADATA_CHILD, wire.hex(), *command[-4:]],
             pass_fds=cast(tuple[int, ...], kwargs["pass_fds"]),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -864,3 +871,339 @@ def test_request_limits_and_fixed_routes() -> None:
     ):
         with pytest.raises(proof.ProofError):
             request.validate()
+
+
+def fruitless_info(*, root: bool = False) -> dict[str, object]:
+    rows = cast(
+        list[dict[str, object]], json.loads((CATALOG / FRUITLESS.projection_file).read_bytes())
+    )
+    row = next(row for row in rows if row["upload_id"] == (25112 if root else 70072))
+    if not root:
+        files = cast(list[dict[str, object]], row["files"])
+        selected = next(file for file in files if file["file_id"] == 125900)
+        selected.update(
+            file_name=FRUITLESS.filename,
+            file_nicname="mp3",
+            file_rawsize=FRUITLESS.expected_bytes,
+            download_url=FRUITLESS.media_url,
+        )
+        cast(dict[str, object], selected["file_format_info"]).update(
+            sr="44k", ch="stereo", br="CBR"
+        )
+    return row
+
+
+def case_review(case: ProofCase) -> dict[str, object]:
+    return {
+        "schema": "sobafm-source-proof-review-3",
+        "case_id": case.case_id,
+        "fingerprint_policy": proof.FINGERPRINT_POLICY,
+        "candidate_digest": case.candidate_digest,
+        "responses": {route.name: "0" * 64 for route in case.metadata},
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+        "review_reference": "https://github.com/slackysoba/sobafm/issues/27#issuecomment-1",
+    }
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_cases_preserve_candidates_and_bind_manifest(case: ProofCase) -> None:
+    record = proof.validate_catalog(CATALOG, case)
+    assert metadata_digest(record) == case.candidate_digest
+    candidate = parse_catalog((CATALOG / case.candidate_file).read_text())
+    assert not select(candidate, parse_query({"title": record.title}), ()).matches
+    review = case_review(case)
+    assert (
+        proof.review_manifest(json.dumps(review).encode(), case.candidate_digest, case)
+        == review["responses"]
+    )
+    other = next(item for item in CASES if item != case)
+    for changes in (
+        {"case_id": other.case_id},
+        {"candidate_digest": other.candidate_digest},
+        {"responses": case_review(other)["responses"]},
+        {"case_id": "unknown"},
+    ):
+        with pytest.raises(proof.ProofError):
+            proof.review_manifest(
+                json.dumps(review | changes).encode(), case.candidate_digest, case
+            )
+    legacy = {key: value for key, value in review.items() if key != "case_id"}
+    legacy["schema"] = "sobafm-source-proof-review-2"
+    if case == FRUITLESS:
+        with pytest.raises(proof.ProofError, match="review_case_conflict"):
+            proof.review_manifest(json.dumps(legacy).encode(), case.candidate_digest, case)
+    else:
+        assert proof.review_manifest(json.dumps(legacy).encode(), case.candidate_digest, case)
+
+
+@pytest.mark.parametrize("part", ["candidate", "projection", "context", "stem", "review"])
+def test_cross_case_catalog_rejected_before_cli_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], part: str
+) -> None:
+    for filename in (FRUITLESS.candidate_file, FRUITLESS.projection_file, FRUITLESS.context_file):
+        (tmp_path / filename).write_bytes((CATALOG / filename).read_bytes())
+    if part == "stem":
+        path = tmp_path / FRUITLESS.context_file
+        path.write_text(path.read_text().replace('"125900"', '"125901"'))
+    elif part != "review":
+        filename = getattr(FRUITLESS, f"{part}_file")
+        other = getattr(WILD_WINDSTEPS, f"{part}_file")
+        (tmp_path / filename).write_bytes((CATALOG / other).read_bytes())
+    review_path = tmp_path / "review.json"
+    review_path.write_text(
+        json.dumps(case_review(WILD_WINDSTEPS if part == "review" else FRUITLESS))
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "proof",
+            "--live-ccmixter",
+            "--case",
+            FRUITLESS.case_id,
+            "--catalog-directory",
+            str(tmp_path),
+            "--review",
+            str(review_path),
+        ],
+    )
+    with (
+        patch.object(proof.os, "pipe2") as pipe,
+        patch.object(proof.os, "open") as opening,
+        patch.object(proof.subprocess, "Popen") as process,
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        proof.main()
+    assert exit_info.value.code == 1
+    assert not pipe.called and not opening.called and not process.called
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["transport"] == "not_started" and receipt["case_id"] == FRUITLESS.case_id
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_owner_and_child_reject_cross_case_before_reservation(
+    tmp_path: Path, case: ProofCase
+) -> None:
+    other = next(item for item in CASES if item != case)
+    owner = proof.RequestOwner(tmp_path, case_id=case.case_id)
+    spec = proof.Request(other.media_url, 32, case_id=other.case_id)
+    try:
+        with (
+            patch.object(proof.subprocess, "Popen") as process,
+            pytest.raises(proof.ProofError, match="request_case_conflict"),
+        ):
+            owner.start(spec)
+        assert not process.called and owner.metadata_requests == owner.media_requests == 0
+        assert owner.active is None
+        with pytest.raises(proof.ProofError, match="route_rejected"):
+            replace(spec, case_id=case.case_id).validate()
+    finally:
+        assert owner.close()
+    # Invalid descriptors demonstrate that the real child rejects before mapping or HTTP.
+    for request_case in (other.case_id, case.case_id):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "sobafm.ccmixter_proof",
+                "--request-child",
+                case.case_id,
+                "-1",
+                "-1",
+                json.dumps({"url": other.media_url, "cap": 32, "case_id": request_case}),
+            ],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        assert result.returncode != 0 and not result.stdout
+        assert (
+            b"request_case_conflict" if request_case == other.case_id else b"route_rejected"
+        ) in result.stderr
+
+
+@pytest.mark.parametrize("root", [False, True])
+def test_fruitless_file_order_is_not_identity(root: bool) -> None:
+    row = fruitless_info(root=root)
+    cast(list[object], row["files"]).reverse()
+    body = json.dumps([row]).encode()
+    name = "root_info" if root else "info"
+    proof.validate_info(body, CATALOG, FRUITLESS, name)
+    assert proof.metadata_fingerprint(name, body, FRUITLESS) == hashlib.sha256(body).hexdigest()
+    assert (
+        proof.metadata_fingerprint(name, body + b" ", FRUITLESS) != hashlib.sha256(body).hexdigest()
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "duplicate",
+        "missing",
+        "stem",
+        "owner",
+        "filename",
+        "label",
+        "mime",
+        "duration",
+        "rate",
+        "channels",
+        "bitrate",
+        "size",
+        "string_size",
+        "route",
+        "credit",
+        "parent",
+        "keys",
+    ],
+)
+def test_fruitless_rejects_conflicts(change: str) -> None:
+    row = fruitless_info()
+    files = cast(list[dict[str, object]], row["files"])
+    selected = files[0]
+    info = cast(dict[str, object], selected["file_format_info"])
+    if change == "duplicate":
+        files.append(dict(selected))
+    elif change == "missing":
+        files.pop(0)
+    elif change == "stem":
+        files[0], files[1] = files[1] | {"file_id": 125900}, files[0] | {"file_id": 125901}
+    elif change == "credit":
+        row["user_real_name"] = "Different creator"
+    elif change == "parent":
+        cast(list[dict[str, object]], row["remix_parents"])[0]["user_real_name"] = "Changed credit"
+    elif change in {"mime", "duration", "rate", "channels", "bitrate"}:
+        info[
+            {
+                "mime": "mime_type",
+                "duration": "ps",
+                "rate": "sr",
+                "channels": "ch",
+                "bitrate": "br",
+            }[change]
+        ] = "changed"
+    elif change != "keys":
+        key, value = {
+            "owner": ("file_upload", 70993),
+            "filename": ("file_name", "stem.mp3"),
+            "label": ("file_nicname", "Drums"),
+            "size": ("file_rawsize", 8_232_795),
+            "string_size": ("file_rawsize", "8232794"),
+            "route": ("download_url", proof.MEDIA),
+        }[change]
+        selected[key] = value
+    body = json.dumps([row]).encode()
+    if change == "keys":
+        body = body.replace(b'"upload_id": 70072', b'"upload_id": 70072, "upload_id": 70072')
+    with pytest.raises(proof.ProofError):
+        proof.validate_info(body, CATALOG, FRUITLESS)
+
+
+@pytest.mark.parametrize("change", ["artist", "license", "chain", "wrong_row", "duplicate_file"])
+def test_upstream_credit_record_is_independently_checked(change: str) -> None:
+    row = fruitless_info(root=True)
+    if change == "artist":
+        row["user_real_name"] = "Different creator"
+    elif change == "license":
+        row["license_url"] = "https://example.invalid/license"
+    elif change == "chain":
+        row["remix_parents"] = [{"upload_id": 1}]
+    elif change == "wrong_row":
+        row = fruitless_info()
+    else:
+        files = cast(list[dict[str, object]], row["files"])
+        files[1]["file_id"] = files[0]["file_id"]
+    with pytest.raises(proof.ProofError):
+        proof.validate_info(json.dumps([row]).encode(), CATALOG, FRUITLESS, "root_info")
+
+
+@pytest.mark.parametrize("route", FRUITLESS.metadata)
+def test_fruitless_plain_type_is_only_for_nominated_info(
+    tmp_path: Path, route: MetadataRoute
+) -> None:
+    result = metadata_transfer(
+        tmp_path, proof.Request(route.url, 32, case_id=FRUITLESS.case_id), "text/plain"
+    )
+    assert result.verdict == (
+        "transferred" if route.recording_id is not None else "content_type_rejected"
+    )
+
+
+@pytest.mark.parametrize("change", ["none", "root_credit", "root_whitespace", "root_keys"])
+def test_fruitless_six_real_child_transfers_gate_media(tmp_path: Path, change: str) -> None:
+    bodies = {
+        route.name: json.dumps([fruitless_info(root=route.name == "root_info")]).encode()
+        if route.recording_id is not None
+        else html_metadata()
+        for route in FRUITLESS.metadata
+    }
+    changed = bodies["root_info"]
+    if change == "root_credit":
+        changed = changed.replace(b'"DeBenedictis"', b'"Changed credit"')
+    elif change == "root_whitespace":
+        changed += b" "
+    elif change == "root_keys":
+        changed = changed.replace(b'"upload_id": 25112', b'"upload_id": 25112, "upload_id": 25112')
+    if change != "root_whitespace":
+        bodies["root_info"] = changed
+    fingerprints = {
+        name: proof.metadata_fingerprint(name, body, FRUITLESS) for name, body in bodies.items()
+    }
+    owner = proof.RequestOwner(tmp_path, case_id=FRUITLESS.case_id)
+    original_start = owner.start
+    original_process = subprocess.Popen
+    calls: list[proof.Request] = []
+    children: list[subprocess.Popen[bytes]] = []
+
+    def start(request: proof.Request) -> None:
+        calls.append(request)
+        if request.media:
+            raise proof.ProofError("owned_media_boundary")
+        original_start(request)
+
+    def process(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        command = cast(list[str], args[0])
+        request = proof.Request(**json.loads(command[-1]))
+        route = next(route for route in FRUITLESS.metadata if route.url == request.url)
+        payload = changed if route.name == "root_info" else bodies[route.name]
+        mime = "text/plain" if route.recording_id is not None else "text/html"
+        wire = (
+            f"HTTP/1.1 200 Fixture\r\nContent-Type: {mime}\r\n"
+            f"Content-Length: {len(payload)}\r\n\r\n"
+        ).encode() + payload
+        child = original_process(
+            [sys.executable, "-c", METADATA_CHILD, wire.hex(), *command[-4:]],
+            pass_fds=cast(tuple[int, ...], kwargs["pass_fds"]),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        children.append(child)
+        return child
+
+    expected = {
+        "none": "owned_media_boundary",
+        "root_credit": "metadata_identity_conflict",
+        "root_whitespace": "metadata_changed",
+        "root_keys": "duplicate_json_key",
+    }[change]
+    try:
+        with (
+            patch.object(owner, "start", side_effect=start),
+            patch.object(proof.subprocess, "Popen", side_effect=process),
+            pytest.raises(proof.ProofError, match=expected),
+        ):
+            proof.run_proof(owner, CATALOG, fingerprints)
+        assert len(calls) == (7 if change == "none" else 4)
+        assert all(request.case_id == FRUITLESS.case_id for request in calls)
+        assert owner.media_requests == 0  # The media boundary has never spawned a child.
+        if change == "none":
+            assert calls[-1].url == FRUITLESS.media_url and calls[-1].expected == 8_232_794
+        assert all(
+            child.poll() is not None and child.stdout is not None and child.stdout.closed
+            for child in children
+        )
+        assert (
+            not owner.cleanup_missed and owner.active is None and not (tmp_path / "body").exists()
+        )
+    finally:
+        assert owner.close()

@@ -1,0 +1,123 @@
+[
+  {
+    "upload_id": 70072,
+    "upload_name": "Fruitless",
+    "file_page_url": "https://ccmixter.org/files/Dan_Mantau/70072",
+    "user_name": "Dan_Mantau",
+    "user_real_name": "Dan_Mantau",
+    "license_name": "Attribution Noncommercial  (3.0)",
+    "license_url": "http://creativecommons.org/licenses/by-nc/3.0/",
+    "upload_extra": {
+      "usertags": "female_vocals,drums,guitar,bass,rhodes,cello",
+      "featuring": "Lisa DeBenedictis",
+      "bpm": 105
+    },
+    "files": [
+      {
+        "file_id": 125900,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:26"
+        }
+      },
+      {
+        "file_id": 125901,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125902,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125903,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125904,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125905,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125906,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      },
+      {
+        "file_id": 125907,
+        "file_upload": 70072,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:27"
+        }
+      }
+    ],
+    "remix_parents": [
+      {
+        "upload_id": 25112,
+        "file_page_url": "https://ccmixter.org/files/lisadb/25112",
+        "upload_name": "Fruitless",
+        "artist_page_url": "https://ccmixter.org/people/lisadb",
+        "user_real_name": "DeBenedictis"
+      }
+    ]
+  },
+  {
+    "upload_id": 25112,
+    "upload_name": "Fruitless",
+    "file_page_url": "https://ccmixter.org/files/lisadb/25112",
+    "user_name": "lisadb",
+    "user_real_name": "DeBenedictis",
+    "license_name": "Attribution Noncommercial  (3.0)",
+    "license_url": "http://creativecommons.org/licenses/by-nc/3.0/",
+    "upload_extra": {
+      "usertags": "female_vocals",
+      "featuring": "",
+      "bpm": 96
+    },
+    "files": [
+      {
+        "file_id": 29325,
+        "file_upload": 25112,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:51"
+        }
+      },
+      {
+        "file_id": 29326,
+        "file_upload": 25112,
+        "file_format_info": {
+          "mime_type": "audio/mpeg",
+          "ps": "3:51"
+        }
+      }
+    ]
+  }
+]

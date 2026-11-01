@@ -12,7 +12,21 @@ address observed metadata rejections. Human listening remains deferred.
 ## Implemented boundary
 
 `sobafm.ccmixter_proof` checks the six fixed metadata responses and can make
-one GET for upload **70993**, file **129564**, expecting **4,693,829 bytes**.
+one GET for the selected closed case:
+
+| `--case` | Recording / file | Expected bytes | Six metadata responses |
+| --- | --- | --- | --- |
+| `wild-windsteps-70993-129564` (default) | 70993 / 129564 | 4,693,829 | mix, parent and root pages; info 70993; terms; about |
+| `fruitless-70072-125900` | 70072 / 125900 | 8,232,794 | mix and root pages; info 70072 and root info 25112; terms; about |
+
+Issue [#27](https://github.com/slackysoba/sobafm/issues/27) adds the
+[prepared complete Fruitless mix](ccmixter-fruitless-candidate.md).
+`ccmixter_cases.py` contains these two typed definitions; it accepts no external
+case definition. Selection binds the exact candidate digest, case-specific
+projection/import context and complete six-response manifest before creating
+pipes, a lock, a file reservation or a child. The owner passes its case to each
+request child, which checks case and route before mapping descriptors or
+opening HTTP. There is no fallback from one case to the other.
 There are **zero retries**, including after a transport or 5xx failure. This
 is stricter than the contract's allowance of at most one transient retry.
 
@@ -55,14 +69,20 @@ proxies, follow redirects, authenticate, search, paginate or seek alternatives.
 TLS uses Python's normal certificate/hostname verification. The fixed network
 entry requires `--live-ccmixter`; importing the module does no work.
 
-Only the exact info URL
-`https://ccmixter.org/api/query?f=json&dataview=info&ids=70993&limit=1`
-also accepts `text/plain` as a metadata content type. All HTML, audio and other
-routes still reject it. This permits transfer only: the info body must match
-its byte-exact reviewed SHA-256, parse as JSON without duplicate keys, match
-the saved projection and pass the existing importer, candidate, route and
-numeric-size checks before media access. HTML/error bodies, JSONP and malformed
-JSON do not gain an alternative parsing path.
+Only the selected case's exact nominated info URLs also accept `text/plain`:
+`https://ccmixter.org/api/query?f=json&dataview=info&ids=70993&limit=1` for
+WILD WINDSTEPS; the same exact route with IDs **70072** and **25112** for
+Fruitless. HTML, media and other routes still reject it. This permits transfer
+only: each info body must match its byte-exact reviewed SHA-256, parse as JSON
+without duplicate keys, match the saved projection and pass the importer.
+Candidate file selection uses its unique ID, never array position. Duplicate,
+missing or changed file IDs/owners, a stem substituted for the complete mix,
+changed filename/label, format, numeric size or route stop the proof. Reordering
+a file array is semantically valid but still changes its byte-exact fingerprint,
+so it cannot bypass review. Fruitless root info independently checks the
+upstream identity, license and credits; its Vox/Guitar files are never selected
+for playback. HTML/error bodies, JSONP and malformed JSON gain no alternative
+parsing path.
 
 Each transfer receipt includes `content_type`, a lowercase MIME type/subtype
 of at most 129 ASCII characters, or null for missing/invalid values. This
@@ -83,11 +103,23 @@ byte-identical to the preserved candidate-preparation response, and passed
 the unchanged candidate validator. The diagnostic does not reconstruct the
 earlier response's unretained headers.
 
-Neither observation acquired audio, ran a decoder or granted catalog
-admission. All earlier execution releases are consumed or expired. This code
-change supplies neither a fresh baseline nor a live grant; a later invocation
-needs a new concrete execution review, including renewed time-sensitive
-source/access evidence and security assessment.
+The later [2026-10-31 outcome](https://github.com/slackysoba/sobafm/issues/1#issuecomment-6551972107)
+(2026-11-01 UTC) passed all six metadata comparisons, then received **HTTP 403**
+on the one WILD WINDSTEPS media request, with **zero audio bytes**. Cleanup
+released the owned resources within the original deadlines. That is a
+recording-specific source-access blocker with no established cause; it does
+not qualify media integrity, decoding or catalog admission. The
+[bounded diagnosis](https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552047593)
+found the same published route without a documented extra authentication
+requirement. No identity/header spoofing, alternate copy or media retry followed.
+
+All earlier execution releases are consumed or expired. The separate
+[Fruitless preparation](ccmixter-fruitless-candidate.md) captured four metadata
+responses and explicitly reused accepted terms/about evidence. Neither its
+preparation nor issue #27 releases a source run. A later invocation needs a
+new concrete execution review, including current source/access evidence and
+security assessment. All historical candidate bytes and failed receipts remain
+separate from the Fruitless case.
 
 ## Separate metadata execution review
 
@@ -95,16 +127,17 @@ The run requires an operator-controlled JSON manifest with this exact shape:
 
 ```json
 {
-  "schema": "sobafm-source-proof-review-2",
+  "schema": "sobafm-source-proof-review-3",
+  "case_id": "fruitless-70072-125900",
   "fingerprint_policy": "ccmixter-hidden-index-v1",
   "candidate_digest": "REPLACE_WITH_METADATA_DIGEST",
   "expires_at": "REPLACE_WITH_UTC_WINDOW_END",
   "review_reference": "https://github.com/slackysoba/sobafm/issues/19#issuecomment-REPLACE",
   "responses": {
     "mix_page": "REPLACE_WITH_COMPARISON_SHA256",
-    "parent_page": "REPLACE_WITH_COMPARISON_SHA256",
     "root_page": "REPLACE_WITH_COMPARISON_SHA256",
     "info": "REPLACE_WITH_RAW_SHA256",
+    "root_info": "REPLACE_WITH_RAW_SHA256",
     "terms": "REPLACE_WITH_COMPARISON_SHA256",
     "about": "REPLACE_WITH_COMPARISON_SHA256"
   }
@@ -118,20 +151,24 @@ storage checkpoint and one window ending at most ten minutes after invocation.
 Use `metadata_digest()` on the prepared recording from the existing catalog
 parser. No admission review is produced or changed.
 
-Derive comparison hashes with `metadata_fingerprint(name, body)` from the exact
-saved, reviewed, unencoded bodies for the six names/URLs in `METADATA`. Retain
-the original bodies, byte sizes and raw SHA-256 separately; do not rewrite
-those baselines with normalized content. Review the three supplied credit pages, their
-complete chain and license/notice statements, the current terms/access pages,
-and the exact info record against the candidate document. Check the single
-file's `download_url` and numeric `file_rawsize` fields against the stated
-route and size. The existing saved projection deliberately omitted those
-fields; owned fixture tests do not establish the live API shape. If the saved
-response does not supply those fields as required, resolve the discrepancy
-before a live run. Do not invent a current fingerprint or silently substitute
-new metadata. Do not use provider-generated approval fields. The preserved
-3,624-byte info response from the candidate preparation confirms
-`file_rawsize: 4693829`; `file_filesize` is only display text (`" (4.48MB)"`).
+Derive comparison hashes with `metadata_fingerprint(name, body, case)` from
+exact saved, reviewed, unencoded bodies for that case's six names/URLs. Retain
+original bytes or verified exact reconstructions, sizes and raw SHA-256
+separately; never overwrite a baseline with normalized content. Review the
+supplied credit pages and full chain, license/notice statements, terms/access
+pages and each nominated info record against the case's candidate document.
+The candidate file must supply its exact `download_url`, integer
+`file_rawsize`, filename, `mp3` label and reported audio/mpeg duration, 44k,
+stereo and bitrate mode. Saved projections intentionally retain fewer fields;
+owned fixture tests do not establish live access.
+
+Schema 3 requires `case_id` and exactly the selected case's response names.
+For WILD WINDSTEPS replace `root_info` with `parent_page`. Schema 2 remains
+accepted only for the original WILD WINDSTEPS case and its original digest and
+six names; it cannot authorize Fruitless. Unknown cases, cross-case catalogs,
+contexts, projections, digests or manifests fail before state changes. No
+provider-generated approval field is trusted. Do not invent fingerprints or
+substitute unreviewed metadata to make a comparison pass.
 
 ### Explicit fingerprint policy
 
@@ -146,8 +183,8 @@ The earlier failed response body was deleted during required cleanup, so this
 capture does not reconstruct that unavailable response. The link's purpose is
 not inferred and the client never follows it.
 
-Policy `ccmixter-hidden-index-v1` applies only to the five fixed HTML routes:
-`mix_page`, `parent_page`, `root_page`, `terms` and `about`. Each body must contain
+Policy `ccmixter-hidden-index-v1` applies only to each case's fixed HTML routes:
+`mix_page`, `root_page`, `terms`, `about`, plus `parent_page` for WILD WINDSTEPS. Each body must contain
 exactly one `__cnt_st` token and one `/emails/indexe.php` occurrence, within this
 exact byte context (`\r\n` denotes literal CRLF; `DIGITS` is 1–10 ASCII decimal
 digits):
@@ -161,10 +198,10 @@ comparison. Every other byte, including whitespace, attribute order, route,
 hidden context and all notices, remains hashed unchanged. Missing, duplicate,
 malformed or altered markers fail closed. There is no general HTML parsing,
 whitespace cleanup, attribute sorting or source-selected exclusion list.
-`info` is always byte-exact SHA-256, even if its JSON strings resemble the HTML
+`info` and Fruitless `root_info` are always byte-exact SHA-256, even if its JSON strings resemble the HTML
 marker. Source data cannot select another policy or approve itself.
 
-The trusted manifest must explicitly use schema `sobafm-source-proof-review-2`
+The trusted manifest must use schema 3 (or the original-case-only schema 2)
 and this exact policy identifier. Legacy schema 1, missing/unknown policies,
 duplicate keys and extra fields are rejected, so an old raw-body manifest
 cannot silently acquire normalized comparison semantics. After merge, a new
@@ -175,17 +212,17 @@ This remains a conservative safeguard for **one finite proof**, not a general
 ingestion policy. Any other changed byte causes a safe rejection, including
 new or changed credits, chain links, licenses or access statements. A mismatch
 means **changed metadata requiring review**, not a finding that rights were
-revoked. Result schema `sobafm-source-proof-result-2` retains raw `sha256`,
+revoked. Result schema `sobafm-source-proof-result-3` records `case_id` and retains raw `sha256`,
 `received` and `stored` values separately from `comparison_sha256`,
 `fingerprint_policy` and `review_match`. Failed transfers or invalid markers
 have no computed comparison digest. Receipts do not export response bodies or
 fetch media after a mismatch. Acquiring/reviewing a new baseline needs its own
 applicable bounded metadata scope; never add requests to make a comparison pass.
 
-The info response also passes the existing importer and an exact comparison
+Each nominated info response also passes the existing importer and a comparison
 with the saved projection: title, uploader, reported format/duration, license,
-file identity and direct parent must remain unchanged. All five HTML page/policy
-fingerprints must match before media access. The immutable prepared candidate
+file identity and direct parent must remain unchanged. All six case-specific
+metadata fingerprints must match before media access. The immutable prepared candidate
 and trusted catalog-review boundary remain unchanged and unadmitted.
 
 ## Concrete command for execution review
@@ -194,6 +231,9 @@ and trusted catalog-review boundary remain unchanged and unadmitted.
 The initial issue authorizes code and owned offline/loopback tests only. The
 coordinator releases a reviewed, finite live invocation separately. There is
 no decode step; #7's binary, PCM and useful-fit gates remain independent.
+Fruitless reports **206 seconds**, beyond the existing **150-second /
+28,800,000-byte PCM** experiment. A future decode proposal must account for
+that separately; this source-only change expands neither bound.
 
 This proposed native amd64 invocation uses the already-present Python image
 from the reviewed #7 experiment, without pulling or building. Reconfirm its
@@ -224,7 +264,7 @@ docker create --name sobafm-source-proof-19 --pull=never --init --restart=no \
   --env PYTHONPATH=/proofsrc --entrypoint=python \
   ghcr.io/astral-sh/uv@sha256:8f4ab6a0f2cc074290ba6a136eb016350b2b6b93a2108e07b72724901ad1914f \
   -B -m sobafm.ccmixter_proof --live-ccmixter \
-  --review /review.json --catalog-directory /catalog
+  --case fruitless-70072-125900 --review /review.json --catalog-directory /catalog
 ```
 
 Before create, confirm the name is absent and Docker is reachable. Bound each
@@ -293,9 +333,13 @@ child download, HTTP parsing, byte hash, JSON parser, candidate validation and
 cleanup before the media-request boundary. They reject malformed JSON,
 HTML/error responses, JSONP, duplicate keys, changed credits, route/size
 conflicts and even a whitespace-only change against the reviewed info hash.
-Separate header tests keep `text/plain` rejected outside the exact info route
+Separate header tests keep `text/plain` rejected outside the selected case's exact info routes
 and verify bounded MIME diagnostics without response parameters or cookies.
-These tests do not establish a
+New case regressions cover pre-state catalog/manifest mismatch, owner/child case
+mismatch, file-array reordering, duplicate/missing IDs, stem substitution,
+format/size/route conflicts, independent root credits and zero audio acquisition
+through the real six-child metadata sequence. Existing ownership, cancellation
+and cleanup schedules remain in the suite. These tests do not establish a
 live access pass, listening quality, decoder correctness or Linux containment.
 Run locked sync, all-file pre-commit and the complete offline suite before
 push; bind CI and independent review to the actual PR commit.
