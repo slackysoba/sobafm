@@ -1,9 +1,88 @@
 """Exercise setup admission with shell fakes; never download or dispatch anything."""
 
+import re
 import subprocess
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "evaluations/linux_resource/arm64_preflight_setup.sh"
+WORKFLOW = SCRIPT.parents[2] / ".github/workflows/arm64-runner-preflight.yaml"
+
+
+def workflow_run_body(step_name: str) -> str:
+    step = WORKFLOW.read_text(encoding="utf-8").split(f"      - name: {step_name}\n", 1)[1]
+    step = step.split("      - name:", 1)[0]
+    body = step.split("        run: |\n", 1)[1]
+    return "\n".join(line.removeprefix("          ") for line in body.splitlines())
+
+
+def test_job_environment_path_references_use_available_contexts() -> None:
+    # GitHub's jobs.<job_id>.env availability table excludes runner and env.
+    # This checks the direct path expressions that failed server validation;
+    # YAML parsing and shell tests alone cannot catch this failure.
+    available = {"github", "needs", "strategy", "matrix", "vars", "secrets", "inputs"}
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    for block in re.findall(r"^    env:\n((?:      .*\n)+)", workflow, re.MULTILINE):
+        contexts = set(re.findall(r"\$\{\{\s*([a-z_]+)[.\[]", block))
+        assert contexts <= available, (
+            f"Unavailable job environment contexts: {contexts - available}"
+        )
+
+
+def test_step_paths_are_exported_without_replacing_existing_environment(tmp_path: Path) -> None:
+    environment_file = tmp_path / "owned-test-environment"
+    environment_file.write_text("EXISTING=keep\n", encoding="utf-8")
+    root = tmp_path / "runner temp/sobafm-arm64-preflight-123-1"
+    tool_cache = tmp_path / "runner tools"
+    result = subprocess.run(
+        ["/bin/bash", "-e", "-o", "pipefail", "-c", workflow_run_body("Set preflight paths")],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PREFLIGHT_ROOT": str(root),
+            "PREFLIGHT_TOOL_CACHE": str(tool_cache),
+            "GITHUB_ENV": str(environment_file),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == result.stderr == ""
+    assert environment_file.read_text(encoding="utf-8") == (
+        f"EXISTING=keep\nPREFLIGHT_ROOT={root}\nPREFLIGHT_TOOL_CACHE={tool_cache}\n"
+    )
+
+
+def test_invalid_paths_cannot_inject_environment_records(tmp_path: Path) -> None:
+    environment_file = tmp_path / "owned-test-environment"
+    environment_file.write_text("EXISTING=keep\n", encoding="utf-8")
+    for invalid in ("relative/path", "/tmp/path\nEXTRA=value", "/tmp/path\rEXTRA=value"):
+        for field in ("PREFLIGHT_ROOT", "PREFLIGHT_TOOL_CACHE"):
+            environment = {
+                "PATH": "/usr/bin:/bin",
+                "PREFLIGHT_ROOT": "/tmp/sobafm-arm64-preflight-123-1",
+                "PREFLIGHT_TOOL_CACHE": "/opt/hostedtoolcache",
+                "GITHUB_ENV": str(environment_file),
+                field: invalid,
+            }
+            result = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-e",
+                    "-o",
+                    "pipefail",
+                    "-c",
+                    workflow_run_body("Set preflight paths"),
+                ],
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=5,
+            )
+            assert result.returncode == 1
+            assert result.stdout == result.stderr == ""
+            assert environment_file.read_text(encoding="utf-8") == "EXISTING=keep\n"
 
 
 def run_setup(
@@ -181,11 +260,7 @@ def test_workflow_does_not_observe_after_a_failed_setup(tmp_path: Path) -> None:
     python.write_text("#!/bin/sh\nprintf observer_must_not_run\n", encoding="utf-8")
     python.chmod(0o700)
     repository = SCRIPT.parents[2]
-    workflow = (repository / ".github/workflows/arm64-runner-preflight.yaml").read_text(
-        encoding="utf-8"
-    )
-    body = workflow.split("        run: |\n", maxsplit=1)[1]
-    body = "\n".join(line.removeprefix("          ") for line in body.splitlines())
+    body = workflow_run_body("Observe prerequisites or report setup failure")
     body = body.replace("${{ github.sha }}", "1" * 40)
     result = subprocess.run(
         ["/bin/bash", "-e", "-o", "pipefail", "-c", body],

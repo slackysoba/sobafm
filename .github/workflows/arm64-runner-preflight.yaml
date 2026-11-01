@@ -15,15 +15,23 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 8
     env:
-      PREFLIGHT_ROOT: ${{ runner.temp }}/sobafm-arm64-preflight-${{ github.run_id }}-${{ github.run_attempt }}
       PREFLIGHT_WORKSPACE: ${{ github.workspace }}
-      PREFLIGHT_TOOL_CACHE: ${{ runner.tool_cache }}
     steps:
       - name: Check out exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Set preflight paths
+        timeout-minutes: 1
+        shell: bash
+        env:
+          PREFLIGHT_ROOT: ${{ runner.temp }}/sobafm-arm64-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          PREFLIGHT_TOOL_CACHE: ${{ runner.tool_cache }}
+        run: |
+          [[ "$PREFLIGHT_ROOT" =~ ^/[^[:cntrl:]]+$ && "$PREFLIGHT_TOOL_CACHE" =~ ^/[^[:cntrl:]]+$ ]]
+          printf 'PREFLIGHT_ROOT=%s\nPREFLIGHT_TOOL_CACHE=%s\n' \
+            "$PREFLIGHT_ROOT" "$PREFLIGHT_TOOL_CACHE" >> "$GITHUB_ENV"
       - name: Admit bounded temporary tool setup
         id: admission
         timeout-minutes: 1
