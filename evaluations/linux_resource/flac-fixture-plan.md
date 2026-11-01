@@ -1,8 +1,9 @@
 # Owned FLAC qualification preparation
 
 Issue [#7](https://github.com/slackysoba/sobafm/issues/7). The offline harness is
-prepared; **no FLAC fixture, installed decoder image, native startup or decode
-result is bound or claimed**. Existing CBR, VBR and overlap evidence remains
+prepared; **no complete FLAC fixture or installed decoder/native-startup/decode
+result is bound or claimed**. One encoder attempt reached the 2.5 MB compressed
+file limit and failed. Existing CBR, VBR and overlap evidence remains
 separate. Q3, Q4, native arm64 and release qualification remain incomplete.
 
 ## Execution gates
@@ -11,9 +12,11 @@ separate. Q3, Q4, native arm64 and release qualification remain incomplete.
 [accepted narrow encoder/muxer source review](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553937600).
 Its handoff SHA256 is
 `9f8800b616ea63b7ae01c58a77dad35026dd86725b63e1c68cbcff566be271b9`.
-The corrected recipe and existing limits are unchanged. Installed route
-availability, actual finalization, output size and whole-process fit remain
-unproven; source review is not an execution result or permission to retry.
+The corrected recipe is unchanged. The first authorized encoder run passed its
+actual target and pre-input gates, then failed at its 2,500,000-byte file limit.
+The prospective FLAC limit is now 4,000,000 bytes; complete finalization, that
+limit's sufficiency and decoder fit remain unproven. Source review is not
+permission to retry.
 
 Generation still requires independent review and concrete release of one external
 owner bound to the final committed source, retained encoder image/executable and
@@ -42,6 +45,24 @@ and metadata hash. The external operator must establish the actual source/image
 and target; an image label in an in-container result is not that proof. No ELF
 allowlist, encoded digest, original PCM MD5 or successful native observation is
 invented in this change.
+
+## Measured size failure and prospective limit
+
+The [recorded attempt](results/2026-11-01-owned-flac-fixture-incomplete.yaml) on
+source `92fa7d9f78f1e34415ee1581aec4ed86cf7f7b0b` passed native amd64/plain-core,
+reviewed ELF and pre-input CORE/FSIZE gates. FFmpeg reported `File too large`
+and exited 229 after accepting 17,498,112 of the required 23,040,000 raw bytes.
+The generator then observed a broken pipe. The retained 2,500,000-byte file is
+incomplete, with no admitted metadata or complete-file receipt. Both original
+cleanup deadlines passed; no process, descriptor or container debt remained.
+
+The FLAC recipe alone now reserves 4,000,000 compressed bytes. Child hard/soft
+FSIZE, pre-input limit verification, closed-file checks, metadata admission and
+the future FLAC binding use that same limit. MP3 CBR/VBR keep 2,500,000-byte
+limits and their retained fixtures. The 4 MB allowance provides prospective
+headroom; it is not a measured final size or proof that the full recipe fits.
+It needs a new independently reviewed one-shot owner and explicit release.
+This change neither retries the consumed attempt nor releases decoder execution.
 
 ## One owned generation
 
@@ -76,13 +97,15 @@ selects the vendor using the output muxer flag. Preserve both flags and the
 unchanged MP3 recipes. This source finding does not complete execution review.
 
 The output is a fresh seekable compressed file so STREAMINFO can be finalized.
-Keep the existing generation owner: hard/soft FSIZE 2,500,000 bytes, CORE zero,
+Keep the existing generation owner with FLAC hard/soft FSIZE 4,000,000 bytes,
+CORE zero,
 60-second work deadline, original three-second cleanup deadline, 65,536-byte
 stderr cap and zero accepted diagnostics. Use the development-only 536,870,912-byte
 group, swap zero, two CPUs, 64 tasks, nonroot UID/GID 1000, default seccomp, no
 capabilities/new privileges/network, read-only root and one fresh writable
 fixture directory. This is not the runtime-fit budget. Reconcile one compressed
-artifact of at most 2.5 MB plus compact receipts with the existing allocation;
+artifact of at most 4 MB plus compact receipts with the current development
+allocation, while retaining the failed artifact pending a scoped retention decision;
 do not regenerate retained MP3 fixtures or silently increase caps/retry failures.
 
 Require all raw bytes generated/accepted, the known raw SHA256, a nonzero raw MD5,
@@ -123,8 +146,11 @@ Actual compiled-version correspondence remains an execution gate.
 Allocate both 2,304,000-byte PCM banks and the 4,194,304-byte copy arena only after
 that gate. Authenticate exact compressed length/hash in its prepaid snapshot,
 validate STREAMINFO/MD5 and exact metadata hash, recheck stopped ownership, and
-only then resume input. The FLAC input partition ends at 2,500,000; the 65,536-byte
-output view begins there, without overlap. No extra whole-payload copy is made
+only then resume input. The FLAC input partition ends at 4,000,000; the 65,536-byte
+output view begins there, without overlap. Binding admission enforces
+`4,000,000 + 65,536 = 4,065,536 <= 4,194,304`, leaving 128,768 bytes unused.
+The copy arena, PCM banks, process/group caps and 98,979,840-byte controlled-capacity
+ledger do not increase. No extra whole-payload copy is made
 during decoding. Six-second readiness requires 1,152,000 aligned bytes within
 15 seconds; the complete operation has the existing 150-second deadline.
 
@@ -175,7 +201,9 @@ native fit, audio quality, Q4 or release readiness.
 
 `test_flac_contract.py` exercises malformed metadata, exact diagnostic grammar,
 fragmented native admission, changed identity/mappings and absent execution
-bindings. Injected syscall schedules exercise the actual shared pump/finally
+bindings. Recipe-specific FSIZE setup/admission, closed-file boundaries and
+nonoverlapping FLAC partitions are checked without a native encoder or decoder.
+Injected syscall schedules exercise the actual shared pump/finally
 block: partial I/O, wrong hash, short final output despite zero exit, excess PCM,
 early exit, signals, failed readers, withheld EOF, rejected input metadata,
 original cleanup deadlines and retained FD/PID debt. No native codec, fixture

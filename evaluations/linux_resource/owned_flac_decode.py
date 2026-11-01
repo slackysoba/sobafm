@@ -17,7 +17,12 @@ from .flac_contract import (
     inspect_fixture,
     validate_diagnostics,
 )
-from .owned_mp3_decode import DecodeFixture, NativeDecoder, decode_fixture
+from .owned_mp3_decode import (
+    DecodeFixture,
+    NativeDecoder,
+    decode_fixture,
+    validate_fixture_partitions,
+)
 from .probe import ProbeError, emit, observe
 
 
@@ -49,6 +54,7 @@ class FlacBinding:
             or not checksum(self.metadata_sha256, 64)
         ):
             raise ProbeError("incomplete or changed owned FLAC evidence binding")
+        validate_fixture_partitions(self.fixture)
 
     def validate_input(self, payload: memoryview) -> None:
         header = inspect_fixture(payload, self.raw_md5)

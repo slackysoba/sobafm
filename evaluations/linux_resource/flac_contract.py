@@ -14,7 +14,7 @@ RAW_SHA256 = (
     # Recorded pre-encoder PCM digest, not the lossy MP3 output digest.
     "0feb0dec8b6eb253893680342a58d1abb37727ef0da8f8aace849608ff41fa54"  # pragma: allowlist secret
 )
-MAX_FILE_BYTES = 2_500_000
+MAX_FILE_BYTES = 4_000_000
 MAX_METADATA_BYTES = 65_536
 MAX_DIAGNOSTIC_BYTES = 65_536
 ARGV = (
