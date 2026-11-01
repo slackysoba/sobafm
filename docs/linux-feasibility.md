@@ -422,6 +422,11 @@ behavior. Q4 remains not run; application architecture acceptance is still
 gated. Issue #7 remains open until actual acceptance evidence exists; the
 larger-cap alternative is outside the approval.
 
+The [direct-decoder cancellation preparation](../evaluations/linux_resource/mpg123-cancellation-plan.md)
+implements the first two Q4 cases and deterministic ownership regressions.
+Native execution still requires the Q3 gate and exact review/release; the two
+noncooperative process-topology cases remain a subsequent slice.
+
 The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
 tests one supplemental DATA/STACK-limit candidate with `-version` and no input.
 Its signed dependency resolution and actual installed-binary review are complete.
