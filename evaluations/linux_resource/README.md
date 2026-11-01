@@ -28,7 +28,9 @@ dependencies, provider adapter or station framework.
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
   The [prepared direct-decoder cancellation slice](mpg123-cancellation-plan.md)
   implements the feed and stdout-backpressure cases with offline ownership
-  regressions. Native execution and the two process-topology cases remain pending.
+  regressions. The [prepared launcher/descendant slice](mpg123-topology-plan.md)
+  implements the two process-topology cases with explicit descriptor transfer
+  and nondirect-child release evidence. All four native Q4 cases remain pending.
 - Every concrete native case needs independent review. Stop after its first
   failure and preserve the observation before preparing a correction; no case
   authorizes an automatic retry or the larger-cap fallback.
