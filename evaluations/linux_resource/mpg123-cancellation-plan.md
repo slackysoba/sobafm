@@ -1,16 +1,17 @@
-# Prepared direct-decoder cancellation cases
+# Direct-decoder cancellation cases
 
-This is an offline implementation slice for
+This is the direct-decoder part of the bounded experiment for
 [issue #7](https://github.com/slackysoba/sobafm/issues/7), following the accepted
 [Q4 contract](../../docs/linux-feasibility.md#initial-stop-or-go-proof).
-No native Q4 case has run. Native execution remains behind the Q3 gate,
-including the separately owned FLAC case, and review/release of the exact
-source, operator, image and fixture. Offline tests do not qualify cancellation,
+Both native-amd64 direct cases passed once after the
+[initial Q3 acceptance](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6555741812)
+and exact source/operator review and per-case release. Results are recorded below.
+Offline tests alone do not qualify cancellation,
 Linux containment, native arm64, listening quality or application L4 behavior.
 
 ## Scope and retained inputs
 
-`owned_mp3_cancel.py` prepares only cancellation during feed and cancellation
+`owned_mp3_cancel.py` implements only cancellation during feed and cancellation
 with stdout backpressured. Each is a separate one-shot operation with its own
 original owner. It imports the existing fixed decoder argv, native file
 allowlist, fixture contract and pipe layout without changing the qualified
@@ -132,7 +133,7 @@ The receipt distinguishes bytes accepted, bytes received/drained, bank high
 water, discarded partial-frame residue, request/signal timestamps, original
 deadline and actual release, exit/reaping, descriptor/process/view ownership,
 memory-event deltas and swap. `complete_decode` remains false. Each passing
-case, if later executed, qualifies only that direct-decoder case.
+case qualifies only that direct-decoder case.
 Deadline/backstop events include the outstanding descriptors, operations,
 payload lease and current native inventory. An unavailable inventory is
 explicitly unknown; late release reports cleared debt while retaining failure.
@@ -178,4 +179,31 @@ capacity/ownership evidence. The extension has its own narrow launcher and
 validator; these two direct-decoder cases retain their original PGID semantics.
 Native execution still requires exact source/operator review and release.
 
-All four Q4 cases and later application qualification remain outstanding.
+The separately recorded topology cases also passed. Later application
+qualification remains outstanding; this document releases no new operation.
+
+## Recorded direct cancellation results
+
+Both cases ran once on 2026-11-01 at source
+`e5e2f8cc0f53478a83b6b22b15f20b5f1ec65ed5`, with the image and native bindings
+above, on x86_64 kernel `6.18.33.2-microsoft-standard-WSL2`.
+The [concrete operator review](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6555746271)
+and [independent four-case result acceptance](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6556104431)
+bind the exact issued owners and all 17 files in each frozen case manifest.
+
+| Case and selected receipt | Observed cancellation trigger | Native release after first cancellation |
+| --- | --- | --- |
+| [Feed](results/2026-11-01-q4-feed.yaml) | Input remained unfinished after 65,536 accepted compressed bytes and 8,192 PCM bytes received. | 0.001828242 seconds |
+| [Stdout backpressure](results/2026-11-01-q4-stdout-backpressure.yaml) | 65,536 unread pipe bytes equaled its capacity; the same decoder was sleeping in an amd64 write to stdout FD 1. | 0.001632895 seconds |
+
+Each case dispatched TERM and recorded a second cancellation against the same
+original three-second deadline. Both produced 74,428 prefix PCM bytes in total,
+including 66,236 drained after cancellation; all original I/O, descriptors,
+process and payload owners released. Exit zero is recorded with
+`complete_decode: false`, not interpreted as complete-fixture playback.
+
+Both original native and external cleanup deadlines passed. Memory-event deltas
+and swap were zero; stopped/no-OOM containers were removed and exact ID/name
+absence verified. No cleanup or CLI debt remained. Both banks and the copy
+reservation retained their unchanged capacities. No PCM was exported, and these
+results do not establish application L4 behavior, native arm64 or listening quality.

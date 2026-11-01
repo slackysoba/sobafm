@@ -1,8 +1,10 @@
 # Pinned mpg123 supply and startup
 
 Issue [#7](https://github.com/slackysoba/sobafm/issues/7). Status: **authenticated
-metadata, binary binding, no-input startup and one owned MP3 decode complete;
-remaining Q3/Q4 cases pending**.
+metadata, binary binding, no-input startup and owned MP3 decode complete**.
+The later [initial amd64 Q3/Q4 case matrix](../../docs/linux-feasibility.md#recorded-native-amd64-decoder-proof)
+is accepted within its distinct bindings. The stage-specific limitations below
+preserve what this supply/startup evidence established at the time.
 The [complete proposal and selected operation evidence](results/2026-10-27-mpg123-proposal.yaml)
 record all 27 proposed additions and the unchanged 87-package base. This follows
 the [fixed FFmpeg startup rejection](decoder-supply.md). The completed mpg123 run

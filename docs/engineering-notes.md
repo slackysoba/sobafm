@@ -8,6 +8,12 @@ Prove one eligible recording end to end in the intended Linux container before e
 
 The [accepted experimental interpretation for #7](decisions/0001-linux-resource-proposal.md) permits the ordinary Docker runtime to own the entire service's capped group and place processes before input, without delegating cgroup management to the application. Prove that runtime authority, visible effective limits and descendant membership in Q1-Q4; retain the full shared cap in every server's calculation. This is permission for the bounded proof, not evidence of useful fit or approval to build the playback architecture around it.
 
+The [recorded initial native-amd64 proof](linux-feasibility.md#recorded-native-amd64-decoder-proof)
+now supplies bounded owned-fixture useful-fit, aggregate PCM and four controlled
+process-release results, with distinct case source/image bindings. It does not
+adopt an application architecture or replace the eligible-recording integration,
+native-arm64 or later application qualification gates. The accepted ADR remains unchanged.
+
 Keep the initial release path to one repository, one image build, one Compose example, one data volume and one operator guide. Add infrastructure only for demonstrated requirements. Prefer maintained decoder distributions and SDKs over custom supply chains. If a dependency needs a patch, retain a small reproducer, supported version, rationale and exit condition.
 
 ## Audio boundaries

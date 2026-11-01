@@ -7,6 +7,10 @@ replace the remaining VBR, 44.1 kHz, mono, overlap, FLAC, Q4 or native arm64 cas
 The [separate AS startup](mpg123-proposal.md#stricter-address-space-startup) passed;
 its source and image binding remain separate from input execution.
 
+The later [initial amd64 Q3/Q4 case matrix](../../docs/linux-feasibility.md#recorded-native-amd64-decoder-proof)
+combines separately bound results. The historical case verdicts and their scope
+below remain unchanged.
+
 ## Owned fixture and development operation
 
 Generate exactly 5,760,000 stereo sample frames at 48 kHz, signed little-endian

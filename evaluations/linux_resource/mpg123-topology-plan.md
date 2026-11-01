@@ -1,11 +1,13 @@
-# Prepared Q4 launcher and descendant cases
+# Q4 launcher and descendant cases
 
 The [concrete design accepted on issue #7](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6552315831)
 permits this offline implementation of the remaining two Q4 fault fixtures.
 It continues the [direct cancellation preparation](mpg123-cancellation-plan.md)
 and the accepted [experimental contract](../../docs/decisions/0001-linux-resource-proposal.md).
-No native Q4 case is executed or qualified here. Q3, exact source/operator review
-and a separate one-shot release for each native case remain required.
+Both native-amd64 topology cases passed once after Q3 acceptance, exact
+source/operator review and separate one-shot releases. The actual results below
+retain their process, command, source and image bindings. This is the initial
+controlled Q4 proof, not application or native-arm64 qualification.
 
 ## Concrete topology and ownership
 
@@ -80,7 +82,8 @@ This fixture uses one PCM-bearing native decoder. L's zero-PCM premise is its
 pre-payload fork, verified absence of media descriptors and fixed non-media code
 path. The same-UID fixture mount is not a filesystem access-control barrier.
 L's interpreter and metadata remain charged inside the original group cap; its
-extra process has not been qualified for useful fit. Kernel pipe storage and
+extra process is now exercised only by the bounded topology cases below, not a
+general playback workload. Kernel pipe storage and
 object/allocator overhead retain the documented product exclusions and are not
 additional payload pools. No limits or reservations are enlarged.
 
@@ -142,7 +145,7 @@ or release the original payload lease.
 Both cases retain the original three-second cancellation deadline, at-most-one-
 second TERM grace and bounded drain. The phase budget is 15 seconds; the native
 retention backstop reports failure at 45 seconds while preserving ownership.
-The future external operation remains proposed at 90 seconds with its own
+The reviewed external operation is bounded at 90 seconds with its own
 original three-second cleanup deadline. No container kill counts as successful
 producer cleanup, and no automatic workload retry is authorized.
 
@@ -172,8 +175,43 @@ unknown/reused identities, missing PONG, ECHILD and late cleanup. Both full
 controller schedules use the actual shared owner loop and media/control I/O.
 
 Run locked sync, all-file hooks/strict Pyright and full pytest before push.
-These are implementation checks, not native Q4 qualification. Freeze the exact
-source/operator and interpreter identity, review native permissions and useful
-fit, finish Q3, and obtain each concrete one-shot native release before running.
+These are implementation checks, not native Q4 qualification. The actual cases
+below additionally required the frozen source/operator and interpreter identity,
+reviewed native permissions and useful fit, Q3 acceptance and separate one-shot
+releases. Future execution requires its own applicable review and release.
 Retain at most 700,000 bytes per native case, 64,000 selected public bytes and
 one 32,768-byte Docker local log file. No PCM is exported.
+
+## Recorded topology results
+
+The two one-shot cases ran on 2026-11-01 at source
+`e5e2f8cc0f53478a83b6b22b15f20b5f1ec65ed5` and image
+`sha256:e3ff7b02740b55f52735b17afc9846d151f86bf7395341f5d53f7d3dbb235cfc`,
+on x86_64 kernel `6.18.33.2-microsoft-standard-WSL2`.
+The actual controller ELF was
+`30a7def0b3e8d24a36d3829202717542bef124c0a40608b2232b7c837b271bc9`.
+Each receipt retains its own runtime device/inode and pinned process identities;
+those observations are not transferred between containers.
+The [independent actual-result review](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6556104431)
+verified all 17 files in each manifest and accepted both cases.
+
+| Case and selected receipt | Actual topology witness | Native release after first cancellation |
+| --- | --- | --- |
+| [Ignoring launcher](results/2026-11-01-q4-ignoring-launcher.yaml) | Same launcher alive with TERM ignored and unblocked at +1.004180360 seconds; KILL dispatched at +1.005211198 seconds and launcher reaped with status -9. Decoder reaped by launcher with status 0; H/S/P/X and EOF observed. | 1.027698228 seconds |
+| [Descendant after leader exit](results/2026-11-01-q4-descendant-after-leader-exit.yaml) | Launcher reaped with status 0; same decoder observed running under PID 1 in its original group/session before cancellation. H/S and EOF observed; pinned process, original group and native inventory later absent. | 0.002612263 seconds |
+
+The ignored-TERM witness applies to the owned non-media launcher, not stock
+mpg123. The one-second grace is the scheduled KILL threshold; the receipt retains
+the actual dispatch timestamp rather than rounding it to one second.
+The descendant's decoder exit status remains null: init adoption and actual
+release were observed, but the controller did not obtain a decoder wait status.
+Leader exit or init adoption alone did not release its resources.
+
+Each case accepted only the 65,536-byte compressed prefix and repeated cancellation
+without resetting the original three-second deadline. Both native and external
+deadlines passed, all original I/O and payload owners released, and no process,
+descriptor, CLI or cleanup debt remained. Memory events and swap were zero;
+stopped/no-OOM state, removal and exact container absence were verified.
+`complete_decode` remains false. These results complete the controlled initial
+Q4 case set with the direct cases, while application behavior, native arm64,
+real-source audio, Discord, listening and release readiness remain unqualified.
