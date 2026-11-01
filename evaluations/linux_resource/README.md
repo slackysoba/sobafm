@@ -25,8 +25,9 @@ dependencies, provider adapter or station framework.
   channels, readiness and both cleanup deadlines under the same limits.
   The [owned FLAC preparation](flac-fixture-plan.md) adds offline metadata,
   admission and lossless-completion contracts. Its narrow encoder source review
-  is bound; concrete generation release and decoder binding remain pending.
-  No FLAC generation/startup/decode result is claimed.
+  is bound. The first encoder attempt failed at the 2.5 MB compressed-file cap;
+  a prospective 4 MB FLAC-only limit still needs a newly released run.
+  No complete FLAC fixture, decoder startup or decode result is claimed.
   Remaining cases and listening quality are still unqualified.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.

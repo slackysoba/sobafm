@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 from .decoder_startup import CHILD_ENV, Child, cleanup
+from .flac_contract import MAX_FILE_BYTES as FLAC_MAX_FILE_BYTES
 from .flac_contract import RAW_SHA256, inspect_fixture
 from .mp3_vbr_contract import inspect_vbr_fixture
 from .probe import Identity, ProbeError, emit, proc_fields, read_text, validate_identity
@@ -45,6 +46,10 @@ class FixtureRecipe:
     @property
     def raw_bytes(self) -> int:
         return self.sample_frames * self.channels * 2
+
+    @property
+    def max_file_bytes(self) -> int:
+        return FLAC_MAX_FILE_BYTES if self.codec == "flac" else FIXTURE_BYTES
 
 
 CBR = FixtureRecipe(48000, 2, False, Path("/fixtures/owned-cbr-48000-stereo-120s.mp3"))
@@ -122,8 +127,8 @@ def fill_pcm(first_frame: int, buffer: bytearray, recipe: FixtureRecipe = CBR) -
     return frames * frame_bytes
 
 
-def verify_file_limits(text: str) -> dict[str, int]:
-    wanted = {"Max file size": FIXTURE_BYTES, "Max core file size": 0}
+def verify_file_limits(text: str, recipe: FixtureRecipe = CBR) -> dict[str, int]:
+    wanted = {"Max file size": recipe.max_file_bytes, "Max core file size": 0}
     found: dict[str, int] = {}
     for line in text.splitlines():
         for name, value in wanted.items():
@@ -136,7 +141,7 @@ def verify_file_limits(text: str) -> dict[str, int]:
     return found
 
 
-def verify_encoder(pid: int) -> dict[str, int]:
+def verify_encoder(pid: int, recipe: FixtureRecipe = CBR) -> dict[str, int]:
     root = Path(f"/proc/{pid}")
     status = proc_fields(read_text(root / "status"))
     if read_text(root / "cgroup").strip() != "0::/" or os.getpgid(pid) != pid:
@@ -163,11 +168,17 @@ def verify_encoder(pid: int) -> dict[str, int]:
     }.items():
         if read_text(Path("/sys/fs/cgroup") / name).strip() != value:
             raise ProbeError("development group limits differ")
-    return verify_file_limits(read_text(root / "limits"))
+    return verify_file_limits(read_text(root / "limits"), recipe)
 
 
 def exec_encoder(
-    stdin: int, stderr: int, ready: int, gate: int, fds: list[int], argv: tuple[str, ...]
+    stdin: int,
+    stderr: int,
+    ready: int,
+    gate: int,
+    fds: list[int],
+    argv: tuple[str, ...],
+    recipe: FixtureRecipe = CBR,
 ) -> None:
     try:
         os.setsid()
@@ -180,7 +191,7 @@ def exec_encoder(
             if fd not in {ready, gate}:
                 os.close(fd)
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (FIXTURE_BYTES, FIXTURE_BYTES))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (recipe.max_file_bytes, recipe.max_file_bytes))
         os.write(ready, b"R")
         if os.read(gate, 1) != b"x":
             os._exit(125)
@@ -228,7 +239,7 @@ def generate_fixture(recipe: FixtureRecipe = CBR) -> dict[str, object]:
         (in_r, in_w), (err_r, err_w), (ready_r, ready_w), (gate_r, gate_w) = pipes
         pid = os.fork()
         if pid == 0:
-            exec_encoder(in_r, err_w, ready_w, gate_r, fds, argv)
+            exec_encoder(in_r, err_w, ready_w, gate_r, fds, argv, recipe)
             os._exit(125)
         child.pid = pid
         for fd in (in_r, err_w, ready_w, gate_r):
@@ -239,7 +250,7 @@ def generate_fixture(recipe: FixtureRecipe = CBR) -> dict[str, object]:
             raise ProbeError("encoder setup deadline exceeded")
         if os.read(ready_r, 1) != b"R":
             raise ProbeError("encoder setup failed")
-        limits = verify_encoder(pid)
+        limits = verify_encoder(pid, recipe)
         emit({"event": "fixture_exec_gate", "rlimits": limits, "input": "owned_integer_pcm"})
         if os.write(gate_w, b"x") != 1:
             raise ProbeError("short encoder exec-gate write")
@@ -336,12 +347,12 @@ def generate_fixture(recipe: FixtureRecipe = CBR) -> dict[str, object]:
         and deadline_met
         and not stderr
         and accepted == generated == recipe.raw_bytes
-        and 0 < size <= FIXTURE_BYTES
+        and 0 < size <= recipe.max_file_bytes
     )
     if passed:
         try:
             with fixture.open("rb") as stream:
-                compressed = stream.read(FIXTURE_BYTES + 1)
+                compressed = stream.read(recipe.max_file_bytes + 1)
             if len(compressed) != size:
                 raise ProbeError("owned fixture changed after encoder completion")
             if recipe == VBR:

@@ -360,8 +360,12 @@ retain provenance and compact results rather than decoded output.
 The [owned FLAC harness](../evaluations/linux_resource/flac-fixture-plan.md) is
 prepared offline with exact original PCM count/hash, bounded metadata/diagnostic
 contracts and explicit input/EOF/release evidence. The accepted narrow encoder
-source review is bound; concrete generation release and the actual installed
-decoder image/native/fixture bindings remain pending execution gates.
+source review is bound. Its first encoding attempt failed at the 2,500,000-byte
+compressed-output limit before accepting all raw input, with both cleanup owners
+released on time. The prospective FLAC-only limit is 4,000,000 bytes, still within
+the unchanged copy arena: `4,000,000 + 65,536 = 4,065,536 <= 4,194,304`.
+The 4 MB fit, complete-file evidence and actual installed decoder/native bindings
+remain pending execution gates; MP3 limits and the runtime capacity ledger are unchanged.
 Its tests do not establish a FLAC useful-fit result or complete Q3.
 
 Before Q3 can pass, reconcile aggregate PCM: application banks, PCM-bearing

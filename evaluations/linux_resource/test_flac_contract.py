@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import os
+import resource
 import signal
 import unittest
 from contextlib import ExitStack
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from . import flac_contract as flac
+from . import owned_mp3_fixture as generator
 from .decoder_startup import Child, CleanupResult
 from .owned_flac_decode import FlacBinding, run_bound_decode
 from .owned_mp3_decode import (
@@ -22,7 +26,7 @@ from .owned_mp3_decode import (
     stopped_native_gate,
 )
 from .owned_mp3_fixture import CBR, CHUNK_BYTES, FLAC, encoder_argv, fill_pcm, generate_fixture
-from .probe import ProbeError
+from .probe import COPY_BYTES, ProbeError
 
 MODULE = "evaluations.linux_resource.owned_mp3_decode"
 MD5 = "12" * 16  # Synthetic parser fixture; never an execution binding.
@@ -210,6 +214,142 @@ class Pump:
 
 
 class FlacContractTests(unittest.TestCase):
+    def test_recipe_file_limits_agree_at_child_setup_and_pre_input_gate(self) -> None:
+        for recipe, limit in ((CBR, 2_500_000), (generator.VBR, 2_500_000), (FLAC, 4_000_000)):
+            with self.subTest(recipe=recipe):
+                self.assertEqual(recipe.max_file_bytes, limit)
+                text = f"Max file size {limit} {limit} bytes\nMax core file size 0 0 bytes\n"
+                self.assertEqual(generator.verify_file_limits(text, recipe)["Max file size"], limit)
+                with self.assertRaises(ProbeError):
+                    generator.verify_file_limits(text.replace(str(limit), str(limit + 1)), recipe)
+                with ExitStack() as stack:
+                    for name in ("setsid", "dup2", "close", "write"):
+                        stack.enter_context(patch.object(generator.os, name))
+                    stack.enter_context(patch.object(generator.os, "open", return_value=9))
+                    stack.enter_context(patch.object(generator.os, "read", return_value=b"x"))
+                    limits = stack.enter_context(patch.object(generator.resource, "setrlimit"))
+                    execute = stack.enter_context(patch.object(generator.os, "execve"))
+                    exit_process = stack.enter_context(patch.object(generator.os, "_exit"))
+                    argv = encoder_argv(recipe)
+                    generator.exec_encoder(1, 2, 3, 4, [1, 2, 3, 4], argv, recipe)
+                    limits.assert_any_call(resource.RLIMIT_FSIZE, (limit, limit))
+                    limits.assert_any_call(resource.RLIMIT_CORE, (0, 0))
+                    execute.assert_called_once_with(argv[0], argv, generator.CHILD_ENV)
+                    exit_process.assert_not_called()
+        self.assertEqual(
+            generator.verify_file_limits(
+                "Max file size 2500000 2500000 bytes\nMax core file size 0 0 bytes\n"
+            )["Max file size"],
+            2_500_000,
+        )
+
+    def test_generation_closed_file_and_metadata_use_flac_limit(self) -> None:
+        raw = b"abcd"
+        md5 = hashlib.md5(raw, usedforsecurity=False).hexdigest()
+        prefix = b"fLaC" + block(0, streaminfo(md5=md5)) + block(4, comment())
+        prefix += block(1, bytes(8192), last=True)
+        compressed = prefix + bytes(flac.MAX_FILE_BYTES - len(prefix))
+        inspect(compressed, md5)
+        with self.assertRaises(ProbeError):
+            inspect(compressed + b"x", md5)
+
+        def check_size(size: int) -> None:
+            sent = False
+            ready = iter((b"R", b""))
+
+            def fill(frame: int, buffer: bytearray, recipe: generator.FixtureRecipe) -> int:
+                self.assertEqual(recipe, FLAC)
+                buffer[:4] = raw
+                return 4 if frame == 0 else 0
+
+            def write(fd: int, payload: bytes | memoryview) -> int:
+                nonlocal sent
+                if fd == 12:
+                    sent = True
+                return len(payload)
+
+            def read(fd: int, count: int) -> bytes:
+                return next(ready) if fd == 15 else b""
+
+            def reap(child: Child) -> None:
+                if sent:
+                    child.exit_code = 0
+
+            with self.subTest(size=size), ExitStack() as stack:
+                stack.enter_context(patch.object(Path, "exists", side_effect=(False, True)))
+                stack.enter_context(patch.object(Path, "is_dir", return_value=True))
+                stack.enter_context(
+                    patch.object(Path, "iterdir", return_value=iter([Path("task")]))
+                )
+                stat_result = os.stat_result((0, 0, 0, 1, 0, 0, size, 0, 0, 0))
+                stack.enter_context(patch.object(Path, "stat", return_value=stat_result))
+                opened = stack.enter_context(
+                    patch.object(
+                        Path,
+                        "open",
+                        side_effect=(io.BytesIO(b"synthetic ELF"), io.BytesIO(compressed)),
+                    )
+                )
+                digest = MagicMock()
+                digest.hexdigest.return_value = generator.FFMPEG_SHA256
+                stack.enter_context(
+                    patch.object(generator.hashlib, "file_digest", return_value=digest)
+                )
+                stack.enter_context(
+                    patch.object(generator, "RAW_SHA256", hashlib.sha256(raw).hexdigest())
+                )
+                stack.enter_context(
+                    patch.object(
+                        generator.FixtureRecipe,
+                        "raw_bytes",
+                        new_callable=PropertyMock,
+                        return_value=4,
+                    )
+                )
+                stack.enter_context(patch.object(generator, "fill_pcm", side_effect=fill))
+                stack.enter_context(
+                    patch.object(
+                        generator.os, "pipe", side_effect=[(11, 12), (13, 14), (15, 16), (17, 18)]
+                    )
+                )
+                stack.enter_context(patch.object(generator.os, "fork", return_value=42))
+                for name in ("close", "set_blocking"):
+                    stack.enter_context(patch.object(generator.os, name))
+                stack.enter_context(patch.object(generator.os, "write", side_effect=write))
+                stack.enter_context(patch.object(generator.os, "read", side_effect=read))
+                stack.enter_context(patch.object(Child, "reap", autospec=True, side_effect=reap))
+                gate = stack.enter_context(
+                    patch.object(
+                        generator,
+                        "verify_encoder",
+                        return_value={
+                            "Max file size": flac.MAX_FILE_BYTES,
+                            "Max core file size": 0,
+                        },
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        generator.select,
+                        "select",
+                        side_effect=[([15], [], []), ([13], [12], []), ([], [], [])],
+                    )
+                )
+                stack.enter_context(patch.object(generator.time, "monotonic", return_value=1))
+                stack.enter_context(
+                    patch.object(generator, "cleanup", return_value=CleanupResult(True, []))
+                )
+                stack.enter_context(patch.object(generator, "emit"))
+                result = generate_fixture(FLAC)
+                gate.assert_called_once_with(42, FLAC)
+                passed = size == flac.MAX_FILE_BYTES
+                self.assertEqual(result["verdict"], "fixture_generated" if passed else "incomplete")
+                self.assertEqual(opened.call_count, 2 if passed else 1)
+                self.assertFalse(result["cleanup_debt"])
+
+        for size in (flac.MAX_FILE_BYTES, flac.MAX_FILE_BYTES + 1):
+            check_size(size)
+
     def test_fixture_recipe_reuses_cbr_pcm_and_has_no_mp3_options(self) -> None:
         left, right = bytearray(CHUNK_BYTES), bytearray(CHUNK_BYTES)
         for start in (0, 16384, flac.SAMPLE_FRAMES - 1, flac.SAMPLE_FRAMES):
@@ -380,7 +520,7 @@ class FlacContractTests(unittest.TestCase):
     def test_bound_receipt_requires_exact_known_lossless_expectations(self) -> None:
         fixture = DecodeFixture(
             FLAC.path,
-            100,
+            flac.MAX_FILE_BYTES,
             "ab" * 32,
             flac.RAW_BYTES,
             flac.MAX_FILE_BYTES,
@@ -395,11 +535,20 @@ class FlacContractTests(unittest.TestCase):
             MD5,
             "ef" * 32,
         )
+        self.assertEqual(flac.MAX_FILE_BYTES + CHUNK_BYTES, 4_065_536)
+        self.assertEqual(COPY_BYTES, 4_194_304)
+        self.assertLessEqual(fixture.output_copy_offset + CHUNK_BYTES, COPY_BYTES)
+        with (
+            patch(f"{MODULE}.COPY_BYTES", 4_065_535),
+            self.assertRaisesRegex(ProbeError, "partitions"),
+        ):
+            replace(binding)
         for changed in (
             replace(fixture, pcm_sha256=None),
             replace(fixture, pcm_bytes=4),
             replace(fixture, sha256=""),
             replace(fixture, output_copy_offset=1),
+            replace(fixture, file_bytes=flac.MAX_FILE_BYTES + 1),
         ):
             with self.assertRaises(ProbeError):
                 replace(binding, fixture=changed)
