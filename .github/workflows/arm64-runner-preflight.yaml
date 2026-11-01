@@ -1,4 +1,4 @@
-name: Read-only arm64 runner preflight
+name: Native arm64 runner preflight
 
 on:
   workflow_dispatch:
@@ -13,23 +13,74 @@ concurrency:
 jobs:
   observe-runner:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 3
+    timeout-minutes: 8
+    env:
+      PREFLIGHT_ROOT: ${{ runner.temp }}/sobafm-arm64-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+      PREFLIGHT_WORKSPACE: ${{ github.workspace }}
+      PREFLIGHT_TOOL_CACHE: ${{ runner.tool_cache }}
     steps:
       - name: Check out exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Observe existing prerequisites without installation
+      - name: Admit bounded temporary tool setup
+        id: admission
+        timeout-minutes: 1
+        shell: bash
+        run: bash evaluations/linux_resource/arm64_preflight_setup.sh prepare
+      - name: Supply pinned uv through the runner tool cache
+        id: setup-uv
+        timeout-minutes: 2
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        env:
+          TMPDIR: ${{ env.PREFLIGHT_ROOT }}/tmp
+          UV_PYTHON_INSTALL_DIR: ${{ env.PREFLIGHT_ROOT }}/python
+          UV_PYTHON_CACHE_DIR: ${{ env.PREFLIGHT_ROOT }}/python-cache
+          UV_NO_MODIFY_PATH: "1"
+        with:
+          version: "0.13.6"
+          python-version: "3.14.10"
+          activate-environment: false
+          enable-cache: false
+          restore-cache: false
+          save-cache: false
+          cache-python: false
+          prune-cache: false
+          cache-local-path: ${{ env.PREFLIGHT_ROOT }}/cache
+          tool-dir: ${{ env.PREFLIGHT_ROOT }}/tools
+          tool-bin-dir: ${{ env.PREFLIGHT_ROOT }}/bin
+          download-from-astral-mirror: false
+          github-token: ""
+          add-problem-matchers: false
+          quiet: true
+      - name: Install only the observed Python version
+        id: python
+        timeout-minutes: 2
+        env:
+          SETUP_UV_PATH: ${{ steps.setup-uv.outputs.uv-path }}
+        shell: bash
+        run: bash evaluations/linux_resource/arm64_preflight_setup.sh install
+      - name: Observe prerequisites or report setup failure
+        if: ${{ !cancelled() }}
+        timeout-minutes: 2
+        env:
+          ADMISSION_OUTCOME: ${{ steps.admission.outcome }}
+          UV_OUTCOME: ${{ steps.setup-uv.outcome }}
+          PYTHON_OUTCOME: ${{ steps.python.outcome }}
         shell: bash
         run: |
-          python_path=$(command -v python3.14 || true)
-          if [[ "$python_path" == /* && -x "$python_path" ]]; then
+          python_path="$PREFLIGHT_ROOT/python/cpython-3.14.10-linux-aarch64-gnu/bin/python3.14"
+          if [[ "$ADMISSION_OUTCOME" == success && "$UV_OUTCOME" == success \
+              && "$PYTHON_OUTCOME" == success && -x "$python_path" ]]; then
             exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent LANG=C LC_ALL=C \
               "$python_path" -I -B evaluations/linux_resource/arm64_runner_preflight.py \
               --inspect-arm64-runner --expected-source '${{ github.sha }}'
           fi
-          # Minimal observations only. Missing Python never triggers setup/install.
+          # A failed setup never starts the observer, retries or installs another version.
+          if [[ -d "$PREFLIGHT_ROOT" && ! -L "$PREFLIGHT_ROOT" ]]; then
+            bash evaluations/linux_resource/arm64_preflight_setup.sh check || true
+          fi
           architecture=unobserved
           kernel=unobserved
           page_bytes=null
@@ -48,6 +99,6 @@ jobs:
               && [[ "$value" =~ ^[1-9][0-9]{0,7}$ ]]; then
             page_bytes=$value
           fi
-          printf '{"schema":"sobafm-arm64-runner-preflight-1","expected_source":"%s","classification":"unqualified","issues":["python_314_unavailable"],"facts":{"architecture":"%s","kernel":"%s","page_bytes":%s},"native_runtime_qualification":"not_run","decoder_feasibility":"unobserved","cleanup_status":"not_qualified_by_fallback"}\n' \
+          printf '{"schema":"sobafm-arm64-runner-preflight-1","expected_source":"%s","classification":"unqualified","issues":["python_314_setup_unavailable"],"facts":{"architecture":"%s","kernel":"%s","page_bytes":%s},"native_runtime_qualification":"not_run","decoder_feasibility":"unobserved","cleanup_status":"not_qualified_by_fallback"}\n' \
             '${{ github.sha }}' "$architecture" "$kernel" "$page_bytes"
           exit 1
