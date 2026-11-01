@@ -122,6 +122,13 @@ It performs no provider calls, audio acquisition, listening or Discord activity.
 
 ## Saved source metadata imports
 
+The [observed Night Owl FMA candidate](../evaluations/catalog/fma-night-owl-candidate.md)
+now has complete captured web notices, the exact CC BY 3.0 Unported link and a
+reproducible existing-schema manifest/catalog/report. Its single HEAD observation
+returned 302 to login; actual GET behavior, audio integrity and embedded notices
+remain unobserved. Availability stays unknown and no admission review is created.
+This dated follow-up preserves the older inventory rather than rewriting it.
+
 The [first ccMixter playback candidate](../evaluations/catalog/ccmixter-playback-candidate.md)
 now resolves WILD WINDSTEPS (70993), its exact published MP3 file and complete
 supplied upstream credit chain. Its dated prepared catalog remains unadmitted
@@ -204,8 +211,10 @@ tag, contributor, file and notice bounds apply during normalization. Reuse the
 existing 2,000,000-byte catalog bound rather than expanding it to fit a response.
 File access and JSON errors are reported without private paths or raw input.
 
-The Jamendo and FMA fixtures are invented offline examples, not observed songs
-or completed imports. The ccMixter fixture is a selected-field projection of
+The Jamendo and FMA fixtures named `synthetic` are invented offline examples,
+not observed songs or completed imports. The separate Night Owl `observed`
+manifest uses the dated evidence above; it is still metadata only. The original
+ccMixter fixture is a selected-field projection of
 one real response observed on 2026-10-27: a two-ID request returned only 17241,
 33,199 bytes, with file 18462 reporting `3:12`; parent 15139 had no license URL.
 It retains the known missing-ID and upstream-credit gaps. No raw response,
@@ -508,7 +517,10 @@ assert a new revision. The subsequent
 [source-research checkpoint](https://github.com/slackysoba/sobafm/issues/6#issuecomment-6440870726)
 records readable FMA app-developer policy retrieved through Exa, resolving the
 earlier policy-read gap. This slice also observed the policy in the public search
-index; direct FMA page reads still returned 403. Its candidate records identify
+index; direct FMA page reads at that observation still returned 403. The later
+[Night Owl evidence](../evaluations/catalog/fma-night-owl-evidence.json) records
+successful metadata-page reads and the separate HEAD login redirect for that
+recording only. The historical inventory's candidate records identify
 the missing recording-level notices and formats individually. Do not bypass
 access restrictions or mistake indexed metadata for current file availability.
 

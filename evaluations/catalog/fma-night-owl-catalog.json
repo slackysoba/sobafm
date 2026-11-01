@@ -1,0 +1,55 @@
+{
+  "schema": "sobafm-catalog-1",
+  "synthetic": false,
+  "partitions": [
+    {
+      "source": "fma",
+      "state": "complete",
+      "note": "2026-11-01 observed; bounded subset: One FMA Night Owl recording; complete web notices captured 2026-11-01 UTC; metadata only, no audio or admission.",
+      "recordings": [
+        {
+          "title": "Night Owl",
+          "primary_artist": "Broke For Free",
+          "creators": [
+            "Broke For Free"
+          ],
+          "provenance": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+          "kind": "complete",
+          "kind_evidence": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+          "duration_seconds": 194,
+          "availability": "unknown",
+          "composition": null,
+          "composer": null,
+          "facts": [
+            {
+              "feature": "electronic",
+              "value": true,
+              "strength": "weak",
+              "evidence": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/"
+            }
+          ],
+          "credits": {
+            "snapshot_id": "fma-aba6502c18a4540d8394516aca393cbba8dda7c4dfa417f97aa379e0e366d483",
+            "notices": [
+              "Provider: Free Music Archive",
+              "Source: https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+              "Duration reported: https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+              "Artist as supplied: Broke For Free; https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+              "Album: Directionless EP; source-reported release date: 2011-01-18.",
+              "Official download dialog requires song title, artist name, source (Free Music Archive) and license type (CC BY).",
+              "Recording Track info states Instrumental: No; AI generated?: No. Generic artist biography wording does not establish recording vocals or override Instrumental: No.",
+              "Complete recording, artist overview and linked FMA biography pages supplied no additional recording contributor names or attribution terms. Composer is unknown; embedded audio notices remain unobserved.",
+              "Existing maintainer-confirmed source permission requires attribution, no commercialization and no monetization; donations permitted. Authority and conditions: fma-night-owl-evidence.json, permission.",
+              "FMA policy requires permitted operator-hosted copies; no direct FMA playback/hotlinking. Policy and preparation limits: fma-night-owl-evidence.json, hosting_policy.",
+              "The released 2026-11-01 UTC HEAD returned 302 to /login without a body read or redirect follow; actual GET behavior is unobserved. No audio or operator copy is available. Access evidence: fma-night-owl-evidence.json, head_observation.",
+              "Metadata preparation only. No audio modification, decoding, playback or admission is asserted. Reported duration is not actual complete-file validation."
+            ],
+            "license_label": "CC BY 3.0 Unported",
+            "license_url": "https://creativecommons.org/licenses/by/3.0/"
+          },
+          "recording_id": "/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl"
+        }
+      ]
+    }
+  ]
+}

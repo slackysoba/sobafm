@@ -1,0 +1,207 @@
+{
+  "schema": "sobafm-fma-observed-evidence-1",
+  "candidate_id": "FMA-NIGHT-OWL",
+  "observed_local_date": "2026-10-31",
+  "local_timezone": "America/Los_Angeles",
+  "observed_utc_date": "2026-11-01",
+  "status": "Observed metadata only; no operator audio copy, admission or playback qualification",
+  "permission": {
+    "authority": "https://github.com/slackysoba/sobafm/issues/6#issuecomment-6441099250",
+    "conditions_record": "https://github.com/slackysoba/sobafm/issues/6#issuecomment-6440417895",
+    "conditions": [
+      "attribution",
+      "no commercialization",
+      "no monetization",
+      "donations permitted"
+    ],
+    "basis": "Existing maintainer-confirmed direct permission; no repeated grant or private correspondence requested"
+  },
+  "source_observations": [
+    {
+      "role": "recording",
+      "url": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
+      "observed_utc": "2026-11-01T02:56:14.542108+00:00",
+      "status": 200,
+      "response_bytes": 52741,
+      "response_sha256": "37a131d478b7527e52b4adf3af233086f2c828224a7842789ea2b7351d4c6e97", "response_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "retained_capture_sha256": "7df776522a1d0cb559f083c157df29acb3bf1949b0d33c7d8cd02db408ceaa66", "retained_capture_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "capture_scope": "Complete visible text and links; script/style contents excluded; no keyword or comment-section cut.",
+      "selected_text_truncated": false,
+      "redirect_followed": false,
+      "audio_requested": false
+    },
+    {
+      "role": "artist_overview",
+      "url": "https://freemusicarchive.org/music/Broke_For_Free/",
+      "observed_utc": "2026-11-01T02:56:16.519726+00:00",
+      "status": 200,
+      "response_bytes": 94865,
+      "response_sha256": "5c8149704ea08fa6536425adb9ab1ad4ccb072d4777a65ebc79ffd38b4edba75", "response_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "retained_capture_sha256": "b81b493525d3132c5f2bc726b28d21426cd7586566e9fb30755a4749d9c7c7c8", "retained_capture_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "capture_scope": "Complete visible text and links; script/style contents excluded; no keyword or comment-section cut.",
+      "selected_text_truncated": false,
+      "redirect_followed": false,
+      "audio_requested": false
+    },
+    {
+      "role": "artist_biography",
+      "url": "https://freemusicarchive.org/music/Broke_For_Free/bio",
+      "observed_utc": "2026-11-01T03:00:39.543054+00:00",
+      "status": 200,
+      "response_bytes": 56902,
+      "response_sha256": "3bf5afa0fe33b55ec9f7e47f8d0bdd38616a757964486a83b2a74f55339bc17c", "response_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "retained_capture_sha256": "cedc6702f1970be2a6cd50bc3f1740184acbb6a9eda15bf366950e97f2edf764", "retained_capture_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "capture_scope": "Complete visible text and links; script/style contents excluded; no keyword or comment-section cut.",
+      "selected_text_truncated": false,
+      "redirect_followed": false,
+      "audio_requested": false
+    },
+    {
+      "role": "album",
+      "url": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP",
+      "observed_utc": "2026-11-01T02:47:59.649161+00:00",
+      "status": 200,
+      "response_bytes": 73293,
+      "response_sha256": "3e3559caa41d346cbec71fa6868a19ebb61cdc3c85442f0c81517ffe4062991f", "response_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "retained_capture_sha256": "47886019e00e8cad0091c8c5520e1d40ff39578c097f273f27daccbbb0282c30", "retained_capture_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "capture_scope": "Selected relevant metadata and notices; not a complete visible-text capture.",
+      "selected_text_truncated": false,
+      "redirect_followed": false,
+      "audio_requested": false
+    },
+    {
+      "role": "hosting_policy",
+      "url": "https://freemusicarchive.org/app-developers",
+      "observed_utc": "2026-11-01T02:48:29.880192+00:00",
+      "status": 200,
+      "response_bytes": 26061,
+      "response_sha256": "da572ab4f88e638d48dd1fed1a5ad0a8006129fd6f91d7e4bc7da82a8d222630", "response_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "retained_capture_sha256": "937cba05ae9a100174c5ba3e58749f6af274e202eda5f925febc2fca2f55b656", "retained_capture_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "capture_scope": "Selected relevant metadata and notices; not a complete visible-text capture.",
+      "selected_text_truncated": false,
+      "redirect_followed": false,
+      "audio_requested": false
+    },
+    {
+      "role": "download_dialog_metadata",
+      "url": "https://freemusicarchive.org/track/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/downloadOverlay/",
+      "observed_utc": "2026-11-01T02:48:31.579460+00:00",
+      "status": 200,
+      "response_bytes": 5518,
+      "response_sha256": "0b0eb36b3a9c90f290655550ecf33c7785f762eeb52d7e91e90ac968807b4c6d", "response_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "retained_capture_sha256": "15f2a9e29e848d94e9793309bec41ef1a420e3414d5af623454d2d007ad3a750", "retained_capture_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+      "capture_scope": "Selected relevant metadata and notices; not a complete visible-text capture.",
+      "selected_text_truncated": false,
+      "redirect_followed": false,
+      "audio_requested": false
+    }
+  ],
+  "source_notice_review": {
+    "canonical_identity": "/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl",
+    "title": "Night Owl",
+    "primary_artist": "Broke For Free",
+    "album": "Directionless EP",
+    "reported_release_date": "2011-01-18",
+    "reported_duration_seconds": 194,
+    "license_url": "https://creativecommons.org/licenses/by/3.0/",
+    "license_label": "CC BY 3.0 Unported",
+    "supplied_attribution": [
+      "song title",
+      "artist name",
+      "source: Free Music Archive",
+      "license type: CC BY"
+    ],
+    "track_info": {
+      "instrumental": "No",
+      "ai_generated": "No",
+      "genres": [
+        "Electronic",
+        "Minimal Electronic"
+      ]
+    },
+    "artist_biography": [
+      "I love making music.",
+      "Nostalgic, feel-good instrumentals"
+    ],
+    "additional_recording_contributors_in_captured_notices": [],
+    "composer": null,
+    "scope": "Complete recording, artist overview and linked FMA biography visible notice sections supplied no further names or recording-specific terms. Generic biography wording does not override the recording's Instrumental: No or establish a vocal fact. No claim covers unvisited external pages or embedded audio tags.",
+    "web_footer": "The Tribe of Noise site footer is not a recording contributor designation.",
+    "embedded_notices": "unobserved",
+    "external_artist_links_followed": false,
+    "complete_notice_pass": {
+      "requests": 3,
+      "response_bytes": 204508,
+      "selected_evidence_bytes": 57010,
+      "truncated": false,
+      "owners_released": true
+    },
+    "public_review": "https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552664467"
+  },
+  "hosting_policy": {
+    "source_url": "https://freemusicarchive.org/app-developers",
+    "observed_policy": "FMA API closed; no direct playback/hotlinking from FMA; permitted copies must be hosted by the operator under source conditions; no forwarding user queries for scraping without explicit approval.",
+    "accepted_preparation": "One operator-hosted evaluation copy, <=20,000,000 bytes, <=7 days, within existing storage limits; no acquisition released.",
+    "review": "https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552671365",
+    "file_integrity": "pending actual file",
+    "quarantine_owner_and_expiry": "must be bound to the exact acquired file before intake; no quarantine created",
+    "decoder_limit_unchanged": "150 seconds / 28,800,000 PCM bytes; no 194-second expansion released"
+  },
+  "head_observation": {
+    "observed_utc": "2026-11-01T03:06:42.027522+00:00",
+    "method": "HEAD",
+    "requests": 1,
+    "target": "Exact ordinary published Night Owl download endpoint identified by the reviewed release; no media URL is embedded here.",
+    "status": 302,
+    "content_type": "text/html",
+    "safe_location": "https://freemusicarchive.org/login",
+    "advertised_audio_mime": null,
+    "advertised_file_bytes": null,
+    "body_read_calls": 0,
+    "body_bytes_read": 0,
+    "redirect_followed": false,
+    "get_fallback": false,
+    "retried": false,
+    "credentials_or_cookies_used": false,
+    "owner_released": true,
+    "cleanup_failure_entered": false,
+    "cleanup_debt": false,
+    "original_cleanup_deadline_met": null,
+    "interpretation": "Completed header observation, not media-access success. Anonymous audio access is unestablished; actual GET behavior remains unobserved. Attempt consumed.",
+    "release": "https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552671365",
+    "result": "https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552729791",
+    "retained_result_sha256": "02f10288092d544225e457eefae6e6e72c95ceb413e6c0f44708b60897c8ca86", "retained_result_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret",
+    "retained_receipt_sha256": "a1318382d3fd22c13605989ed68b5a1d83f94a539b61004982c89d224970b4b9", "retained_receipt_sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret"
+  },
+  "projection": {
+    "method": "Explicit operator projection of captured facts into the existing FMA manifest; complete-recording classification is page/album metadata only, not file validation.",
+    "notice_references": "Operator-authored provenance references name sections in this included evidence file. Required recording and license links remain in structured importer fields; no source notice or validation rule was weakened.",
+    "source_text_excluded": "Unrelated comments, other releases, raw page markup and navigation; no private path, session identifier or media URL is included.",
+    "availability": "unknown",
+    "admission_reviews_created": 0,
+    "vocal_fact_inferred": false,
+    "unmapped_descriptor": "Minimal Electronic",
+    "source_scope": "One bounded observed recording; not whole-provider coverage",
+    "metadata_digest": "741591d22c948f3caf790285d74ac4d855d5732b76463babe41a8ab73e1198bb", "metadata_digest_note": "Parsed metadata SHA-256, not a credential. # pragma: allowlist secret",
+    "credit_snapshot_id": "fma-aba6502c18a4540d8394516aca393cbba8dda7c4dfa417f97aa379e0e366d483",
+    "artifacts": [
+      {
+        "file": "import-fma-night-owl-observed.json",
+        "sha256": "b15dfc0eca7c8f48db70136909571d6b7fed1456b44dc52a4ad0dff98b148dea", "sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret"
+      },
+      {
+        "file": "import-fma-night-owl-context.json",
+        "sha256": "1a282ce2f5d45f4c25c0ac9d683f132ceabbc77d78a3c89d7bff45fcb1eaf03d", "sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret"
+      },
+      {
+        "file": "fma-night-owl-catalog.json",
+        "sha256": "4ecb37b8bec8ccff38c3ff2e05c2f9cf8c450c529a4a523d61d8b02eff18a9aa", "sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret"
+      },
+      {
+        "file": "fma-night-owl-import-report.json",
+        "sha256": "754c721a03bbf53df2aa1d9e29e8b4b0f47876af1d4ccc18c4f60d90543bdb97", "sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret"
+      }
+    ]
+  },
+  "historical_record": "three-source-inventory.json, FMA-NIGHT-OWL, observed 2026-10-27; retained unchanged, with this dated follow-up resolving its web-notice/license gaps only"
+}
