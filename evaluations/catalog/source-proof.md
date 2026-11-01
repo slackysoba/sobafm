@@ -4,9 +4,10 @@ Issue [#19](https://github.com/slackysoba/sobafm/issues/19) implements the
 [candidate's finite source contract](ccmixter-playback-candidate.md#proposed-finite-source-proof).
 This is an opt-in Linux evaluation, with no production source integration,
 decoder, new dependency, catalog admission or playback. Source qualification
-remains incomplete; the observed metadata rejection below motivates the
-comparison correction in [#21](https://github.com/slackysoba/sobafm/issues/21).
-Human listening remains deferred.
+remains incomplete. The comparison correction in
+[#21](https://github.com/slackysoba/sobafm/issues/21) and the info content-type
+compatibility correction under [Outcome 1](https://github.com/slackysoba/sobafm/issues/1)
+address observed metadata rejections. Human listening remains deferred.
 
 ## Implemented boundary
 
@@ -53,6 +54,40 @@ route, size or metadata stop the proof. The client does not use environment
 proxies, follow redirects, authenticate, search, paginate or seek alternatives.
 TLS uses Python's normal certificate/hostname verification. The fixed network
 entry requires `--live-ccmixter`; importing the module does no work.
+
+Only the exact info URL
+`https://ccmixter.org/api/query?f=json&dataview=info&ids=70993&limit=1`
+also accepts `text/plain` as a metadata content type. All HTML, audio and other
+routes still reject it. This permits transfer only: the info body must match
+its byte-exact reviewed SHA-256, parse as JSON without duplicate keys, match
+the saved projection and pass the existing importer, candidate, route and
+numeric-size checks before media access. HTML/error bodies, JSONP and malformed
+JSON do not gain an alternative parsing path.
+
+Each transfer receipt includes `content_type`, a lowercase MIME type/subtype
+of at most 129 ASCII characters, or null for missing/invalid values. This
+bounded diagnostic remains available when headers reject the transfer.
+Parameters, cookies and other response headers are not exported.
+
+### Observed info response and remaining release boundary
+
+The [2026-10-28 attempt](https://github.com/slackysoba/sobafm/issues/1#issuecomment-6465779177)
+passed the three credit-page comparisons and stopped at the info response with
+HTTP 200 and `content_type_rejected`, before reading its body or requesting
+terms, about or media. That receipt did not retain the rejected MIME value.
+A [separately authorized diagnostic](https://github.com/slackysoba/sobafm/issues/1#issuecomment-6466027607)
+then observed HTTP 200, `text/plain`, Content-Length 3,624 and no content or
+transfer encoding on the exact info URL. Its 3,624-byte body had raw SHA-256
+`bf6dbb718b5a1d6f378908c6ef94fc44cb5d5323ba77bf7c54069110a0790786`,
+byte-identical to the preserved candidate-preparation response, and passed
+the unchanged candidate validator. The diagnostic does not reconstruct the
+earlier response's unretained headers.
+
+Neither observation acquired audio, ran a decoder or granted catalog
+admission. All earlier execution releases are consumed or expired. This code
+change supplies neither a fresh baseline nor a live grant; a later invocation
+needs a new concrete execution review, including renewed time-sensitive
+source/access evidence and security assessment.
 
 ## Separate metadata execution review
 
@@ -252,7 +287,15 @@ deadlines, late release, removal failure, metadata changes and unchanged catalog
 rejection. Fingerprint regressions accept only the bounded numeric variation,
 preserve raw evidence, keep JSON byte-exact and reject policy ambiguity,
 changed notices and malformed/duplicate marker contexts. These fixtures are
-deliberately not audio and do not establish a
+deliberately not audio. Content-type regressions retain the exact HTTPS route
+while replacing its transport with owned responses; they exercise the real
+child download, HTTP parsing, byte hash, JSON parser, candidate validation and
+cleanup before the media-request boundary. They reject malformed JSON,
+HTML/error responses, JSONP, duplicate keys, changed credits, route/size
+conflicts and even a whitespace-only change against the reviewed info hash.
+Separate header tests keep `text/plain` rejected outside the exact info route
+and verify bounded MIME diagnostics without response parameters or cookies.
+These tests do not establish a
 live access pass, listening quality, decoder correctness or Linux containment.
 Run locked sync, all-file pre-commit and the complete offline suite before
 push; bind CI and independent review to the actual PR commit.
