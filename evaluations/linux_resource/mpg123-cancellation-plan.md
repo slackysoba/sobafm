@@ -156,7 +156,7 @@ while original I/O remains owned, then require later release without a retry loo
 The repository's locked sync, all-file hooks/strict Pyright and full pytest
 remain required. Passing them is preparation evidence only.
 
-## Execution and next extension
+## Execution and topology extension
 
 After Q3 and exact independent review, prepare a separately reviewed external
 operator and explicit one-shot release for each case. Its proposed operation
@@ -167,12 +167,15 @@ Retain at most 700,000 bytes per case, at most 64,000 selected public bytes and
 one bounded 32,768-byte Docker local log file. Stay within the agreed project
 storage and artifact allowance. No concrete native operation is released here.
 
-The next slice supplies the other two Q4 cases: an owned child that truly
+The [prepared topology extension](mpg123-topology-plan.md) supplies the other two Q4 cases: an owned child that truly
 ignores TERM and a descendant surviving leader exit. Stock mpg123 replaces
 inherited SIG_IGN; SIGSTOP or a blocked TERM mask cannot qualify as ignoring
 TERM. The accepted proposed interpretation uses a narrow non-media launcher
-with the unmodified decoder performing actual I/O. Its concrete descriptor
-transfer, process identities, pre-PCM fork and capacity/ownership proof require
-review before implementation or execution. No launcher is included here.
+with the unmodified decoder performing actual I/O. The
+[concrete implementation design](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6552315831)
+was accepted, covering descriptor transfer, identities, pre-PCM forks and
+capacity/ownership evidence. The extension has its own narrow launcher and
+validator; these two direct-decoder cases retain their original PGID semantics.
+Native execution still requires exact source/operator review and release.
 
 All four Q4 cases and later application qualification remain outstanding.

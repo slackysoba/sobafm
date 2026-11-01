@@ -425,7 +425,9 @@ larger-cap alternative is outside the approval.
 The [direct-decoder cancellation preparation](../evaluations/linux_resource/mpg123-cancellation-plan.md)
 implements the first two Q4 cases and deterministic ownership regressions.
 Native execution still requires the Q3 gate and exact review/release; the two
-noncooperative process-topology cases remain a subsequent slice.
+noncooperative process-topology cases have a separately
+[prepared launcher/descendant implementation](../evaluations/linux_resource/mpg123-topology-plan.md)
+under the same limits. All four native Q4 cases remain unqualified.
 
 The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
 tests one supplemental DATA/STACK-limit candidate with `-version` and no input.

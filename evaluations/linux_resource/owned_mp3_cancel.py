@@ -539,6 +539,14 @@ class CancelRun:
         self.request("controlled_trigger")
         emit({"event": "cancellation_trigger", **self.trigger})
 
+    def can_feed(self) -> bool:
+        return (
+            self.cancel.started is None and self.input_count < PREFIX_BYTES and self.input_released
+        )
+
+    def reap_child(self) -> None:
+        self.child.reap()
+
     def io_step(self, timeout: float = 0.01) -> None:
         if self.pipes is None:
             select.select([], [], [], timeout)
@@ -559,15 +567,7 @@ class CancelRun:
             and self.output_view is not None
         ):
             readable.append(pipes.output_read)
-        writable = (
-            [pipes.input_write]
-            if (
-                self.cancel.started is None
-                and self.input_count < PREFIX_BYTES
-                and self.input_released
-            )
-            else []
-        )
+        writable = [pipes.input_write] if self.can_feed() else []
         ready, writes, _ = select.select(readable, writable, [], timeout)
         for fd in ready:
             try:
@@ -583,9 +583,9 @@ class CancelRun:
                 self.fail(error)
                 self.close(fd)
         if self.child.pid > 0:
-            self.child.reap()
+            self.reap_child()
         self.check_trigger()
-        if writes and self.cancel.started is None:
+        if writes and self.can_feed():
             try:
                 self.write_input()
             except (OSError, ValueError, ProbeError) as error:
@@ -712,9 +712,7 @@ class CancelRun:
         }
 
 
-def run_case(case: Case) -> dict[str, object]:
-    owner = CancelRun(case)
-
+def run_owner(owner: CancelRun) -> dict[str, object]:
     def interrupted(signum: int, frame: FrameType | None) -> None:
         if not owner.trigger:
             owner.failure = owner.failure or "external cancellation preceded the fixed trigger"
@@ -750,6 +748,10 @@ def run_case(case: Case) -> dict[str, object]:
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+
+
+def run_case(case: Case) -> dict[str, object]:
+    return run_owner(CancelRun(case))
 
 
 def main() -> int:
