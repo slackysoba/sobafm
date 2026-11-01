@@ -223,7 +223,7 @@ acquired or hashed.
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
 | Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Exact binary set acquired and installed offline; binding reviewed. The fixed supplemental DATA/STACK candidate failed loader startup on amd64. |
-| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | [Supply, startup and one owned MP3 decode completed](../evaluations/linux_resource/mpg123-proposal.md) under unchanged limits. Other Q3 cases and Q4 remain pending; this MP3 evidence does not remove FLAC or other qualification requirements. |
+| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | Supply, startup, owned CBR decode/overlap and [owned VBR mono conversion](../evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode) passed under unchanged limits. Other Q3 cases and Q4 remain pending; this MP3 evidence does not remove FLAC or other qualification requirements. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
 [amd64 file list](https://packages.debian.org/trixie/amd64/ffmpeg/filelist),
@@ -448,5 +448,10 @@ or establish the remaining Q3/Q4 cases. One subsequent
 [retained-fixture overlap](../evaluations/linux_resource/mpg123-overlap-plan.md#recorded-overlap-result)
 passed with two admitted decoders live for 30.016542233 seconds, independent
 readiness and complete output, both original cleanup deadlines met and no
-retained resource debt. Other Q3 formats/rates/channels and native arm64 remain
-unqualified; no playback architecture adoption follows from these narrow cases.
+retained resource debt. A separate
+[owned VBR 44.1 kHz mono decode](../evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode)
+then passed once: exact header-derived 23,039,448-byte output, identical stereo
+channels for every frame, nonzero output overall, 0.229574-second readiness and
+both original cleanup deadlines met. Remaining Q3 cases, Q4, native arm64 and
+listening quality remain unqualified; these narrow results do not adopt a
+playback architecture.

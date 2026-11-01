@@ -1,7 +1,7 @@
 # Owned VBR MP3 at 44.1 kHz mono
 
 Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **Owned VBR generation
-passed once; native decoding is pending separate review.** Reuse the retained CBR
+and native decoding each passed once on amd64.** Reuse the retained CBR
 and [two-decoder overlap](mpg123-overlap-plan.md#recorded-overlap-result) evidence.
 This slice supplies the remaining MP3 bitrate/rate/channel case from Q3. It
 does not include FLAC, Q4, source audio, provider/Discord activity, listening,
@@ -161,6 +161,34 @@ The selected forced-rate NtoM path excludes the optional libsyn123 resampler;
 its [audio.c](https://scm.orgis.org/mpg123/tags/1.33.7/src/audio.c) forced output
 rate also avoids the fallback NtoM warning branch. Record any unexpected actual
 diagnostic as a failure instead of broadening acceptance during execution.
+
+## Recorded decode
+
+The [separately released decode](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6551695518)
+passed on its first attempt at source
+`45a184b5f0017eb3037a10a9e3e1a1345fef7d9d`. The
+[selected original result](results/2026-10-31-owned-vbr-decode.yaml) preserves all
+native events. The authenticated 916,598-byte fixture produced exactly
+23,039,448 PCM bytes, with all 5,759,862 stereo frames satisfying the mono
+duplication predicate and nonzero output observed. Its PCM SHA-256 is
+`1ec6120e5f5e81c959eb3f317a48b2a991544b169ff34047dec98724b72affe9`.
+
+Readiness was reached in 0.229574 seconds with 1,179,648 whole-frame bytes
+buffered. Native completion took 3.184457 seconds and the outer operation took
+8.016 seconds. The exact source-format diagnostic policy passed, including
+`MPEG 1.0 L III vbr 44100 mono` and `[1:59] Decoding of - finished.`. The
+331-byte diagnostic stream is retained by hash and bounded text in the result.
+
+The original native and external three-second cleanup deadlines were met.
+Exit was zero, the leader was reaped, parent payload views were released and
+no PID, descriptor or CLI debt remained. Every memory-event delta and swap
+usage was zero. The container stopped without OOM and was removed with full-ID
+absence verified. The immutable decoder evidence occupies 106,992 bytes.
+
+This qualifies the fixed owned VBR, 44.1-to-48 kHz, mono-to-stereo case under
+the existing limits. It does not establish listening quality, general MP3
+completion policy, FLAC behavior, Q4, native arm64 or full Q3 qualification.
+The retained CBR and overlap cases were not repeated.
 
 ## External ownership, storage and stopping
 
