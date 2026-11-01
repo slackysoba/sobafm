@@ -9,6 +9,25 @@ permits preparation of the existing toolchain setup route. This revised workflow
 has **not been dispatched**. The runner remains unqualified for native decoder
 work; ordinary arm64 CI establishes tooling/tests only.
 
+The merged setup preparation at `d72b22745256226b9b11a68ce93dcd67991e6c26`
+was rejected before any job started in
+[run 41273534125](https://github.com/slackysoba/sobafm/actions/runs/41273534125).
+GitHub reported `Unrecognized named-value: 'runner'` for `runner.temp` at line 18,
+column 23 and `runner.tool_cache` at line 20, column 29. The same two errors occurred
+on the reviewed branch in
+[run 41272742489](https://github.com/slackysoba/sobafm/actions/runs/41272742489),
+despite ordinary CI passing. Neither failure was a setup dispatch.
+
+[GitHub's context availability table](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability)
+allows `runner` in step environments, but not job environments. A running step
+now resolves the same unique run/attempt paths, checks they are absolute and
+contain no control characters, and appends them to `GITHUB_ENV` for later steps.
+It does not read that environment file or override reserved runner variables.
+Focused offline tests reject unavailable direct job-environment context references
+and exercise path exports; they are not a complete GitHub workflow validator.
+Review the new head's complete Actions run inventory, including push-triggered
+zero-job failures, as well as ordinary CI before any later dispatch release.
+
 The separate `Native arm64 runner preflight` workflow runs only through
 `workflow_dispatch`, on the existing `ubuntu-24.04-arm` capability. It uses the
 existing commit-pinned checkout and setup-uv actions, read-only repository
