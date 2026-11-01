@@ -1,17 +1,20 @@
-# Q1-Q2 runtime placement and enforcement proof
+# Linux runtime and decoder proof
 
-This is the small first part of [issue #7](https://github.com/slackysoba/sobafm/issues/7).
+This is the bounded initial proof for [issue #7](https://github.com/slackysoba/sobafm/issues/7).
 The [experimental interpretation](../../docs/decisions/0001-linux-resource-proposal.md)
 is approved. The runner/configuration received
 [independent review](https://github.com/slackysoba/sobafm/pull/10#pullrequestreview-5666254143)
-before the recorded execution. It tests ordinary Docker placement and enforcement, not the eventual
-application entrypoint/image or decoder fit. It adds no application modules,
+before the original Q1/Q2 execution. Later separately reviewed cases establish
+owned decoder useful fit and controlled process release on native amd64.
+These are experimental harness results, not the eventual application image.
+The proof adds no application modules,
 dependencies, provider adapter or station framework.
 
 ## Current boundary
 
 - Q1 and Q2 passed once each on native amd64 on 2026-10-27, as recorded below.
-- Q3 is partially exercised. The pinned mpg123 path has a
+- The [initial native-amd64 Q3 gate is accepted](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6555741812).
+  The pinned mpg123 path has a
   [source-derived address-space scope and PCM reconciliation](mpg123-proposal.md#source-derived-scope-of-the-candidate),
   verified native input gates and one passing
   [owned MP3 confirmation](mpg123-fixture-plan.md#corrected-confirmation) on amd64.
@@ -23,19 +26,19 @@ dependencies, provider adapter or station framework.
   The [owned VBR 44.1 kHz mono case](mpg123-vbr-plan.md#recorded-decode) also
   passed once, with exact header-derived output count, identical output
   channels, readiness and both cleanup deadlines under the same limits.
-  The [owned FLAC preparation](flac-fixture-plan.md) adds offline metadata,
-  admission and lossless-completion contracts. Its narrow encoder source review
-  is bound. The first encoder attempt failed at the 2.5 MB compressed-file cap;
-  a prospective 4 MB FLAC-only limit still needs a newly released run.
-  No complete FLAC fixture, decoder startup or decode result is claimed.
-  Remaining cases and listening quality are still unqualified.
-- Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
-  gate. Helper-process reaping here does not establish decoder cleanup behavior.
-  The [prepared direct-decoder cancellation slice](mpg123-cancellation-plan.md)
-  implements the feed and stdout-backpressure cases with offline ownership
-  regressions. The [prepared launcher/descendant slice](mpg123-topology-plan.md)
-  implements the two process-topology cases with explicit descriptor transfer
-  and nondirect-child release evidence. All four native Q4 cases remain pending.
+  The [complete owned FLAC generation and decode](flac-fixture-plan.md#recorded-complete-generation)
+  passed under the separately bound encoder and installed decoder images.
+  The earlier 2.5 MB generation failure remains unchanged.
+- All four native-amd64 Q4 cases passed once: [feed and stdout backpressure](mpg123-cancellation-plan.md#recorded-direct-cancellation-results),
+  and [ignored TERM and descendant after leader exit](mpg123-topology-plan.md#recorded-topology-results).
+  Each repeated cancellation retained the original three-second deadline and
+  released the actual processes, descriptors, I/O and payload ownership without
+  debt. Q1/Q2 helper cleanup is not substituted for these decoder observations.
+- Native arm64 remains blocked by the observed piped core routing on the available
+  target; [the assessment](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553650111)
+  requires a target satisfying the unchanged gate. No host-security change is authorized.
+  Application integration, real-source audio, Discord, listening and release
+  qualification remain outstanding. The accepted experimental ADR is unchanged.
 - Every concrete native case needs independent review. Stop after its first
   failure and preserve the observation before preparing a correction; no case
   authorizes an automatic retry or the larger-cap fallback.
@@ -43,9 +46,9 @@ dependencies, provider adapter or station framework.
 The current conditional PCM arithmetic is
 `2 * 12,524,288 + 8,802,304 = 33,850,880` bytes. The first owned case exercised
 one decoder, while reserving two address spaces; the subsequent overlap exercised
-both admitted processes. Remaining Q3 work must exercise the required formats
-without violating the mapped/backing
-scope, payload ownership or useful-fit criteria. The full 90,177,536-byte group
+both admitted processes. The accepted case matrix covers CBR, VBR mono conversion,
+FLAC and overlap under the documented mapped/backing scope and payload ownership.
+The full 90,177,536-byte group
 cap remains a separate controlled-capacity boundary; it does not itself establish
 the smaller PCM bound.
 
@@ -55,6 +58,14 @@ The later fixed FFmpeg DATA/STACK startup candidate was
 were never aggregate PCM proofs. Those historical results remain unchanged.
 The subsequent mpg123 evidence does not waive source-access restrictions or
 remaining qualification cases and introduces no custom decoder distribution.
+
+The [current case matrix](../../docs/linux-feasibility.md#recorded-native-amd64-decoder-proof)
+retains distinct source/image identities. Selected records preserve original
+generic preflight and per-case status fields; those historical fields are not
+silently rewritten into the later collective Q3/Q4 assessment. Map samples are
+admission observations, not replacements for the capacity argument. Each selected
+event stream includes its native gate once; the identical copy in the original
+final result is omitted. Original stream and manifest hashes remain separate.
 
 ## Exact first-stage candidate
 
@@ -74,6 +85,9 @@ The retained `ffmpeg` candidate is Debian `7:7.1.5-0+deb13u1`, not a qualified
 integration and not part of this first-stage image.
 
 ## Recorded amd64 result
+
+This table records only the original 2026-10-27 Q1/Q2 stage. Its unrun Q3/Q4 rows
+remain historical; the later results are linked above.
 
 The [selected machine-readable evidence](results/2026-10-27-amd64.yaml) binds this
 pass to source `a708fa370e68cefeb5de22ce4c0e54e77673ee56`, the image digest below,
@@ -107,8 +121,8 @@ were unchanged at reported precision. No fixture or proof container remains.
 
 This pass establishes neither eventual application entrypoint/image behavior,
 useful decoder fit, aggregate native PCM, Q4 cancellation, native arm64 containment
-nor release readiness. The 98,979,840-byte ledger is unchanged and remains
-arithmetic until useful workloads honor all reservations. No rerun was needed.
+nor release readiness. At this stage the unchanged 98,979,840-byte ledger was
+arithmetic without useful-workload evidence. No Q1/Q2 rerun was needed.
 
 ## Reviewed invocation
 
@@ -212,7 +226,8 @@ workload OOM, which would be a failure.
 The ledger remains 90,177,536 group + 4,608,000 PCM + 4,194,304 copies =
 98,979,840 controlled bytes. Q1/Q2 allocate no PCM bank or audio payload; their
 success establishes neither useful fit under all prepaid reservations nor the
-separate aggregate native PCM condition. Reports keep Q3/Q4 `not_run` explicit.
+separate aggregate native PCM condition. The original Q1/Q2 reports keep their
+Q3/Q4 `not_run` fields explicit.
 
 Capture only these external fields: source commit/probe hash, image digest,
 native architecture/kernel/runtime versions, builtin seccomp evidence,

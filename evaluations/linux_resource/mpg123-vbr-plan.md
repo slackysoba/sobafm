@@ -7,6 +7,10 @@ This slice supplies the remaining MP3 bitrate/rate/channel case from Q3. It
 does not include FLAC, Q4, source audio, provider/Discord activity, listening,
 native arm64 or playback architecture adoption.
 
+The later [initial amd64 Q3/Q4 case matrix](../../docs/linux-feasibility.md#recorded-native-amd64-decoder-proof)
+combines separately bound results. This VBR result retains its original scope
+and does not become a run of the later source or FLAC image.
+
 ## One bounded generation
 
 The existing [generator](owned_mp3_fixture.py) has two closed recipes. Its

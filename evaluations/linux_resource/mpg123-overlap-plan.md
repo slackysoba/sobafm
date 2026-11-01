@@ -7,6 +7,10 @@ is reused as unchanged evidence. This next Q3 case uses the same owned compresse
 fixture, image, executable, command, numeric capacities and security settings.
 No fixture generation, package installation, source audio or Q4 case is included.
 
+The later [initial amd64 Q3/Q4 case matrix](../../docs/linux-feasibility.md#recorded-native-amd64-decoder-proof)
+combines separately bound results. This overlap result retains its original
+source, image and verdict.
+
 ## Admission and payload ownership
 
 The [overlap harness](owned_mp3_overlap.py) creates all twenty pipe ends and both

@@ -1,6 +1,6 @@
 # Linux resource feasibility proposal
 
-Status: **experimental interpretation and Q1-Q4 scope approved; runtime unqualified**.
+Status: **initial native-amd64 Q1-Q4 proof recorded; application architecture unqualified**.
 This is the bounded feasibility slice of
 [issue #7](https://github.com/slackysoba/sobafm/issues/7), under
 [Outcome 1](https://github.com/slackysoba/sobafm/issues/1). The
@@ -18,7 +18,8 @@ group cap. This deliberately pays for some memory twice. It avoids an applicatio
 cgroup manager, a privileged launcher and a separate worker service.
 
 The proposed controlled-capacity total is **98,979,840 decimal bytes**, below
-100,000,000. That is arithmetic, not proof of useful fit. The maintainer
+100,000,000. Arithmetic alone does not establish useful fit; the distinct
+owned-workload and process-release evidence is recorded below. The maintainer
 [approved the grouped-cap/runtime-placement interpretation and bounded proof](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6439759990).
 The [recorded Q1/Q2 pass](../evaluations/linux_resource/README.md#recorded-amd64-result)
 demonstrates runtime placement, effective namespace reachability, inherited
@@ -32,9 +33,77 @@ cgroup v2 and the cgroupfs driver, plus an x86_64 Linux contributor environment
 with Python 3.14.4. Subsequently Q1 and Q2 each passed once in the pinned image
 with Python 3.14.7. Both disposable proof containers were stopped, removed and
 verified absent after evidence capture; no cleanup debt remained. No decoder,
-audio or provider ran. Native arm64 containment, useful memory fit, decoder and
-application cancellation, audio quality and release behavior remain
-**unmeasured**. Development-host evidence does not qualify a Linux release host.
+audio or provider ran in that first stage. The subsequent native-amd64 decoder
+cases establish only the finite proof below. Native arm64 containment,
+application cancellation, audio quality and release behavior remain unqualified.
+Development-host evidence does not qualify a Linux release host.
+
+### Recorded native-amd64 decoder proof
+
+The [initial Q3 acceptance](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6555741812)
+reconciles four distinct case bindings. Image A is
+`sha256:e3ff7b02740b55f52735b17afc9846d151f86bf7395341f5d53f7d3dbb235cfc`;
+image B is
+`sha256:18b9b2b6cf26b2df9af458ea6d5d2bbd2be19bfbb152686092e02e59e522822c`.
+The recorded target is native x86_64, kernel `6.18.33.2-microsoft-standard-WSL2`.
+Source hashes below identify the actual mounted harness, not the later
+documentation commit. This is not one all-case source/image pass.
+
+| Q3 case and original result | Actual source / image | Readiness | Known completion |
+| --- | --- | --- | --- |
+| [120-second CBR, 48 kHz stereo](../evaluations/linux_resource/results/2026-10-28-owned-mp3-decode-confirmation.yaml) | `e0d54f1c5ec16808994138645f05c642c68ba78f` / A | 1,167,360 bytes at 0.045588931 seconds | All 1,920,768 input bytes; exactly 23,040,000 PCM bytes. |
+| [120-second VBR, 44.1 kHz mono to 48 kHz stereo](../evaluations/linux_resource/results/2026-10-31-owned-vbr-decode.yaml) | `45a184b5f0017eb3037a10a9e3e1a1345fef7d9d` / A | 1,179,648 bytes at 0.229574477 seconds | All 916,598 input bytes; exact header-derived 23,039,448 PCM bytes; 5,759,862 equal-channel frames and nonzero output. |
+| [120-second FLAC, 48 kHz stereo](../evaluations/linux_resource/results/2026-11-01-owned-flac-decode.yaml) | `e5e2f8cc0f53478a83b6b22b15f20b5f1ec65ed5` / B | 1,159,168 bytes at 0.066463983 seconds | All 3,478,328 input bytes; 23,040,000 PCM bytes with the original lossless hash. |
+| [Two-decoder CBR overlap](../evaluations/linux_resource/results/2026-10-28-owned-mp3-overlap.yaml) | `188081e56839bd92239f0b23e668b219c6cc136b` / A | Each 1,179,648 bytes at 0.075801715 / 0.075247779 seconds | Both live for 30.016542233 seconds; each drained 5,760,000 bytes during overlap and completed 23,040,000 PCM bytes with the confirmation hash. |
+
+Every case passed its diagnostic/completion predicate, had no OOM or swap use,
+and met both original native and external three-second cleanup deadlines with
+actual release and no debt. The original diagnostic failure and partial FLAC
+generation remain failed/incomplete at their original bindings. The
+[complete FLAC generation](../evaluations/linux_resource/results/2026-11-01-owned-flac-fixture.yaml)
+used a separate encoder image and development budget; it is not decoder-fit evidence.
+
+Each Q3 case allocated and touched both 2,304,000-byte banks and the 4,194,304-byte
+copy arena after native admission. Single cases used one native address space
+while reserving two; overlap exercised both, reaching both bank capacities.
+The [source-derived mapped/backing scope](../evaluations/linux_resource/mpg123-proposal.md#source-derived-scope-of-the-candidate),
+exact admitted decoder closures, clean fixed stdin/raw-stdout paths, no PCM at
+fork, disjoint copy partitions and at most two PCM-bearing native spaces including
+debt support the bound:
+`2 * 12,524,288 + 4,608,000 + 4,194,304 = 33,850,880 <= 34,560,000`.
+STACK is already inside AS; no mapping sample, page-rounding slack or kernel
+special-map allowance is added. Kernel pipe storage and object overhead retain
+the explicit product exclusions. The separate controlled-capacity total remains
+98,979,840. Changed targets, closures or ownership/copy paths require reassessment
+of affected evidence, not automatic transfer of these results.
+
+The [four-case Q4 acceptance](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6556104431)
+binds all four runs to source `e5e2f8cc0f53478a83b6b22b15f20b5f1ec65ed5` and image A.
+Each case ran once after its own release, with two cancellation requests sharing
+one original three-second native deadline. The selected records preserve the
+actual admission gates, process/control witnesses, signal times and release.
+
+| Q4 case | Actual witness | Native release after first cancellation |
+| --- | --- | --- |
+| [Feed](../evaluations/linux_resource/results/2026-11-01-q4-feed.yaml) | Unfinished input after 65,536 accepted compressed bytes and 8,192 PCM bytes received. | 0.001828242 seconds |
+| [Stdout backpressure](../evaluations/linux_resource/results/2026-11-01-q4-stdout-backpressure.yaml) | Full 65,536-byte pipe; same decoder sleeping in stdout write. | 0.001632895 seconds |
+| [Ignored TERM](../evaluations/linux_resource/results/2026-11-01-q4-ignoring-launcher.yaml) | Owned non-media launcher retained TERM-ignore disposition and answered PONG; KILL and actual launcher reaping followed. | 1.027698228 seconds |
+| [Descendant after leader exit](../evaluations/linux_resource/results/2026-11-01-q4-descendant-after-leader-exit.yaml) | Leader reaped; same running decoder observed adopted by init before cancellation, then actual process/group/native-inventory release. | 0.002612263 seconds |
+
+All original native and external cleanup deadlines passed. No process, descriptor,
+original I/O, payload-view or CLI debt remained; stopped/no-OOM state, removal and
+container absence were verified. Memory events and swap were zero. These are
+prefix cancellation results with `complete_decode=false`; the descendant's
+unobserved decoder wait status remains null. The launcher is the ignored-TERM
+fixture, not a claim that stock mpg123 ignored TERM.
+
+The initial native-amd64 proof is complete within these case scopes. Native arm64
+remains blocked by [observed piped core routing](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553650111)
+on the available target; no host-security change is authorized. The accepted
+experimental ADR remains unchanged. A later architecture-adoption decision,
+the eligible-recording integration and L1-L6 evidence still belong at their real
+boundaries. No real-source audio, provider, Discord, listening or release
+qualification follows, and issues #7 and #1 remain open.
 
 ## One candidate deployment
 
@@ -223,7 +292,7 @@ acquired or hashed.
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
 | Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Exact binary set acquired and installed offline; binding reviewed. The fixed supplemental DATA/STACK candidate failed loader startup on amd64. |
-| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | Supply, startup, owned CBR decode/overlap and [owned VBR mono conversion](../evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode) passed under unchanged limits. Other Q3 cases and Q4 remain pending; this MP3 evidence does not remove FLAC or other qualification requirements. |
+| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | Supply, startup, owned CBR decode/overlap, [VBR mono conversion](../evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode) and all four controlled Q4 cases passed under unchanged limits. The distinct FLAC case completes the initial Q3 matrix; application and native-arm64 qualification remain separate. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
 [amd64 file list](https://packages.debian.org/trixie/amd64/ffmpeg/filelist),
@@ -318,7 +387,7 @@ belong at actual integration boundaries when those boundaries exist.
    Pause heavy work at 8 GB or below 25 GB free on the development drive. Only an
    increase or other material new commitment needs renewed maintainer approval.
 
-Proposed initial execution ceiling: one candidate configuration, one image per
+The original proposed initial execution ceiling was one candidate configuration, one image per
 target, one sequential pass per native architecture, at most 30 minutes per
 target and 20 MB safe evidence total. Permit one rerun only for a documented
 harness error;
@@ -326,13 +395,19 @@ configuration or code fixes require a new reviewed evidence identity. Stop at
 the first containment, source-access, security, accounting or cleanup-ownership
 failure. Do not tune limits repeatedly until a run passes.
 
+Actual execution proceeded through the separately reviewed supply, startup,
+fixture and case releases linked in the result records. Preserve those finite
+operation bounds and distinct images/sources; do not describe the accumulated
+evidence as a single-image, single-pass execution of this original proposal.
+
 ### Initial stop-or-go proof
 
 The concrete [Q1/Q2 runner, configuration and results](../evaluations/linux_resource/README.md)
 used the already present pinned amd64 Python image without decoder installation
-or an image build. Q1/Q2 passed and the finite pass stopped. Q3 remains unresolved
-because the focused permitted evidence pass did not establish a native PCM
-capacity bound; Q4 remains not run behind the Q3 gate.
+or an image build. Q1/Q2 passed and that finite pass stopped without Q3/Q4 evidence.
+The later separately reviewed native decoder cases and aggregate PCM reconciliation
+now satisfy the initial amd64 Q3 gate, followed by the four controlled Q4 cases
+recorded above. Their historical records retain their original statuses.
 
 Use a small standard-library process runner, permitted local fixtures, pipes,
 bounded buffers and a paced PCM discard sink. The runner observes the real
@@ -357,18 +432,19 @@ No fixture uses `18.raw`, a source catalog
 download or a reconstructed restricted sample. Bound fixtures to 20 MB total;
 retain provenance and compact results rather than decoded output.
 
-The [owned FLAC harness](../evaluations/linux_resource/flac-fixture-plan.md) is
-prepared offline with exact original PCM count/hash, bounded metadata/diagnostic
+The [owned FLAC harness](../evaluations/linux_resource/flac-fixture-plan.md) uses
+exact original PCM count/hash, bounded metadata/diagnostic
 contracts and explicit input/EOF/release evidence. The accepted narrow encoder
 source review is bound. Its first encoding attempt failed at the 2,500,000-byte
 compressed-output limit before accepting all raw input, with both cleanup owners
-released on time. The prospective FLAC-only limit is 4,000,000 bytes, still within
+released on time. The corrected FLAC-only limit is 4,000,000 bytes, still within
 the unchanged copy arena: `4,000,000 + 65,536 = 4,065,536 <= 4,194,304`.
-The 4 MB fit, complete-file evidence and actual installed decoder/native bindings
-remain pending execution gates; MP3 limits and the runtime capacity ledger are unchanged.
-Its tests do not establish a FLAC useful-fit result or complete Q3.
+The later complete fixture is 3,478,328 bytes, and the installed-image native
+decode passed with exact original PCM count/hash. MP3 limits and the runtime
+capacity ledger are unchanged. The actual records, rather than offline tests,
+supply this useful-fit evidence.
 
-Before Q3 can pass, reconcile aggregate PCM: application banks, PCM-bearing
+Q3 requires aggregate PCM reconciliation: application banks, PCM-bearing
 copies and bounded native decoder PCM retention must together be at most
 34,560,000. Record how decoder buffering is bounded for the selected formats;
 peak sampling alone does not establish capacity. If primary documentation and
@@ -427,18 +503,18 @@ service. If permissions rather than fit fail, increasing memory is irrelevant:
 stop and obtain a supported native Docker target with existing adequate runtime
 permissions, not a host security or delegation change made by the agent.
 
-Next action: complete the remaining Q3 format/rate/channel cases within the
-source-derived mapped/backing scope established below, then qualify Q4 release
-behavior. Q4 remains not run; application architecture acceptance is still
-gated. Issue #7 remains open until actual acceptance evidence exists; the
-larger-cap alternative is outside the approval.
+Next action: review the bounded amd64 proof for its intended integration scope
+and obtain a native-arm64 target satisfying the unchanged gates. Application
+architecture acceptance and later boundary qualification remain separate.
+Issue #7 remains open; the larger-cap alternative is outside the approval.
 
 The [direct-decoder cancellation preparation](../evaluations/linux_resource/mpg123-cancellation-plan.md)
-implements the first two Q4 cases and deterministic ownership regressions.
-Native execution still requires the Q3 gate and exact review/release; the two
+implements the first two Q4 cases and deterministic ownership regressions. Both
+native cases passed after Q3 acceptance and exact review/release. The two
 noncooperative process-topology cases have a separately
 [prepared launcher/descendant implementation](../evaluations/linux_resource/mpg123-topology-plan.md)
-under the same limits. All four native Q4 cases remain unqualified.
+under the same limits, and both also passed. The selected records and independent
+acceptance above qualify only these four controlled cases.
 
 The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
 tests one supplemental DATA/STACK-limit candidate with `-version` and no input.
@@ -447,8 +523,8 @@ The [recorded recovery and startup result](../evaluations/linux_resource/decoder
 shows exit 127 at a shared-library mapping failure under the fixed DATA/STACK
 candidate, with verified cleanup. That candidate is rejected; no memory tuning
 or audio followed. The whole-service ledger is unchanged. This does not establish
-overall-budget infeasibility or PCM coverage; Q3/Q4 and alternative assessment
-remain outstanding.
+overall-budget infeasibility or PCM coverage. Subsequent Q3/Q4 results are recorded
+above; the alternative remains unmeasured and unauthorized.
 
 The [follow-up mpg123 result](../evaluations/linux_resource/mpg123-proposal.md)
 establishes authenticated supply and a no-input startup pass with the unchanged
@@ -470,6 +546,7 @@ retained resource debt. A separate
 [owned VBR 44.1 kHz mono decode](../evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode)
 then passed once: exact header-derived 23,039,448-byte output, identical stereo
 channels for every frame, nonzero output overall, 0.229574-second readiness and
-both original cleanup deadlines met. Remaining Q3 cases, Q4, native arm64 and
-listening quality remain unqualified; these narrow results do not adopt a
-playback architecture.
+both original cleanup deadlines met. The separately recorded FLAC and Q4 cases
+now complete the initial amd64 matrix. Native arm64, listening and application
+qualification remain outstanding; these narrow results do not adopt a playback
+architecture.

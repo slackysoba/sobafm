@@ -1,10 +1,11 @@
-# Owned FLAC qualification preparation
+# Owned FLAC qualification
 
-Issue [#7](https://github.com/slackysoba/sobafm/issues/7). The offline harness is
-prepared; **no complete FLAC fixture or installed decoder/native-startup/decode
-result is bound or claimed**. One encoder attempt reached the 2.5 MB compressed
-file limit and failed. Existing CBR, VBR and overlap evidence remains
-separate. Q3, Q4, native arm64 and release qualification remain incomplete.
+Issue [#7](https://github.com/slackysoba/sobafm/issues/7). **One complete owned
+fixture generation and one native-amd64 decode passed**, as recorded below.
+The earlier 2.5 MB generation failure is preserved. CBR, VBR and overlap retain
+their separate source/image bindings; together they satisfy the initial Q3 gate.
+These results do not qualify arbitrary FLAC input, music quality, native arm64
+or the application/release architecture.
 
 ## Execution gates
 
@@ -14,9 +15,9 @@ Its handoff SHA256 is
 `9f8800b616ea63b7ae01c58a77dad35026dd86725b63e1c68cbcff566be271b9`.
 The corrected recipe is unchanged. The first authorized encoder run passed its
 actual target and pre-input gates, then failed at its 2,500,000-byte file limit.
-The prospective FLAC limit is now 4,000,000 bytes; complete finalization, that
-limit's sufficiency and decoder fit remain unproven. Source review is not
-permission to retry.
+The later separately released generation produced 3,478,328 bytes under the
+4,000,000-byte FLAC limit. Its complete-file evidence and the distinct installed
+decoder case are recorded below. Source review alone is not permission to retry.
 
 Generation still requires independent review and concrete release of one external
 owner bound to the final committed source, retained encoder image/executable and
@@ -29,14 +30,18 @@ retry, cap increase, image build or raw PCM file is included.
 
 `owned_flac_decode.BINDING` remains unset and rejects before filesystem
 observation, allocation or fork. Command-line flags cannot supply a decoder
-review. A subsequent reviewed source change must bind the actual evidence;
-synthetic unit-test values are never execution configuration.
+review. The actual reviewed external owner constructed a fixed `FlacBinding`
+inside its exact container invocation, without changing repository source or
+the unset default. Its source, command, binding and executed-owner hashes are
+retained in the selected decode record. Synthetic test values are never
+execution configuration.
 
-Before decoding, complete the separately owned metadata
+The decode release required the separately owned metadata
 recovery, linked ELF/initializer/loader inspection, actual compiled version-pointer
 binding and authenticated single-package installation/image binding. Require the
 final source, image, full installed ELF inventory, target and exact operator to
-receive independent review. No download, build, installation or invocation is
+receive independent review. Those gates passed for the recorded case.
+No download, build, installation or invocation is
 performed by importing these modules or running ordinary tests.
 
 The FLAC binding contains the reviewed image identity and review link, immutable
@@ -46,7 +51,7 @@ and target; an image label in an in-container result is not that proof. No ELF
 allowlist, encoded digest, original PCM MD5 or successful native observation is
 invented in this change.
 
-## Measured size failure and prospective limit
+## Preserved size failure and corrected limit
 
 The [recorded attempt](results/2026-11-01-owned-flac-fixture-incomplete.yaml) on
 source `92fa7d9f78f1e34415ee1581aec4ed86cf7f7b0b` passed native amd64/plain-core,
@@ -58,11 +63,10 @@ cleanup deadlines passed; no process, descriptor or container debt remained.
 
 The FLAC recipe alone now reserves 4,000,000 compressed bytes. Child hard/soft
 FSIZE, pre-input limit verification, closed-file checks, metadata admission and
-the future FLAC binding use that same limit. MP3 CBR/VBR keep 2,500,000-byte
-limits and their retained fixtures. The 4 MB allowance provides prospective
-headroom; it is not a measured final size or proof that the full recipe fits.
-It needs a new independently reviewed one-shot owner and explicit release.
-This change neither retries the consumed attempt nor releases decoder execution.
+the actual FLAC binding use that same limit. MP3 CBR/VBR keep 2,500,000-byte
+limits and their retained fixtures. The later 3,478,328-byte result establishes
+sufficiency for this exact recipe only. Each consumed release remains separate;
+neither successful generation nor this record releases another native operation.
 
 ## One owned generation
 
@@ -76,7 +80,7 @@ Compute SHA256 and MD5 incrementally in the one reusable 65,536-byte buffer;
 retain partial-write offsets and accept the whole chunk before reusing it.
 No full raw file is created. MD5 is the FLAC format checksum, not authentication.
 
-The proposed fixed command reuses the retained encoder image
+The executed fixed command reused the retained encoder image
 `sha256:f214f61096a8823a587859e4ce87616f25a63f77b37e659c79ef8757a6cef76c`
 and FFmpeg ELF
 `e8a8d46f5225f3062cec7c07fb145d58ae73c603cb740dcd5bad34bfb54e455a`:
@@ -182,20 +186,69 @@ suppresses 100-percent progress. Unknown-count text, extra warnings/errors and
 arbitrary control erasure are rejected; total diagnostics remain at most 65,536
 bytes. The banner reader tolerates fragmented delivery without consuming later
 diagnostics. This grammar is a source-derived acceptance contract, not a native
-observation from the pending installed image.
+observation by itself. The actual installed-image result below separately
+records the observed 255-byte closed diagnostic stream.
 
 The native route is synchronous and owns ordinary mapped conversion, channel,
 residual, metadata, bitreader, MD5 and stdio storage. The static conversion union
 is not the whole native footprint: retained ELF inspection finds CLI BSS
 2,884,720 bytes and page-rounded PT_LOAD spans 3,121,152 bytes. Charge all ordinary
 native mappings under AS, including temporary missing-frame storage. Full linked
-initializer/loader closure and actual startup/useful fit are still required.
+initializer/loader closure and actual admission/useful fit were required and
+independently reviewed for the recorded case. The exact trusted closure, clean
+environment, immutable root and scoped synchronous stdin/stdout path remain
+material premises; this is not a universal initializer or resolver proof.
 
 Under the established closed-process/mapping premises the unchanged conditional
 PCM bound is `2 * 12,524,288 + 8,802,304 = 33,850,880`, below 34,560,000.
 The controlled-capacity total is `90,177,536 + 8,802,304 = 98,979,840`, strictly
 below 100,000,000. Neither arithmetic nor offline tests prove Linux containment,
 native fit, audio quality, Q4 or release readiness.
+
+## Recorded complete generation
+
+The [one-shot release](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6554924641)
+ran at source `e5e2f8cc0f53478a83b6b22b15f20b5f1ec65ed5` using the encoder image
+above. The [selected result](results/2026-11-01-owned-flac-fixture.yaml) and
+[independent complete-file assessment](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6554973930)
+record all 23,040,000 raw bytes accepted, 5,760,000 frames and a 3,478,328-byte
+compressed file, SHA256
+`c5a30138c8194c3c537ea5e34fde2c056b06884f751009efdd6185ccc85daac8`.
+The finalized 8,256-byte metadata has the expected format, frame count and raw
+MD5 `6ebabd404d2d6bd97525a07fb67b47e4`.
+
+Native generation took 3.992629480 seconds; outer elapsed was 10.605334700 seconds.
+Exit was zero with no diagnostics. Both original three-second cleanup deadlines
+passed, the leader and payload owners released, and the stopped/no-OOM container
+was removed and verified absent without debt. The earlier partial file and its
+failure remain preserved. Generation uses the development budget and establishes
+no decoder runtime fit.
+
+## Recorded native decode
+
+The [accepted installed image](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6555405699)
+is `sha256:18b9b2b6cf26b2df9af458ea6d5d2bbd2be19bfbb152686092e02e59e522822c`:
+the unchanged 114-package base plus only `flac 1.5.0+ds-2` on amd64. The
+[selected native result](results/2026-11-01-owned-flac-decode.yaml) binds source
+`e5e2f8cc0f53478a83b6b22b15f20b5f1ec65ed5`, its reviewed external owner and this
+image; it does not substitute the encoder image or the earlier MP3 image.
+
+The actual controller and six native ELF identities, complete native banner,
+stopped process, closed mapping inventory and zero-input limits passed before
+the prepaid pools and fixture admission. The observed ordinary mapped extent
+was 7,151,616 bytes; this sample is not a PCM capacity bound or extra allowance.
+All 3,478,328 input bytes produced exactly 23,040,000 PCM bytes with the original
+raw SHA256 above. Input completion, both EOFs, exact diagnostics and reaped exit
+zero were independently checked. Readiness was 1,159,168 aligned bytes at
+0.066463983 seconds; native elapsed was 0.313937871 seconds and outer elapsed
+7.050666200 seconds. Memory-event deltas and swap were zero.
+
+Both original three-second cleanup deadlines passed, with no retained process,
+descriptor, I/O or payload debt. Container removal and absence were verified.
+The [independent result acceptance](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6555678009)
+checked all 11 original evidence files. No PCM was exported or played. The
+[collective Q3 acceptance](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6555741812)
+uses this result alongside the distinct MP3 and overlap cases.
 
 ## Offline verification
 
