@@ -20,7 +20,10 @@ dependencies, provider adapter or station framework.
   A [two-decoder overlap](mpg123-overlap-plan.md#recorded-overlap-result) then
   passed once using the retained fixture, with a measured 30-second interval,
   independent readiness/full completion and both original cleanup deadlines met.
-  Other formats/rates/channels remain unqualified.
+  The [owned VBR 44.1 kHz mono case](mpg123-vbr-plan.md#recorded-decode) also
+  passed once, with exact header-derived output count, identical output
+  channels, readiness and both cleanup deadlines under the same limits.
+  Remaining cases and listening quality are still unqualified.
 - Q4 is not executed or waived. Decoder cancellation follows the unresolved Q3
   gate. Helper-process reaping here does not establish decoder cleanup behavior.
 - Every concrete native case needs independent review. Stop after its first
