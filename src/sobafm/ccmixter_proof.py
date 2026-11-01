@@ -98,10 +98,19 @@ class Transfer:
     sha256: str | None
     transport_eof: bool
     status: int | None
+    content_type: str | None = None
 
 
 def _alarm(_signum: int, _frame: FrameType | None) -> None:
     raise TimeoutError
+
+
+def _content_type(response: http.client.HTTPResponse) -> str | None:
+    """Retain only a bounded MIME essence, never parameters or other headers."""
+    value = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
+    if re.fullmatch(r"[a-z0-9!#$&^_.+-]{1,64}/[a-z0-9!#$&^_.+-]{1,64}", value):
+        return value
+    return None
 
 
 def _headers(response: http.client.HTTPResponse, request: Request) -> int | None:
@@ -129,8 +138,10 @@ def _headers(response: http.client.HTTPResponse, request: Request) -> int | None
             raise ProofError("advertised_oversize")
         if request.expected is not None and length != request.expected:
             raise ProofError("advertised_size_conflict")
-    content_type = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
+    content_type = _content_type(response)
     allowed = {"audio/mpeg"} if request.media else {"text/html", "application/json"}
+    if not request.media and request.url == METADATA["info"]:
+        allowed.add("text/plain")
     if content_type not in allowed:
         raise ProofError("content_type_rejected")
     return length
@@ -146,6 +157,7 @@ def download(request: Request, directory_fd: int, counter: mmap.mmap) -> Transfe
     fd: int | None = None
     received = stored = 0
     status: int | None = None
+    content_type: str | None = None
     digest = hashlib.sha256()
     verdict, eof = "transport_error", False
     try:
@@ -168,6 +180,7 @@ def download(request: Request, directory_fd: int, counter: mmap.mmap) -> Transfe
         )
         response = connection.getresponse()
         status = response.status
+        content_type = _content_type(response)
         advertised = _headers(response, request)
         fd = os.open(
             "body", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd
@@ -225,7 +238,9 @@ def download(request: Request, directory_fd: int, counter: mmap.mmap) -> Transfe
         if connection is not None:
             connection.close()
         signal.setitimer(signal.ITIMER_REAL, 0)
-    return Transfer(verdict, received, stored, digest.hexdigest() if eof else None, eof, status)
+    return Transfer(
+        verdict, received, stored, digest.hexdigest() if eof else None, eof, status, content_type
+    )
 
 
 @dataclass

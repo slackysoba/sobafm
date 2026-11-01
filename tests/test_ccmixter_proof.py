@@ -117,7 +117,13 @@ def test_framed_transfer_hash_and_verified_removal(tmp_path: Path) -> None:
         tmp_path, response(body, headers=f"Content-Length: {len(body)}\r\n"), expected=len(body)
     )
     assert result == proof.Transfer(
-        "transferred", len(body), len(body), hashlib.sha256(body).hexdigest(), True, 200
+        "transferred",
+        len(body),
+        len(body),
+        hashlib.sha256(body).hexdigest(),
+        True,
+        200,
+        "audio/mpeg",
     )
     assert total == len(body)
 
@@ -398,6 +404,233 @@ def valid_info() -> bytes:
     files = cast(list[dict[str, object]], row["files"])
     files[0].update(download_url=proof.MEDIA, file_rawsize=proof.EXPECTED_BYTES)
     return json.dumps([row]).encode()
+
+
+def metadata_transfer(
+    tmp_path: Path, spec: proof.Request, content_type: str, headers: str = ""
+) -> proof.Transfer:
+    wire = (
+        f"HTTP/1.1 200 Fixture\r\nContent-Type: {content_type}\r\n"
+        f"Content-Length: 0\r\n{headers}\r\n"
+    ).encode()
+    original_process = subprocess.Popen
+
+    def fixture_process(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        command = cast(list[str], args[0])
+        return original_process(
+            [sys.executable, "-c", METADATA_CHILD, wire.hex(), *command[-3:]],
+            pass_fds=cast(tuple[int, ...], kwargs["pass_fds"]),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    owner = proof.RequestOwner(tmp_path)
+    try:
+        with patch.object(proof.subprocess, "Popen", side_effect=fixture_process):
+            owner.start(spec)
+            return owner.wait()
+    finally:
+        assert owner.close() and not owner.cleanup_missed
+        assert owner.active is None and not (tmp_path / "body").exists()
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [proof.Request(url, 32) for name, url in proof.METADATA.items() if name != "info"]
+    + [
+        proof.Request(proof.MEDIA, 32, media=True),
+        proof.Request(proof.MEDIA, 32),
+        proof.Request(proof.METADATA["info"], 32, media=True),
+        proof.Request("http://127.0.0.1/info", 32, loopback=True),
+    ],
+)
+def test_plain_text_is_rejected_outside_exact_info_route(
+    tmp_path: Path, spec: proof.Request
+) -> None:
+    result = metadata_transfer(tmp_path, spec, "text/plain; charset=utf-8")
+    assert result.verdict == "content_type_rejected" and result.content_type == "text/plain"
+    assert result.received == result.stored == 0
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        proof.METADATA["info"] + "&callback=fixture",
+        proof.METADATA["info"].replace("70993", "70072"),
+        "https://example.invalid/info",
+    ],
+)
+def test_plain_info_does_not_admit_other_routes(tmp_path: Path, url: str) -> None:
+    with pytest.raises(proof.ProofError, match="route_rejected"):
+        metadata_transfer(tmp_path, proof.Request(url, 32), "text/plain")
+
+
+@pytest.mark.parametrize(
+    "content_type", ["text/plain", "Text/Plain; charset=utf-8", "application/json"]
+)
+def test_info_accepts_observed_type_without_weakening_framing(
+    tmp_path: Path, content_type: str
+) -> None:
+    spec = proof.Request(proof.METADATA["info"], 32)
+    assert metadata_transfer(tmp_path, spec, content_type).verdict == "transferred"
+    result = metadata_transfer(tmp_path, spec, content_type, "Content-Length: 0\r\n")
+    assert result.verdict == "ambiguous_framing" and result.received == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Text/Plain; fixture=not-retained", "text/plain"),
+        ("text/html\r\nSet-Cookie: fixture=not-retained", "text/html"),
+        ("", None),
+        ("text/" + "x" * 65, None),
+        ("text/pl\x01ain", None),
+        ("text/plain, application/json", None),
+    ],
+)
+def test_content_type_evidence_is_bounded_and_drops_parameters(
+    tmp_path: Path, value: str, expected: str | None
+) -> None:
+    result = metadata_transfer(tmp_path, proof.Request(proof.METADATA["info"], 32), value)
+    assert result.content_type == expected
+    assert "not-retained" not in repr(result)
+
+
+def test_rejected_transfer_retains_only_mime_essence(tmp_path: Path) -> None:
+    wire = (
+        b"HTTP/1.1 200 Fixture\r\nContent-Type: text/plain; fixture=not-retained\r\n"
+        b"Set-Cookie: fixture=not-retained\r\nContent-Length: 3\r\n\r\nabc"
+    )
+    result, count = acquire(tmp_path, wire)
+    assert result.verdict == "content_type_rejected" and result.content_type == "text/plain"
+    assert result.received == result.stored == count == 0
+    assert "not-retained" not in repr(result)
+
+
+# The request retains the exact fixed HTTPS URL. Only the transport is replaced:
+# HTTP parsing, download/file IO, child ownership, hash and candidate gates run.
+METADATA_CHILD = """
+import http.client, io, sys
+from unittest.mock import Mock
+from sobafm import ccmixter_proof as proof
+wire = bytes.fromhex(sys.argv[1])
+response = http.client.HTTPResponse(Mock(makefile=Mock(return_value=io.BytesIO(wire))))
+response.begin()
+connection = Mock(sock=Mock(), getresponse=Mock(return_value=response))
+proof.http.client.HTTPSConnection = Mock(return_value=connection)
+proof.http.client.HTTPConnection = Mock(return_value=connection)
+sys.argv = ['proof', '--request-child', *sys.argv[2:]]
+proof.main()
+"""
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "valid",
+        "whitespace",
+        "malformed",
+        "html",
+        "jsonp",
+        "error",
+        "keys",
+        "route",
+        "size",
+        "credit",
+    ],
+)
+def test_plain_info_passes_real_transfer_and_validation_before_media(
+    tmp_path: Path, case: str
+) -> None:
+    info = valid_info()
+    bodies = {
+        "whitespace": info + b" ",
+        "malformed": b"[{",
+        "html": b"<html>owned service error</html>",
+        "jsonp": b"callback(" + info + b");",
+        "error": b'{"error":"owned service error"}',
+        "keys": b'[{"upload_id":70993,"upload_id":70993}]',
+    }
+    body = bodies.get(case, info)
+    if case in {"route", "size", "credit"}:
+        rows = cast(list[dict[str, object]], json.loads(info))
+        files = cast(list[dict[str, object]], rows[0]["files"])
+        if case == "route":
+            files[0]["download_url"] = "https://example.invalid/other.mp3"
+        elif case == "size":
+            files[0]["file_rawsize"] = proof.EXPECTED_BYTES + 1
+        else:
+            rows[0]["user_real_name"] = "Changed creator"
+        body = json.dumps(rows).encode()
+    baseline = {
+        name: (info if case == "whitespace" else body) if name == "info" else html_metadata()
+        for name in proof.METADATA
+    }
+    fingerprints = {name: proof.metadata_fingerprint(name, data) for name, data in baseline.items()}
+    owner = proof.RequestOwner(tmp_path)
+    original_process = subprocess.Popen
+    original_start = owner.start
+    calls: list[proof.Request] = []
+    children: list[subprocess.Popen[bytes]] = []
+
+    def start(request: proof.Request) -> None:
+        calls.append(request)
+        if request.media:
+            raise proof.ProofError("owned_media_boundary")
+        original_start(request)
+
+    def metadata_process(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        command = cast(list[str], args[0])
+        request = proof.Request(**json.loads(command[-1]))
+        is_info = request.url == proof.METADATA["info"]
+        payload, content_type = (body, "text/plain") if is_info else (html_metadata(), "text/html")
+        wire = (
+            f"HTTP/1.1 200 Fixture\r\nContent-Type: {content_type}\r\n"
+            f"Content-Length: {len(payload)}\r\n\r\n"
+        ).encode() + payload
+        process = original_process(
+            [sys.executable, "-c", METADATA_CHILD, wire.hex(), *command[-3:]],
+            pass_fds=cast(tuple[int, ...], kwargs["pass_fds"]),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        children.append(process)
+        return process
+
+    failure = {
+        "valid": "owned_media_boundary",
+        "whitespace": "metadata_changed",
+        "malformed": "Expecting",
+        "html": "Expecting",
+        "jsonp": "Expecting",
+        "error": "metadata_identity_conflict",
+        "keys": "duplicate_json_key",
+        "route": "route_or_size_conflict",
+        "size": "route_or_size_conflict",
+        "credit": "metadata_identity_conflict",
+    }[case]
+    try:
+        with (
+            patch.object(owner, "start", side_effect=start),
+            patch.object(proof.subprocess, "Popen", side_effect=metadata_process),
+            pytest.raises(ValueError, match=failure),
+        ):
+            proof.run_proof(owner, CATALOG, fingerprints)
+        assert len(calls) == (7 if case == "valid" else 4)
+        assert sum(request.media for request in calls) == (1 if case == "valid" else 0)
+        entry = next(item for item in owner.request_evidence if item["request"] == "info")
+        assert entry["content_type"] == "text/plain" and entry["verdict"] == "transferred"
+        assert entry["received"] == entry["stored"] == len(body)
+        assert entry["sha256"] == entry["comparison_sha256"] == hashlib.sha256(body).hexdigest()
+        assert entry["review_match"] == (case != "whitespace")
+        assert all(
+            child.poll() is not None and child.stdout is not None and child.stdout.closed
+            for child in children
+        )
+        assert owner.active is None and not (tmp_path / "body").exists()
+        assert not owner.cleanup_missed
+    finally:
+        assert owner.close()
 
 
 def html_metadata(index: bytes = b"302614073") -> bytes:
