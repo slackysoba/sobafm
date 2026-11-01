@@ -1,0 +1,53 @@
+name: Read-only arm64 runner preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm64-runner-preflight
+  cancel-in-progress: false
+
+jobs:
+  observe-runner:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 3
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Observe existing prerequisites without installation
+        shell: bash
+        run: |
+          python_path=$(command -v python3.14 || true)
+          if [[ "$python_path" == /* && -x "$python_path" ]]; then
+            exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent LANG=C LC_ALL=C \
+              "$python_path" -I -B evaluations/linux_resource/arm64_runner_preflight.py \
+              --inspect-arm64-runner --expected-source '${{ github.sha }}'
+          fi
+          # Minimal observations only. Missing Python never triggers setup/install.
+          architecture=unobserved
+          kernel=unobserved
+          page_bytes=null
+          if value=$(/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C \
+              /usr/bin/timeout --signal=TERM --kill-after=1s 3s /usr/bin/uname -m 2>/dev/null) \
+              && [[ "$value" =~ ^[A-Za-z0-9._+-]{1,128}$ ]]; then
+            architecture=$value
+          fi
+          if value=$(/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C \
+              /usr/bin/timeout --signal=TERM --kill-after=1s 3s /usr/bin/uname -r 2>/dev/null) \
+              && [[ "$value" =~ ^[A-Za-z0-9._+-]{1,128}$ ]]; then
+            kernel=$value
+          fi
+          if value=$(/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C \
+              /usr/bin/timeout --signal=TERM --kill-after=1s 3s /usr/bin/getconf PAGESIZE 2>/dev/null) \
+              && [[ "$value" =~ ^[1-9][0-9]{0,7}$ ]]; then
+            page_bytes=$value
+          fi
+          printf '{"schema":"sobafm-arm64-runner-preflight-1","expected_source":"%s","classification":"unqualified","issues":["python_314_unavailable"],"facts":{"architecture":"%s","kernel":"%s","page_bytes":%s},"native_runtime_qualification":"not_run","decoder_feasibility":"unobserved","cleanup_status":"not_qualified_by_fallback"}\n' \
+            '${{ github.sha }}' "$architecture" "$kernel" "$page_bytes"
+          exit 1
