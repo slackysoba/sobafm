@@ -1,0 +1,17 @@
+{
+  "schema": "sobafm-import-context-1",
+  "observed_at": "2026-11-01",
+  "evidence_kind": "observed",
+  "scope": "UTC metadata refresh of Fruitless upload70072 and its published parent25112. Only complete-mix file125900 is proposed; all stems and upstream recordings are excluded from playback.",
+  "state": "complete",
+  "requested_ids": [
+    "70072",
+    "25112"
+  ],
+  "selected_files": [
+    {
+      "recording_id": "70072",
+      "file_id": "125900"
+    }
+  ]
+}

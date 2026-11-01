@@ -1,0 +1,164 @@
+schema: sobafm-source-preparation-evidence-1
+case_id: fruitless-70072-125900
+observed_local_date: 2026-10-31 America/Los_Angeles
+started_utc: '2026-11-01T02:01:45.487840+00:00'
+finished_utc: '2026-11-01T02:01:53.159516+00:00'
+capture_review_reference: https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552081467
+preparation_checkpoint: https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552135455
+implementation_issue: https://github.com/slackysoba/sobafm/issues/27
+live_execution_released: false
+source_commit: 75dc3862281c4dbbe7bfeadb4aa64ad2e654d733  # pragma: allowlist secret - public source or artifact digest
+candidate_digest: f7caef9aee0aed124b2004d4cade992627e20f5c45e52847d3214401665f8623  # pragma: allowlist secret - public source or artifact digest
+candidate_file_sha256: 2da224dd5d1c16d8d00d8a88e920d0f6052488b21128c2fef315f95f50b96dbc  # pragma: allowlist secret - public source or artifact digest
+availability: unknown
+admission: not_granted
+recording:
+  id: 70072
+  file_id: 125900
+  title: Fruitless
+  artist: Dan_Mantau
+  reported_bytes: 8232794
+  reported_seconds: 206
+  reported_format:
+    media-type: audio
+    format-name: audio-mp3-mp3
+    default-ext: mp3
+    mime_type: audio/mpeg
+    sr: 44k
+    ch: stereo
+    ps: '3:26'
+    br: CBR
+source_file_evidence:
+- file_id: 125900
+  filename: Dan_Mantau_-_Fruitless.mp3
+  label: mp3
+  reported_bytes: 8232794
+  selected: true
+- file_id: 125901
+  filename: Dan_Mantau_-_Fruitless_1.mp3
+  label: Drums
+  reported_bytes: 8278770
+  selected: false
+- file_id: 125902
+  filename: Dan_Mantau_-_Fruitless_2.mp3
+  label: Bass
+  reported_bytes: 8278770
+  selected: false
+- file_id: 125903
+  filename: Dan_Mantau_-_Fruitless_3.mp3
+  label: Guitar 1
+  reported_bytes: 8278770
+  selected: false
+- file_id: 125904
+  filename: Dan_Mantau_-_Fruitless_4.mp3
+  label: Guitar 2
+  reported_bytes: 8278770
+  selected: false
+- file_id: 125905
+  filename: Dan_Mantau_-_Fruitless_5.mp3
+  label: Lead guitar
+  reported_bytes: 8278770
+  selected: false
+- file_id: 125906
+  filename: Dan_Mantau_-_Fruitless_6.mp3
+  label: Rhodes
+  reported_bytes: 8278770
+  selected: false
+- file_id: 125907
+  filename: Dan_Mantau_-_Fruitless_7.mp3
+  label: Cello
+  reported_bytes: 8278770
+  selected: false
+route: https://ccmixter.org/content/Dan_Mantau/Dan_Mantau_-_Fruitless.mp3
+route_observed_only: true
+credit_review:
+  chain:
+  - 70072
+  - 25112
+  creators:
+  - Dan_Mantau
+  - Lisa DeBenedictis
+  - DeBenedictis
+  notice_paragraphs: 9
+  full_pages_same_as_accepted_except_existing_numeric_marker: true
+  full_info_bytes_identical_to_retained_records: true
+  root_page_has_no_further_upstream_section: true
+  root_info_omission_not_used_as_empty_chain_proof: true
+  no_new_required_notice_observed: true
+  file_embedded_notices: unobserved until separately released acquisition/validation
+permission_reference: https://github.com/slackysoba/sobafm/issues/6#issuecomment-6441099250
+permission_conditions:
+- attribution
+- no commercialization
+- no monetization
+- donations permitted
+source_storage: Propose one bounded temporary ccMixter copy only after concrete review;
+  delete on completion/failure/cancellation, retain cleanup debt until actual release,
+  one-hour backstop, no library/backup/repeated playback loop.
+capture_receipt_sha256: 231a8e46beb07b60a9017d7458b0c2df2c40881719dea9df6b0cc16fef11c16d  # pragma: allowlist secret - public source or artifact digest
+responses:
+  mix_page:
+    url: https://ccmixter.org/files/Dan_Mantau/70072
+    status: 200
+    complete: true
+    bytes: 38785
+    sha256: f26d36b895ade5047fb79509b7c66e3774a82093dc121d010d0cc2fc378941f9  # pragma: allowlist secret - public source or artifact digest
+    comparison_sha256: 736d6aef6ddde298a2708db8c4314d13644b76d7f8689bfa8172001684ea2829  # pragma: allowlist secret - public source or artifact digest
+    content_type: text/html
+  root_page:
+    url: https://ccmixter.org/files/lisadb/25112
+    status: 200
+    complete: true
+    bytes: 46044
+    sha256: 879715000871703c18115349fbf2cff2ccd121bbb1549c40ef8349a59beaf12a  # pragma: allowlist secret - public source or artifact digest
+    comparison_sha256: f9aacf4f2b25acfacec22b20e49ec086942970ef2527ed2d595a50cf5883e306  # pragma: allowlist secret - public source or artifact digest
+    content_type: text/html
+  info:
+    url: https://ccmixter.org/api/query?f=json&dataview=info&ids=70072&limit=1
+    status: 200
+    complete: true
+    bytes: 8259
+    sha256: c7d2b6209f611476f23f88fd27993ff52eda18d87f18b45ce0e3aba219d8815b  # pragma: allowlist secret - public source or artifact digest
+    comparison_sha256: c7d2b6209f611476f23f88fd27993ff52eda18d87f18b45ce0e3aba219d8815b  # pragma: allowlist secret - public source or artifact digest
+    content_type: text/plain
+  root_info:
+    url: https://ccmixter.org/api/query?f=json&dataview=info&ids=25112&limit=1
+    status: 200
+    complete: true
+    bytes: 7475
+    sha256: 54147a8fedc2827d7bd49bbef54ecfbb255b75ed13c4a94b6ecc5e9e8f8aef6d  # pragma: allowlist secret - public source or artifact digest
+    comparison_sha256: 54147a8fedc2827d7bd49bbef54ecfbb255b75ed13c4a94b6ecc5e9e8f8aef6d  # pragma: allowlist secret - public source or artifact digest
+    content_type: text/plain
+policy_reuse:
+  terms:
+    bytes: 58018
+    sha256: 0c8c5e2f72ea450a8f9d160af3ad709e8ab0384324d08e650210ce2cf07cfccf  # pragma: allowlist secret - public source or artifact digest
+    comparison_sha256: 5e4e865d6540d38838424751f73aac3d44f279962842f1fe988612bd7860db22  # pragma: allowlist secret - public source or artifact digest
+    fingerprint_policy: ccmixter-hidden-index-v1
+    acceptance_reference: https://github.com/slackysoba/sobafm/issues/1#issuecomment-6551592128
+    reuse: Unchanged existing accepted policy evidence; no new policy request in this
+      four-route refresh.
+  about:
+    bytes: 37140
+    sha256: f9d49337182007ed35f4d7e8d39dff2a6e3c7f5bf9e48b667b7d97da8ebce083  # pragma: allowlist secret - public source or artifact digest
+    comparison_sha256: a29bc9f9618959f0e12c9b95114213c84f89c7d9ba6f0ac4c68db18ea55e88e3  # pragma: allowlist secret - public source or artifact digest
+    fingerprint_policy: ccmixter-hidden-index-v1
+    acceptance_reference: https://github.com/slackysoba/sobafm/issues/1#issuecomment-6551592128
+    reuse: Unchanged existing accepted policy evidence; no new policy request in this
+      four-route refresh.
+metadata_capture:
+  requests: 4
+  total_bytes: 100563
+  media_requests: 0
+  retries: 0
+  redirects: 0
+  complete: true
+  child_and_reader_released: true
+prior_candidate:
+  recording_id: 70993
+  file_id: 129564
+  transport: HTTP 403; zero audio bytes
+  source_access: recording-specific blocker; cause not established
+  outcome_reference: https://github.com/slackysoba/sobafm/issues/1#issuecomment-6551972107
+  diagnosis_reference: https://github.com/slackysoba/sobafm/issues/1#issuecomment-6552047593
+  receipt_sha256: 8b54d34ab8f8e5072887a5fc8a673053e4eedce5b5a18a14fd9419ea4a39e90c  # pragma: allowlist secret - public source or artifact digest
