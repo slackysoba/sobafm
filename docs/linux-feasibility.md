@@ -359,8 +359,9 @@ retain provenance and compact results rather than decoded output.
 
 The [owned FLAC harness](../evaluations/linux_resource/flac-fixture-plan.md) is
 prepared offline with exact original PCM count/hash, bounded metadata/diagnostic
-contracts and explicit input/EOF/release evidence. Encoder-route review and the
-actual installed image/native/fixture bindings remain unset execution gates.
+contracts and explicit input/EOF/release evidence. The accepted narrow encoder
+source review is bound; concrete generation release and the actual installed
+decoder image/native/fixture bindings remain pending execution gates.
 Its tests do not establish a FLAC useful-fit result or complete Q3.
 
 Before Q3 can pass, reconcile aggregate PCM: application banks, PCM-bearing

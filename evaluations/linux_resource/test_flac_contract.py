@@ -230,6 +230,7 @@ class FlacContractTests(unittest.TestCase):
     def test_unreleased_entrypoints_fail_before_observation_files_or_fork(self) -> None:
         with (
             patch("evaluations.linux_resource.owned_flac_decode.observe") as observe,
+            patch("evaluations.linux_resource.owned_mp3_fixture.FLAC_ENCODER_REVIEW", None),
             patch.object(Path, "exists") as exists,
             patch("os.fork") as fork,
         ):
