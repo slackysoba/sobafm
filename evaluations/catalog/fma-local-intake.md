@@ -119,7 +119,11 @@ Ctrl-C or SIGTERM requests deletion of the exact owned destination. Expiry does
 the same. The first cancellation/expiry starts one three-second cleanup deadline;
 repeat requests cannot restart it. A blocked read/write/close or failed deletion
 keeps its original thread, file descriptors and capacity debt until actual
-settlement. Passing the deadline permanently fails that timing verdict even if
+settlement. Closing the files is insufficient: a caller must observe the worker's
+actual termination before successful cleanup timing can be reported. The release
+timestamp is that external observation; a late first observation conservatively
+fails timing even if the worker may have exited sooner. Passing the deadline
+permanently fails that timing verdict even if
 later cleanup succeeds. The owner retries settlement of the same resources;
 it never retries acquisition. Do not kill it merely because cleanup is late.
 
@@ -141,7 +145,9 @@ recopies bytes or approves a pending copy. An interrupted owner cannot prove its
 old cleanup timing; recovery preserves any recorded cleanup start and reports a
 failed timing verdict. If no cleanup start was persisted, the old deadline is
 explicitly unknown (`null`), with no fresh recovery allowance. Missing,
-inconsistent or substituted ownership evidence
+invalid, unbound or substituted ownership evidence starts and stays in this
+unknown/failed state; closing the current attempt's handles cannot establish the
+old slot's timing. Inconsistent ownership evidence
 leaves debt and blocks reuse. An uncertain temporary state or moved payload needs
 scoped reconciliation; no path-only deletion or blanket cleanup is attempted.
 

@@ -159,6 +159,10 @@ def test_pending_copy_has_no_admission_and_preserves_original(
     assert owner.report()["cleanup_deadline_met"] is True
     assert not (case.slot / "payload").exists()
     assert case.source.read_bytes() == case.data
+    observed_release = owner.report()["released_at"]
+    case.clock.advance(4)
+    assert owner.report()["released_at"] == observed_release
+    assert owner.report()["cleanup_deadline_met"] is True
 
 
 @pytest.mark.parametrize(
@@ -525,6 +529,14 @@ def test_recovery_inconsistent_ownership_never_authorizes_deletion(
     assert owner.report()["cleanup_debt"] is True
     assert owner.report()["released"] is False
     assert owner.report()["unresolved_previous_slot"] is True
+    assert owner.report()["cleanup_deadline"] is None
+    assert owner.report()["cleanup_deadline_known"] is False
+    assert owner.report()["cleanup_deadline_met"] is False
+    assert owner.cleanup_started_utc is None
+    assert owner.cleanup_missed is True
+    case.clock.advance(4)
+    owner.cancel()
+    assert owner.report()["cleanup_deadline"] is None
     assert (case.slot / "payload").read_bytes() == case.data
     assert case.source.read_bytes() == case.data
 
@@ -715,6 +727,7 @@ def test_recovery_preserves_recorded_first_cleanup_start(
     assert owner.join(5)
     assert owner.cleanup_started_utc == state["cleanup_started_utc"]
     assert owner.report()["cleanup_deadline"] == 98
+    assert owner.report()["cleanup_deadline_known"] is True
     assert owner.report()["cleanup_deadline_met"] is False
     assert owner.report()["released"] is True
 
@@ -733,4 +746,56 @@ def test_released_slot_cannot_be_reused_by_retry(
     assert retry.failure == "slot_not_empty"
     assert (case.slot / "state.json").read_bytes() == state
     assert not (case.slot / "payload").exists()
+    assert case.source.read_bytes() == case.data
+
+
+@pytest.mark.parametrize("observe_late_worker", [True, False])
+def test_cleanup_waits_for_actual_worker_exit_after_io_settles(
+    case: Case,
+    monkeypatch: pytest.MonkeyPatch,
+    owners: list[intake.LocalIntake],
+    observe_late_worker: bool,
+) -> None:
+    owner = case.owner()
+    owners.append(owner)
+    io_settled, allow_exit = threading.Event(), threading.Event()
+    release = owner._release  # pyright: ignore[reportPrivateUsage]
+
+    def hold_after_io() -> None:
+        release()
+        io_settled.set()
+        assert allow_exit.wait(5), "test did not release its post-I/O worker barrier"
+
+    monkeypatch.setattr(owner, "_release", hold_after_io)
+    owner.start(execute=True)
+    try:
+        assert owner.pending.wait(5)
+        owner.cancel()
+        assert io_settled.wait(5)
+        assert owner.fds == {}
+        assert not (case.slot / "payload").exists()
+        assert owner.cleanup_deadline == 103
+        case.clock.advance(4)
+        if observe_late_worker:
+            assert not owner.join()
+            interim = owner.report()
+            assert interim["worker_alive"] is True
+            assert interim["cleanup_debt"] is True
+            assert interim["released"] is False
+            assert interim["released_at"] is None
+            assert interim["cleanup_deadline_met"] is False
+            owner.cancel()
+            assert owner.cleanup_deadline == 103
+    finally:
+        allow_exit.set()
+    assert owner.join(5)
+    final = owner.report()
+    assert final["worker_alive"] is False
+    assert final["released"] is True
+    assert final["released_at"] == 104
+    assert final["cleanup_deadline"] == 103
+    assert final["cleanup_deadline_met"] is False
+    case.clock.advance(4)
+    assert owner.report()["cleanup_deadline_met"] is False
+    assert owner.report()["released_at"] == 104
     assert case.source.read_bytes() == case.data

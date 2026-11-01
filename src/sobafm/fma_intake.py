@@ -275,9 +275,10 @@ class LocalIntake:
         self.phase = "not_started"
         self.failure: str | None = None
         self.cleanup_deadline: float | None = None
-        self.cleanup_deadline_unknown = False
+        # Recovery starts with an unknown old clock, including failed preflight.
+        self.cleanup_deadline_unknown = recovery
         self.cleanup_started_utc: str | None = None
-        self.cleanup_missed = False
+        self.cleanup_missed = recovery
         self.released_at: float | None = None
         self.io: str | None = None
         self.copied_bytes = 0
@@ -327,17 +328,36 @@ class LocalIntake:
         if self.thread is not None:
             self.thread.join(timeout)
         self._expire()
+        alive = self._observe_worker_exit()
+        return self.thread is not None and not alive
+
+    def _observe_worker_exit(self) -> bool:
+        """Only an external observation can establish the thread's actual release."""
         with self.lock:
+            alive = self.thread is not None and self.thread.is_alive()
+            observed_at = self.monotonic()
+            if (
+                self.thread is not None
+                and not alive
+                and not self.fds
+                and not self.payload_retained
+                and not self.unresolved_slot
+                and self.phase in ("released", "rejected")
+                and self.released_at is None
+            ):
+                self.released_at = observed_at
             if self.cleanup_deadline is not None and self.released_at is None:
-                self.cleanup_missed |= self.monotonic() > self.cleanup_deadline
-        return self.thread is not None and not self.thread.is_alive()
+                self.cleanup_missed |= observed_at > self.cleanup_deadline
+            elif self.cleanup_deadline is not None and self.released_at is not None:
+                self.cleanup_missed |= self.released_at > self.cleanup_deadline
+            return alive
 
     def report(self) -> dict[str, object]:
         self._expire()
         with self.lock:
-            alive = self.thread is not None and self.thread.is_alive()
+            alive = self._observe_worker_exit()
             released = (
-                self.thread is not None
+                self.released_at is not None
                 and not alive
                 and not self.fds
                 and not self.payload_retained
@@ -696,22 +716,19 @@ class LocalIntake:
                 raise IntakeError("released_state_has_payload_debt")
         self.payload_retained = state["phase"] != "released"
         self.owns_slot = True
-        self._close("state_read")
         # An interrupted owner cannot retroactively prove its original cleanup deadline.
-        self.cleanup_missed = True
-        if original is None:
-            # The old reader may have been cancelled before it could persist state.
-            # An unknown old deadline is debt, never a fresh recovery allowance.
-            self.cleanup_deadline_unknown = True
-            self.cleanup_deadline = None
-            self.cleanup_started_utc = None
-        self.cancel("recovered_interrupted_owner")
         if original is not None:
-            self.cleanup_started_utc = _timestamp(original)
-            self.cleanup_deadline = (
-                self.monotonic()
-                + (original + timedelta(seconds=CLEANUP_SECONDS) - self.utc_now()).total_seconds()
-            )
+            with self.lock:
+                self.cleanup_started_utc = _timestamp(original)
+                self.cleanup_deadline = (
+                    self.monotonic()
+                    + (
+                        original + timedelta(seconds=CLEANUP_SECONDS) - self.utc_now()
+                    ).total_seconds()
+                )
+                self.cleanup_deadline_unknown = False
+        self.cancel("recovered_interrupted_owner")
+        self._close("state_read")
 
     def _copy(self) -> None:
         digest = hashlib.sha256()
@@ -818,7 +835,6 @@ class LocalIntake:
                 self._close("lock")
                 self._close("directory")
                 settled_at = self.monotonic()
-                self.released_at = None if self.unresolved_slot else settled_at
                 if self.cleanup_deadline is not None:
                     self.cleanup_missed |= settled_at > self.cleanup_deadline
                 self.phase = "released" if self.owns_slot else "rejected"
