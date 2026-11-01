@@ -12,6 +12,7 @@ import signal
 import stat
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 from .decoder_startup import (
@@ -24,6 +25,7 @@ from .decoder_startup import (
     group_members,
     verify_child,
 )
+from .mp3_vbr_contract import MonoPcmCheck
 from .probe import COPY_BYTES, PCM_BYTES, ProbeError, counters, emit, observe, read_text
 
 FIXTURE = Path("/fixtures/owned-cbr-48000-stereo-120s.mp3")
@@ -97,6 +99,43 @@ MAPPED_ELF = {
 SPECIAL_MAPS = {"[vdso]", "[vvar]", "[vvar_vclock]", "[vsyscall]"}
 
 
+@dataclass(frozen=True)
+class DecodeFixture:
+    path: Path
+    file_bytes: int
+    sha256: str
+    pcm_bytes: int
+    output_copy_offset: int
+    format_line: str
+    mono_output: bool = False
+
+
+def cbr_fixture() -> DecodeFixture:
+    return DecodeFixture(
+        FIXTURE,
+        FIXTURE_BYTES,
+        FIXTURE_SHA256,
+        PCM_OUTPUT_BYTES,
+        OUTPUT_COPY_OFFSET,
+        "MPEG 1.0 L III vbr 48000 j-s",
+    )
+
+
+def validate_fixture_partitions(fixture: DecodeFixture) -> None:
+    output_end = fixture.output_copy_offset + CHUNK_BYTES
+    scratch_start = COPY_BYTES - 4 if fixture.mono_output else COPY_BYTES
+    if (
+        not 0 < fixture.file_bytes <= fixture.output_copy_offset
+        or output_end > scratch_start
+        or not re.fullmatch(r"[0-9a-f]{64}", fixture.sha256)
+        or fixture.pcm_bytes < READY_BYTES
+        or fixture.pcm_bytes % 4
+        or not 0 < READY_BYTES <= BANK_BYTES
+        or 2 * BANK_BYTES != PCM_BYTES
+    ):
+        raise ProbeError("fixed payload partitions or complete count exceed their reservations")
+
+
 def verify_core_limit(text: str) -> None:
     rows = [
         line[len("Max core file size") :].split()
@@ -166,7 +205,7 @@ def parse_maps(text: str) -> dict[str, object]:
     }
 
 
-def validate_diagnostics(data: bytes) -> None:
+def validate_diagnostics(data: bytes, format_line: str = "MPEG 1.0 L III vbr 48000 j-s") -> None:
     if not data.startswith(BANNER):
         raise ProbeError("native banner differs")
     counts = {"directory": 0, "encoding": 0, "playing": 0, "format": 0, "complete": 0}
@@ -179,9 +218,8 @@ def validate_diagnostics(data: bytes) -> None:
             counts["encoding"] += 1
         elif line == "Playing MPEG stream 1 of 1: - ...":
             counts["playing"] += 1
-        # This fixture's Info extension has method 0, which mpg123 labels VBR.
-        # Its independently inspected frame headers remain constant 128 kbit/s.
-        elif line == "MPEG 1.0 L III vbr 48000 j-s":
+        # Match the fixed source format, independently of forced output conversion.
+        elif line == format_line:
             counts["format"] += 1
         elif re.fullmatch(r"\[[0-9]+:[0-5][0-9]\] Decoding of - finished\.", line):
             counts["complete"] += 1
@@ -309,33 +347,29 @@ def stopped_native_gate(
     }
 
 
-def load_fixture_snapshot(copy_view: memoryview) -> None:
+def load_fixture_snapshot(copy_view: memoryview, fixture: DecodeFixture | None = None) -> None:
     """Authenticate the complete owned compressed snapshot before admitting its first byte."""
+    fixture = fixture or cbr_fixture()
     accepted = 0
-    with FIXTURE.open("rb", buffering=0) as stream:
-        while accepted < FIXTURE_BYTES:
-            end = min(FIXTURE_BYTES, accepted + CHUNK_BYTES)
+    with fixture.path.open("rb", buffering=0) as stream:
+        while accepted < fixture.file_bytes:
+            end = min(fixture.file_bytes, accepted + CHUNK_BYTES)
             with copy_view[accepted:end] as part:
                 amount = stream.readinto(part)
             if amount is None or amount <= 0:
                 raise ProbeError("owned fixture ended before its authenticated length")
             accepted += amount
-        with copy_view[FIXTURE_BYTES : FIXTURE_BYTES + 1] as extra:
+        with copy_view[fixture.file_bytes : fixture.file_bytes + 1] as extra:
             if stream.readinto(extra) != 0:
                 raise ProbeError("owned fixture exceeds its authenticated length")
-    with copy_view[:FIXTURE_BYTES] as payload:
-        if hashlib.sha256(payload).hexdigest() != FIXTURE_SHA256:
+    with copy_view[: fixture.file_bytes] as payload:
+        if hashlib.sha256(payload).hexdigest() != fixture.sha256:
             raise ProbeError("owned compressed snapshot differs from generation receipt")
 
 
-def decode_fixture() -> dict[str, object]:
-    if (
-        not 0 < FIXTURE_BYTES <= OUTPUT_COPY_OFFSET
-        or OUTPUT_COPY_OFFSET + CHUNK_BYTES > COPY_BYTES
-        or not 0 < READY_BYTES <= BANK_BYTES
-        or 2 * BANK_BYTES != PCM_BYTES
-    ):
-        raise ProbeError("fixed payload partitions overlap or exceed their reservations")
+def decode_fixture(fixture: DecodeFixture | None = None) -> dict[str, object]:
+    fixture = fixture or cbr_fixture()
+    validate_fixture_partitions(fixture)
     if (
         os.sysconf("SC_PAGE_SIZE") != 4096
         or len(list(Path("/proc/self/task").iterdir())) != 1
@@ -346,16 +380,12 @@ def decode_fixture() -> dict[str, object]:
         raise ProbeError("core routing differs; no host setting will be changed")
     verify_native_files()
     before_events = counters(read_text(Path("/sys/fs/cgroup/memory.events")))
-    in_r, in_w = os.pipe()
-    out_r, out_w = os.pipe()
-    err_r, err_w = os.pipe()
-    ready_r, ready_w = os.pipe()
-    gate_r, gate_w = os.pipe()
-    fds = [in_r, in_w, out_r, out_w, err_r, err_w, ready_r, ready_w, gate_r, gate_w]
-    child: Child | None = None
+    fds: list[int] = []
+    child = Child(0)
     stderr = bytearray()
     buffers: list[bytearray] = []
     views: list[memoryview] = []
+    mono_check: MonoPcmCheck | None = None
     pcm_hash = hashlib.sha256()
     pcm_digest = ""
     input_count = output_count = 0
@@ -374,11 +404,21 @@ def decode_fixture() -> dict[str, object]:
     prepare_deadline = started + PREPARE_SECONDS
     workload_deadline = started + WORKLOAD_SECONDS
     try:
+        in_r, in_w = os.pipe()
+        fds.extend((in_r, in_w))
+        out_r, out_w = os.pipe()
+        fds.extend((out_r, out_w))
+        err_r, err_w = os.pipe()
+        fds.extend((err_r, err_w))
+        ready_r, ready_w = os.pipe()
+        fds.extend((ready_r, ready_w))
+        gate_r, gate_w = os.pipe()
+        fds.extend((gate_r, gate_w))
         pid = os.fork()
         if pid == 0:
             decoder_child(in_r, out_w, err_w, ready_w, gate_r, fds)
             os._exit(125)
-        child = Child(pid)
+        child.pid = pid
         for fd in (in_r, out_w, err_w, ready_w, gate_r):
             os.close(fd)
             fds.remove(fd)
@@ -416,10 +456,16 @@ def decode_fixture() -> dict[str, object]:
         views = [memoryview(buffer) for buffer in buffers]
         bank_view, _, copy_view = views
         phase = "fixture_snapshot"
-        load_fixture_snapshot(copy_view)
-        input_view = copy_view[:FIXTURE_BYTES].toreadonly()
-        output_view = copy_view[OUTPUT_COPY_OFFSET : OUTPUT_COPY_OFFSET + CHUNK_BYTES]
+        load_fixture_snapshot(copy_view, fixture)
+        input_view = copy_view[: fixture.file_bytes].toreadonly()
+        output_view = copy_view[
+            fixture.output_copy_offset : fixture.output_copy_offset + CHUNK_BYTES
+        ]
         views.extend([input_view, output_view])
+        if fixture.mono_output:
+            carry = copy_view[COPY_BYTES - 4 : COPY_BYTES]
+            views.append(carry)
+            mono_check = MonoPcmCheck(carry)
         if time.monotonic() >= prepare_deadline:
             raise ProbeError("fixture preparation exceeded readiness deadline")
         if read_start_identity(pid) != ("T", start_ticks) or native_processes() != {pid}:
@@ -427,8 +473,10 @@ def decode_fixture() -> dict[str, object]:
         emit(
             {
                 "event": "decode_input_gate",
-                "fixture_bytes": FIXTURE_BYTES,
-                "fixture_sha256": FIXTURE_SHA256,
+                "fixture_bytes": fixture.file_bytes,
+                "fixture_sha256": fixture.sha256,
+                "output_copy_offset": fixture.output_copy_offset,
+                "mono_carry_reserved_bytes": 4 if fixture.mono_output else 0,
                 "pcm_bank_capacity": PCM_BYTES,
                 "copy_capacity": COPY_BYTES,
                 "native_address_spaces": 1,
@@ -456,7 +504,7 @@ def decode_fixture() -> dict[str, object]:
                 )
             if native_processes() - {pid}:
                 raise ProbeError("unexpected native address space; retain its cleanup debt")
-            if child.exit_code is not None and input_count != FIXTURE_BYTES:
+            if child.exit_code is not None and input_count != fixture.file_bytes:
                 raise ProbeError("decoder exited before the authenticated input completed")
             readable, writable, _ = select.select(
                 ([out_r] if output_open else []) + ([err_r] if error_open else []),
@@ -473,16 +521,18 @@ def decode_fixture() -> dict[str, object]:
                 if len(part) > room:
                     raise ProbeError("decoder diagnostics exceeded reserved capacity")
             if out_r in readable:
-                limit = min(CHUNK_BYTES, PCM_OUTPUT_BYTES - output_count + 1)
+                limit = min(CHUNK_BYTES, fixture.pcm_bytes - output_count + 1)
                 with output_view[:limit] as destination:
                     amount = os.readv(out_r, [destination])
                 if amount == 0:
                     output_open = False
                 else:
                     output_count += amount
-                    if output_count > PCM_OUTPUT_BYTES:
+                    if output_count > fixture.pcm_bytes:
                         raise ProbeError("decoded PCM exceeds the known fixture count")
                     with output_view[:amount] as payload:
+                        if mono_check is not None:
+                            mono_check.feed(payload)
                         pcm_hash.update(payload)
                         if ready_seconds is None:
                             if bank_filled + amount > BANK_BYTES:
@@ -500,7 +550,7 @@ def decode_fixture() -> dict[str, object]:
                             with bank_view[:amount] as bank_destination:
                                 bank_destination[:] = payload
             if in_w in writable:
-                end = min(FIXTURE_BYTES, input_count + CHUNK_BYTES)
+                end = min(fixture.file_bytes, input_count + CHUNK_BYTES)
                 with input_view[input_count:end] as payload:
                     try:
                         amount = os.write(in_w, payload)
@@ -509,7 +559,7 @@ def decode_fixture() -> dict[str, object]:
                 if amount <= 0:
                     raise ProbeError("decoder input made no progress")
                 input_count += amount
-                if input_count == FIXTURE_BYTES:
+                if input_count == fixture.file_bytes:
                     os.close(in_w)
                     fds.remove(in_w)
                     input_open = False
@@ -518,25 +568,34 @@ def decode_fixture() -> dict[str, object]:
         exec_failed = os.read(ready_r, 2) != b""
         if child.exit_code != 0 or exec_failed:
             raise ProbeError("decoder or exec did not finish successfully")
-        if output_count != PCM_OUTPUT_BYTES or output_count % 4:
+        if output_count != fixture.pcm_bytes or output_count % 4:
             raise ProbeError("decoded PCM differs from the known complete fixture count")
-        validate_diagnostics(bytes(stderr))
+        if mono_check is not None:
+            mono_check.finish(fixture.pcm_bytes // 4)
+        validate_diagnostics(bytes(stderr), fixture.format_line)
         if time.monotonic() > workload_deadline:
             raise ProbeError("completion evidence arrived after the workload deadline")
     except (OSError, ProbeError, ValueError) as error:
         failure = str(error)
     finally:
         cleanup_deadline = time.monotonic() + CLEANUP_SECONDS
-        for fd in fds:
-            with suppress(OSError):
+        for fd in tuple(fds):
+            try:
                 os.close(fd)
-        if child is not None:
+                fds.remove(fd)
+            except OSError as error:
+                failure = failure or f"descriptor release failed: {error}"
+        debt = bool(fds)
+        cleanup_met = not debt
+        if child.pid > 0:
             try:
                 release = cleanup(child, cleanup_deadline)
                 retained = sorted(set(release.retained_pids) | native_processes())
-                debt = child.exit_code is None or bool(retained)
+                debt = child.exit_code is None or bool(retained) or bool(fds)
                 cleanup_met = release.deadline_met and not debt
             except (OSError, ValueError, ProbeError) as error:
+                debt = True
+                cleanup_met = False
                 failure = failure or f"cleanup observation failed: {error}"
         for view in reversed(views):
             view.release()
@@ -564,8 +623,9 @@ def decode_fixture() -> dict[str, object]:
         and cleanup_met
         and ready_seconds is not None
         and ready_seconds <= PREPARE_SECONDS
-        and input_count == FIXTURE_BYTES
-        and output_count == PCM_OUTPUT_BYTES
+        and input_count == fixture.file_bytes
+        and output_count == fixture.pcm_bytes
+        and (mono_check is None or mono_check.finished and not mono_check.failed)
         and events.get("oom") == 0
         and events.get("oom_kill") == 0
         and swap == "0"
@@ -577,7 +637,7 @@ def decode_fixture() -> dict[str, object]:
         "phase": phase,
         "argv": list(ARGV),
         "decoder_sha256": MAPPED_ELF[ARGV[0]],
-        "fixture_sha256": FIXTURE_SHA256,
+        "fixture_sha256": fixture.sha256,
         "fixture_bytes_accepted": input_count,
         "exec_gate_released": exec_released,
         "native_input_gate_released": input_released,
@@ -585,13 +645,18 @@ def decode_fixture() -> dict[str, object]:
         "native_gate": native_gate,
         "pcm_output_bytes": output_count,
         "pcm_output_sha256": pcm_digest,
+        "mono_frames_checked": mono_check.frames if mono_check is not None else None,
+        "mono_output_verified": mono_check.finished and not mono_check.failed
+        if mono_check is not None
+        else None,
         "ready_seconds": ready_seconds,
         "ready_buffered_bytes": ready_buffered,
         "pcm_bank_capacity": PCM_BYTES,
         "copy_capacity": COPY_BYTES,
-        "exit_code": child.exit_code if child is not None else None,
-        "leader_reaped": child is not None and child.exit_code is not None,
+        "exit_code": child.exit_code,
+        "leader_reaped": child.pid > 0 and child.exit_code is not None,
         "retained_pids": retained,
+        "retained_fds": list(fds),
         "cleanup_debt": debt,
         "cleanup_deadline_met": cleanup_met,
         "parent_payload_views_released": not views and not buffers,
