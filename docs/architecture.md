@@ -24,6 +24,15 @@ The separate Linux-only `fma_intake.py` evaluation owns one explicitly supplied 
 
 ## Decisions to establish first
 
+The opt-in [Night Owl validation evaluation](../evaluations/fma_validation/README.md)
+connects that one-copy intake to sequential contained Mutagen inspection and a
+fresh mpg123 streaming runner under maintained init. A closed source/image/input/
+expiry packet and finite external Docker controller retain process, I/O, payload
+and volume debt through actual release. Synthetic checks exercise this source;
+fresh topology fit, native terminal-filter qualification and actual recording
+validation remain separate pending execution gates. This adds no playback service
+or catalog admission and does not alter the accepted resource ADR.
+
 - Source-specific acquisition/storage implementations for the accepted three-source pool, with complete recording credits and access evidence.
 - The simplest viable non-root Docker resource model under the approved capacity definition.
 - Supported dependencies and decoder distribution without a bespoke supply system by default.

@@ -63,3 +63,11 @@ Build evidence in stages:
 5. A clean-machine walkthrough using the actual release image.
 
 A pass at one stage does not replace another. Bind evidence to the actual commit, image and native target. Retain failures and limitations alongside successes and reuse valid unchanged checks.
+
+The [#44 evaluation](../evaluations/fma_validation/README.md) makes those boundaries
+explicit for the supplied Night Owl candidate. Its source-only packet separates
+technical decode, source correspondence, embedded notice review and catalog
+admission. New init/owner/helper topology and terminal diagnostics require fresh
+native fit evidence before source intake; synthetic tests and unchanged native
+ELF hashes cannot substitute for it. Mutagen remains a pinned evaluation-only
+dependency with preserved GPL notices and explicit pre-parser allocation limits.

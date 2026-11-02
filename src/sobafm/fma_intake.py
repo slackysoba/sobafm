@@ -643,8 +643,22 @@ class LocalIntake:
         self.thread = threading.Thread(target=self._run, name="fma-local-intake", daemon=False)
         self.thread.start()
 
-    def cancel(self, reason: str = "cancelled") -> None:
+    def cancel(self, reason: str = "cancelled", *, started_at: datetime | None = None) -> None:
         with self.lock:
+            if started_at is not None:
+                now, mono = self.utc_now(), self.monotonic()
+                if started_at.tzinfo != UTC or started_at > now:
+                    raise IntakeError("invalid_original_cleanup_time")
+                original = min(started_at, _utc(self.request.expires_at))
+                deadline = mono + (original - now).total_seconds() + CLEANUP_SECONDS
+                # A trusted enclosing evaluation may convey an earlier failure
+                # from its retained helper. It can only tighten this obligation;
+                # unknown recovery timing can never be repaired by a new clock.
+                if not self.cleanup_deadline_unknown and (
+                    self.cleanup_deadline is None or deadline < self.cleanup_deadline
+                ):
+                    self.cleanup_deadline = deadline
+                    self.cleanup_started_utc = _timestamp(original)
             if self.cleanup_deadline is None and not self.cleanup_deadline_unknown:
                 now, mono = self.utc_now(), self.monotonic()
                 expires = _utc(self.request.expires_at)

@@ -23,6 +23,30 @@ from sobafm.catalog import Catalog, parse_catalog
 CATALOG_PATH = Path(__file__).parents[1] / "evaluations/catalog/fma-night-owl-catalog.json"
 
 
+def test_enclosing_case_can_only_tighten_original_cleanup_clock(case: Case) -> None:
+    owner = case.owner()
+    original = case.clock.utc - timedelta(seconds=1)
+    owner.cancel(started_at=original)
+    assert owner.cleanup_deadline == case.clock.mono + 2
+    case.clock.advance(0.5)
+    owner.cancel(started_at=case.clock.utc)
+    assert owner.cleanup_deadline == case.clock.mono + 1.5
+    owner.cancel(started_at=original - timedelta(seconds=1))
+    assert owner.cleanup_deadline == case.clock.mono + 0.5
+
+
+def test_invalid_enclosing_clock_does_not_change_intake_state(case: Case) -> None:
+    owner = case.owner()
+    for value in (case.clock.utc + timedelta(seconds=1), case.clock.utc.replace(tzinfo=None)):
+        with pytest.raises(intake.IntakeError, match="invalid_original_cleanup_time"):
+            owner.cancel(started_at=value)
+        assert not owner.stop.is_set() and owner.cleanup_deadline is None
+    recovered = case.owner(recovery=True)
+    recovered.cancel(started_at=case.clock.utc - timedelta(seconds=1))
+    assert recovered.cleanup_deadline_unknown and recovered.cleanup_deadline is None
+    assert recovered.cleanup_missed
+
+
 @dataclass
 class Clock:
     utc: datetime
