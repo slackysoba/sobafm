@@ -91,7 +91,7 @@ Primary pinned source supporting this choice is mpg123 1.33.7
 [mpg123.c](https://scm.orgis.org/mpg123/tags/1.33.7/src/mpg123.c),
 [metaprint.c](https://scm.orgis.org/mpg123/tags/1.33.7/src/metaprint.c),
 [local.c](https://scm.orgis.org/mpg123/tags/1.33.7/src/local.c),
-[term_posix.c](https://scm.orgis.org/mpg123/tags/1.33.7/src/compat/term_posix.c) and
+[term_posix.c](https://scm.orgis.org/mpg123/tags/1.33.7/src/term_posix.c) and
 [parse.c](https://scm.orgis.org/mpg123/tags/1.33.7/src/libmpg123/parse.c).
 Python-only PTY tests establish channel behavior; they do not qualify the native
 terminal filter. Frozen synthetic native tag/encoding/ordering/cancellation cases
