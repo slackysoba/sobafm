@@ -21,6 +21,7 @@ from evaluations.fma_validation.observation import (
     ObservationWorkspace,
     ProcessPin,
 )
+from evaluations.linux_resource import owned_mp3_cancel as cancellation
 from evaluations.linux_resource.owned_mp3_cancel import CancelRun
 from evaluations.linux_resource.probe import ProbeError
 
@@ -137,9 +138,19 @@ class SyntheticObservation(ObservationWorkspace):
         self._run(action)
 
 
-def workspace(chunk: int = 2048) -> tuple[SyntheticObservation, Streams, Bridge, list[float]]:
-    now = [100.0]
-    clock = CaseClock(200, 300, wall=lambda: now[0], monotonic=lambda: now[0])
+@dataclass
+class MonotonicClock:
+    now: list[float]
+
+    def monotonic(self) -> float:
+        return self.now[0]
+
+
+def workspace(
+    chunk: int = 2048, *, uptime: float = 100.0
+) -> tuple[SyntheticObservation, Streams, Bridge, list[float]]:
+    now = [uptime]
+    clock = CaseClock(uptime + 100, uptime + 200, wall=lambda: now[0], monotonic=lambda: now[0])
     streams, bridge = Streams(chunk), Bridge()
     return SyntheticObservation(clock, bridge, streams), streams, bridge, now
 
@@ -476,13 +487,18 @@ def test_namespace_unknown_is_not_empty_and_group_observations_are_bounded() -> 
     assert streams.opened == streams.closed
 
 
+@pytest.mark.parametrize("uptime", [0.25, 500.0])
 def test_inherited_signal_and_kill_check_use_both_observation_hooks(
+    uptime: float,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    now = [uptime]
+    # Replace only this evaluation module's binding, not the shared time module.
+    monkeypatch.setattr(cancellation, "time", MonotonicClock(now))
     owner = CancelRun("feed")
     owner.child.pid = 999
     owner.child.exit_code = 0
-    owner.cancel.request(0.0)
+    owner.cancel.request(now[0])
     observed: list[int] = []
 
     def members(pid: int) -> list[int]:
@@ -496,13 +512,29 @@ def test_inherited_signal_and_kill_check_use_both_observation_hooks(
     monkeypatch.setattr("evaluations.linux_resource.owned_mp3_cancel.group_members", forbidden)
     owner.signal_group(signal.SIGTERM)
     owner.manage_cancel()
+    assert observed == [999, 999] and owner.kill_sent is None
+    now[0] = uptime + 0.875
+    owner.manage_cancel()
+    assert observed == [999, 999] and owner.kill_sent is None
+    now[0] = uptime + 1
+    owner.manage_cancel()
     assert observed == [999, 999, 999]
+    assert owner.kill_sent == uptime + 1
+    now[0] = uptime + 2
+    owner.request("repeat")
+    owner.manage_cancel()
+    assert observed == [999, 999, 999]
+    assert owner.cancel.started == uptime and owner.cancel.deadline == uptime + 3
 
 
+@pytest.mark.parametrize("uptime", [0.25, 500.0])
 def test_stream_run_routes_live_signal_and_release_through_retained_workspace(
+    uptime: float,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    observation, streams, _, _ = workspace()
+    observation, streams, _, now = workspace(uptime=uptime)
+    # The inherited cancellation schedule and CaseClock share this same source.
+    monkeypatch.setattr(cancellation, "time", MonotonicClock(now))
     pin = ProcessPin(3, 30, 2, "/synthetic/python", 3, 4, 1000, "/")
 
     def capture(_cls: type[ProcessPin], _pid: int, actual: ObservationWorkspace) -> ProcessPin:
@@ -538,8 +570,20 @@ def test_stream_run_routes_live_signal_and_release_through_retained_workspace(
     run.request("synthetic_cancel")
     run.child.exit_code = 0
     run.manage_cancel()
+    assert signals == [signal.SIGTERM, signal.SIGCONT] * 2 and run.kill_sent is None
+    now[0] = uptime + 0.875
+    run.manage_cancel()
+    assert signals == [signal.SIGTERM, signal.SIGCONT] * 2 and run.kill_sent is None
+    now[0] = uptime + 1
+    run.manage_cancel()
     assert signals[-1] == signal.SIGKILL
-    assert observation.clock.cleanup_start_utc == 100 and run.cancel.deadline == 103
+    assert len(signals) == 5 and run.kill_sent == uptime + 1
+    now[0] = uptime + 2
+    run.request("repeat")
+    run.manage_cancel()
+    assert len(signals) == 5
+    assert observation.clock.cleanup_start_utc == uptime and run.cancel.deadline == uptime + 3
+    assert observation.clock.cleanup_monotonic == uptime + 3
     observation.fd = 20
     observation.uncertain_close = True
     assert not run.release_if_done()
