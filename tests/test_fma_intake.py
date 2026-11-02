@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -83,7 +83,9 @@ def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, catalog: Catalog) -> C
         intake.SOURCE_URL,
         intake.METADATA_DIGEST,
         intake.CREDIT_SNAPSHOT,
-        clock.utc.isoformat().replace("+00:00", "Z"),
+        intake.Acquisition(
+            clock.utc.isoformat().replace("+00:00", "Z"), "exact", "Synthetic acquisition evidence."
+        ),
         (clock.utc + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
         ("Synthetic download-time notice for offline regression only.",),
         identity,
@@ -95,7 +97,7 @@ def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, catalog: Catalog) -> C
 
 
 def manifest(request: intake.IntakeRequest) -> bytes:
-    return json.dumps({"schema": "sobafm-fma-intake-1", **asdict(request)}).encode()
+    return json.dumps(request.manifest()).encode()
 
 
 @pytest.fixture
@@ -171,7 +173,7 @@ def test_pending_copy_has_no_admission_and_preserves_original(
         ("source_url", "https://freemusicarchive.org/another-recording/"),
         ("metadata_digest", "0" * 64),
         ("credit_snapshot", "unknown"),
-        ("acquired_at", "2026-11-01T01:00:00-08:00"),
+        ("acquisition", "2026-11-01T01:00:00-08:00"),
         ("expires_at", "not a time"),
         ("download_notices", []),
         ("download_notices", [" notice"]),
@@ -184,7 +186,7 @@ def test_request_rejection_precedes_destination_mutation(
     field: str,
     value: object,
 ) -> None:
-    data: dict[str, object] = {"schema": "sobafm-fma-intake-1", **asdict(case.request)}
+    data = case.request.manifest()
     data[field] = value
     with pytest.raises(intake.IntakeError):
         intake.parse_request(json.dumps(data).encode(), catalog, case.clock.now())
@@ -206,7 +208,10 @@ def test_invalid_window_size_or_hash_never_creates_destination(
     elif kind == "hash":
         request = replace(request, file=replace(request.file, sha256="0" * 64))
     elif kind == "future":
-        request = replace(request, acquired_at=request.expires_at)
+        request = replace(
+            request,
+            acquisition=replace(request.acquisition, retention_anchor_utc=request.expires_at),
+        )
     elif kind == "eight_days":
         request = replace(
             request,
@@ -486,7 +491,7 @@ def test_process_interruption_recovery_never_recopies_or_renews_expiry(
     recovered = owner.report()
     assert recovered["owner_id"] == receipt["owner_id"]
     assert recovered["expires_at"] == receipt["expires_at"]
-    assert recovered["acquired_at"] == receipt["acquired_at"]
+    assert recovered["acquisition"] == receipt["acquisition"]
     assert recovered["cleanup_deadline"] is None
     assert recovered["cleanup_deadline_known"] is False
     assert recovered["cleanup_deadline_met"] is False
