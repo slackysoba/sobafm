@@ -36,6 +36,7 @@ class Command:
         self.diagnostic = bytearray()
         self.retained: set[int] = set()
         self.uncertain: set[int] = set()
+        self.descriptors: dict[str, int] = {}
         self.stopping: float | None = None
         self.worker = threading.Thread(
             target=self._launch, name="owned-docker-command", daemon=False
@@ -52,9 +53,11 @@ class Command:
                 bufsize=0,
                 start_new_session=True,
             )
-            for stream in (self.process.stdout, self.process.stderr):
+            for name, stream in (("stdout", self.process.stdout), ("stderr", self.process.stderr)):
                 assert stream is not None
-                self.retained.add(stream.fileno())
+                fd = stream.fileno()
+                self.descriptors[name] = fd
+                self.retained.add(fd)
             for stream in (self.process.stdout, self.process.stderr):
                 assert stream is not None
                 os.set_blocking(stream.fileno(), False)
@@ -78,11 +81,17 @@ class Command:
                 process.kill()
             else:
                 process.terminate()
-        for stream, target in ((process.stdout, self.output), (process.stderr, self.diagnostic)):
+        for name, stream, target in (
+            ("stdout", process.stdout, self.output),
+            ("stderr", process.stderr, self.diagnostic),
+        ):
             assert stream is not None
-            if stream.closed or stream.fileno() not in self.retained:
+            fd = self.descriptors.get(name)
+            if fd is None or fd not in self.retained:
                 continue
-            fd = stream.fileno()
+            # close() can release its fd, mark FileIO closed, and still raise.
+            # Reconcile the original number without consulting closed/fileno().
+            # A live/reused descriptor is never closed or credited by inference.
             if fd in self.uncertain:
                 try:
                     os.fstat(fd)
@@ -90,6 +99,10 @@ class Command:
                     if error.errno == errno.EBADF:
                         self.uncertain.remove(fd)
                         self.retained.remove(fd)
+                continue
+            if stream.closed:
+                self.uncertain.add(fd)
+                self.error = "management_close_debt"
                 continue
             if not select.select([fd], [], [], 0)[0]:
                 continue

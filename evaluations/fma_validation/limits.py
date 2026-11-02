@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 from evaluations.linux_resource.probe import COPY_BYTES, GROUP_BYTES, PCM_BYTES, ProbeError
 
@@ -42,10 +43,78 @@ assert GROUP_BYTES + PCM_BYTES + COPY_BYTES == 98_979_840
 
 
 def encode_report(value: object, limit: int = REPORT_BYTES) -> bytes:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-    if len(encoded) > limit:
-        raise ProbeError("report_capacity_exceeded")
-    return encoded
+    json_size(value, limit)
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("ascii")
+
+
+def json_size(value: object, limit: int = REPORT_BYTES) -> int:
+    """Check canonical ASCII JSON before allocating any escaped string/chunk.
+
+    Only closed builtin JSON values are accepted. Depth, nodes, scalar integer
+    width and cumulative output are bounded, including rejected inputs. A JSON
+    iterencoder alone does not bound the size of its individual string chunks.
+    """
+    if not 0 <= limit <= REPORT_BYTES:
+        raise ProbeError("invalid_report_limit")
+    total = nodes = 0
+
+    def charge(amount: int) -> None:
+        nonlocal total
+        total += amount
+        if total > limit:
+            raise ProbeError("report_capacity_exceeded")
+
+    def string_size(text: str) -> None:
+        charge(2)
+        for char in text:
+            number = ord(char)
+            if char in '\\"\b\f\n\r\t':
+                charge(2)
+            elif 32 <= number <= 126:
+                charge(1)
+            else:
+                charge(6 if number <= 0xFFFF else 12)
+
+    def walk(item: object, depth: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if depth > 12 or nodes > 8192:
+            raise ProbeError("report_structure_limit")
+        if item is None:
+            charge(4)
+        elif type(item) is bool:
+            charge(4 if item else 5)
+        elif type(item) is str:
+            string_size(item)
+        elif type(item) is int:
+            if item.bit_length() > 128:
+                raise ProbeError("report_integer_limit")
+            charge(len(str(item)))
+        elif type(item) is float:
+            if not math.isfinite(item):
+                raise ProbeError("report_nonfinite_number")
+            charge(len(repr(item)))
+        elif type(item) in (list, tuple):
+            values = cast(list[object] | tuple[object, ...], item)
+            charge(2 + max(0, len(values) - 1))
+            for child in values:
+                walk(child, depth + 1)
+        elif type(item) is dict:
+            fields = cast(dict[object, object], item)
+            charge(2 + max(0, len(fields) - 1))
+            for key, child in fields.items():
+                if type(key) is not str:
+                    raise ProbeError("report_string_key_required")
+                string_size(key)
+                charge(1)
+                walk(child, depth + 1)
+        else:
+            raise ProbeError("unsupported_report_value")
+
+    walk(value, 0)
+    return total
 
 
 def digest(value: object) -> str:

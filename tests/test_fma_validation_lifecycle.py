@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import cast
+from typing import IO, cast
 
 import pytest
 
@@ -181,6 +181,50 @@ def test_blocked_close_does_not_block_timed_join_or_renew_cancel(
         worker.join(3)
         actual_close(read_fd)
     assert not worker.is_alive() and helper.join(0)
+
+
+def test_metadata_helper_reports_bounded_rejection_and_still_settles(
+    tmp_path: Path,
+    synthetic_pins: None,
+) -> None:
+    path = tmp_path / "unsupported-synthetic-version"
+    data = b"ID3\x04\0\0\0\0\0\0" + b"owned synthetic nonaudio"
+    path.write_bytes(data)
+    fd = os.open(path, os.O_RDONLY)
+    helper = OwnedHelper(clock(), "metadata")
+    try:
+        helper.launch(
+            [
+                sys.executable,
+                "-m",
+                "evaluations.fma_validation.metadata",
+                "--execute",
+                "--owned-fd",
+                str(fd),
+                "--bytes",
+                str(len(data)),
+            ],
+            (fd,),
+        )
+        helper.finish_input()
+        helper.admit()
+        end = time.monotonic() + 5
+        while not helper.join(0.01) and time.monotonic() < end:
+            pass
+        assert helper.join(0) and helper.process is not None
+        assert helper.process.returncode == 1
+        assert reports(bytes(helper.stdout)) == [
+            {
+                "schema": "sobafm-fma-metadata-rejection-1",
+                "reason": "unsupported_id3_version",
+                "credits_complete": False,
+            }
+        ]
+        assert helper.output_eof and helper.error_eof and not helper.fds
+        os.fstat(fd)
+    finally:
+        settle(helper)
+        os.close(fd)
 
 
 def test_cancellation_during_registered_launch_retains_actual_child(
@@ -371,3 +415,76 @@ def test_native_zero_exit_without_exact_input_eof_fails(
     finally:
         os.close(read_fd)
         os.close(write_fd)
+
+
+class UncertainClose:
+    def __init__(self, stream: IO[bytes], schedule: str) -> None:
+        self.stream, self.schedule = stream, schedule
+        self.calls = 0
+        self.reused: int | None = None
+
+    @property
+    def closed(self) -> bool:
+        return self.stream.closed
+
+    def fileno(self) -> int:
+        return self.stream.fileno()
+
+    def close(self) -> None:
+        self.calls += 1
+        fd = self.stream.fileno()
+        if self.schedule != "still_live":
+            self.stream.close()
+        if self.schedule == "reused":
+            replacement = os.open("/dev/null", os.O_RDONLY)
+            if replacement != fd:
+                os.dup2(replacement, fd)
+                os.close(replacement)
+            self.reused = fd
+        raise OSError(errno.EINTR, "owned synthetic uncertain close")
+
+
+@pytest.mark.parametrize("schedule", ["released", "still_live", "reused"])
+def test_controller_uncertain_close_reconciles_original_fd_without_retry_or_assumption(
+    schedule: str,
+) -> None:
+    command = Command([sys.executable, "-I", "-B", "-c", "pass"])
+    command.worker.join(3)
+    assert not command.worker.is_alive()
+    process = command.process
+    assert process is not None and process.stdout is not None
+    assert process.wait(timeout=3) == 0
+    original = process.stdout
+    fd = original.fileno()
+    wrapped = UncertainClose(original, schedule)
+    process.stdout = cast(IO[bytes], wrapped)
+    command.stop()
+    started = command.stopping
+    try:
+        command.pump()
+        assert fd in command.uncertain and fd in command.retained
+        assert command.error == "management_close_debt"
+        command.pump()
+        command.stop()
+        assert command.stopping == started and wrapped.calls == 1
+        if schedule == "released":
+            with pytest.raises(OSError) as error:
+                os.fstat(fd)
+            assert error.value.errno == errno.EBADF
+            assert command.settled()
+        else:
+            os.fstat(fd)
+            assert fd in command.uncertain and not command.settled()
+            for _ in range(5):
+                command.pump()
+            assert wrapped.calls == 1 and fd in command.retained
+    finally:
+        # The fixture releases only its known live backing/replacement. The
+        # production owner never retries an uncertain close on a numeric fd.
+        if not original.closed:
+            original.close()
+        if wrapped.reused is not None:
+            os.close(wrapped.reused)
+        command.pump()
+        assert command.settled()
+        assert command.error == "management_close_debt" and command.stopping == started

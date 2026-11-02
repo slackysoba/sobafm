@@ -264,6 +264,17 @@ class ValidationConsumer:
                     self.cancel()
                     raise ProbeError("metadata_deadline")
             rows = reports(bytes(helper.stdout))
+            if len(rows) == 1 and rows[0].get("schema") == "sobafm-fma-metadata-rejection-1":
+                rejection = rows[0]
+                reason = rejection.get("reason")
+                if (
+                    set(rejection) == {"schema", "reason", "credits_complete"}
+                    and rejection["credits_complete"] is False
+                    and isinstance(reason, str)
+                    and re.fullmatch("[a-z_]{1,80}", reason)
+                ):
+                    self.metadata = rejection
+                raise ProbeError("metadata_helper_rejected")
             if (
                 helper.failure
                 or helper.stderr

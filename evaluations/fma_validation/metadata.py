@@ -17,14 +17,39 @@ from typing import Protocol, cast
 
 from evaluations.linux_resource.probe import ProbeError
 
-from .limits import MAX_FRAMES, MAX_SEEKS, REPORT_BYTES, TAG_BYTES, encode_report
+from .limits import MAX_FRAMES, MAX_SEEKS, REPORT_BYTES, TAG_BYTES, encode_report, json_size
 
 ADDRESS_BYTES = 67_108_864
 DATA_BYTES = 50_331_648
 CPU_SECONDS = 10
-# Mutagen retains the original tag and shrinking frame slices simultaneously.
-# Reserve three half-MiB byte spans plus bounded projections within 2 MiB.
 PARSER_TAG_BYTES = 524_288
+DECODED_SOURCE_BYTES = 8192
+FRAME_SOURCE_BYTES = 4096
+# Preserve the raw envelope while bounding every frame allowed to allocate
+# Unicode, uniqueness keys or textual projections. Opaque frames are never
+# passed to a frame-specific parser. COMR's binary-bearing key is unsupported.
+TEXT_FRAMES = frozenset({"COMM", "USER", "IPLS", "OWNE"})
+UNSUPPORTED_FRAMES = {
+    "CHAP": "unsupported_nested_id3",
+    "CTOC": "unsupported_nested_id3",
+    "COMR": "unsupported_commercial_notice",
+}
+COPY_ACCOUNTING = {
+    "tag_slices_and_opaque_frames": 3 * PARSER_TAG_BYTES,
+    "decoded_frame_transients_and_keys": 24 * DECODED_SOURCE_BYTES,
+    "projection_framing_and_hashes": 2 * REPORT_BYTES,
+    "serialized_string_bytes_and_write_slice": 2 * REPORT_BYTES,
+    "remaining_fixed_margin": 65_536,
+}
+assert sum(COPY_ACCOUNTING.values()) == 2_097_152
+
+
+class MetadataRejected(ProbeError):
+    """Only source-independent codes from this module may be returned to owner."""
+
+
+def selected_id(name: str) -> bool:
+    return name.startswith(("T", "W")) or name in TEXT_FRAMES
 
 
 class BoundedFile:
@@ -87,8 +112,10 @@ def preflight(stream: BoundedFile) -> dict[str, object]:
     if not header.startswith(b"ID3"):
         stream.seek(0)
         return {"v2_present": False, "frame_ids": [], "duplicate_frame_ids": []}
-    if len(header) != 10 or header[3] not in (2, 3, 4) or header[4] != 0:
-        raise ProbeError("unsupported_id3_version")
+    # v2.4's determine_bpi may choose unchecked ordinary-size boundaries.
+    # This supported subset uses v2.3's one fixed interpretation only.
+    if len(header) != 10 or header[3] != 3 or header[4] != 0:
+        raise MetadataRejected("unsupported_id3_version")
     if header[5] != 0:
         raise ProbeError("unsupported_id3_header_flags")
     end = 10 + synchsafe(header[6:10])
@@ -98,7 +125,8 @@ def preflight(stream: BoundedFile) -> dict[str, object]:
         raise ProbeError("metadata_copy_reservation")
     version = header[3]
     ids: list[str] = []
-    width = 6 if version == 2 else 10
+    decoded_bytes = 0
+    width = 10
     while stream.tell() < end:
         remaining = end - stream.tell()
         raw = stream.read(min(width, remaining))
@@ -109,34 +137,45 @@ def preflight(stream: BoundedFile) -> dict[str, object]:
             break
         if len(raw) != width or len(ids) >= MAX_FRAMES:
             raise ProbeError("metadata_frame_limit")
-        name_bytes = raw[:3] if version == 2 else raw[:4]
+        name_bytes = raw[:4]
         if not all(48 <= value <= 57 or 65 <= value <= 90 for value in name_bytes):
             raise ProbeError("unsupported_id3_frame_id")
-        length = (
-            int.from_bytes(raw[3:6], "big")
-            if version == 2
-            else synchsafe(raw[4:8])
-            if version == 4
-            else int.from_bytes(raw[4:8], "big")
-        )
-        if version != 2 and raw[9] != 0:
+        length = int.from_bytes(raw[4:8], "big")
+        if raw[9] != 0:
             raise ProbeError("unsupported_id3_frame_transform")
         if length <= 0 or stream.tell() + length > end:
             raise ProbeError("invalid_id3_frame_extent")
-        ids.append(name_bytes.decode("ascii"))
+        name = name_bytes.decode("ascii")
+        if name in UNSUPPORTED_FRAMES:
+            raise MetadataRejected(UNSUPPORTED_FRAMES[name])
+        if name in ids:
+            raise MetadataRejected("unresolved_duplicate_frame_id")
+        if selected_id(name):
+            decoded_bytes += length
+            if length > FRAME_SOURCE_BYTES or decoded_bytes > DECODED_SOURCE_BYTES:
+                raise MetadataRejected("metadata_decoded_payload_reservation")
+        ids.append(name)
         stream.seek(length, os.SEEK_CUR)
     stream.seek(0)
     return {
         "v2_present": True,
         "v2_version": [2, version, 0],
         "tag_bytes": end,
+        "decoded_source_bytes": decoded_bytes,
         "frame_ids": ids,
         "duplicate_frame_ids": sorted(key for key, count in Counter(ids).items() if count > 1),
     }
 
 
 class Id3Loader(Protocol):
-    def __call__(self, fileobj: BoundedFile, *, translate: bool, load_v1: bool) -> object: ...
+    def __call__(
+        self,
+        fileobj: BoundedFile,
+        *,
+        known_frames: dict[str, object],
+        translate: bool,
+        load_v1: bool,
+    ) -> object: ...
 
 
 class V1Parser(Protocol):
@@ -145,6 +184,11 @@ class V1Parser(Protocol):
 
 class ParsedTags(Protocol):
     unknown_frames: list[bytes]
+
+
+class ParsedFrame(Protocol):
+    @property
+    def FrameID(self) -> str: ...
 
 
 def bounded_text(value: object) -> str:
@@ -159,11 +203,11 @@ def selected_frames(tags: Mapping[str, object]) -> tuple[list[dict[str, object]]
     unsupported: list[str] = []
     if len(tags) > MAX_FRAMES:
         raise ProbeError("metadata_frame_limit")
-    for key, frame in tags.items():
-        frame_id = key.split(":", 1)[0]
-        if not (
-            frame_id.startswith(("T", "W")) or frame_id in {"COMM", "USER", "IPLS", "OWNE", "COMR"}
-        ):
+    for frame in tags.values():
+        # Never export a library HashKey: COMR, for example, serializes its
+        # entire binary-bearing frame into that supposedly textual key.
+        frame_id = cast(ParsedFrame, frame).FrameID
+        if not selected_id(frame_id):
             unsupported.append(bounded_text(frame_id))
             continue
         fields: dict[str, object] = {}
@@ -201,9 +245,9 @@ def selected_frames(tags: Mapping[str, object]) -> tuple[list[dict[str, object]]
                 fields[name] = bounded_text(value)
             else:
                 raise ProbeError("unsupported_notice_field")
-        selected.append({"id": frame_id, "key": bounded_text(key), "fields": fields})
+        selected.append({"id": frame_id, "key": frame_id, "fields": fields})
         # Reject before accumulating another projected notice; never truncate.
-        encode_report(selected, REPORT_BYTES // 2)
+        json_size(selected, REPORT_BYTES // 2)
     return selected, sorted(unsupported)
 
 
@@ -218,12 +262,30 @@ def inspect(fd: int, size: int) -> dict[str, object]:
     omitted: list[str] = []
     unknown: list[dict[str, object]] = []
     if framing["v2_present"]:
-        tag = load(stream, translate=False, load_v1=False)
+        definitions = cast(dict[str, object], importlib.import_module("mutagen.id3").Frames)
+        known = {name: frame for name, frame in definitions.items() if selected_id(name)}
+        source_ids = cast(list[str], framing["frame_ids"])
+        # An unrecognized textual-looking frame is explicit unresolved evidence,
+        # rather than a silently omitted licensing/contributor notice.
+        if any(selected_id(name) and name not in known for name in source_ids):
+            raise MetadataRejected("unsupported_textual_frame")
+        tag = load(stream, known_frames=known, translate=False, load_v1=False)
         v2, omitted = selected_frames(cast(Mapping[str, object], tag))
+        expected = {name for name in source_ids if name in known}
+        if {item["id"] for item in v2} != expected or len(v2) != len(expected):
+            raise MetadataRejected("unresolved_dropped_or_changed_notice")
+        opaque_ids: list[str] = []
         for raw in cast(ParsedTags, tag).unknown_frames:
-            unknown.append({"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+            name = raw[:4].decode("ascii")
+            opaque_ids.append(name)
+            unknown.append(
+                {"id": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+            )
             if len(unknown) > MAX_FRAMES:
                 raise ProbeError("metadata_frame_limit")
+        if Counter(opaque_ids) != Counter(name for name in source_ids if name not in known):
+            raise MetadataRejected("unresolved_opaque_frame_loss")
+        omitted.extend(opaque_ids)
     v1: list[dict[str, object]] = []
     v1_version: str | None = None
     tail_hash: str | None = None
@@ -262,7 +324,7 @@ def inspect(fd: int, size: int) -> dict[str, object]:
         "recording_correspondence": "requires_trusted_review",
         "links_followed": False,
     }
-    encode_report(result)
+    json_size(result, REPORT_BYTES - 1)
     return result
 
 
@@ -302,8 +364,20 @@ def main() -> int:
                 raise ProbeError("metadata_report_write")
             offset += amount
         return 0
-    except Exception:
+    except Exception as error:
         # Parser exceptions can contain source text; never print or trust them.
+        reason = str(error) if isinstance(error, ProbeError) else "metadata_inspection_failed"
+        os.write(
+            1,
+            encode_report(
+                {
+                    "schema": "sobafm-fma-metadata-rejection-1",
+                    "reason": reason,
+                    "credits_complete": False,
+                }
+            )
+            + b"\n",
+        )
         os.write(2, b"metadata_inspection_failed\n")
         return 1
 

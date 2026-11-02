@@ -59,18 +59,33 @@ Before parsing, the helper applies AS 67,108,864 bytes, DATA 50,331,648 bytes, t
 CPU seconds, zero core/file output and a 30-second alarm. The borrowed file is
 regular, single-link and read-only. A framing pass caps the complete ID3v2 tag at
 1,048,576 bytes, 512 frames, 512 seeks and cumulative reads at three file lengths.
-Within that absolute framing cap, only tags of at most **524,288 bytes** are
-currently admitted to Mutagen: its original data, shrinking slices and frame
-payloads can overlap. This explicit supported subset leaves projection/report
-space in the 2 MiB metadata copy partition. Larger tags fail with
-`metadata_copy_reservation`; their contents are never truncated. The actual
-recording's tag size is unknown. A larger tag would need a reviewed alternative.
-Compression, encryption, unsynchronization, extended headers and unsupported
-transforms fail before library allocation. Selected notices have field and report
-bounds; oversized notices fail without truncation. ID3v1 and v2 are preserved
-separately with conflicts, URLs, contributors and notices; unknown frames retain
-hash/length only. Artwork/lyrics frames are omitted explicitly. No URLs are
-followed and `credits_complete` remains false.
+The supported subset is **ID3v1 and fixed-framing ID3v2.3**, with a maximum
+**524,288-byte** v2 tag. v2.2/v2.4 are rejected before parsing; in particular,
+Mutagen's v2.4 size-repair heuristic may otherwise select different boundaries
+from preflight. Nested CHAP/CTOC, COMR commercial notices, duplicate frame IDs,
+compression, encryption, unsynchronization and extended headers also fail
+explicitly before parsing. No recursive parser or silent repair is added.
+
+The maintained `known_frames` API admits only T/W frames and COMM, USER, IPLS,
+OWNE to frame-specific parsing. Each admitted frame payload is at most **4,096
+bytes**, and all such source payloads together are at most **8,192 bytes**,
+checked before decoding or HashKey construction. Other frames stay opaque, with
+explicit ID/hash/length and omission evidence; artwork/lyrics are not decoded or
+dumped. Unrecognized textual-looking IDs are unresolved failures. Raw framed
+IDs must agree with the returned known and opaque occurrences, so a known
+malformed notice silently dropped by Mutagen cannot produce a successful report.
+Duplicate IDs are rejected even when different discriminators might be valid;
+this conservative subset avoids losing source evidence during consolidation.
+
+Reports project explicit textual fields and use only a frame ID as their safe
+key. No Mutagen HashKey is exported. COMR remains an explicit unsupported notice,
+including its terms and optional logo, rather than exposing its serialized-frame
+key or silently losing a term. ID3v1 and v2.3 notices stay separate with conflicts,
+URLs and contributors. Bounded rejection codes remain visible to the owner;
+parser exception text is never returned. No URLs are followed and
+`credits_complete` remains false. The actual recording's tag version, size and
+contents are unknown; an unsupported case needs a reviewed alternative, never
+truncation or increased capacity.
 
 The pinned mpg123 CLI remains noisy enough to reject warnings, resynchronization,
 format changes and malformed completion. `--no-frankenstein` is deliberately
@@ -116,6 +131,40 @@ PTY channel backing; this introduces no new exclusion. The code bounds I/O and
 report buffers, but exact parser allocation/copy overlap and the new process
 topology require fresh fit evidence. Old native proofs qualify only their exact
 unchanged source/image/target cases, not this topology.
+
+The metadata reservation explicitly includes decoded Unicode backing and keys,
+not just raw bytes. Its conservative source-bound accounting is:
+
+| Simultaneous payload allowance | Bytes |
+| --- | ---: |
+| Original tag, shrinking slices, current/retained opaque frames: `3 * 524288` | 1,572,864 |
+| Admitted raw/text/fixup/Unicode/key transients: `24 * 8192` | 196,608 |
+| Projected fields, framing IDs, opaque hashes and v1 evidence | 131,072 |
+| Serialized string plus bytes, or bytes plus the current write slice | 131,072 |
+| Fixed margin | 65,536 |
+| Total metadata partition | 2,097,152 |
+
+For pinned v2.3 `read_frames`, original input plus current/replacement slices and
+accumulated opaque payload is bounded by three raw tag extents. The much smaller
+admitted-frame budget separately covers raw text fixups, at most four-byte
+Unicode backing per source byte, incremental decoder/join intermediates, retained
+decoded values and textual uniqueness keys. The 24-times allowance covers six
+four-byte extents; COMR serialization, recursion, alternate framing and duplicate
+merge paths are excluded. Projection reuses these bounded text values, exports
+no library key and limits frames/hashes separately. Only object headers, container
+overhead and allocator overhead remain solely in the whole-group charge.
+
+Before `json.dumps` can allocate an escaped result, an allocation-light traversal
+checks exact canonical ASCII JSON size, builtin value types, depth, node count,
+integer width and finite numbers. It counts controls, DEL, surrogates and non-BMP
+escapes without allocating their expansion; an iterencoder alone would still
+allow an oversized single string chunk. Serialization is then at most 64 KiB
+each for the string and bytes. The selected notice projection has a 32 KiB
+encoded bound. These gates apply to rejected inputs too: near-limit wide text
+and cumulative selected payloads fail before the library, while oversized
+escaped reports fail before materialization. Source tracing and synthetic
+counterexamples support review of these bounds; they are not measured whole-group
+fit or actual-recording qualification. Independent exact-head review remains required.
 
 Before any build/provision/native work, obtain a fresh development-storage
 allocation and independent exact packet review. Prepare a small explicit build

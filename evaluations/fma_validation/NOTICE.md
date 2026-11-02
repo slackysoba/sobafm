@@ -30,7 +30,12 @@ security audit. No Trusted Publishing or artifact attestation was supplied.
 Mutagen can allocate whole tags and decompress frame payloads. The helper applies
 address/data/CPU limits and an alarm before importing/parsing; a separate framing
 pass rejects unsupported transformations before library allocation. It bounds
-tag bytes, reads, seeks, frames and selected notices. Large/unsupported evidence
+tag bytes, reads, seeks, frames and selected notices. The supported parser subset
+is fixed-framing v2.3 plus separate v1: nested chapters, v2.4 repair, duplicate
+frame IDs and COMR are explicit failures. The public `known_frames` parameter
+keeps unselected frames opaque; decoded source payload is bounded separately
+before Unicode/key allocation. Canonical JSON size is checked before encoding.
+Large/unsupported evidence
 fails rather than being silently truncated. Fresh whole-group fit qualification
 is still required. Version-specific use of `ParseID3v1` is isolated in this
 evaluation and covered by synthetic v1/v2 conflict tests.
