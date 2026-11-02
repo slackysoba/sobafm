@@ -358,6 +358,7 @@ def stopped_native_gate(
     deadline: float,
     admitted_pids: frozenset[int] | None = None,
     decoder: NativeDecoder | None = None,
+    identity_gate: Callable[[], dict[str, int]] | None = None,
 ) -> dict[str, object]:
     expected = admitted_pids if admitted_pids is not None else frozenset({child.pid})
     if child.pid not in expected or not 1 <= len(expected) <= 2 or min(expected) <= 0:
@@ -373,15 +374,18 @@ def stopped_native_gate(
         time.sleep(0.01)  # Bounded stopped-state observation, not a test race schedule.
     else:
         raise ProbeError("native stopped-state deadline exceeded")
-    if read_start_identity(child.pid) != ("T", start_ticks):
-        raise ProbeError("native PID/start/stopped identity differs")
     root = Path(f"/proc/{child.pid}")
-    argv = decoder.argv if decoder is not None else ARGV
-    if os.readlink(root / "exe") != argv[0] or len(list((root / "task").iterdir())) != 1:
-        raise ProbeError("native executable or thread identity differs")
-    if frozenset(native_processes()) != expected or group_members(child.pid) != [child.pid]:
-        raise ProbeError("unexpected retained native address space")
-    limits = verify_child(child.pid, True)
+    if identity_gate is None:
+        if read_start_identity(child.pid) != ("T", start_ticks):
+            raise ProbeError("native PID/start/stopped identity differs")
+        argv = decoder.argv if decoder is not None else ARGV
+        if os.readlink(root / "exe") != argv[0] or len(list((root / "task").iterdir())) != 1:
+            raise ProbeError("native executable or thread identity differs")
+        if frozenset(native_processes()) != expected or group_members(child.pid) != [child.pid]:
+            raise ProbeError("unexpected retained native address space")
+        limits = verify_child(child.pid, True)
+    else:
+        limits = identity_gate()
     verify_core_limit(read_text(root / "limits"))
     mappings = parse_maps(read_text(root / "maps"), decoder)
     if time.monotonic() >= deadline:

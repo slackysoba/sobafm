@@ -14,6 +14,7 @@ import pytest
 
 from evaluations.fma_validation import decoder, limits
 from evaluations.fma_validation.limits import REPORT_BYTES, CaseClock
+from evaluations.fma_validation.observation import ObservationWorkspace
 from evaluations.fma_validation.process import ProcessPin
 from evaluations.linux_resource.owned_mp3_overlap import make_pipes
 from evaluations.linux_resource.probe import ProbeError
@@ -144,11 +145,11 @@ def test_report_zero_write_is_failure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def stopped_run(monkeypatch: pytest.MonkeyPatch) -> Iterator[decoder.StreamRun]:
-    def capture(_cls: type[ProcessPin], pid: int) -> ProcessPin:
+    def capture(_cls: type[ProcessPin], pid: int, _workspace: ObservationWorkspace) -> ProcessPin:
         return ProcessPin(pid, 1, 2, "/synthetic/python", 1, 1, 1000, "/")
 
     monkeypatch.setattr(ProcessPin, "capture", classmethod(capture))
-    pin = ProcessPin.capture(3)
+    pin = ProcessPin(3, 1, 2, "/synthetic/python", 1, 1, 1000, "/")
     run = decoder.StreamRun(pin, pin, CaseClock(time.time() + 30, time.time() + 60), -1)
     owned: list[int] = []
     run.pipes = make_pipes(owned)

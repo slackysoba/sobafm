@@ -17,6 +17,7 @@ from evaluations.fma_validation import consumer as consumer_module
 from evaluations.fma_validation.cases import NIGHT_OWL, CaseBinding
 from evaluations.fma_validation.consumer import ValidationConsumer
 from evaluations.fma_validation.limits import FILE_BYTES, FILE_SHA256, CaseClock, encode_report
+from evaluations.fma_validation.observation import ObservationWorkspace
 from evaluations.fma_validation.process import OwnedHelper, ProcessPin
 from evaluations.linux_resource.probe import ProbeError
 from sobafm.fma_intake import Acquisition, FileIdentity, IntakeRequest, LocalIntake
@@ -60,13 +61,15 @@ def terminal(pin: ProcessPin) -> dict[str, object]:
 
 @pytest.fixture
 def consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ValidationConsumer:
-    def capture(pid: int) -> ProcessPin:
-        return ProcessPin(pid, 1, os.getpid(), sys.executable, 1, 1, 1000, "/")
+    def capture(pid: int, _workspace: ObservationWorkspace) -> ProcessPin:
+        return ProcessPin(pid, 1, os.getpid(), "/synthetic/python", 1, 1, 1000, "/")
 
-    def verify(_pin: ProcessPin) -> None:
+    def verify(_pin: ProcessPin, _workspace: ObservationWorkspace) -> None:
         return
 
-    def inventory(*_pins: ProcessPin) -> set[int]:
+    def inventory(
+        *_pins: ProcessPin, workspace: ObservationWorkspace, cleanup: bool = False
+    ) -> set[int]:
         return set()
 
     monkeypatch.setattr(ProcessPin, "capture", capture)
@@ -89,14 +92,14 @@ def consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ValidationConsu
         monotonic=lambda: 10.0,
     )
     clock = CaseClock(200, 300, lambda: 105.0, lambda: 10.0)
-    pin = capture(os.getpid())
+    pin = capture(os.getpid(), ObservationWorkspace(clock))
     return ValidationConsumer(owner, pin, pin, clock)
 
 
 def launch(consumer: ValidationConsumer, schedule: str = "finish") -> OwnedHelper:
     helper = OwnedHelper(consumer.clock, "decoder")
     consumer.active, consumer.phase = helper, "streaming"
-    row = terminal(ProcessPin(1, 1, os.getpid(), sys.executable, 1, 1, 1000, "/"))
+    row = terminal(ProcessPin(1, 1, os.getpid(), "/synthetic/python", 1, 1, 1000, "/"))
     raw = encode_report(row).decode()
     # Child substitutes only its actual PID into the fixture's closed role pin.
     program = (

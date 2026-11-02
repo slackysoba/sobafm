@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,7 +15,6 @@ from typing import cast
 
 import pytest
 
-from evaluations.fma_validation import consumer as consumer_module
 from evaluations.fma_validation.cases import (
     BASE_BYTES,
     BASE_SHA256,
@@ -30,6 +30,7 @@ from evaluations.fma_validation.cases import (
 from evaluations.fma_validation.consumer import ValidationConsumer, expected_outcome
 from evaluations.fma_validation.limits import CaseClock, encode_report
 from evaluations.fma_validation.metadata import BoundedFile, inspect, preflight
+from evaluations.fma_validation.observation import ObservationWorkspace
 from evaluations.fma_validation.process import OwnedHelper, ProcessPin
 from evaluations.linux_resource.probe import ProbeError
 from sobafm.fma_intake import FileIdentity, LocalIntake
@@ -104,22 +105,31 @@ def test_rejection_recipe_fails_before_library_entry(
         os.close(fd)
 
 
-def test_synthetic_case_uses_actual_local_intake_and_metadata_child(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def capture(pid: int) -> ProcessPin:
-        return ProcessPin(pid, 1, os.getpid(), sys.executable, 1, 1, os.geteuid(), "/")
+class SyntheticObservations(ObservationWorkspace):
+    """Typed host-test seam; these facts do not claim container containment."""
 
-    def verify(_pin: ProcessPin) -> None:
+    def capture(self, pid: int) -> ProcessPin:
+        return ProcessPin(pid, 1, os.getpid(), "/synthetic/python", 1, 1, 1000, "/")
+
+    def verify(self, pin: ProcessPin, cleanup: bool = False) -> None:
         return
 
-    def inventory(*_pins: ProcessPin) -> set[int]:
+    def inventory(
+        self,
+        init: ProcessPin,
+        owner: ProcessPin,
+        helper: ProcessPin | None = None,
+        cleanup: bool = False,
+    ) -> set[int]:
+        if self.debt:
+            raise ProbeError("synthetic_observation_debt")
         return set()
 
-    monkeypatch.setattr(ProcessPin, "capture", capture)
-    monkeypatch.setattr(ProcessPin, "verify", verify)
-    monkeypatch.setattr(consumer_module, "inventory", inventory)
+
+@contextmanager
+def synthetic_consumer(
+    tmp_path: Path,
+) -> Generator[tuple[LocalIntake, ValidationConsumer, OwnedQualificationRequest]]:
     source = tmp_path / "synthetic-rejection"
     source.write_bytes(rejection_fixture())
     slot = tmp_path / "slot"
@@ -127,9 +137,23 @@ def test_synthetic_case_uses_actual_local_intake_and_metadata_child(
     req = request(source)
     owner = LocalIntake(slot, source, req)
     clock = CaseClock(time.time() + 30, datetime.fromisoformat(req.expires_at).timestamp())
-    pin = capture(os.getpid())
-    consumer = ValidationConsumer(owner, pin, pin, clock, req.case)
+    workspace = SyntheticObservations(clock)
+    pin = workspace.capture(os.getpid())
+    consumer = ValidationConsumer(owner, pin, pin, clock, req.case, workspace=workspace)
     try:
+        yield owner, consumer, req
+    finally:
+        # Always settle the actual intake/reader/helper, including when a test
+        # assertion fails. The typed seam stays installed throughout teardown;
+        # no restoring a host-proc observer while a non-daemon reader owns work.
+        owner.cancel()
+        assert owner.join(3), owner.report()
+
+
+def test_synthetic_case_uses_actual_local_intake_and_metadata_child(tmp_path: Path) -> None:
+    source = tmp_path / "synthetic-rejection"
+    slot = tmp_path / "slot"
+    with synthetic_consumer(tmp_path) as (owner, consumer, req):
         owner.start(execute=True)
         assert owner.pending.wait(3), owner.report()
         ledger = json.loads((slot / "state.json").read_bytes())
@@ -152,9 +176,20 @@ def test_synthetic_case_uses_actual_local_intake_and_metadata_child(
         assert result["case_binding"] == req.case.record()
         assert owner.report()["released"] is True and owner.report()["cleanup_deadline_met"] is True
         assert not owner.report()["cleanup_debt"] and source.read_bytes() == rejection_fixture()
-    finally:
-        owner.cancel()
-        assert owner.join(3), owner.report()
+
+
+def test_synthetic_assertion_cannot_abandon_reader_or_helper(tmp_path: Path) -> None:
+    with (
+        pytest.raises(AssertionError, match="injected test assertion"),
+        synthetic_consumer(tmp_path) as (owner, consumer, _req),
+    ):
+        owner.start(execute=True)
+        assert owner.pending.wait(3), owner.report()
+        owner.read_into(consumer)
+        raise AssertionError("injected test assertion")
+    assert owner.join(0) and owner.report()["released"] is True
+    assert owner.report()["cleanup_debt"] is False
+    assert consumer.active is None
 
 
 def test_binding_cannot_mutate_or_cross_purpose(tmp_path: Path) -> None:

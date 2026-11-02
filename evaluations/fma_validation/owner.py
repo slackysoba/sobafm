@@ -16,6 +16,7 @@ from sobafm.fma_intake import LocalIntake, OwnedRead
 
 from .consumer import ValidationConsumer, expected_outcome
 from .limits import CaseClock, encode_report
+from .observation import ObservationWorkspace
 from .packet import Packet, integer, load, load_qualification
 from .process import ProcessPin, inventory
 
@@ -25,12 +26,12 @@ ORIGINAL = Path("/input/original")
 CONFIG = Path("/case/packet.json")
 
 
-def preflight(packet: Packet) -> tuple[ProcessPin, ProcessPin]:
+def preflight(packet: Packet, workspace: ObservationWorkspace) -> tuple[ProcessPin, ProcessPin]:
     observe()
     if os.getpid() == 1 or os.uname().machine != "x86_64":
         raise ProbeError("separate_native_amd64_owner_required")
-    init, owner = ProcessPin.capture(1), ProcessPin.capture(os.getpid())
-    if inventory(init, owner):
+    init, owner = ProcessPin.capture(1, workspace), ProcessPin.capture(os.getpid(), workspace)
+    if inventory(init, owner, workspace=workspace):
         raise ProbeError("unexpected_initial_members")
     for pin, key in ((init, "init_sha256"), (owner, "python_sha256")):
         digest = hashlib.sha256()
@@ -77,10 +78,11 @@ def preflight(packet: Packet) -> tuple[ProcessPin, ProcessPin]:
 
 def execute(packet: Packet) -> dict[str, object]:
     clock = CaseClock(packet.whole_end, packet.expires)
-    init, owner_pin = preflight(packet)
+    workspace = ObservationWorkspace(clock)
+    init, owner_pin = preflight(packet, workspace)
     before = counters(read_text(Path("/sys/fs/cgroup/memory.events")))
     owner = LocalIntake(SLOT, ORIGINAL, packet.request)
-    consumer = ValidationConsumer(owner, init, owner_pin, clock, packet.case)
+    consumer = ValidationConsumer(owner, init, owner_pin, clock, packet.case, workspace=workspace)
     reader: OwnedRead | None = None
     failure: str | None = None
 
@@ -133,7 +135,8 @@ def execute(packet: Packet) -> dict[str, object]:
     report = owner.report()
     reader_report = None if reader is None else reader.report()
     settled = (
-        not inventory(init, owner_pin)
+        not workspace.debt
+        and not inventory(init, owner_pin, workspace=workspace, cleanup=True)
         and report["released"] is True
         and report["cleanup_deadline_met"] is True
         and not clock.missed

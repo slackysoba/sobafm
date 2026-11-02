@@ -57,9 +57,9 @@ Decoder admission and terminal records validate canonical ASCII JSON size,
 escaping, types and structure **before** serialization. Each record reserves its
 newline within 65,536 bytes; the helper's aggregate output cap still applies.
 Admission serialization occurs while the verified native process is stopped,
-before bank allocation or native resume. The temporary native-stat fields are
-released first; native mapping/security evidence remains in the record and its
-existing owner. Cancellation or expiry during preflight prevents resume.
+before bank allocation or native resume. Native mapping/security evidence remains
+in the record and its existing owner. Cancellation or expiry during preflight
+prevents resume.
 
 Charge the explicit serialized representations to the unchanged 786,432-byte
 runner partition: at most 65,535 bytes each for JSON text/ASCII bytes during
@@ -69,7 +69,80 @@ and uses memoryview slices without allocating payload tail copies. Cancellation
 does not renew its original clock or certify a held write as released. These
 local bounds do not establish the complete runner backing/copy maximum, encoder
 internal allocation, PTY accounting/release or native topology fit; those remain
-separate qualification gates. No reservation subdivision is adopted.
+separate qualification gates. No PTY reservation subdivision is adopted.
+
+### Process observation transactions
+
+`ObservationWorkspace` is specific to this evaluation. The intake owner creates
+one workspace with its original `CaseClock` before preflight and shares it with
+the consumer and sequential `OwnedHelper` operations. The separate decoder
+process owns its own workspace. A non-reentrant lease covers every read, parse,
+executable lookup, directory iterator and actual close. Cancellation only records
+intent on the original clock; it cannot borrow or replace an active workspace.
+
+Each capture, verification, inventory or stopped-native observation is one
+transaction with a cumulative **65,536-byte input policy**. All bracket reads and
+returned executable/directory-name bytes count; individual files do not reset
+the counter. This is an input policy, not a universal proc-size or allocation
+maximum. Reads use an 8,192-byte fixed arena: 2,048 bytes for input, 2,048 for
+whole-record carry, 512 for line carry, and unused reserved backing. At a file
+limit, one extra byte in existing storage distinguishes EOF from overflow.
+
+The closed schemas reject unsupported layouts rather than accepting prefixes:
+
+- `stat`: at most 2,048 bytes and 64 fields, at least the 52 current fields;
+  preserve the complete record through the final `)`, including newline in the
+  at-most-64-byte ASCII command name.
+- `status`: at most 16,384 bytes, 128 nonempty rows and 512 bytes per row before
+  newline; keys at most 64 bytes. Selected fields must occur exactly once.
+  All four UID/GID values are 1000, NNP is 1, seccomp is 2 and CapEff is zero;
+  parent and thread count must agree with `stat`.
+- `cgroup`: at most 16 bytes and exactly `0::/` followed by newline.
+  `cgroup.procs`: at most 64 distinct positive PIDs, ten digits each, complete
+  newline-terminated rows, no duplicate or omitted pinned role.
+- Directory scans admit at most 256 total entries and 64 numeric process IDs;
+  extra task/FD entries fail before retention. Executable selection requires an
+  absolute printable ASCII target of at most 64 bytes, plus device and inode.
+  Capture brackets security/membership with start and executable identity checks.
+
+First failure starts cleanup before close. Complete validated facts are staged;
+they replace the prior committed snapshot only after all actual closes and a
+final clock check. Failed or vanished observations mean **unknown inventory**,
+never an empty set or cached success. An uncertain descriptor or iterator close
+retains its handle, arena and staged facts, prevents another lease, and blocks
+local release certification. Timeout never clears that debt. Cleanup observations
+may establish later physical settlement but retain missed/unknown original timing.
+Both inherited cancellation group lookups and the decoder's live/release checks
+use this path. Historical evaluations retain their default observation behavior.
+
+The approved metric distinguishes contained control scratch from selected
+audio/IPC payload. Raw proc parsing, path construction, stat caches, libc directory
+backing and C-stack scratch stay inside the **full 90,177,536-byte group cap**.
+Maintained `os.readlink`, `os.stat` and `os.scandir` calls therefore do not require
+a proposed 32,768-byte whole-libc bridge bound. No such bound is claimed or used
+for admission. This supersedes that proposed prerequisite without changing the
+approved metric, group cap, copy partitions or PTY decision gate.
+
+Selected executable text, immutable pins, native map evidence and report copies
+remain payload. Each workspace prepays **8,192 bytes within its existing owner's
+copy partition** for selected pins through their actual lifetime. The current
+callers have at most 16 simultaneous pin versions/aliases across retained roles,
+two helper-history records, old/staged snapshots and bracket temporaries. Charging
+64 executable bytes, one group byte and a conservative 32 bytes for each of six
+bounded integer values per version, plus two 64-byte selected readlink extents,
+is at most 4,240 bytes. Object/container/allocator headers stay in the full group
+charge. Four staged pin slots are checked before capture; external aliases remain
+charged after snapshot replacement. `record()` preserves immutable value aliases;
+wire validation preserves the same eight keys and caps types/ranges before pin
+construction. Controller and terminal callers still charge their received JSON.
+Report projections, serialized text/bytes and receiver copies retain their
+separate existing reservations; this allowance cannot cover native maps or audio.
+
+Maps, limits, counters, mountinfo and the preliminary legacy environment probe
+remain explicit later capacity work. Complete existing map/security evidence is
+preserved. No full runner envelope, new native fit, Linux containment or release
+qualification follows from these deterministic scanner tests. The runner remains
+786,432 bytes and the total remains 98,979,840 bytes, with no residual pool.
 
 The outer controller owns bounded Docker command launch, pipes, output and actual
 child exit. It journals intent before dispatch and records the full exact container
