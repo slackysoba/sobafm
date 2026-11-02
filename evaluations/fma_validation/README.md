@@ -138,10 +138,71 @@ construction. Controller and terminal callers still charge their received JSON.
 Report projections, serialized text/bytes and receiver copies retain their
 separate existing reservations; this allowance cannot cover native maps or audio.
 
-Maps, limits, counters, mountinfo and the preliminary legacy environment probe
-remain explicit later capacity work. Complete existing map/security evidence is
-preserved. No full runner envelope, new native fit, Linux containment or release
-qualification follows from these deterministic scanner tests. The runner remains
+### Native limits and complete maps
+
+The FMA runner reads native limits once before exec and once while stopped. Each
+scan admits at most 16,384 bytes, 64 rows and 256 bytes per row. DATA=12,000,000,
+STACK=524,288, AS=12,524,288 and CORE=0 must each occur exactly once, with equal
+soft/hard values and exact `bytes` units. Decimal input is bounded before
+conversion; missing, duplicate, truncated, overflowing or changed values fail.
+
+The stopped observation includes complete identity/security/thread/inventory
+checks, one limits scan, maps, and a second complete identity/inventory bracket
+in **one original-clock transaction**. Both brackets, executable/directory bytes,
+file reads and overflow probes share 65,536 input bytes. Component maxima cannot
+all coexist. The preparation deadline is checked throughout, after actual close,
+and before commit; existing admission serialization, PCM allocation and resume
+ordering remains in force. Historical evaluations keep their default stopped
+gate behavior; only FMA supplies the combined observation callback.
+
+Maps admit at most 65,536 input bytes, 64 complete rows and 512 bytes per row
+(the row/width policy also implies a tighter 32,832-byte file maximum). Address
+and offset hex fields have at most 16 digits, device halves eight, and inode
+decimals 20, all bounded before conversion. Only canonical reviewed ELF paths,
+anonymous/heap/stack and the existing kernel-special paths are selected. Every
+row retains its path, permissions and extent; row 65 fails before retention.
+Private mappings, no writable-executable pages, ordered positive page-aligned
+extents, the complete ELF set, anonymous/special restrictions and the ordinary
+AS ceiling remain mandatory. SHA-256 consumes the **original read views**,
+including whitespace; it never hashes a canonicalized or truncated projection.
+Special totals/exclusion text and `sampled_pcm_proof=false` are unchanged.
+
+`native_records.py` defines immutable selected facts and projections that alias
+their values. The closed source packet includes this policy module; missing or
+changed bindings fail before journal/controller resource creation for both FMA
+and owned qualification. The decoder workspace prepays **32,768 bytes within the existing
+786,432-byte runner partition**, separately from the 8,192-byte pin reservation.
+A conservative version costs at most `64 * (48 + 4 + 32 + 20) + 1024 = 7680`
+payload bytes: each row charges a 48-byte ASCII path, four permissions bytes,
+32 bytes for its bounded integer and 20 bytes of keys, even when backing aliases.
+The final 1,024 bytes cover limits/keys, totals, digest and fixed scope fields.
+Four such versions fit: prior committed/external evidence, new staged/partial
+evidence and projection/failure overlap. Actual callers make one native admission
+attempt; this is not permission to retain an unbounded history. Container/object
+headers remain in G. Selected facts, partial rows and external immutable aliases
+remain charged during held reads/closes, failed reports and snapshot replacement.
+
+The known simultaneous runner payload subtotal is 696,320 bytes: selected native
+facts 32,768; pins 8,192; input bytes plus input buffer 131,072; two existing PCM
+scratch chunks 131,072; three diagnostic extents 196,608; and three report extents
+196,608 (encoding pair plus a conservatively retained line). The PCM bank stays
+in its separate P reservation. This subtotal deliberately is **not full runner
+closure**: diagnostic parsing/string splits, encoder internals, other retained
+report evidence and asynchronous PTY backing still require their own complete
+accounting. The difference is not an unallocated allowance or execution release.
+
+Receiver copies coexist with the sender: the intake owner's existing partition
+charges its stdout buffer, raw copy, complete-prefix copy, split lines, JSON
+decoding, newly parsed values and prior retained record at a conservative seven
+65,536-byte extents, plus 32,768 selected native bytes (491,520 total for this
+native receive overlap). Other intake-owner payload remains separate pending work.
+No receiver copy is hidden in the sender's alias accounting. Tests preserve every
+selected record through serialization/receive and exercise old/staged evidence,
+report rejection before bank allocation/resume and original cleanup deadlines.
+
+Counters, mountinfo and the preliminary legacy environment probe remain later
+capacity work. No full runner envelope, native fit, Linux containment or release
+qualification follows from these deterministic tests. The runner remains
 786,432 bytes and the total remains 98,979,840 bytes, with no residual pool.
 
 The outer controller owns bounded Docker command launch, pipes, output and actual

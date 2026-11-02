@@ -16,13 +16,11 @@ from pathlib import Path
 from types import FrameType
 from typing import cast
 
-from evaluations.linux_resource.decoder_startup import verify_rlimits
 from evaluations.linux_resource.owned_mp3_cancel import CancelRun
 from evaluations.linux_resource.owned_mp3_decode import (
     decoder_child,
     receive_banner,
     stopped_native_gate,
-    verify_core_limit,
     verify_native_files,
 )
 from evaluations.linux_resource.owned_mp3_overlap import make_pipes
@@ -185,8 +183,7 @@ class StreamRun(CancelRun):
         if os.read(pipes.ready_read, 1) != b"R":
             raise ProbeError("native_setup_failed")
         self.observation.child_identity(pid, self.start_ticks, self.helper_pin.pid)
-        verify_rlimits(read_text(Path(f"/proc/{pid}/limits")), True)
-        verify_core_limit(read_text(Path(f"/proc/{pid}/limits")))
+        self.observation.native_limits(pid, self.phase_deadline)
         if self.members() != {pid}:
             raise ProbeError("native_inventory_before_exec")
         if os.write(pipes.gate_write, b"x") != 1:
@@ -202,7 +199,7 @@ class StreamRun(CancelRun):
             self.phase_deadline,
             frozenset({self.owner_pin.pid, pid}),
             DECODER,
-            self.stopped_identity,
+            observation_gate=self.stopped_observation,
         )
         self.wait_ready(pipes.ready_read)
         if os.read(pipes.ready_read, 1) != b"":
@@ -215,17 +212,17 @@ class StreamRun(CancelRun):
         self.observation.native_descriptors(pid)
         self.admit_stream()
 
-    def stopped_identity(self) -> dict[str, int]:
-        self.observation.stopped_identity(
+    def stopped_observation(self) -> tuple[dict[str, int], dict[str, object]]:
+        limits, mappings = self.observation.stopped_native(
             self.child.pid,
             self.start_ticks,
             DECODER.argv[0],
             self.init_pin,
             self.owner_pin,
             self.helper_pin,
+            self.phase_deadline,
         )
-        # Limits/maps remain explicit later capacity work; keep complete evidence.
-        return verify_rlimits(read_text(Path(f"/proc/{self.child.pid}/limits")), True)
+        return limits.record(), mappings.record()
 
     def admit_stream(self) -> None:
         """Preflight the full admission record while the verified native is stopped."""

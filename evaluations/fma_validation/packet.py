@@ -37,6 +37,7 @@ SOURCE_FILES = (
             "metadata",
             "process",
             "observation",
+            "native_records",
             "diagnostics",
             "pty_channel",
             "decoder",
