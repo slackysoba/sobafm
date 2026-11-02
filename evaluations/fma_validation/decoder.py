@@ -31,7 +31,6 @@ from evaluations.linux_resource.probe import (
     PCM_BYTES,
     ProbeError,
     counters,
-    emit,
     observe,
     read_text,
 )
@@ -44,10 +43,32 @@ from .limits import (
     PCM_LIMIT,
     PREPARE_SECONDS,
     READY_BYTES,
+    REPORT_BYTES,
     CaseClock,
+    encode_report,
 )
 from .process import ProcessPin, inventory
 from .pty_channel import open_diagnostics
+
+
+def report_line(value: object) -> bytes:
+    """Reserve newline space before JSON serialization, including escaped text."""
+    return encode_report(value, REPORT_BYTES - 1) + b"\n"
+
+
+def write_report(data: bytes) -> None:
+    """Own one immutable record until every partial synchronous write settles."""
+    offset = 0
+    with memoryview(data) as view:
+        while offset < len(view):
+            with view[offset:] as remaining:
+                try:
+                    amount = os.write(1, remaining)
+                except InterruptedError:
+                    continue
+                if not 0 < amount <= len(remaining):
+                    raise ProbeError("decoder_report_write")
+                offset += amount
 
 
 class StreamRun(CancelRun):
@@ -184,20 +205,13 @@ class StreamRun(CancelRun):
             "2",
         }:
             raise ProbeError("native_controlling_terminal_or_extra_descriptor")
-        self.buffers = [bytearray(PCM_BYTES), bytearray(2 * CHUNK_BYTES)]
-        for buffer in self.buffers:
-            for offset in range(0, len(buffer), 4096):
-                buffer[offset] = 1
-        self.views = [memoryview(buffer) for buffer in self.buffers]
-        self.bank = self.views[0]
-        self.output_view = self.views[1][:CHUNK_BYTES]
-        self.views.append(self.output_view)
-        for fd in (0, pipes.input_write, pipes.output_read, master):
-            os.set_blocking(fd, False)
-        self.preparation_remaining()
-        os.kill(pid, signal.SIGCONT)
-        self.input_released = True
-        emit(
+        del native_stat
+        self.admit_stream()
+
+    def admit_stream(self) -> None:
+        """Preflight the full admission record while the verified native is stopped."""
+        assert self.pipes is not None
+        data = report_line(
             {
                 "event": "decoder_admitted",
                 "case_binding": self.case.record(),
@@ -207,6 +221,21 @@ class StreamRun(CancelRun):
                 "runner": self.helper_pin.record(),
             }
         )
+        self.preparation_remaining()
+        self.buffers = [bytearray(PCM_BYTES), bytearray(2 * CHUNK_BYTES)]
+        for buffer in self.buffers:
+            for offset in range(0, len(buffer), 4096):
+                buffer[offset] = 1
+        self.views = [memoryview(buffer) for buffer in self.buffers]
+        self.bank = self.views[0]
+        self.output_view = self.views[1][:CHUNK_BYTES]
+        self.views.append(self.output_view)
+        for fd in (0, self.pipes.input_write, self.pipes.output_read, self.pipes.error_read):
+            os.set_blocking(fd, False)
+        self.preparation_remaining()
+        os.kill(self.child.pid, signal.SIGCONT)
+        self.input_released = True
+        write_report(data)
 
     def read_pcm(self) -> None:
         assert self.pipes is not None and self.output_view is not None and self.bank is not None
@@ -452,7 +481,7 @@ def main() -> int:
                 run.fail(error)
                 select.select([], [], [], 0.01)
     result = run.finish()
-    emit(result)
+    write_report(report_line(result))
     return 0 if result["passed"] else 1
 
 
