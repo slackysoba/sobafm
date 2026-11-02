@@ -167,6 +167,23 @@ class IntakeRequest:
     file: FileIdentity
     version: Literal[1, 2] = 2
 
+    def ledger_fields(self) -> dict[str, object]:
+        return {"schema": f"sobafm-fma-owned-slot-{self.version}", **self.time_fields()}
+
+    def summary_fields(self) -> dict[str, object]:
+        return {
+            "schema": f"sobafm-fma-pending-intake-{self.version}",
+            "source_url": self.source_url,
+            "metadata_digest": self.metadata_digest,
+            "credit_snapshot": self.credit_snapshot,
+            **self.time_fields(safe=True),
+            "notices_count": len(self.download_notices),
+            "notices_sha256": hashlib.sha256(_encoded(self.download_notices)).hexdigest(),
+        }
+
+    def reader_fields(self) -> dict[str, object]:
+        return {}
+
     def time_fields(self, *, safe: bool = False) -> dict[str, object]:
         if self.version == 1:
             return {"acquired_at": self.acquisition.retention_anchor_utc}
@@ -458,6 +475,7 @@ class OwnedRead:
         with self._owner.lock:
             settled = self.join()
             return {
+                **self._owner.request.reader_fields(),
                 "request_sha256": self._owner.request.fingerprint,
                 "expected_bytes": self._expected.bytes,
                 "expected_sha256": self._expected.sha256,
@@ -582,6 +600,27 @@ class OwnedRead:
         self._owner.wake.set()
 
 
+class LocalRequest(Protocol):
+    """Ownership inputs shared by IntakeRequest and the closed owned qualification.
+
+    Parsing/admission belongs to those two callers. This is not a schema registry;
+    the public intake parser continues to accept only its original FMA schemas.
+    """
+
+    @property
+    def file(self) -> FileIdentity: ...
+    @property
+    def version(self) -> Literal[1, 2]: ...
+    @property
+    def expires_at(self) -> str: ...
+    @property
+    def fingerprint(self) -> str: ...
+    def validate(self, now: datetime, *, recovery: bool = False) -> None: ...
+    def ledger_fields(self) -> dict[str, object]: ...
+    def summary_fields(self) -> dict[str, object]: ...
+    def reader_fields(self) -> dict[str, object]: ...
+
+
 class LocalIntake:
     """One retained thread owns all blocking file work and the absolute-expiry lease.
 
@@ -593,7 +632,7 @@ class LocalIntake:
         self,
         directory: Path,
         source: Path | None,
-        request: IntakeRequest,
+        request: LocalRequest,
         *,
         recovery: bool = False,
         utc_now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -643,7 +682,14 @@ class LocalIntake:
         self.thread = threading.Thread(target=self._run, name="fma-local-intake", daemon=False)
         self.thread.start()
 
-    def cancel(self, reason: str = "cancelled", *, started_at: datetime | None = None) -> None:
+    def cancel(
+        self,
+        reason: str = "cancelled",
+        *,
+        started_at: datetime | None = None,
+        timing_unknown: bool = False,
+        deadline_missed: bool = False,
+    ) -> None:
         with self.lock:
             if started_at is not None:
                 now, mono = self.utc_now(), self.monotonic()
@@ -654,11 +700,12 @@ class LocalIntake:
                 # A trusted enclosing evaluation may convey an earlier failure
                 # from its retained helper. It can only tighten this obligation;
                 # unknown recovery timing can never be repaired by a new clock.
+                if self.cleanup_started_utc is None or original < _utc(self.cleanup_started_utc):
+                    self.cleanup_started_utc = _timestamp(original)
                 if not self.cleanup_deadline_unknown and (
                     self.cleanup_deadline is None or deadline < self.cleanup_deadline
                 ):
                     self.cleanup_deadline = deadline
-                    self.cleanup_started_utc = _timestamp(original)
             if self.cleanup_deadline is None and not self.cleanup_deadline_unknown:
                 now, mono = self.utc_now(), self.monotonic()
                 expires = _utc(self.request.expires_at)
@@ -671,6 +718,8 @@ class LocalIntake:
                 else:
                     self.cleanup_deadline = mono + CLEANUP_SECONDS
                     self.cleanup_started_utc = _timestamp(now)
+            self.cleanup_deadline_unknown |= timing_unknown
+            self.cleanup_missed |= deadline_missed or timing_unknown
             self.failure = self.failure or reason
             self.stop.set()
             self.wake.set()
@@ -742,20 +791,12 @@ class LocalIntake:
                 and not self.unresolved_slot
             )
             result: dict[str, object] = {
-                "schema": f"sobafm-fma-pending-intake-{self.request.version}",
+                **self.request.summary_fields(),
                 "owner_id": self.owner_id,
                 "phase": self.phase,
                 "failure": self.failure,
                 "request_sha256": self.request.fingerprint,
-                "source_url": self.request.source_url,
-                "metadata_digest": self.request.metadata_digest,
-                "credit_snapshot": self.request.credit_snapshot,
-                **self.request.time_fields(safe=True),
                 "expires_at": self.request.expires_at,
-                "notices_count": len(self.request.download_notices),
-                "notices_sha256": hashlib.sha256(
-                    _encoded(self.request.download_notices)
-                ).hexdigest(),
                 "expected_bytes": self.request.file.bytes,
                 "copied_bytes": self.copied_bytes,
                 "copied_sha256": self.copied_sha256,
@@ -898,10 +939,9 @@ class LocalIntake:
         self.io = "state_persistence"
         self.phase = phase
         state = {
-            "schema": f"sobafm-fma-owned-slot-{self.request.version}",
+            **self.request.ledger_fields(),
             "owner_id": self.owner_id,
             "request_sha256": self.request.fingerprint,
-            **self.request.time_fields(),
             "expires_at": self.request.expires_at,
             "phase": phase,
             "directory_identity": self.fd_identities["directory"],
@@ -1021,14 +1061,13 @@ class LocalIntake:
             or stat.S_IMODE(info.st_mode) != 0o600
         ):
             raise IntakeError("invalid_recovery_state")
-        time_key = "acquired_at" if self.request.version == 1 else "acquisition"
+        binding = self.request.ledger_fields()
         state = _object(
             _decode(os.read(fd, MAX_MANIFEST_BYTES + 1)),
             {
                 "schema",
                 "owner_id",
                 "request_sha256",
-                time_key,
                 "expires_at",
                 "phase",
                 "payload_identity",
@@ -1039,12 +1078,12 @@ class LocalIntake:
                 "directory_identity",
                 "lock_identity",
             }
+            | set(binding)
             | ({"reader_state"} if self.request.version == 2 else set()),
         )
         if (
-            state["schema"] != f"sobafm-fma-owned-slot-{self.request.version}"
+            any(state[key] != value for key, value in binding.items())
             or state["request_sha256"] != self.request.fingerprint
-            or state[time_key] != self.request.time_fields()[time_key]
             or state["expires_at"] != self.request.expires_at
             or state["directory_identity"] != list(self.fd_identities["directory"])
             or state["lock_identity"] != list(self.fd_identities["lock"])

@@ -14,9 +14,9 @@ from types import FrameType
 from evaluations.linux_resource.probe import ProbeError, counters, emit, observe, read_text
 from sobafm.fma_intake import LocalIntake, OwnedRead
 
-from .consumer import ValidationConsumer
+from .consumer import ValidationConsumer, expected_outcome
 from .limits import CaseClock, encode_report
-from .packet import Packet, integer, load
+from .packet import Packet, integer, load, load_qualification
 from .process import ProcessPin, inventory
 
 ROOT = Path("/source")
@@ -76,18 +76,24 @@ def preflight(packet: Packet) -> tuple[ProcessPin, ProcessPin]:
 
 
 def execute(packet: Packet) -> dict[str, object]:
+    packet.case.require_frozen()
     clock = CaseClock(packet.whole_end, packet.expires)
     init, owner_pin = preflight(packet)
     before = counters(read_text(Path("/sys/fs/cgroup/memory.events")))
     owner = LocalIntake(SLOT, ORIGINAL, packet.request)
-    consumer = ValidationConsumer(owner, init, owner_pin, clock)
+    consumer = ValidationConsumer(owner, init, owner_pin, clock, packet.case)
     reader: OwnedRead | None = None
     failure: str | None = None
 
     def cancel(reason: str) -> None:
         clock.cancel()
         assert clock.cleanup_start_utc is not None
-        owner.cancel(reason, started_at=datetime.fromtimestamp(clock.cleanup_start_utc, UTC))
+        owner.cancel(
+            reason,
+            started_at=datetime.fromtimestamp(clock.cleanup_start_utc, UTC),
+            timing_unknown=clock.timing_unknown,
+            deadline_missed=clock.missed,
+        )
 
     def interrupted(_signal: int, _frame: FrameType | None) -> None:
         # Host-origin signal timing is not carried by a trusted IPC record.
@@ -127,10 +133,8 @@ def execute(packet: Packet) -> dict[str, object]:
     delta = {key: after[key] - before[key] for key in before} if memory_ok else {}
     report = owner.report()
     reader_report = None if reader is None else reader.report()
-    passed = (
-        failure is None
-        and consumer.finished
-        and not inventory(init, owner_pin)
+    settled = (
+        not inventory(init, owner_pin)
         and report["released"] is True
         and report["cleanup_deadline_met"] is True
         and not clock.missed
@@ -140,8 +144,10 @@ def execute(packet: Packet) -> dict[str, object]:
         and delta.get("oom_kill") == 0
         and read_text(Path("/sys/fs/cgroup/memory.swap.current")).strip() == "0"
     )
+    passed = settled and failure is None and consumer.finished
     result: dict[str, object] = {
-        "schema": "sobafm-fma-owner-1",
+        "schema": packet.case.schema("owner"),
+        "case_binding": packet.case.record(),
         "packet_sha256": packet.fingerprint,
         "passed": passed,
         "failure": failure,
@@ -155,20 +161,24 @@ def execute(packet: Packet) -> dict[str, object]:
         "catalog_admitted": False,
         "container_exit_observed": False,
     }
+    if packet.case.synthetic:
+        result["qualification_passed"] = settled and expected_outcome(
+            consumer.receipt(), packet.case
+        )
     encode_report(result)
     return result
 
 
-def main() -> int:
+def main(*, qualification: bool = False) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute-reviewed-packet", action="store_true")
     args = parser.parse_args()
     if not args.execute_reviewed_packet:
         parser.error("reviewed exact packet required")
-    packet = load(CONFIG, ROOT)
+    packet = (load_qualification if qualification else load)(CONFIG, ROOT)
     result = execute(packet)
     emit(result)
-    return 0 if result["passed"] is True else 1
+    return 0 if result["qualification_passed" if qualification else "passed"] is True else 1
 
 
 if __name__ == "__main__":

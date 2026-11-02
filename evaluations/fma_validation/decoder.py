@@ -14,6 +14,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from types import FrameType
+from typing import cast
 
 from evaluations.linux_resource.decoder_startup import verify_child
 from evaluations.linux_resource.owned_mp3_cancel import CancelRun
@@ -35,12 +36,11 @@ from evaluations.linux_resource.probe import (
     read_text,
 )
 
+from .cases import CASE_IDS, NIGHT_OWL, CaseBinding, CaseId
 from .diagnostics import DECODER, validate
 from .limits import (
     CHUNK_BYTES,
     DECODE_SECONDS,
-    FILE_BYTES,
-    FILE_SHA256,
     PCM_LIMIT,
     PREPARE_SECONDS,
     READY_BYTES,
@@ -54,9 +54,16 @@ class StreamRun(CancelRun):
     """Reuse actual close/signal debt handling, replacing fixture-only admission/I/O."""
 
     def __init__(
-        self, init: ProcessPin, owner: ProcessPin, clock: CaseClock, cancel_fd: int
+        self,
+        init: ProcessPin,
+        owner: ProcessPin,
+        clock: CaseClock,
+        cancel_fd: int,
+        case: CaseBinding = NIGHT_OWL,
     ) -> None:
         super().__init__("feed")
+        case.require_frozen()
+        self.case = case
         self.init_pin, self.owner_pin, self.clock = init, owner, clock
         self.helper_pin = ProcessPin.capture(os.getpid())
         self.cancel_fd = cancel_fd
@@ -194,6 +201,7 @@ class StreamRun(CancelRun):
         emit(
             {
                 "event": "decoder_admitted",
+                "case_binding": self.case.record(),
                 "native_gate": self.native_gate,
                 "init": self.init_pin.record(),
                 "owner": self.owner_pin.record(),
@@ -288,15 +296,18 @@ class StreamRun(CancelRun):
         ):
             self.busy.add(0)
             try:
-                data = os.read(0, min(CHUNK_BYTES, FILE_BYTES - self.received + 1))
+                data = os.read(0, min(CHUNK_BYTES, self.case.bytes - self.received + 1))
                 self.received += len(data)
-                if self.received > FILE_BYTES:
+                if self.received > self.case.bytes:
                     raise ProbeError("compressed_input_overrun")
                 self.input_hash.update(data)
                 self.input_buffer.extend(data)
                 if not data:
                     self.input_eof = True
-                    if self.received != FILE_BYTES or self.input_hash.hexdigest() != FILE_SHA256:
+                    if (
+                        self.received != self.case.bytes
+                        or self.input_hash.hexdigest() != self.case.sha256
+                    ):
                         raise ProbeError("compressed_input_binding")
                     assert self.pipes is not None
                     self.close(self.pipes.input_write)
@@ -369,7 +380,9 @@ class StreamRun(CancelRun):
         )
         return {
             "event": "full_stream_result",
-            "schema": "sobafm-fma-decode-1",
+            "schema": self.case.schema("decode"),
+            "case_binding": self.case.record(),
+            "runner": self.helper_pin.record(),
             "passed": passed,
             "failure": self.failure,
             "input_bytes": self.input_count,
@@ -381,7 +394,7 @@ class StreamRun(CancelRun):
             "pcm_bytes": self.output_count,
             "pcm_sha256": self.pcm_digest,
             "measured_duration_seconds": self.output_count / 192_000,
-            "web_duration_seconds": 194,
+            "web_duration_seconds": None if self.case.synthetic else 194,
             "ready_seconds": self.ready_seconds,
             "cleanup": self.clock.receipt(),
             "cleanup_debt": not self.released,
@@ -404,16 +417,19 @@ def main() -> int:
     parser.add_argument("--cancel-fd", type=int, required=True)
     parser.add_argument("--admit-fd", type=int, required=True)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--case", choices=CASE_IDS, default="night-owl")
     args = parser.parse_args()
     if not args.execute:
         parser.error("explicit finite native evaluation required")
+    case = CaseBinding(cast(CaseId, args.case))
+    case.require_frozen()
     if os.read(args.admit_fd, 1) != b"x":
         return 1
     os.close(args.admit_fd)
     init = ProcessPin.from_record(json.loads(args.init))
     owner = ProcessPin.from_record(json.loads(args.owner))
     clock = CaseClock(args.whole_end, args.expires)
-    run = StreamRun(init, owner, clock, args.cancel_fd)
+    run = StreamRun(init, owner, clock, args.cancel_fd, case)
 
     def interrupted(_signum: int, _frame: FrameType | None) -> None:
         run.failure = run.failure or "external_cancel"

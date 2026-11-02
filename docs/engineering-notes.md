@@ -71,3 +71,12 @@ admission. New init/owner/helper topology and terminal diagnostics require fresh
 native fit evidence before source intake; synthetic tests and unchanged native
 ELF hashes cannot substitute for it. Mutagen remains a pinned evaluation-only
 dependency with preserved GPL notices and explicit pre-parser allocation limits.
+
+Its failure regressions include nonzero helper exit after full delivery, early
+write exit with immediately available or later-drained terminal evidence,
+simultaneous helper failure, absent/partial/malformed/cross-case records, repeated
+cancellation and held descriptors. Terminal timing adoption precedes successful
+result validation and output retirement. Valid failed receipts can tighten the
+original clock; invalid receipts make timing unknown, and neither can certify
+resource release. The separate owned-synthetic qualification verdict never turns
+an expected pipeline failure into `passed` or substitutes for native fit evidence.

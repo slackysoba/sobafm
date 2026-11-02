@@ -6,6 +6,7 @@ import argparse
 import errno
 import hashlib
 import json
+import math
 import os
 import re
 import select
@@ -20,9 +21,11 @@ from typing import cast
 
 from evaluations.linux_resource.probe import ProbeError
 
-from .consumer import object_pairs, reports, validate_decode, validate_metadata
-from .limits import FILE_BYTES, FILE_SHA256, REPORT_BYTES, CaseClock, encode_report
-from .packet import Packet, load, read_bounded, string
+from .consumer import expected_outcome, object_pairs, reports, validate_decode, validate_metadata
+from .limits import REPORT_BYTES, CaseClock, encode_report
+from .packet import Packet, load, load_qualification, read_bounded, string
+from .process import ProcessPin
+from .terminal import validate_terminal
 
 
 class Command:
@@ -30,6 +33,7 @@ class Command:
 
     def __init__(self, argv: list[str]) -> None:
         self.argv = argv
+        self.owner_output = False
         self.process: subprocess.Popen[bytes] | None = None
         self.error: str | None = None
         self.output = bytearray()
@@ -163,7 +167,8 @@ class Journal:
         self.worker: threading.Thread | None = None
         self.error: Exception | None = None
         self.data: dict[str, object] = {
-            "schema": "sobafm-fma-controller-ledger-1",
+            "schema": packet.case.schema("controller-ledger"),
+            "case_binding": packet.case.record(),
             "packet_sha256": packet.fingerprint,
             "case_id": packet.text("case_id"),
             "image": packet.text("image"),
@@ -239,26 +244,34 @@ def mapping(value: object) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
+OWNER_FIELDS = {
+    "schema",
+    "case_binding",
+    "packet_sha256",
+    "passed",
+    "failure",
+    "init",
+    "owner",
+    "intake",
+    "reader",
+    "validation",
+    "memory_event_delta",
+    "cleanup",
+    "catalog_admitted",
+    "container_exit_observed",
+}
+
+
 def validate_owner(report: dict[str, object], packet: Packet) -> None:
-    if set(report) != {
-        "schema",
-        "packet_sha256",
-        "passed",
-        "failure",
-        "init",
-        "owner",
-        "intake",
-        "reader",
-        "validation",
-        "memory_event_delta",
-        "cleanup",
-        "catalog_admitted",
-        "container_exit_observed",
-    } or (
-        report["schema"] != "sobafm-fma-owner-1"
+    case = packet.case
+    rejection = case.name in ("metadata-rejection", "first-write-cancel")
+    if set(report) != OWNER_FIELDS | ({"qualification_passed"} if case.synthetic else set()) or (
+        report["schema"] != case.schema("owner")
+        or report["case_binding"] != case.record()
         or report["packet_sha256"] != packet.fingerprint
-        or report["passed"] is not True
-        or report["failure"] is not None
+        or report["passed"] is not (not rejection)
+        or report["failure"] != ("validation_owner_failed" if rejection else None)
+        or (case.synthetic and report.get("qualification_passed") is not True)
         or report["catalog_admitted"] is not False
         or report["container_exit_observed"] is not False
     ):
@@ -266,6 +279,20 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
     intake = mapping(report["intake"])
     reader = mapping(report["reader"])
     validation = mapping(report["validation"])
+    for value in (report["cleanup"], validation.get("cleanup")):
+        timing = mapping(value)
+        started = timing.get("cleanup_start_utc")
+        if (
+            timing.get("whole_end_utc") != packet.whole_end
+            or timing.get("expires_utc") != packet.expires
+            or timing.get("cleanup_deadline_met") is not True
+            or timing.get("cleanup_timing_unknown") is not False
+            or timing.get("case_deadline_met") is not True
+            or type(started) not in (int, float)
+            or not math.isfinite(cast(float, started))
+            or not 0 <= cast(float, started) <= time.time()
+        ):
+            raise ProbeError("owner_cleanup_evidence_failed")
     if (
         any(
             intake.get(key) is not True
@@ -283,27 +310,43 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
         or intake.get("retained_handles") != []
         or intake.get("original_io_in_flight") is not None
         or intake.get("request_sha256") != packet.request.fingerprint
-        or intake.get("copied_bytes") != FILE_BYTES
-        or intake.get("copied_sha256") != FILE_SHA256
-        or any(
-            reader.get(key) is not True
-            for key in ("stream_verified", "completed", "consumer_released", "settled")
-        )
+        or intake.get("copied_bytes") != case.bytes
+        or intake.get("copied_sha256") != case.sha256
+        or any(reader.get(key) is not True for key in ("consumer_released", "settled"))
         or any(
             reader.get(key) is not False
             for key in ("descriptor_retained", "reader_alive", "cancel_alive")
         )
-        or reader.get("failure") is not None
         or reader.get("in_flight") is not None
-        or reader.get("read_bytes") != FILE_BYTES
-        or reader.get("delivered_bytes") != FILE_BYTES
-        or reader.get("read_sha256") != FILE_SHA256
-        or validation.get("finished") is not True
-        or validation.get("phase") != "settled"
         or validation.get("active") is not None
-        or validation.get("delivered_bytes") != FILE_BYTES
+        or validation.get("case_binding") != case.record()
     ):
         raise ProbeError("owner_release_evidence_failed")
+    if case.synthetic and (
+        intake.get("schema") != case.schema("pending-intake")
+        or intake.get("case_binding") != case.record()
+        or reader.get("case_binding") != case.record()
+    ):
+        raise ProbeError("owner_qualification_binding")
+    if rejection:
+        if (
+            not expected_outcome(validation, case)
+            or reader.get("completed") is not False
+            or not isinstance(reader.get("failure"), str)
+        ):
+            raise ProbeError("qualification_expected_failure_missing")
+    elif (
+        reader.get("failure") is not None
+        or reader.get("stream_verified") is not True
+        or reader.get("completed") is not True
+        or reader.get("read_bytes") != case.bytes
+        or reader.get("delivered_bytes") != case.bytes
+        or reader.get("read_sha256") != case.sha256
+        or validation.get("finished") is not True
+        or validation.get("phase") != "settled"
+        or validation.get("delivered_bytes") != case.bytes
+    ):
+        raise ProbeError("owner_stream_evidence_failed")
     delta = mapping(report["memory_event_delta"])
     if (
         delta.get("oom") != 0
@@ -311,16 +354,18 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
         or any(type(value) is not int or value < 0 for value in delta.values())
     ):
         raise ProbeError("owner_memory_evidence_failed")
-    validate_decode(mapping(validation.get("decode")))
-    validate_metadata(mapping(validation.get("metadata")))
+    if not rejection:
+        validate_decode(mapping(validation.get("decode")), case)
+        validate_metadata(mapping(validation.get("metadata")), case)
     helpers = validation.get("helpers")
-    if not isinstance(helpers, list) or len(cast(list[object], helpers)) != 2:
+    roles = ("metadata",) if case.name == "metadata-rejection" else ("metadata", "decoder")
+    if not isinstance(helpers, list) or len(cast(list[object], helpers)) != len(roles):
         raise ProbeError("owner_helper_release_missing")
-    for role, value in zip(("metadata", "decoder"), cast(list[object], helpers), strict=True):
+    for role, value in zip(roles, cast(list[object], helpers), strict=True):
         helper = mapping(value)
         if (
             helper.get("role") != role
-            or helper.get("exit_code") != 0
+            or helper.get("exit_code") != (1 if rejection and role == roles[-1] else 0)
             or helper.get("launching") is not False
             or helper.get("failure") is not None
             or any(
@@ -331,6 +376,19 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
             or helper.get("stderr_eof") is not True
         ):
             raise ProbeError("owner_helper_release_failed")
+        if role == "decoder":
+            timing = validate_terminal(
+                mapping(validation.get("decode")),
+                case,
+                ProcessPin.from_record(helper.get("process")),
+                CaseClock(packet.whole_end, packet.expires),
+            )
+            if (
+                timing["cleanup_deadline_met"] is not True
+                or timing["cleanup_timing_unknown"] is not False
+                or timing["case_deadline_met"] is not True
+            ):
+                raise ProbeError("owner_decoder_cleanup_failed")
 
 
 def creation_args(packet: Packet) -> list[str]:
@@ -377,7 +435,7 @@ def creation_args(packet: Packet) -> list[str]:
         packet.text("image"),
         "-B",
         "-m",
-        "evaluations.fma_validation.owner",
+        packet.owner_module,
         "--execute-reviewed-packet",
     ]
 
@@ -390,6 +448,78 @@ class Controller:
         self.command_receipts: list[dict[str, object]] = []
         self.container: str | None = None
         self.owner_report: dict[str, object] | None = None
+
+    def capture_owner(self, command: Command, *, final: bool = False) -> None:
+        """Adopt failure timing before command acceptance or final retirement."""
+        if not command.owner_output:
+            return
+        raw = bytes(command.output)
+        complete = raw[: raw.rfind(b"\n") + 1]
+        if not complete and not final:
+            return
+        try:
+            records = reports(complete)
+            if len(records) != 1:
+                raise ProbeError("owner_report_count")
+            report = records[0]
+            encode_report(report)
+            if (
+                set(report)
+                != OWNER_FIELDS
+                | ({"qualification_passed"} if self.packet.case.synthetic else set())
+                or report.get("packet_sha256") != self.packet.fingerprint
+                or report.get("schema") != self.packet.case.schema("owner")
+                or report.get("case_binding") != self.packet.case.record()
+                or ProcessPin.from_record(report.get("init")).pid != 1
+                or ProcessPin.from_record(report.get("owner")).pid <= 1
+                or type(report.get("passed")) is not bool
+                or report.get("catalog_admitted") is not False
+                or report.get("container_exit_observed") is not False
+            ):
+                raise ProbeError("owner_terminal_binding")
+            timing = mapping(report.get("cleanup"))
+            if (
+                set(timing)
+                != {
+                    "whole_end_utc",
+                    "expires_utc",
+                    "cleanup_start_utc",
+                    "cleanup_deadline_met",
+                    "cleanup_timing_unknown",
+                    "case_deadline_met",
+                }
+                or timing["whole_end_utc"] != self.clock.whole_end_utc
+                or timing["expires_utc"] != self.clock.expires_utc
+                or any(
+                    type(timing[key]) is not bool
+                    for key in (
+                        "cleanup_deadline_met",
+                        "cleanup_timing_unknown",
+                        "case_deadline_met",
+                    )
+                )
+            ):
+                raise ProbeError("owner_terminal_window")
+            started = timing["cleanup_start_utc"]
+            if started is not None:
+                if (
+                    type(started) not in (int, float)
+                    or not math.isfinite(cast(float, started))
+                    or not 0 <= cast(float, started) <= self.clock.wall()
+                ):
+                    raise ProbeError("owner_terminal_clock")
+                self.clock.adopt_cleanup(cast(float, started))
+            elif timing["cleanup_timing_unknown"] is not True:
+                raise ProbeError("owner_terminal_clock_missing")
+            self.clock.timing_unknown |= timing["cleanup_timing_unknown"] is True
+            self.clock.missed |= timing["cleanup_deadline_met"] is not True
+            self.clock.case_missed |= timing["case_deadline_met"] is not True
+            self.owner_report = report
+            if final and raw != complete:
+                raise ProbeError("owner_terminal_partial")
+        except ValueError, KeyError, TypeError, RecursionError, ProbeError:
+            self.clock.timing_unknown = self.clock.missed = True
+            self.journal.data["owner_terminal_error"] = "invalid_or_missing_owner_terminal"
 
     def persist(self, *, cleanup: bool = False) -> None:
         try:
@@ -415,12 +545,14 @@ class Controller:
         )
         self.persist(cleanup=cleanup)
         command = Command([self.docker, *args])
+        command.owner_output = attach
         self.commands.append(command)
         end = time.monotonic() + seconds
         if not cleanup:
             end = min(end, self.clock.end_monotonic)
         while True:
             command.pump()
+            self.capture_owner(command, final=command.settled())
             if (
                 not cleanup
                 and self.clock.cleanup_start_utc is not None
@@ -428,25 +560,11 @@ class Controller:
             ):
                 command.stop()
                 raise ProbeError("management_cancelled")
-            if attach and command.output.endswith(b"\n") and command.output:
-                records = reports(bytes(command.output))
-                if len(records) != 1:
-                    raise ProbeError("owner_report_count")
-                self.owner_report = records[0]
-                timing = mapping(self.owner_report.get("cleanup"))
-                started = timing.get("cleanup_start_utc")
-                if type(started) not in (int, float):
-                    self.clock.timing_unknown = True
-                    raise ProbeError("owner_cleanup_clock_unknown")
-                self.clock.adopt_cleanup(cast(float, started))
-                if (
-                    timing.get("cleanup_deadline_met") is not True
-                    or timing.get("cleanup_timing_unknown") is not False
-                ):
-                    self.clock.missed = True
-                if self.clock.cleanup_monotonic is not None:
-                    end = min(end, self.clock.cleanup_monotonic)
+            if attach and self.clock.cleanup_monotonic is not None:
+                end = min(end, self.clock.cleanup_monotonic)
             if command.settled():
+                if attach and self.owner_report is None:
+                    self.clock.timing_unknown = self.clock.missed = True
                 receipt = command.receipt()
                 self.command_receipts.append(receipt)
                 self.commands.remove(command)
@@ -524,7 +642,7 @@ class Controller:
             or record.get("workdir") != "/source"
             or record.get("path") != self.packet.text("python_path")
             or record.get("args")
-            != ["-B", "-m", "evaluations.fma_validation.owner", "--execute-reviewed-packet"]
+            != ["-B", "-m", self.packet.owner_module, "--execute-reviewed-packet"]
         ):
             raise ProbeError("container_entrypoint_changed")
         mounts = record.get("mounts")
@@ -655,6 +773,7 @@ class Controller:
             while self.commands:
                 for command in tuple(self.commands):
                     command.pump()
+                    self.capture_owner(command, final=command.settled())
                     if command.settled():
                         self.command_receipts.append(command.receipt())
                         self.commands.remove(command)
@@ -662,7 +781,7 @@ class Controller:
                 if self.commands:
                     select.select([], [], [], 0.01)
             self.clock.observe()
-        passed = (
+        accepted = (
             failed is None
             and stopped
             and not self.clock.missed
@@ -670,21 +789,25 @@ class Controller:
             and not self.clock.timing_unknown
         )
         self.journal.data.update(
-            phase="settled" if passed else "retained_for_reconciliation",
-            passed=passed,
+            phase="settled" if accepted else "retained_for_reconciliation",
+            passed=accepted
+            and self.owner_report is not None
+            and self.owner_report.get("passed") is True,
             failure=failed,
             container_exit_observed=stopped,
-            cleanup_debt=not passed,
+            cleanup_debt=not accepted,
             cleanup=self.clock.receipt(),
             commands=self.command_receipts,
             owner_report=self.owner_report,
             slot_reusable=False,
         )
+        if self.packet.case.synthetic:
+            self.journal.data["qualification_passed"] = accepted
         self.journal.save()
         return self.journal.data
 
 
-def main() -> int:
+def main(*, qualification: bool = False) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packet", type=Path, required=True)
     parser.add_argument("--journal", type=Path, required=True)
@@ -694,7 +817,9 @@ def main() -> int:
     if args.execute_reviewed_packet == args.inspect_retained or os.uname().sysname != "Linux":
         parser.error("choose one explicit Linux execution or read-only retained inspection")
     root = Path(__file__).resolve().parents[2]
-    packet = load(args.packet, root, recovery=args.inspect_retained)
+    packet = (load_qualification if qualification else load)(
+        args.packet, root, recovery=args.inspect_retained
+    )
     if args.inspect_retained:
         # Deliberately cannot clear an unknown original clock, restart a case,
         # infer ownership by disappearance, or unlink a payload by pathname.
@@ -729,7 +854,7 @@ def main() -> int:
     finally:
         journal.close()
     print(encode_report(result).decode())
-    return 0 if result["passed"] else 1
+    return 0 if result["qualification_passed" if qualification else "passed"] else 1
 
 
 if __name__ == "__main__":

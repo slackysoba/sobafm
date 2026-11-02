@@ -12,12 +12,11 @@ from datetime import UTC, datetime
 from typing import cast
 
 from evaluations.linux_resource.probe import ProbeError
-from sobafm.fma_intake import LocalIntake
+from sobafm.fma_intake import IntakeRequest, LocalIntake
 
+from .cases import NIGHT_OWL, PCM_SHA256, CaseBinding, OwnedQualificationRequest
 from .diagnostics import FORMAT
 from .limits import (
-    FILE_BYTES,
-    FILE_SHA256,
     MAX_FRAMES,
     MAX_SEEKS,
     METADATA_SECONDS,
@@ -28,6 +27,7 @@ from .limits import (
     encode_report,
 )
 from .process import OwnedHelper, ProcessPin, inventory
+from .terminal import DECODE_FIELDS, validate_terminal
 
 
 def object_pairs(items: list[tuple[str, object]]) -> dict[str, object]:
@@ -55,7 +55,7 @@ def reports(raw: bytes) -> list[dict[str, object]]:
     return records
 
 
-def validate_metadata(result: dict[str, object]) -> None:
+def validate_metadata(result: dict[str, object], case: CaseBinding = NIGHT_OWL) -> None:
     if set(result) != {
         "schema",
         "parser",
@@ -73,7 +73,7 @@ def validate_metadata(result: dict[str, object]) -> None:
         "recording_correspondence",
         "links_followed",
     } or (
-        result["schema"] != "sobafm-fma-metadata-1"
+        result["schema"] != case.schema("metadata")
         or result["parser"] != "mutagen-1.48.1"
         or result["credits_complete"] is not False
         or result["links_followed"] is not False
@@ -82,7 +82,7 @@ def validate_metadata(result: dict[str, object]) -> None:
         or not isinstance(result["framing"], dict)
     ):
         raise ProbeError("metadata_report_fields")
-    for key, limit in (("read_bytes", FILE_BYTES * 3), ("seek_count", MAX_SEEKS)):
+    for key, limit in (("read_bytes", case.bytes * 3), ("seek_count", MAX_SEEKS)):
         value = result[key]
         if type(value) is not int or not 0 <= value <= limit:
             raise ProbeError("metadata_report_limits")
@@ -105,40 +105,18 @@ def validate_metadata(result: dict[str, object]) -> None:
     encode_report(result)
 
 
-def validate_decode(result: dict[str, object]) -> None:
-    if set(result) != {
-        "event",
-        "schema",
-        "passed",
-        "failure",
-        "input_bytes",
-        "input_sha256",
-        "input_complete",
-        "stdout_eof",
-        "stderr_eof",
-        "exit_code",
-        "pcm_bytes",
-        "pcm_sha256",
-        "measured_duration_seconds",
-        "web_duration_seconds",
-        "ready_seconds",
-        "cleanup",
-        "cleanup_debt",
-        "memory_event_delta",
-        "swap_current",
-        "diagnostics",
-        "catalog_admitted",
-        "listening",
-    }:
+def validate_decode(result: dict[str, object], case: CaseBinding = NIGHT_OWL) -> None:
+    if set(result) != DECODE_FIELDS:
         raise ProbeError("decode_report_fields")
     pcm = result["pcm_bytes"]
     if (
         result["event"] != "full_stream_result"
-        or result["schema"] != "sobafm-fma-decode-1"
+        or result["schema"] != case.schema("decode")
+        or result["case_binding"] != case.record()
         or result["passed"] is not True
         or result["failure"] is not None
-        or result["input_bytes"] != FILE_BYTES
-        or result["input_sha256"] != FILE_SHA256
+        or result["input_bytes"] != case.bytes
+        or result["input_sha256"] != case.sha256
         or any(result[key] is not True for key in ("input_complete", "stdout_eof", "stderr_eof"))
         or type(result["exit_code"]) is not int
         or result["exit_code"] != 0
@@ -159,7 +137,8 @@ def validate_decode(result: dict[str, object]) -> None:
         or not 0 <= cast(float, ready) <= 15
         or type(duration) not in (int, float)
         or duration != pcm / 192_000
-        or result["web_duration_seconds"] != 194
+        or result["web_duration_seconds"] != (None if case.synthetic else 194)
+        or (case.synthetic and (pcm != 23_040_000 or result["pcm_sha256"] != PCM_SHA256))
         or not isinstance(result["pcm_sha256"], str)
         or re.fullmatch("[0-9a-f]{64}", result["pcm_sha256"]) is None
     ):
@@ -190,9 +169,23 @@ def validate_decode(result: dict[str, object]) -> None:
 
 class ValidationConsumer:
     def __init__(
-        self, owner: LocalIntake, init: ProcessPin, owner_pin: ProcessPin, clock: CaseClock
+        self,
+        owner: LocalIntake,
+        init: ProcessPin,
+        owner_pin: ProcessPin,
+        clock: CaseClock,
+        case: CaseBinding = NIGHT_OWL,
     ) -> None:
         self.owner, self.init_pin, self.owner_pin, self.clock = owner, init, owner_pin, clock
+        request = owner.request
+        if (
+            request.file.bytes != case.bytes
+            or (case.sha256 is not None and request.file.sha256 != case.sha256)
+            or (isinstance(request, OwnedQualificationRequest) and request.case != case)
+            or (isinstance(request, IntakeRequest) and case.synthetic)
+        ):
+            raise ProbeError("consumer_request_case_binding")
+        self._case = case
         self.lock = threading.RLock()
         self.active: OwnedHelper | None = None
         self.operation = False
@@ -202,8 +195,15 @@ class ValidationConsumer:
         self.history: list[dict[str, object]] = []
         self.delivered = 0
         self.finished = False
+        self.terminal_error: str | None = None
+        self.first_write_cancelled = False
+
+    @property
+    def case(self) -> CaseBinding:
+        return self._case
 
     def _start(self, role: str, args: list[str], inherited: tuple[int, ...] = ()) -> OwnedHelper:
+        self.case.require_frozen()
         with self.lock:
             if self.active is not None or self.clock.remaining() <= 0:
                 raise ProbeError("sequential_helper_not_admitted")
@@ -212,7 +212,15 @@ class ValidationConsumer:
         if inventory(self.init_pin, self.owner_pin):
             raise ProbeError("unsettled_previous_phase")
         helper.launch(
-            [sys.executable, "-m", f"evaluations.fma_validation.{role}", "--execute", *args],
+            [
+                sys.executable,
+                "-m",
+                f"evaluations.fma_validation.{role}",
+                "--execute",
+                "--case",
+                self.case.name,
+                *args,
+            ],
             inherited,
         )
         assert helper.pin is not None
@@ -221,27 +229,61 @@ class ValidationConsumer:
         helper.admit()
         return helper
 
-    def _adopt(self, result: dict[str, object]) -> None:
-        cleanup = result.get("cleanup")
-        if not isinstance(cleanup, dict):
-            raise ProbeError("missing_helper_cleanup_clock")
-        values = cast(dict[str, object], cleanup)
-        started = values.get("cleanup_start_utc")
-        if type(started) not in (int, float):
-            self.clock.timing_unknown = True
-            raise ProbeError("unknown_helper_cleanup_clock")
-        self.clock.adopt_cleanup(cast(float, started))
-        if (
-            values.get("cleanup_timing_unknown") is not False
-            or values.get("cleanup_deadline_met") is not True
-        ):
-            self.clock.missed = True
+    def _capture(self, helper: OwnedHelper, *, final: bool = False) -> None:
+        if helper.role != "decoder":
+            return
+        raw = bytes(helper.stdout)
+        # A pump can stop halfway through a line. Do not interpret a partial
+        # record or certify absence until all output has actually drained.
+        complete = raw[: raw.rfind(b"\n") + 1]
+        try:
+            rows = reports(complete)
+            terminals = [row for row in rows if row.get("event") == "full_stream_result"]
+            if not terminals:
+                if final:
+                    raise ProbeError("decoder_terminal_missing")
+                return
+            if len(terminals) != 1 or rows[-1] != terminals[0] or helper.pin is None:
+                raise ProbeError("decoder_terminal_sequence")
+            if len(rows) == 2 and (
+                rows[0].get("event") != "decoder_admitted"
+                or rows[0].get("case_binding") != self.case.record()
+                or ProcessPin.from_record(rows[0].get("runner")) != helper.pin
+            ):
+                raise ProbeError("decoder_terminal_admission")
+            result = terminals[0]
+            values = validate_terminal(result, self.case, helper.pin, self.clock)
+            if self.decode is not None and self.decode != result:
+                raise ProbeError("decoder_terminal_changed")
+            self.decode = result
+            started = values["cleanup_start_utc"]
+            if started is not None:
+                self.clock.adopt_cleanup(cast(float, started))
+            self.clock.timing_unknown |= values["cleanup_timing_unknown"] is True
+            self.clock.missed |= values["cleanup_deadline_met"] is not True
+            self.clock.case_missed |= values["case_deadline_met"] is not True
+            if final and raw != complete:
+                raise ProbeError("decoder_terminal_partial")
+        except ValueError, TypeError, KeyError, RecursionError, ProbeError:
+            self.terminal_error = "invalid_or_missing_decoder_terminal"
+            self.clock.timing_unknown = self.clock.missed = True
         # Do not revoke the owned reader inside its finish callback. The outer
         # owner conveys this earlier clock after observing actual reader exit.
+
+    def _propagate(self) -> None:
+        self.clock.cancel()
+        assert self.clock.cleanup_start_utc is not None
+        self.owner.cancel(
+            "evaluation_cancelled",
+            started_at=datetime.fromtimestamp(self.clock.cleanup_start_utc, UTC),
+            timing_unknown=self.clock.timing_unknown,
+            deadline_missed=self.clock.missed,
+        )
 
     def _retire(self, helper: OwnedHelper) -> None:
         if not helper.join(0):
             raise ProbeError("helper_still_owned")
+        self._capture(helper, final=True)
         if inventory(self.init_pin, self.owner_pin):
             raise ProbeError("helper_descendant_debt")
         self.history.append(helper.receipt())
@@ -254,9 +296,7 @@ class ValidationConsumer:
         self.operation = True
         try:
             self.phase = "metadata"
-            helper = self._start(
-                "metadata", ["--owned-fd", str(fd), "--bytes", str(FILE_BYTES)], (fd,)
-            )
+            helper = self._start("metadata", ["--owned-fd", str(fd)], (fd,))
             helper.finish_input()
             end = time.monotonic() + METADATA_SECONDS
             while not helper.join(0.01):
@@ -264,14 +304,21 @@ class ValidationConsumer:
                     self.cancel()
                     raise ProbeError("metadata_deadline")
             rows = reports(bytes(helper.stdout))
-            if len(rows) == 1 and rows[0].get("schema") == "sobafm-fma-metadata-rejection-1":
+            if (
+                len(rows) != 1
+                or rows[0].pop("case_binding", None) != self.case.record()
+                or helper.pin is None
+                or rows[0].pop("helper_pid", None) != helper.pin.pid
+            ):
+                raise ProbeError("metadata_case_binding")
+            if len(rows) == 1 and rows[0].get("schema") == self.case.schema("metadata-rejection"):
                 rejection = rows[0]
                 reason = rejection.get("reason")
                 if (
                     set(rejection) == {"schema", "reason", "credits_complete"}
                     and rejection["credits_complete"] is False
                     and isinstance(reason, str)
-                    and re.fullmatch("[a-z_]{1,80}", reason)
+                    and re.fullmatch("[a-z0-9_]{1,80}", reason)
                 ):
                     self.metadata = rejection
                 raise ProbeError("metadata_helper_rejected")
@@ -281,12 +328,12 @@ class ValidationConsumer:
                 or helper.process is None
                 or helper.process.returncode != 0
                 or len(rows) != 1
-                or rows[0].get("schema") != "sobafm-fma-metadata-1"
+                or rows[0].get("schema") != self.case.schema("metadata")
                 or rows[0].get("credits_complete") is not False
             ):
                 raise ProbeError("metadata_helper_failed")
             self.metadata = rows[0]
-            validate_metadata(self.metadata)
+            validate_metadata(self.metadata, self.case)
             self._retire(helper)
             self.phase = "decoder_preparation"
             helper = self._start(
@@ -315,8 +362,16 @@ class ValidationConsumer:
             if len(ready) != 1 or ready[0].get("event") != "decoder_admitted":
                 raise ProbeError("decoder_admission_record")
             record = ready[0]
-            if set(record) != {"event", "native_gate", "init", "owner", "runner"} or (
-                ProcessPin.from_record(record["init"]) != self.init_pin
+            if set(record) != {
+                "event",
+                "case_binding",
+                "native_gate",
+                "init",
+                "owner",
+                "runner",
+            } or (
+                record["case_binding"] != self.case.record()
+                or ProcessPin.from_record(record["init"]) != self.init_pin
                 or ProcessPin.from_record(record["owner"]) != self.owner_pin
                 or ProcessPin.from_record(record["runner"]) != helper.pin
             ):
@@ -347,8 +402,16 @@ class ValidationConsumer:
                 raise ProbeError("consumer_stream_revoked")
             self.active.write(chunk)
             self.delivered += len(chunk)
-            if self.delivered > FILE_BYTES:
+            if self.delivered > self.case.bytes:
                 raise ProbeError("consumer_input_overrun")
+            if self.case.name == "first-write-cancel" and not self.first_write_cancelled:
+                self.first_write_cancelled = True
+                self.cancel()
+                raise ProbeError("qualification_first_write_cancel")
+        except Exception:
+            if self.active is not None:
+                self._capture(self.active)
+            raise
         finally:
             self.operation = False
 
@@ -356,26 +419,25 @@ class ValidationConsumer:
         self.operation = True
         try:
             helper = self.active
-            if helper is None or self.delivered != FILE_BYTES:
+            if helper is None or self.delivered != self.case.bytes:
                 raise ProbeError("consumer_incomplete_input")
             helper.finish_input()
             while not helper.join(0.01):
                 if self.clock.remaining() <= 0:
                     self.cancel()
                     raise ProbeError("decoder_case_deadline")
-            rows = reports(bytes(helper.stdout))
+            self._capture(helper, final=True)
             if (
-                len(rows) != 2
+                self.decode is None
+                or self.terminal_error is not None
                 or helper.stderr
                 or helper.failure
                 or helper.process is None
                 or helper.process.returncode != 0
             ):
                 raise ProbeError("decoder_report_sequence")
-            self.decode = rows[1]
             self.phase = "finishing"
-            self._adopt(self.decode)
-            validate_decode(self.decode)
+            validate_decode(self.decode, self.case)
             self._retire(helper)
             self.finished = True
             self.phase = "settled"
@@ -383,17 +445,14 @@ class ValidationConsumer:
             self.operation = False
 
     def cancel(self) -> None:
+        helper = self.active
+        if helper is not None:
+            self._capture(helper)
         if self.owner.cleanup_started_utc is not None:
             self.clock.adopt_cleanup(
                 datetime.fromisoformat(self.owner.cleanup_started_utc).timestamp()
             )
-        self.clock.cancel()
-        assert self.clock.cleanup_start_utc is not None
-        self.owner.cancel(
-            "evaluation_cancelled",
-            started_at=datetime.fromtimestamp(self.clock.cleanup_start_utc, UTC),
-        )
-        helper = self.active
+        self._propagate()
         if helper is not None:
             helper.cancel()
 
@@ -402,19 +461,60 @@ class ValidationConsumer:
             return False
         helper = self.active
         if helper is not None:
-            if not helper.join(timeout):
+            settled = helper.join(timeout)
+            self._capture(helper, final=settled)
+            if self.owner.stop.is_set() or not self.finished:
+                self._propagate()
+            if not settled:
                 return False
             self._retire(helper)
         return not inventory(self.init_pin, self.owner_pin)
 
     def receipt(self) -> dict[str, object]:
         return {
+            "case_binding": self.case.record(),
             "phase": self.phase,
             "finished": self.finished,
             "delivered_bytes": self.delivered,
             "metadata": self.metadata,
             "decode": self.decode,
+            "terminal_error": self.terminal_error,
+            "first_write_cancelled": self.first_write_cancelled,
             "helpers": self.history,
             "active": None if self.active is None else self.active.receipt(),
             "cleanup": self.clock.receipt(),
         }
+
+
+def expected_outcome(validation: dict[str, object], case: CaseBinding) -> bool:
+    """Only an observation predicate; resource release must be checked separately."""
+    if (
+        validation.get("case_binding") != case.record()
+        or validation.get("terminal_error") is not None
+    ):
+        return False
+    if case.name == "metadata-rejection":
+        return (
+            validation.get("metadata")
+            == {
+                "schema": case.schema("metadata-rejection"),
+                "reason": "unsupported_id3_text_encoding",
+                "credits_complete": False,
+            }
+            and validation.get("phase") == "metadata"
+            and validation.get("decode") is None
+            and validation.get("delivered_bytes") == 0
+            and validation.get("finished") is False
+            and validation.get("first_write_cancelled") is False
+        )
+    if case.name == "first-write-cancel":
+        result = validation.get("decode")
+        return (
+            validation.get("first_write_cancelled") is True
+            and validation.get("finished") is False
+            and isinstance(result, dict)
+            and cast(dict[str, object], result).get("passed") is False
+            and type(validation.get("delivered_bytes")) is int
+            and 0 < cast(int, validation["delivered_bytes"]) <= 65_536
+        )
+    return validation.get("finished") is True

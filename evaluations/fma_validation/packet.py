@@ -14,6 +14,7 @@ from evaluations.linux_resource.probe import ProbeError
 from sobafm.catalog import parse_catalog
 from sobafm.fma_intake import IntakeRequest, parse_request
 
+from .cases import NIGHT_OWL, CaseBinding, OwnedQualificationRequest, parse_owned_request
 from .consumer import object_pairs
 from .limits import FILE_BYTES, FILE_SHA256, REPORT_BYTES, WHOLE_SECONDS, encode_report, utc_seconds
 
@@ -41,11 +42,16 @@ SOURCE_FILES = (
             "consumer",
             "owner",
             "controller",
+            "cases",
+            "terminal",
+            "qualification_controller",
+            "qualification_owner",
         )
     ),
     "evaluations/catalog/fma-night-owl-catalog.json",
     "evaluations/fma_validation/Dockerfile",
     "evaluations/fma_validation/NOTICE.md",
+    "evaluations/fma_validation/qualification-recipes.json",
     "evaluations/fma_validation/COPYING",
     "pyproject.toml",
     "uv.lock",
@@ -88,10 +94,22 @@ def read_bounded(path: Path, limit: int = REPORT_BYTES) -> bytes:
 @dataclass(frozen=True)
 class Packet:
     raw: dict[str, object]
-    request: IntakeRequest
+    request: IntakeRequest | OwnedQualificationRequest
     whole_end: float
     expires: float
     source_hashes: dict[str, str]
+
+    @property
+    def case(self) -> CaseBinding:
+        return (
+            self.request.case if isinstance(self.request, OwnedQualificationRequest) else NIGHT_OWL
+        )
+
+    @property
+    def owner_module(self) -> str:
+        return "evaluations.fma_validation." + (
+            "qualification_owner" if self.case.synthetic else "owner"
+        )
 
     @property
     def fingerprint(self) -> str:
@@ -107,6 +125,18 @@ class Packet:
 
 
 def load(path: Path, root: Path, *, now: float | None = None, recovery: bool = False) -> Packet:
+    return _load(path, root, now=now, recovery=recovery, qualification=False)
+
+
+def load_qualification(
+    path: Path, root: Path, *, now: float | None = None, recovery: bool = False
+) -> Packet:
+    return _load(path, root, now=now, recovery=recovery, qualification=True)
+
+
+def _load(
+    path: Path, root: Path, *, now: float | None, recovery: bool, qualification: bool
+) -> Packet:
     from datetime import UTC, datetime
 
     raw = object_record(
@@ -137,7 +167,8 @@ def load(path: Path, root: Path, *, now: float | None = None, recovery: bool = F
         },
     )
     now = time.time() if now is None else now
-    if raw["schema"] != "sobafm-fma-case-1" or raw["target"] != "linux/amd64":
+    schema = "sobafm-owned-qualification-case-1" if qualification else "sobafm-fma-case-1"
+    if raw["schema"] != schema or raw["target"] != "linux/amd64":
         raise ProbeError("packet_schema_or_target")
     for key in ("source_commit", "source_tree"):
         if re.fullmatch("[0-9a-f]{40}", string(raw[key])) is None:
@@ -173,15 +204,19 @@ def load(path: Path, root: Path, *, now: float | None = None, recovery: bool = F
         raise ProbeError("packet_slot_inode")
     hashes = object_record(raw["source_hashes"], set(SOURCE_FILES))
     source_hashes = {name: sha(value) for name, value in hashes.items()}
-    request = parse_request(
-        encode_report(raw["request"]),
-        parse_catalog(
-            read_bounded(root / "evaluations/catalog/fma-night-owl-catalog.json").decode()
-        ),
-        datetime.fromtimestamp(now, UTC),
-        recovery=recovery,
+    request = (
+        parse_owned_request(raw["request"], datetime.fromtimestamp(now, UTC), recovery=recovery)
+        if qualification
+        else parse_request(
+            encode_report(raw["request"]),
+            parse_catalog(
+                read_bounded(root / "evaluations/catalog/fma-night-owl-catalog.json").decode()
+            ),
+            datetime.fromtimestamp(now, UTC),
+            recovery=recovery,
+        )
     )
-    if (
+    if not qualification and (
         request.version != 2
         or request.file.bytes != FILE_BYTES
         or request.file.sha256 != FILE_SHA256

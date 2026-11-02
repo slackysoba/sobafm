@@ -191,6 +191,60 @@ def test_pending_copy_has_no_admission_and_preserves_original(
     assert owner.report()["cleanup_deadline_met"] is True
 
 
+@pytest.mark.parametrize("version", [1, 2])
+def test_fma_ledger_and_request_keep_original_serialized_namespace(
+    case: Case,
+    owners: list[intake.LocalIntake],
+    version: int,
+) -> None:
+    from typing import Literal
+
+    case.request = replace(
+        case.request,
+        version=cast(Literal[1, 2], version),
+        acquisition=replace(
+            case.request.acquisition,
+            operator_evidence=None if version == 1 else "Synthetic evidence.",
+        ),
+    )
+    owner = start(case, owners)
+    assert owner.pending.wait(5)
+    raw = (case.slot / "state.json").read_bytes()
+    state = cast(dict[str, object], json.loads(raw))
+    time_key = "acquired_at" if version == 1 else "acquisition"
+    assert set(state) == {
+        "schema",
+        "owner_id",
+        "request_sha256",
+        time_key,
+        "expires_at",
+        "phase",
+        "directory_identity",
+        "lock_identity",
+        "payload_identity",
+        "copied_bytes",
+        "copied_sha256",
+        "cleanup_started_utc",
+        "cleanup_missed",
+    } | ({"reader_state"} if version == 2 else set())
+    assert state["schema"] == f"sobafm-fma-owned-slot-{version}"
+    assert state[time_key] == case.request.time_fields()[time_key]
+    assert state["expires_at"] == case.request.expires_at
+    assert (
+        raw == json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    )
+    manifest_fields = case.request.manifest()
+    assert manifest_fields["schema"] == f"sobafm-fma-intake-{version}"
+    if version == 1:
+        del manifest_fields["schema"]
+    original_fingerprint = hashlib.sha256(
+        json.dumps(
+            manifest_fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode()
+    ).hexdigest()
+    assert state["request_sha256"] == original_fingerprint == case.request.fingerprint
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

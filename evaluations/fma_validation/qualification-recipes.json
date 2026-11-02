@@ -1,0 +1,36 @@
+{
+  "schema": "sobafm-owned-qualification-recipes-1",
+  "purpose": "owned-synthetic-qualification",
+  "source_receipt": "evaluations/linux_resource/results/2026-10-28-owned-mp3-decode-confirmation.yaml",
+  "base": {
+    "bytes": 1920768,
+    "sha256": "1a431c03098d8be79a522a3b1f64a8182445a8bf6c009f54c1b3bb1f6dad044d", "sha256_note": "Owned fixture integrity, not a credential. # pragma: allowlist secret"
+  },
+  "tagged-full": {
+    "recipe": "cases.tagged_prefix() + unchanged owned base MPEG bytes + cases.tagged_suffix()",
+    "prefix_bytes": 524288,
+    "prefix_sha256": "eb7ccd7cc367f1bd78a24765c90bbd5bc2b1105658d07a75fda2ad56cdcb89da", "prefix_sha256_note": "Synthetic integrity, not a credential. # pragma: allowlist secret",
+    "suffix_bytes": 128,
+    "suffix_sha256": "5f02aaf60474d450ebf0c3c1d7909b4c8aed43ee0c160b95c37ba8369d03e98a", "suffix_sha256_note": "Synthetic integrity, not a credential. # pragma: allowlist secret",
+    "bytes": 2445184,
+    "sha256": null,
+    "binding_status": "unfrozen; derivation and exact hashing require separate release",
+    "expected_pcm_bytes": 23040000,
+    "expected_pcm_sha256": "ce1390078e09a1b06bcb10d64515886ce4d865456346d7be1b70e455703062df", "expected_pcm_sha256_note": "Owned PCM integrity, not a credential. # pragma: allowlist secret"
+  },
+  "metadata-rejection": {
+    "recipe": "cases.rejection_fixture(); ID3v2.3 TIT2 payload b'\\x01' + b'a\\x00\\x00\\x00' * 1023",
+    "bytes": 4113,
+    "sha256": "88fc476283d8dcccc07d02fdd3a59b7d2bbb92a64d8614cc6989fa7b2de5d3f3", "sha256_note": "Synthetic integrity, not a credential. # pragma: allowlist secret",
+    "expected_reason": "unsupported_id3_text_encoding",
+    "decoder_admission": false
+  },
+  "first-write-cancel": {
+    "input": "tagged-full",
+    "bytes": 2445184,
+    "sha256": null,
+    "binding_status": "unfrozen; same pending derivative as tagged-full",
+    "checkpoint": "after native admission and first completed owner-to-helper write",
+    "pipeline_passed": false
+  }
+}
