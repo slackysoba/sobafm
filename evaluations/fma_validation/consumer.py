@@ -26,6 +26,7 @@ from .limits import (
     CaseClock,
     encode_report,
 )
+from .observation import ObservationWorkspace
 from .process import OwnedHelper, ProcessPin, inventory
 from .terminal import DECODE_FIELDS, validate_terminal
 
@@ -175,8 +176,13 @@ class ValidationConsumer:
         owner_pin: ProcessPin,
         clock: CaseClock,
         case: CaseBinding = NIGHT_OWL,
+        *,
+        workspace: ObservationWorkspace | None = None,
     ) -> None:
         self.owner, self.init_pin, self.owner_pin, self.clock = owner, init, owner_pin, clock
+        self.observation = ObservationWorkspace(clock) if workspace is None else workspace
+        if self.observation.clock is not clock:
+            raise ProbeError("observation_clock_owner")
         request = owner.request
         if (
             request.file.bytes != case.bytes
@@ -204,11 +210,16 @@ class ValidationConsumer:
 
     def _start(self, role: str, args: list[str], inherited: tuple[int, ...] = ()) -> OwnedHelper:
         with self.lock:
-            if self.active is not None or self.clock.remaining() <= 0:
+            if self.active is not None or len(self.history) >= 2 or self.clock.remaining() <= 0:
                 raise ProbeError("sequential_helper_not_admitted")
-            helper = OwnedHelper(self.clock, role)
+            helper = OwnedHelper(self.clock, role, self.observation)
             self.active = helper
-        if inventory(self.init_pin, self.owner_pin):
+        if inventory(
+            self.init_pin,
+            self.owner_pin,
+            workspace=self.observation,
+            cleanup=self.clock.cleanup_start_utc is not None,
+        ):
             raise ProbeError("unsettled_previous_phase")
         helper.launch(
             [
@@ -223,7 +234,7 @@ class ValidationConsumer:
             inherited,
         )
         assert helper.pin is not None
-        if inventory(self.init_pin, self.owner_pin, helper.pin):
+        if inventory(self.init_pin, self.owner_pin, helper.pin, workspace=self.observation):
             raise ProbeError("unexpected_helper_phase_members")
         helper.admit()
         return helper
@@ -283,7 +294,12 @@ class ValidationConsumer:
         if not helper.join(0):
             raise ProbeError("helper_still_owned")
         self._capture(helper, final=True)
-        if inventory(self.init_pin, self.owner_pin):
+        if inventory(
+            self.init_pin,
+            self.owner_pin,
+            workspace=self.observation,
+            cleanup=self.clock.cleanup_start_utc is not None,
+        ):
             raise ProbeError("helper_descendant_debt")
         self.history.append(helper.receipt())
         helper.stdout.clear()
@@ -382,12 +398,13 @@ class ValidationConsumer:
             native_pid = observation.get("pid")
             if type(native_pid) is not int or helper.pin is None:
                 raise ProbeError("native_admission_pid")
-            native = ProcessPin.capture(native_pid)
+            native = ProcessPin.capture(native_pid, self.observation)
             if (
                 native.parent != helper.pin.pid
                 or native.start != observation.get("start_ticks")
                 or native.executable != "/usr/bin/mpg123"
-                or inventory(self.init_pin, self.owner_pin, helper.pin) != {native_pid}
+                or inventory(self.init_pin, self.owner_pin, helper.pin, workspace=self.observation)
+                != {native_pid}
             ):
                 raise ProbeError("native_phase_inventory")
             self.phase = "streaming"
@@ -456,7 +473,7 @@ class ValidationConsumer:
             helper.cancel()
 
     def join(self, timeout: float) -> bool:
-        if self.operation:
+        if self.operation or self.observation.debt:
             return False
         helper = self.active
         if helper is not None:
@@ -467,7 +484,12 @@ class ValidationConsumer:
             if not settled:
                 return False
             self._retire(helper)
-        return not inventory(self.init_pin, self.owner_pin)
+        return not inventory(
+            self.init_pin,
+            self.owner_pin,
+            workspace=self.observation,
+            cleanup=self.clock.cleanup_start_utc is not None,
+        )
 
     def receipt(self) -> dict[str, object]:
         return {

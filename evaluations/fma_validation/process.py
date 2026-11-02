@@ -11,102 +11,24 @@ import struct
 import subprocess
 import threading
 import time
-from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import cast
 
-from evaluations.linux_resource.probe import ProbeError, proc_fields, read_text, unified_path
+from evaluations.linux_resource.probe import ProbeError
 
 from .limits import CHUNK_BYTES, REPORT_BYTES, CaseClock
+from .observation import ObservationWorkspace
+from .observation import ProcessPin as ProcessPin
 
 
-@dataclass(frozen=True)
-class ProcessPin:
-    pid: int
-    start: int
-    parent: int
-    executable: str
-    executable_device: int
-    executable_inode: int
-    uid: int
-    group: str
-
-    @classmethod
-    def from_record(cls, value: object) -> ProcessPin:
-        if not isinstance(value, dict):
-            raise ProbeError("invalid_process_record")
-        fields = cast(dict[str, object], value)
-        integers = ("pid", "start", "parent", "executable_device", "executable_inode", "uid")
-        if set(fields) != {*integers, "executable", "group"}:
-            raise ProbeError("invalid_process_record")
-        if any(type(fields[key]) is not int or cast(int, fields[key]) < 0 for key in integers):
-            raise ProbeError("invalid_process_record")
-        if not isinstance(fields["executable"], str) or not isinstance(fields["group"], str):
-            raise ProbeError("invalid_process_record")
-        return cls(
-            cast(int, fields["pid"]),
-            cast(int, fields["start"]),
-            cast(int, fields["parent"]),
-            fields["executable"],
-            cast(int, fields["executable_device"]),
-            cast(int, fields["executable_inode"]),
-            cast(int, fields["uid"]),
-            fields["group"],
-        )
-
-    @classmethod
-    def capture(cls, pid: int) -> ProcessPin:
-        root = Path(f"/proc/{pid}")
-        fields = read_text(root / "stat").rsplit(")", 1)[1].split()
-        status = proc_fields(read_text(root / "status"))
-        if (
-            len(fields) < 20
-            or status["Uid"].split() != ["1000"] * 4
-            or status["Gid"].split() != ["1000"] * 4
-            or status["NoNewPrivs"].strip() != "1"
-            or status["Seccomp"].strip() != "2"
-            or int(status["CapEff"], 16) != 0
-        ):
-            raise ProbeError("process_security_identity")
-        info = (root / "exe").stat()
-        return cls(
-            pid,
-            int(fields[19]),
-            int(fields[1]),
-            os.readlink(root / "exe"),
-            info.st_dev,
-            info.st_ino,
-            1000,
-            unified_path(read_text(root / "cgroup")),
-        )
-
-    def verify(self) -> None:
-        if self.group != "/" or ProcessPin.capture(self.pid) != self:
-            raise ProbeError("process_identity_changed")
-
-    def record(self) -> dict[str, object]:
-        return asdict(self)
-
-
-def inventory(init: ProcessPin, owner: ProcessPin, helper: ProcessPin | None = None) -> set[int]:
-    """Exclude only pinned roles; all other PIDs remain explicit descendants/debt."""
-    init.verify()
-    owner.verify()
-    if init.pid != 1 or owner.parent != 1 or owner.pid == 1:
-        raise ProbeError("init_owner_topology")
-    roles = {init.pid, owner.pid}
-    if helper is not None:
-        helper.verify()
-        if helper.parent != owner.pid or helper.pid in roles:
-            raise ProbeError("helper_topology")
-        roles.add(helper.pid)
-    rows = read_text(Path("/sys/fs/cgroup/cgroup.procs")).splitlines()
-    if not rows or len(rows) > 64 or any(not row.isdecimal() for row in rows):
-        raise ProbeError("process_inventory_unknown")
-    members = {int(row) for row in rows}
-    if not roles <= members:
-        raise ProbeError("process_role_missing")
-    return members - roles
+def inventory(
+    init: ProcessPin,
+    owner: ProcessPin,
+    helper: ProcessPin | None = None,
+    *,
+    workspace: ObservationWorkspace,
+    cleanup: bool = False,
+) -> set[int]:
+    """Unknown observations retain debt; only a complete transaction excludes roles."""
+    return workspace.inventory(init, owner, helper, cleanup)
 
 
 class OwnedHelper:
@@ -117,8 +39,13 @@ class OwnedHelper:
     intent and writes a bounded original-clock record/signals the direct helper.
     """
 
-    def __init__(self, clock: CaseClock, role: str) -> None:
+    def __init__(
+        self, clock: CaseClock, role: str, workspace: ObservationWorkspace | None = None
+    ) -> None:
         self.clock, self.role = clock, role
+        self.observation = ObservationWorkspace(clock) if workspace is None else workspace
+        if self.observation.clock is not clock:
+            raise ProbeError("observation_clock_owner")
         self.lock = threading.RLock()
         self.process: subprocess.Popen[bytes] | None = None
         self.pin: ProcessPin | None = None
@@ -176,7 +103,7 @@ class OwnedHelper:
                     os.set_blocking(stream.fileno(), False)
             self.close(self.cancel_read)
             self.close(self.admit_read)
-            self.pin = ProcessPin.capture(process.pid)
+            self.pin = ProcessPin.capture(process.pid, self.observation)
         finally:
             with self.lock:
                 self.launching = False
@@ -186,7 +113,7 @@ class OwnedHelper:
     def admit(self) -> None:
         if self.clock.remaining() <= 0 or self.admit_write is None or self.pin is None:
             raise ProbeError("helper_admission_revoked")
-        self.pin.verify()
+        self.pin.verify(self.observation)
         if os.write(self.admit_write, b"x") != 1:
             raise ProbeError("helper_admission_write")
         self.close(self.admit_write)
@@ -345,7 +272,7 @@ class OwnedHelper:
             if not self.lock.acquire(timeout=max(0, deadline - time.monotonic())):
                 return False
             try:
-                if self.launching or self.busy:
+                if self.launching or self.busy or self.observation.debt:
                     return False
             finally:
                 self.lock.release()

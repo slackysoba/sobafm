@@ -450,11 +450,18 @@ class CancelRun:
         finally:
             self.busy.remove(fd)
 
+    def process_start_identity(self, pid: int) -> tuple[str, int]:
+        """Overridable observation only; signal/reap ownership remains here."""
+        return read_start_identity(pid)
+
+    def process_group_members(self, pid: int) -> list[int]:
+        return group_members(pid)
+
     def signal_group(self, sig: signal.Signals) -> None:
         pid = self.child.pid
         own_group = True
         if self.child.exit_code is None:
-            _, actual_start = read_start_identity(pid)
+            _, actual_start = self.process_start_identity(pid)
             # An unreaped direct child cannot have its PID reused. Capture a missing
             # identity only on the pre-exec setup-failure path, before media exists.
             if self.start_ticks == 0 and not self.exec_released:
@@ -464,7 +471,7 @@ class CancelRun:
             own_group = os.getpgid(pid) == pid
             if not own_group and self.exec_released:
                 self.fail("admitted decoder process group changed")
-        members = group_members(pid) if own_group else [pid]
+        members = self.process_group_members(pid) if own_group else [pid]
         if members:
             with suppress(ProcessLookupError):
                 if own_group:
@@ -495,7 +502,7 @@ class CancelRun:
                     self.term_sent = time.monotonic()
                     self.request("repeat_after_term_dispatch")
                 if self.kill_sent is None and time.monotonic() >= self.cancel.started + 1.0:
-                    if group_members(self.child.pid) or self.child.exit_code is None:
+                    if self.process_group_members(self.child.pid) or self.child.exit_code is None:
                         self.signal_group(signal.SIGKILL)
                     self.kill_sent = time.monotonic()
         finally:

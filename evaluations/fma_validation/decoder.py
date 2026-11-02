@@ -16,11 +16,10 @@ from pathlib import Path
 from types import FrameType
 from typing import cast
 
-from evaluations.linux_resource.decoder_startup import verify_child
+from evaluations.linux_resource.decoder_startup import verify_rlimits
 from evaluations.linux_resource.owned_mp3_cancel import CancelRun
 from evaluations.linux_resource.owned_mp3_decode import (
     decoder_child,
-    read_start_identity,
     receive_banner,
     stopped_native_gate,
     verify_core_limit,
@@ -47,6 +46,7 @@ from .limits import (
     CaseClock,
     encode_report,
 )
+from .observation import ObservationWorkspace
 from .process import ProcessPin, inventory
 from .pty_channel import open_diagnostics
 
@@ -81,11 +81,15 @@ class StreamRun(CancelRun):
         clock: CaseClock,
         cancel_fd: int,
         case: CaseBinding = NIGHT_OWL,
+        workspace: ObservationWorkspace | None = None,
     ) -> None:
         super().__init__("feed")
         self.case = case
         self.init_pin, self.owner_pin, self.clock = init, owner, clock
-        self.helper_pin = ProcessPin.capture(os.getpid())
+        self.observation = ObservationWorkspace(clock) if workspace is None else workspace
+        if self.observation.clock is not clock:
+            raise ProbeError("observation_clock_owner")
+        self.helper_pin = ProcessPin.capture(os.getpid(), self.observation)
         self.cancel_fd = cancel_fd
         self.fds.extend((0, cancel_fd))
         self.input_hash = hashlib.sha256()
@@ -100,7 +104,19 @@ class StreamRun(CancelRun):
         self.pty_slave_identity: tuple[int, int] | None = None
 
     def members(self) -> set[int]:
-        return inventory(self.init_pin, self.owner_pin, self.helper_pin)
+        return inventory(
+            self.init_pin,
+            self.owner_pin,
+            self.helper_pin,
+            workspace=self.observation,
+            cleanup=self.cancel.started is not None,
+        )
+
+    def process_start_identity(self, pid: int) -> tuple[str, int]:
+        return self.observation.start_identity(pid, cleanup=self.cancel.started is not None)
+
+    def process_group_members(self, pid: int) -> list[int]:
+        return self.observation.group_members(pid, cleanup=self.cancel.started is not None)
 
     def request(self, reason: str) -> None:
         # The controller's bounded record carries the original cross-process
@@ -127,13 +143,9 @@ class StreamRun(CancelRun):
             self.request("failure")
 
     def prepare(self) -> None:
+        self.observation.single_thread(os.getpid())
         observe()
-        if (
-            os.uname().machine != "x86_64"
-            or os.sysconf("SC_PAGE_SIZE") != 4096
-            or len(list(Path("/proc/self/task").iterdir())) != 1
-            or self.members()
-        ):
+        if os.uname().machine != "x86_64" or os.sysconf("SC_PAGE_SIZE") != 4096 or self.members():
             raise ProbeError("fresh_pinned_single_thread_runner_required")
         if read_text(Path("/proc/sys/kernel/core_pattern")).strip() != "core":
             raise ProbeError("core_route_changed")
@@ -166,13 +178,14 @@ class StreamRun(CancelRun):
             )
             os._exit(125)
         self.child.pid = pid
-        _, self.start_ticks = read_start_identity(pid)
+        _, self.start_ticks = self.process_start_identity(pid)
         for fd in pipes.child_ends():
             self.close(fd)
         self.wait_ready(pipes.ready_read)
         if os.read(pipes.ready_read, 1) != b"R":
             raise ProbeError("native_setup_failed")
-        verify_child(pid, True)
+        self.observation.child_identity(pid, self.start_ticks, self.helper_pin.pid)
+        verify_rlimits(read_text(Path(f"/proc/{pid}/limits")), True)
         verify_core_limit(read_text(Path(f"/proc/{pid}/limits")))
         if self.members() != {pid}:
             raise ProbeError("native_inventory_before_exec")
@@ -189,6 +202,7 @@ class StreamRun(CancelRun):
             self.phase_deadline,
             frozenset({self.owner_pin.pid, pid}),
             DECODER,
+            self.stopped_identity,
         )
         self.wait_ready(pipes.ready_read)
         if os.read(pipes.ready_read, 1) != b"":
@@ -198,15 +212,20 @@ class StreamRun(CancelRun):
         stderr_info = Path(f"/proc/{pid}/fd/2").stat()
         if (stderr_info.st_dev, stderr_info.st_ino) != self.pty_slave_identity:
             raise ProbeError("native_diagnostic_descriptor_changed")
-        native_stat = read_text(Path(f"/proc/{pid}/stat")).rsplit(")", 1)[1].split()
-        if native_stat[4] != "0" or {entry.name for entry in Path(f"/proc/{pid}/fd").iterdir()} != {
-            "0",
-            "1",
-            "2",
-        }:
-            raise ProbeError("native_controlling_terminal_or_extra_descriptor")
-        del native_stat
+        self.observation.native_descriptors(pid)
         self.admit_stream()
+
+    def stopped_identity(self) -> dict[str, int]:
+        self.observation.stopped_identity(
+            self.child.pid,
+            self.start_ticks,
+            DECODER.argv[0],
+            self.init_pin,
+            self.owner_pin,
+            self.helper_pin,
+        )
+        # Limits/maps remain explicit later capacity work; keep complete evidence.
+        return verify_rlimits(read_text(Path(f"/proc/{self.child.pid}/limits")), True)
 
     def admit_stream(self) -> None:
         """Preflight the full admission record while the verified native is stopped."""
@@ -368,6 +387,7 @@ class StreamRun(CancelRun):
         if (
             self.cancel.started is None
             or self.busy
+            or self.observation.debt
             or self.fds
             or (self.child.pid and self.child.exit_code is None)
         ):

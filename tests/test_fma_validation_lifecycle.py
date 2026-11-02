@@ -21,6 +21,7 @@ from evaluations.fma_validation.controller import Command
 from evaluations.fma_validation.decoder import StreamRun
 from evaluations.fma_validation.limits import FILE_BYTES, FILE_SHA256, CaseClock, encode_report
 from evaluations.fma_validation.metadata import BoundedFile
+from evaluations.fma_validation.observation import ObservationWorkspace
 from evaluations.fma_validation.process import OwnedHelper, ProcessPin
 from evaluations.fma_validation.pty_channel import open_diagnostics, read_diagnostics
 from evaluations.linux_resource.owned_mp3_overlap import make_pipes
@@ -90,10 +91,10 @@ def test_pty_does_not_treat_arbitrary_io_errors_as_eof(monkeypatch: pytest.Monke
 
 @pytest.fixture
 def synthetic_pins(monkeypatch: pytest.MonkeyPatch) -> None:
-    def capture(pid: int) -> ProcessPin:
-        return ProcessPin(pid, 1, os.getpid(), sys.executable, 1, 1, 1000, "/")
+    def capture(pid: int, _workspace: ObservationWorkspace) -> ProcessPin:
+        return ProcessPin(pid, 1, os.getpid(), "/synthetic/python", 1, 1, 1000, "/")
 
-    def verify(_self: ProcessPin) -> None:
+    def verify(_self: ProcessPin, _workspace: ObservationWorkspace) -> None:
         return
 
     # Host fixtures deliberately do not claim container security qualification.
@@ -378,7 +379,7 @@ def test_controller_command_bounds_output_and_observes_actual_exit() -> None:
 
 def test_stream_writer_continues_past_old_fixture_prefix(synthetic_pins: None) -> None:
     cancel_read, cancel_write = os.pipe()
-    pin = ProcessPin.capture(os.getpid())
+    pin = ProcessPin(os.getpid(), 1, os.getpid(), "/synthetic/python", 1, 1, 1000, "/")
     run = StreamRun(pin, pin, clock(), cancel_read)
     owned: list[int] = []
     run.pipes = make_pipes(owned)
@@ -404,7 +405,7 @@ def test_native_zero_exit_without_exact_input_eof_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     read_fd, write_fd = os.pipe()
-    pin = ProcessPin.capture(os.getpid())
+    pin = ProcessPin(os.getpid(), 1, os.getpid(), "/synthetic/python", 1, 1, 1000, "/")
     run = StreamRun(pin, pin, clock(), read_fd)
 
     def empty() -> set[int]:

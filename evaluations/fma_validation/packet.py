@@ -36,6 +36,7 @@ SOURCE_FILES = (
             "packet",
             "metadata",
             "process",
+            "observation",
             "diagnostics",
             "pty_channel",
             "decoder",
