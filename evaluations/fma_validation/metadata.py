@@ -350,21 +350,27 @@ def contain() -> None:
 
 
 def main() -> int:
+    from .cases import CASE_IDS, CaseBinding, CaseId
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owned-fd", type=int, required=True)
-    parser.add_argument("--bytes", type=int, required=True)
+    parser.add_argument("--case", choices=CASE_IDS, default="night-owl")
     parser.add_argument("--cancel-fd", type=int, required=True)
     parser.add_argument("--admit-fd", type=int, required=True)
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
     if not args.execute or sys.platform != "linux":
         parser.error("explicit Linux evaluation required")
+    case = CaseBinding(cast(CaseId, args.case))
+    case.require_frozen()
     try:
         contain()
         if os.read(args.admit_fd, 1) != b"x":
             raise ProbeError("metadata_admission_revoked")
         os.close(args.admit_fd)
-        result = inspect(args.owned_fd, args.bytes)
+        result = inspect(args.owned_fd, case.bytes)
+        result["schema"] = case.schema("metadata")
+        result.update(case_binding=case.record(), helper_pid=os.getpid())
         data = encode_report(result) + b"\n"
         offset = 0
         while offset < len(data):
@@ -380,9 +386,11 @@ def main() -> int:
             1,
             encode_report(
                 {
-                    "schema": "sobafm-fma-metadata-rejection-1",
+                    "schema": case.schema("metadata-rejection"),
                     "reason": reason,
                     "credits_complete": False,
+                    "case_binding": case.record(),
+                    "helper_pid": os.getpid(),
                 }
             )
             + b"\n",

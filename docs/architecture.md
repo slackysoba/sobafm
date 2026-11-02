@@ -33,6 +33,15 @@ fresh topology fit, native terminal-filter qualification and actual recording
 validation remain separate pending execution gates. This adds no playback service
 or catalog admission and does not alter the accepted resource ADR.
 
+The explicit owned-synthetic qualification entries reuse this same pipeline with
+three finite case identities. `LocalRequest` shares ownership operations between
+the existing FMA request and a separate synthetic request; FMA v1/v2 serialized
+records and expiry semantics are unchanged. Synthetic request/ledger/report
+namespaces cannot enter the production parser. Tagged-input and cancellation
+derivatives remain unexecutable until their exact hashes are separately frozen.
+Failure terminal envelopes preserve role/case-bound cleanup timing independently
+of successful decode acceptance and retain actual resource debt through join.
+
 - Source-specific acquisition/storage implementations for the accepted three-source pool, with complete recording credits and access evidence.
 - The simplest viable non-root Docker resource model under the approved capacity definition.
 - Supported dependencies and decoder distribution without a bespoke supply system by default.

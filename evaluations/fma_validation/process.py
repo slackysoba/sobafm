@@ -366,6 +366,8 @@ class OwnedHelper:
     def receipt(self) -> dict[str, object]:
         return {
             "role": self.role,
+            "stdout_bytes": len(self.stdout),
+            "stderr_bytes": len(self.stderr),
             "process": None if self.pin is None else self.pin.record(),
             "exit_code": None if self.process is None else self.process.poll(),
             "launching": self.launching,

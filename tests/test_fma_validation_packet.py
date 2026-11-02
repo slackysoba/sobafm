@@ -10,10 +10,11 @@ from typing import cast
 
 import pytest
 
+from evaluations.fma_validation.cases import CaseBinding, OwnedQualificationRequest
 from evaluations.fma_validation.controller import Journal, creation_args
 from evaluations.fma_validation.limits import FILE_BYTES, FILE_SHA256, CaseClock, encode_report
 from evaluations.fma_validation.metadata import PARSER_TAG_BYTES, BoundedFile, preflight
-from evaluations.fma_validation.packet import SOURCE_FILES, Packet, load
+from evaluations.fma_validation.packet import SOURCE_FILES, Packet, load, load_qualification
 from evaluations.linux_resource.probe import ProbeError
 from sobafm.fma_intake import (
     CREDIT_SNAPSHOT,
@@ -166,3 +167,143 @@ def test_parser_copy_reservation_rejected_before_mutagen(tmp_path: Path) -> None
             preflight(BoundedFile(fd, size + 10))
     finally:
         os.close(fd)
+
+
+def qualification_packet(packet_path: Path, name: str = "metadata-rejection") -> Path:
+    from evaluations.fma_validation.cases import CaseId
+
+    raw = cast(dict[str, object], json.loads(packet_path.read_bytes()))
+    case = CaseBinding(cast(CaseId, name))
+    request = OwnedQualificationRequest(
+        case,
+        "2026-11-02T00:01:00Z",
+        "2026-11-02T00:04:30Z",
+        FileIdentity(1, 2, case.bytes, 0, 0, case.sha256 or "0" * 64),
+    )
+    raw.update(schema="sobafm-owned-qualification-case-1", request=request.manifest())
+    packet_path.write_bytes(encode_report(raw))
+    return packet_path
+
+
+def test_disjoint_qualification_request_and_entry_point(packet_path: Path) -> None:
+    original = packet_path.read_bytes()
+    qualification_packet(packet_path)
+    packet = load_qualification(packet_path, ROOT, now=NOW)
+    assert isinstance(packet.request, OwnedQualificationRequest)
+    assert packet.case.name == "metadata-rejection"
+    assert "evaluations.fma_validation.qualification_owner" in creation_args(packet)
+    assert not Path(packet.text("source_path")).exists()
+    with pytest.raises(ProbeError):
+        load(packet_path, ROOT, now=NOW)
+    packet_path.write_bytes(original)
+    with pytest.raises(ProbeError):
+        load_qualification(packet_path, ROOT, now=NOW)
+
+
+@pytest.mark.parametrize("name", ["tagged-full", "first-write-cancel"])
+def test_unfrozen_derivatives_rejected_without_source_access(packet_path: Path, name: str) -> None:
+    qualification_packet(packet_path, name)
+    with pytest.raises(ProbeError, match="qualification_derivative_unfrozen"):
+        load_qualification(packet_path, ROOT, now=NOW)
+
+
+@pytest.mark.parametrize("mutation", ["purpose", "case", "hash", "field", "expiry"])
+def test_qualification_cannot_substitute_identity_or_renew_expiry(
+    packet_path: Path,
+    mutation: str,
+) -> None:
+    qualification_packet(packet_path)
+    raw = cast(dict[str, object], json.loads(packet_path.read_bytes()))
+    request = cast(dict[str, object], raw["request"])
+    binding = cast(dict[str, object], request["case_binding"])
+    if mutation == "purpose":
+        binding["purpose"] = "night-owl-validation"
+    elif mutation == "case":
+        binding["case"] = "custom"
+    elif mutation == "hash":
+        cast(dict[str, object], request["file"])["sha256"] = "0" * 64
+    elif mutation == "field":
+        request["decoder_command"] = "custom"
+    else:
+        request["expires_at"] = "2026-11-03T00:04:30Z"
+    packet_path.write_bytes(encode_report(raw))
+    with pytest.raises((ValueError, ProbeError)):
+        load_qualification(packet_path, ROOT, now=NOW)
+
+
+@pytest.mark.parametrize("kind", ["nonzero", "partial", "cross_case", "absent"])
+def test_outer_terminal_capture_survives_nonzero_or_late_drain(
+    packet_path: Path,
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    import sys
+    import time
+
+    from evaluations.fma_validation.controller import Command, Controller
+    from evaluations.fma_validation.process import ProcessPin
+
+    packet = load(packet_path, ROOT, now=NOW)
+    journal = Journal(tmp_path / "outer-ledger", packet)
+    controller = Controller(packet, journal)
+    controller.clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 5, lambda: 15.0)
+    record: dict[str, object] = {
+        "schema": packet.case.schema("owner"),
+        "case_binding": packet.case.record(),
+        "packet_sha256": packet.fingerprint,
+        "passed": False,
+        "failure": "validation_owner_failed",
+        "init": ProcessPin(1, 1, 0, "/init", 1, 1, 1000, "/").record(),
+        "owner": ProcessPin(2, 1, 1, "/python", 1, 2, 1000, "/").record(),
+        "intake": {},
+        "reader": None,
+        "validation": {},
+        "memory_event_delta": {},
+        "cleanup": {
+            "whole_end_utc": packet.whole_end,
+            "expires_utc": packet.expires,
+            "cleanup_start_utc": NOW,
+            "cleanup_deadline_met": False,
+            "cleanup_timing_unknown": False,
+            "case_deadline_met": True,
+        },
+        "catalog_admitted": False,
+        "container_exit_observed": False,
+    }
+    if kind == "cross_case":
+        record["case_binding"] = CaseBinding("metadata-rejection").record()
+    raw = b"" if kind == "absent" else encode_report(record) + (b"" if kind == "partial" else b"\n")
+    command = Command(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            "import os; os.write(1," + repr(raw) + "); raise SystemExit(1)",
+        ]
+    )
+    command.owner_output = True
+    try:
+        command.worker.join(3)
+        assert command.process is not None and command.process.wait(timeout=3) == 1
+        end = time.monotonic() + 3
+        while not command.settled() and time.monotonic() < end:
+            command.pump()
+            controller.capture_owner(command, final=command.settled())
+        assert command.settled()
+        if kind == "nonzero":
+            assert controller.owner_report is not None
+            assert controller.clock.cleanup_start_utc == NOW and controller.clock.missed
+            assert not controller.clock.timing_unknown
+        else:
+            assert controller.clock.timing_unknown and controller.clock.missed
+            assert controller.owner_report is None
+        controller.clock.cancel()
+        assert controller.clock.missed and command.process.returncode == 1
+    finally:
+        command.stop()
+        end = time.monotonic() + 3
+        while not command.settled() and time.monotonic() < end:
+            command.pump()
+        assert command.settled()
+        journal.close()

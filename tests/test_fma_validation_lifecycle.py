@@ -15,6 +15,7 @@ from typing import IO, cast
 import pytest
 
 from evaluations.fma_validation import process as process_module
+from evaluations.fma_validation.cases import NIGHT_OWL, CaseBinding
 from evaluations.fma_validation.consumer import reports, validate_decode
 from evaluations.fma_validation.controller import Command
 from evaluations.fma_validation.decoder import StreamRun
@@ -113,7 +114,7 @@ def test_actual_contained_metadata_helper_settles_before_borrowed_fd_reuse(
     synthetic_pins: None,
 ) -> None:
     path = tmp_path / "synthetic-metadata"
-    data = b"owned synthetic nonaudio input" * 20
+    data = (b"owned synthetic nonaudio input" * 20).ljust(4113, b" ")
     path.write_bytes(data)
     fd = os.open(path, os.O_RDONLY)
     helper = OwnedHelper(clock(), "metadata")
@@ -126,8 +127,8 @@ def test_actual_contained_metadata_helper_settles_before_borrowed_fd_reuse(
                 "--execute",
                 "--owned-fd",
                 str(fd),
-                "--bytes",
-                str(len(data)),
+                "--case",
+                "metadata-rejection",
             ],
             (fd,),
         )
@@ -188,7 +189,7 @@ def test_metadata_helper_reports_bounded_rejection_and_still_settles(
     synthetic_pins: None,
 ) -> None:
     path = tmp_path / "unsupported-synthetic-version"
-    data = b"ID3\x04\0\0\0\0\0\0" + b"owned synthetic nonaudio"
+    data = (b"ID3\x04\0\0\0\0\0\0" + b"owned synthetic nonaudio").ljust(4113, b" ")
     path.write_bytes(data)
     fd = os.open(path, os.O_RDONLY)
     helper = OwnedHelper(clock(), "metadata")
@@ -201,8 +202,8 @@ def test_metadata_helper_reports_bounded_rejection_and_still_settles(
                 "--execute",
                 "--owned-fd",
                 str(fd),
-                "--bytes",
-                str(len(data)),
+                "--case",
+                "metadata-rejection",
             ],
             (fd,),
         )
@@ -215,9 +216,11 @@ def test_metadata_helper_reports_bounded_rejection_and_still_settles(
         assert helper.process.returncode == 1
         assert reports(bytes(helper.stdout)) == [
             {
-                "schema": "sobafm-fma-metadata-rejection-1",
+                "schema": "sobafm-owned-qualification-metadata-rejection-1",
                 "reason": "unsupported_id3_version",
                 "credits_complete": False,
+                "case_binding": CaseBinding("metadata-rejection").record(),
+                "helper_pid": helper.process.pid,
             }
         ]
         assert helper.output_eof and helper.error_eof and not helper.fds
@@ -282,6 +285,8 @@ def good_decode() -> dict[str, object]:
     return {
         "event": "full_stream_result",
         "schema": "sobafm-fma-decode-1",
+        "case_binding": NIGHT_OWL.record(),
+        "runner": ProcessPin(3, 1, 2, "/python", 1, 1, 1000, "/").record(),
         "passed": True,
         "failure": None,
         "input_bytes": FILE_BYTES,
