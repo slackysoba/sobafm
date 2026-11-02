@@ -180,6 +180,15 @@ container exit. Offline Python-child tests establish control flow only. They
 do not release another fixture derivation, image/build/volume work, PTY accounting,
 native qualification, supplied-file access or catalog admission.
 
+Before another serial case, separately review and release explicit reconciliation
+of the same slot. Payload release retains `state.json` and `owner.lock`; the
+controller records `slot_reusable: false`, and fresh intake rejects retained
+state. Preserve bounded ledgers, original request/expiry/cleanup clocks and failed
+verdicts. Verify slot/file identities, exclusive ownership and actual reader,
+helper, container and CLI release before authorizing scoped retirement of
+completed state. This evaluation has no automatic slot-reuse procedure; another
+slot, ledger replacement or expiry renewal cannot bypass unresolved debt.
+
 ### Unchanged reservations and later release
 
 The unchanged capacity equation is **90,177,536 group + 4,608,000 PCM + 4,194,304
@@ -251,15 +260,19 @@ remain preflight requirements. Keep all native binaries and mapped ELF identitie
 the new image ID and target, dependency/license evidence and init/interpreter
 executable hashes. No build or volume provisioning command runs in ordinary CI.
 
-Provision one new issue-labeled persistent volume under a separately reviewed
-bounded procedure. Prepare `/slot` as UID/GID 1000 mode 0700, then perform a small
+Before the closed owned-synthetic qualification cases, separately review and
+release one new issue-labeled persistent volume and its bounded slot preflight.
+Prepare `/slot` as UID/GID 1000 mode 0700, then perform a small
 owned-synthetic mount/permissions/inode/close/cleanup preflight under the exact
 future mounts and non-root settings. No actual recording read belongs in that
 preflight. Record volume name, creation time, mountpoint hash and namespace slot
-device/inode; bind the receipt hash in the execution packet. Release this only
-after reviewing the init -> owner -> sequential-helper topology's fresh fit and
-native terminal-filter evidence. No inherited real-file input is transported
-through Docker CLI descriptor numbers.
+device/inode; these observed identities and the receipt hash are prerequisites
+for each reviewed qualification packet. Before any owned-audio qualification,
+require accepted exact-image PTY backing/accounting and a successful bounded
+no-media PTY preflight. Before actual Night Owl intake,
+separately review exact-image PTY backing/accounting, fresh init -> owner ->
+sequential-helper topology fit and native terminal-filter qualification evidence.
+No inherited real-file input is transported through Docker CLI descriptor numbers.
 
 `packet.py` defines a closed schema, including the complete fixed runtime source
 file/hash set, source commit/tree, exact image ID/amd64 target, interpreter and
