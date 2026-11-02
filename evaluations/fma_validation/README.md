@@ -77,6 +77,15 @@ malformed notice silently dropped by Mutagen cannot produce a successful report.
 Duplicate IDs are rejected even when different discriminators might be valid;
 this conservative subset avoids losing source evidence during consolidation.
 
+Every admitted frame with an encoding byte (T frames, WXXX, COMM, USER, IPLS
+and OWNE) must use **encoding 0, Latin-1**. UTF-16, UTF-16BE, UTF-8 and unknown
+encodings fail with `unsupported_id3_text_encoding` before library entry,
+including otherwise valid text. Ordinary W URL frames are already Latin-1.
+This excludes Mutagen's Unicode repair path: repeated missing-BOM UTF-16 values
+can retain exception/traceback cycles and shrinking input suffixes before a
+later projection-count rejection. Post-parse garbage collection would not bound
+that peak. Latin-1 decoding is total and does not create those repair exceptions.
+
 Reports project explicit textual fields and use only a frame ID as their safe
 key. No Mutagen HashKey is exported. COMR remains an explicit unsupported notice,
 including its terms and optional logo, rather than exposing its serialized-frame
@@ -126,8 +135,10 @@ aggregate copies = 98,979,840 bytes**. The single copy reservation is partitione
 
 These reservations include simultaneous input, parser byte buffers, projected
 reports, serialization and IPC copies. Parser object/allocator overhead remains
-in the whole-group charge. Existing kernel pipe/socket-buffer exclusions cover
-PTY channel backing; this introduces no new exclusion. The code bounds I/O and
+in the whole-group charge. Approved kernel pipe/socket-buffer exclusions do not
+establish a PTY-backing exclusion. Concrete PTY backing accounting and containment
+remain an unreleased exact-target qualification gate within the unchanged
+98,979,840-byte capacity and existing approved exclusions. The code bounds I/O and
 report buffers, but exact parser allocation/copy overlap and the new process
 topology require fresh fit evidence. Old native proofs qualify only their exact
 unchanged source/image/target cases, not this topology.
@@ -138,7 +149,7 @@ not just raw bytes. Its conservative source-bound accounting is:
 | Simultaneous payload allowance | Bytes |
 | --- | ---: |
 | Original tag, shrinking slices, current/retained opaque frames: `3 * 524288` | 1,572,864 |
-| Admitted raw/text/fixup/Unicode/key transients: `24 * 8192` | 196,608 |
+| Admitted raw/text/Unicode/key transients: `24 * 8192` | 196,608 |
 | Projected fields, framing IDs, opaque hashes and v1 evidence | 131,072 |
 | Serialized string plus bytes, or bytes plus the current write slice | 131,072 |
 | Fixed margin | 65,536 |
@@ -146,11 +157,14 @@ not just raw bytes. Its conservative source-bound accounting is:
 
 For pinned v2.3 `read_frames`, original input plus current/replacement slices and
 accumulated opaque payload is bounded by three raw tag extents. The much smaller
-admitted-frame budget separately covers raw text fixups, at most four-byte
-Unicode backing per source byte, incremental decoder/join intermediates, retained
-decoded values and textual uniqueness keys. The 24-times allowance covers six
-four-byte extents; COMR serialization, recursion, alternate framing and duplicate
-merge paths are excluded. Projection reuses these bounded text values, exports
+admitted-frame budget separately covers raw text slices, conservatively at most
+four-byte Unicode backing per source byte, retained decoded values and textual
+uniqueness keys. The 24-times allowance covers six four-byte extents; Unicode
+repair and its exception-retained suffixes, COMR serialization, recursion,
+alternate framing and duplicate merge paths are excluded before parsing.
+Supported Latin-1 multivalue decoding can still fail the projection-count bound;
+its ordinary input slices do not accumulate in repair traceback cycles.
+Projection reuses these bounded text values, exports
 no library key and limits frames/hashes separately. Only object headers, container
 overhead and allocator overhead remain solely in the whole-group charge.
 

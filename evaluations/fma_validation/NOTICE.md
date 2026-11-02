@@ -34,7 +34,9 @@ tag bytes, reads, seeks, frames and selected notices. The supported parser subse
 is fixed-framing v2.3 plus separate v1: nested chapters, v2.4 repair, duplicate
 frame IDs and COMR are explicit failures. The public `known_frames` parameter
 keeps unselected frames opaque; decoded source payload is bounded separately
-before Unicode/key allocation. Canonical JSON size is checked before encoding.
+before Unicode/key allocation. Encoded frames admit only encoding 0 (Latin-1),
+excluding Unicode repair and exception-retained suffixes before parsing.
+Canonical JSON size is checked before encoding.
 Large/unsupported evidence
 fails rather than being silently truncated. Fresh whole-group fit qualification
 is still required. Version-specific use of `ParseID3v1` is isolated in this

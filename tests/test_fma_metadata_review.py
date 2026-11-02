@@ -85,7 +85,7 @@ def test_alternate_v24_size_interpretation_is_rejected_before_parser(
 @pytest.mark.parametrize(
     ("name", "first", "second"),
     [
-        (b"USER", b"\x03engFirst license", b"\x03engDifferent license"),
+        (b"USER", b"\x00engFirst license", b"\x00engDifferent license"),
         (b"WCOP", b"https://example.invalid/one", b"https://example.invalid/two"),
     ],
 )
@@ -100,7 +100,7 @@ def test_duplicate_notices_are_unresolved_before_hashkey_consolidation(
         inspect_owned(tmp_path, tag(frame(name, first) + frame(name, second)))
 
 
-@pytest.mark.parametrize(("name", "payload"), [(b"USER", b"\x03"), (b"TIT2", b"\xffbad")])
+@pytest.mark.parametrize(("name", "payload"), [(b"USER", b"\x00"), (b"COMM", b"\x00")])
 def test_mutagen_silent_known_frame_drop_becomes_explicit_failure(
     tmp_path: Path,
     name: bytes,
@@ -139,7 +139,7 @@ def test_decoded_payload_limits_apply_before_any_parser_allocation(
     elif kind == "wide_unicode":
         data = frame(b"TIT2", b"\x03" + b"a" * 500_000 + "\U0001f600".encode())
     else:
-        data = b"".join(frame(name, b"\x03" + b"a" * 3000) for name in (b"TIT2", b"TPE1", b"TALB"))
+        data = b"".join(frame(name, b"\x00" + b"a" * 3000) for name in (b"TIT2", b"TPE1", b"TALB"))
     assert len(tag(data)) <= metadata.PARSER_TAG_BYTES
     with pytest.raises(metadata.MetadataRejected, match="metadata_decoded_payload_reservation"):
         inspect_owned(tmp_path, tag(data))
@@ -154,7 +154,7 @@ def test_maximum_raw_envelope_keeps_opaque_artwork_out_of_parser(
 
     artwork = importlib.import_module("mutagen.id3").APIC
     monkeypatch.setattr(artwork, "_fromData", forbidden_artwork)
-    text = b"\x03" + b"a" * 4091 + "\U0001f600".encode()
+    text = b"\x00" + b"a" * 4094 + b"\xe9"
     assert len(text) == metadata.FRAME_SOURCE_BYTES
     notices = frame(b"TIT2", text) + frame(b"TPE1", text)
     opaque_size = metadata.PARSER_TAG_BYTES - 10 - len(notices) - 10
@@ -167,7 +167,51 @@ def test_maximum_raw_envelope_keeps_opaque_artwork_out_of_parser(
     frames = cast(list[dict[str, object]], result["id3v2"])
     assert [item["key"] for item in frames] == ["TIT2", "TPE1"]
     serialized = encode_report(result)
-    assert b"\\u00ff" not in serialized and b"\\ud83d\\ude00" in serialized
+    assert b"\\u00ff" not in serialized and b"\\u00e9" in serialized
+
+
+@pytest.mark.parametrize("frame_count", [1, 2])
+def test_missing_bom_multivalue_repair_is_rejected_before_parser(
+    tmp_path: Path,
+    forbid_parser: None,
+    frame_count: int,
+) -> None:
+    # Reviewer's exact source-level counterexample: each successful UTF-16
+    # repair can retain an error traceback and its shrinking input suffix.
+    payload = b"\x01" + (b"a\x00\x00\x00" * 1023)
+    assert len(payload) == 4093 <= metadata.FRAME_SOURCE_BYTES
+    assert frame_count * len(payload) <= metadata.DECODED_SOURCE_BYTES
+    data = b"".join(frame(name, payload) for name in (b"TIT2", b"TPE1")[:frame_count])
+    with pytest.raises(metadata.MetadataRejected, match="unsupported_id3_text_encoding"):
+        inspect_owned(tmp_path, tag(data))
+
+
+@pytest.mark.parametrize("name", [b"TIT2", b"WXXX", b"COMM", b"USER", b"IPLS", b"OWNE"])
+@pytest.mark.parametrize("encoding", [1, 2, 3, 255])
+def test_non_latin1_encoded_frames_never_reach_parser(
+    tmp_path: Path,
+    forbid_parser: None,
+    name: bytes,
+    encoding: int,
+) -> None:
+    with pytest.raises(metadata.MetadataRejected, match="unsupported_id3_text_encoding"):
+        inspect_owned(tmp_path, tag(frame(name, bytes((encoding,)) + b"owned text")))
+
+
+@pytest.mark.parametrize("values", [128, 129])
+def test_supported_latin1_multivalue_success_and_projection_rejection(
+    tmp_path: Path,
+    values: int,
+) -> None:
+    data = tag(frame(b"TIT2", b"\x00" + b"\x00".join([b"caf\xe9"] * values)))
+    if values == 129:
+        with pytest.raises(ProbeError, match="metadata_notice_exceeds_supported_bound"):
+            inspect_owned(tmp_path, data)
+    else:
+        result = inspect_owned(tmp_path, data)
+        frames = cast(list[dict[str, object]], result["id3v2"])
+        fields = cast(dict[str, object], frames[0]["fields"])
+        assert fields["text"] == ["caf\xe9"] * values
 
 
 @pytest.mark.parametrize(

@@ -38,10 +38,10 @@ def id3(payload: bytes) -> bytes:
 
 def test_metadata_preserves_notices_versions_conflicts_and_unknowns(tmp_path: Path) -> None:
     v2 = id3(
-        frame(b"TIT2", b"\x03Synthetic title")
-        + frame(b"TPE1", b"\x03Synthetic artist")
+        frame(b"TIT2", b"\x00Synthetic title")
+        + frame(b"TPE1", b"\x00Synthetic artist")
         + frame(b"WCOP", b"https://example.invalid/not-a-fetch")
-        + frame(b"COMM", b"\x03engnotice\x00Credit the artist")
+        + frame(b"COMM", b"\x00engnotice\x00Credit the artist")
         + frame(b"ZZZZ", b"unknown")
     )
     v1 = (

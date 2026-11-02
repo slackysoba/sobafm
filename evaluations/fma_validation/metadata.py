@@ -150,12 +150,21 @@ def preflight(stream: BoundedFile) -> dict[str, object]:
             raise MetadataRejected(UNSUPPORTED_FRAMES[name])
         if name in ids:
             raise MetadataRejected("unresolved_duplicate_frame_id")
+        skip = length
         if selected_id(name):
             decoded_bytes += length
             if length > FRAME_SOURCE_BYTES or decoded_bytes > DECODED_SOURCE_BYTES:
                 raise MetadataRejected("metadata_decoded_payload_reservation")
+            if name.startswith("T") or name == "WXXX" or name in TEXT_FRAMES:
+                # Encoding 0 is total Latin-1 decoding. UTF-16 repair can retain
+                # exception/traceback cycles containing many shrinking suffixes
+                # before projection rejects the value count. Exclude every
+                # other encoding before library entry, including valid UTF-8.
+                if stream.read(1) != b"\x00":
+                    raise MetadataRejected("unsupported_id3_text_encoding")
+                skip -= 1
         ids.append(name)
-        stream.seek(length, os.SEEK_CUR)
+        stream.seek(skip, os.SEEK_CUR)
     stream.seek(0)
     return {
         "v2_present": True,
