@@ -1,0 +1,409 @@
+"""One initially inert owner for sequential contained metadata and streaming decode."""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+import sys
+import threading
+import time
+from datetime import UTC, datetime
+from typing import cast
+
+from evaluations.linux_resource.probe import ProbeError
+from sobafm.fma_intake import LocalIntake
+
+from .diagnostics import FORMAT
+from .limits import (
+    FILE_BYTES,
+    FILE_SHA256,
+    MAX_FRAMES,
+    MAX_SEEKS,
+    METADATA_SECONDS,
+    PCM_LIMIT,
+    READY_BYTES,
+    REPORT_BYTES,
+    CaseClock,
+    encode_report,
+)
+from .process import OwnedHelper, ProcessPin, inventory
+
+
+def object_pairs(items: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in items:
+        if key in result:
+            raise ProbeError("duplicate_report_field")
+        result[key] = value
+    return result
+
+
+def reports(raw: bytes) -> list[dict[str, object]]:
+    if len(raw) > REPORT_BYTES:
+        raise ProbeError("helper_report_bound")
+    records: list[dict[str, object]] = []
+    for line in raw.split(b"\n"):
+        if not line:
+            continue
+        value: object = json.loads(line, object_pairs_hook=object_pairs)
+        if not isinstance(value, dict):
+            raise ProbeError("helper_report_object_required")
+        records.append(cast(dict[str, object], value))
+        if len(records) > 2:
+            raise ProbeError("unexpected_helper_report")
+    return records
+
+
+def validate_metadata(result: dict[str, object]) -> None:
+    if set(result) != {
+        "schema",
+        "parser",
+        "framing",
+        "id3v2",
+        "id3v1",
+        "id3v1_version",
+        "id3v1_sha256",
+        "conflicting_frame_ids",
+        "omitted_frame_ids",
+        "unknown_frames",
+        "read_bytes",
+        "seek_count",
+        "credits_complete",
+        "recording_correspondence",
+        "links_followed",
+    } or (
+        result["schema"] != "sobafm-fma-metadata-1"
+        or result["parser"] != "mutagen-1.48.1"
+        or result["credits_complete"] is not False
+        or result["links_followed"] is not False
+        or result["recording_correspondence"] != "requires_trusted_review"
+        or result["id3v1_version"] not in (None, "1.0", "1.1")
+        or not isinstance(result["framing"], dict)
+    ):
+        raise ProbeError("metadata_report_fields")
+    for key, limit in (("read_bytes", FILE_BYTES * 3), ("seek_count", MAX_SEEKS)):
+        value = result[key]
+        if type(value) is not int or not 0 <= value <= limit:
+            raise ProbeError("metadata_report_limits")
+    for key in ("id3v1", "id3v2", "conflicting_frame_ids", "omitted_frame_ids", "unknown_frames"):
+        value = result[key]
+        if not isinstance(value, list) or len(cast(list[object], value)) > MAX_FRAMES:
+            raise ProbeError("metadata_report_collection")
+    for key in ("id3v1", "id3v2"):
+        for item in cast(list[object], result[key]):
+            if not isinstance(item, dict):
+                raise ProbeError("metadata_report_frame")
+            frame = cast(dict[str, object], item)
+            if (
+                set(frame) != {"id", "key", "fields"}
+                or not isinstance(frame["id"], str)
+                or not isinstance(frame["key"], str)
+                or not isinstance(frame["fields"], dict)
+            ):
+                raise ProbeError("metadata_report_frame")
+    encode_report(result)
+
+
+def validate_decode(result: dict[str, object]) -> None:
+    if set(result) != {
+        "event",
+        "schema",
+        "passed",
+        "failure",
+        "input_bytes",
+        "input_sha256",
+        "input_complete",
+        "stdout_eof",
+        "stderr_eof",
+        "exit_code",
+        "pcm_bytes",
+        "pcm_sha256",
+        "measured_duration_seconds",
+        "web_duration_seconds",
+        "ready_seconds",
+        "cleanup",
+        "cleanup_debt",
+        "memory_event_delta",
+        "swap_current",
+        "diagnostics",
+        "catalog_admitted",
+        "listening",
+    }:
+        raise ProbeError("decode_report_fields")
+    pcm = result["pcm_bytes"]
+    if (
+        result["event"] != "full_stream_result"
+        or result["schema"] != "sobafm-fma-decode-1"
+        or result["passed"] is not True
+        or result["failure"] is not None
+        or result["input_bytes"] != FILE_BYTES
+        or result["input_sha256"] != FILE_SHA256
+        or any(result[key] is not True for key in ("input_complete", "stdout_eof", "stderr_eof"))
+        or type(result["exit_code"]) is not int
+        or result["exit_code"] != 0
+        or type(pcm) is not int
+        or not READY_BYTES <= pcm <= PCM_LIMIT
+        or pcm % 4
+        or result["cleanup_debt"] is not False
+        or result["catalog_admitted"] is not False
+        or result["listening"] is not False
+        or result["swap_current"] != "0"
+    ):
+        raise ProbeError("incomplete_full_stream_report")
+    ready = result["ready_seconds"]
+    duration = result["measured_duration_seconds"]
+    if (
+        type(ready) not in (int, float)
+        or not math.isfinite(cast(float, ready))
+        or not 0 <= cast(float, ready) <= 15
+        or type(duration) not in (int, float)
+        or duration != pcm / 192_000
+        or result["web_duration_seconds"] != 194
+        or not isinstance(result["pcm_sha256"], str)
+        or re.fullmatch("[0-9a-f]{64}", result["pcm_sha256"]) is None
+    ):
+        raise ProbeError("invalid_pcm_measurement")
+    delta = result["memory_event_delta"]
+    cleanup = result["cleanup"]
+    diagnostics = result["diagnostics"]
+    if not all(isinstance(value, dict) for value in (delta, cleanup, diagnostics)):
+        raise ProbeError("decode_evidence_missing")
+    counts = cast(dict[str, object], delta)
+    timing = cast(dict[str, object], cleanup)
+    diagnostic = cast(dict[str, object], diagnostics)
+    if (
+        any(type(value) is not int or value < 0 for value in counts.values())
+        or counts.get("oom") != 0
+        or counts.get("oom_kill") != 0
+        or timing.get("cleanup_deadline_met") is not True
+        or timing.get("cleanup_timing_unknown") is not False
+        or timing.get("case_deadline_met") is not True
+        or type(timing.get("cleanup_start_utc")) not in (int, float)
+        or diagnostic.get("terminal_source_filter_required") is not True
+        or not isinstance(diagnostic.get("format"), str)
+    ):
+        raise ProbeError("decode_evidence_failed")
+    if FORMAT.fullmatch(str(diagnostic["format"]).encode("ascii")) is None:
+        raise ProbeError("decode_format_failed")
+
+
+class ValidationConsumer:
+    def __init__(
+        self, owner: LocalIntake, init: ProcessPin, owner_pin: ProcessPin, clock: CaseClock
+    ) -> None:
+        self.owner, self.init_pin, self.owner_pin, self.clock = owner, init, owner_pin, clock
+        self.lock = threading.RLock()
+        self.active: OwnedHelper | None = None
+        self.operation = False
+        self.phase = "inert"
+        self.metadata: dict[str, object] | None = None
+        self.decode: dict[str, object] | None = None
+        self.history: list[dict[str, object]] = []
+        self.delivered = 0
+        self.finished = False
+
+    def _start(self, role: str, args: list[str], inherited: tuple[int, ...] = ()) -> OwnedHelper:
+        with self.lock:
+            if self.active is not None or self.clock.remaining() <= 0:
+                raise ProbeError("sequential_helper_not_admitted")
+            helper = OwnedHelper(self.clock, role)
+            self.active = helper
+        if inventory(self.init_pin, self.owner_pin):
+            raise ProbeError("unsettled_previous_phase")
+        helper.launch(
+            [sys.executable, "-m", f"evaluations.fma_validation.{role}", "--execute", *args],
+            inherited,
+        )
+        assert helper.pin is not None
+        if inventory(self.init_pin, self.owner_pin, helper.pin):
+            raise ProbeError("unexpected_helper_phase_members")
+        helper.admit()
+        return helper
+
+    def _adopt(self, result: dict[str, object]) -> None:
+        cleanup = result.get("cleanup")
+        if not isinstance(cleanup, dict):
+            raise ProbeError("missing_helper_cleanup_clock")
+        values = cast(dict[str, object], cleanup)
+        started = values.get("cleanup_start_utc")
+        if type(started) not in (int, float):
+            self.clock.timing_unknown = True
+            raise ProbeError("unknown_helper_cleanup_clock")
+        self.clock.adopt_cleanup(cast(float, started))
+        if (
+            values.get("cleanup_timing_unknown") is not False
+            or values.get("cleanup_deadline_met") is not True
+        ):
+            self.clock.missed = True
+        # Do not revoke the owned reader inside its finish callback. The outer
+        # owner conveys this earlier clock after observing actual reader exit.
+
+    def _retire(self, helper: OwnedHelper) -> None:
+        if not helper.join(0):
+            raise ProbeError("helper_still_owned")
+        if inventory(self.init_pin, self.owner_pin):
+            raise ProbeError("helper_descendant_debt")
+        self.history.append(helper.receipt())
+        helper.stdout.clear()
+        helper.stderr.clear()
+        with self.lock:
+            self.active = None
+
+    def inspect(self, fd: int) -> None:
+        self.operation = True
+        try:
+            self.phase = "metadata"
+            helper = self._start(
+                "metadata", ["--owned-fd", str(fd), "--bytes", str(FILE_BYTES)], (fd,)
+            )
+            helper.finish_input()
+            end = time.monotonic() + METADATA_SECONDS
+            while not helper.join(0.01):
+                if self.clock.remaining(end) <= 0:
+                    self.cancel()
+                    raise ProbeError("metadata_deadline")
+            rows = reports(bytes(helper.stdout))
+            if (
+                helper.failure
+                or helper.stderr
+                or helper.process is None
+                or helper.process.returncode != 0
+                or len(rows) != 1
+                or rows[0].get("schema") != "sobafm-fma-metadata-1"
+                or rows[0].get("credits_complete") is not False
+            ):
+                raise ProbeError("metadata_helper_failed")
+            self.metadata = rows[0]
+            validate_metadata(self.metadata)
+            self._retire(helper)
+            self.phase = "decoder_preparation"
+            helper = self._start(
+                "decoder",
+                [
+                    "--init",
+                    encode_report(self.init_pin.record()).decode(),
+                    "--owner",
+                    encode_report(self.owner_pin.record()).decode(),
+                    "--whole-end",
+                    str(self.clock.whole_end_utc),
+                    "--expires",
+                    str(self.clock.expires_utc),
+                ],
+            )
+            while b"\n" not in helper.stdout:
+                helper.pump()
+                if (
+                    self.clock.remaining() <= 0
+                    or helper.process is None
+                    or helper.process.poll() is not None
+                    or helper.failure
+                ):
+                    raise ProbeError("decoder_admission_failed")
+            ready = reports(bytes(helper.stdout))
+            if len(ready) != 1 or ready[0].get("event") != "decoder_admitted":
+                raise ProbeError("decoder_admission_record")
+            record = ready[0]
+            if set(record) != {"event", "native_gate", "init", "owner", "runner"} or (
+                ProcessPin.from_record(record["init"]) != self.init_pin
+                or ProcessPin.from_record(record["owner"]) != self.owner_pin
+                or ProcessPin.from_record(record["runner"]) != helper.pin
+            ):
+                raise ProbeError("decoder_admission_identity")
+            gate = record["native_gate"]
+            if not isinstance(gate, dict):
+                raise ProbeError("native_admission_gate")
+            observation = cast(dict[str, object], gate)
+            native_pid = observation.get("pid")
+            if type(native_pid) is not int or helper.pin is None:
+                raise ProbeError("native_admission_pid")
+            native = ProcessPin.capture(native_pid)
+            if (
+                native.parent != helper.pin.pid
+                or native.start != observation.get("start_ticks")
+                or native.executable != "/usr/bin/mpg123"
+                or inventory(self.init_pin, self.owner_pin, helper.pin) != {native_pid}
+            ):
+                raise ProbeError("native_phase_inventory")
+            self.phase = "streaming"
+        finally:
+            self.operation = False
+
+    def write(self, chunk: bytes) -> None:
+        self.operation = True
+        try:
+            if self.phase != "streaming" or self.active is None or self.clock.remaining() <= 0:
+                raise ProbeError("consumer_stream_revoked")
+            self.active.write(chunk)
+            self.delivered += len(chunk)
+            if self.delivered > FILE_BYTES:
+                raise ProbeError("consumer_input_overrun")
+        finally:
+            self.operation = False
+
+    def finish(self) -> None:
+        self.operation = True
+        try:
+            helper = self.active
+            if helper is None or self.delivered != FILE_BYTES:
+                raise ProbeError("consumer_incomplete_input")
+            helper.finish_input()
+            while not helper.join(0.01):
+                if self.clock.remaining() <= 0:
+                    self.cancel()
+                    raise ProbeError("decoder_case_deadline")
+            rows = reports(bytes(helper.stdout))
+            if (
+                len(rows) != 2
+                or helper.stderr
+                or helper.failure
+                or helper.process is None
+                or helper.process.returncode != 0
+            ):
+                raise ProbeError("decoder_report_sequence")
+            self.decode = rows[1]
+            self.phase = "finishing"
+            self._adopt(self.decode)
+            validate_decode(self.decode)
+            self._retire(helper)
+            self.finished = True
+            self.phase = "settled"
+        finally:
+            self.operation = False
+
+    def cancel(self) -> None:
+        if self.owner.cleanup_started_utc is not None:
+            self.clock.adopt_cleanup(
+                datetime.fromisoformat(self.owner.cleanup_started_utc).timestamp()
+            )
+        self.clock.cancel()
+        assert self.clock.cleanup_start_utc is not None
+        self.owner.cancel(
+            "evaluation_cancelled",
+            started_at=datetime.fromtimestamp(self.clock.cleanup_start_utc, UTC),
+        )
+        helper = self.active
+        if helper is not None:
+            helper.cancel()
+
+    def join(self, timeout: float) -> bool:
+        if self.operation:
+            return False
+        helper = self.active
+        if helper is not None:
+            if not helper.join(timeout):
+                return False
+            self._retire(helper)
+        return not inventory(self.init_pin, self.owner_pin)
+
+    def receipt(self) -> dict[str, object]:
+        return {
+            "phase": self.phase,
+            "finished": self.finished,
+            "delivered_bytes": self.delivered,
+            "metadata": self.metadata,
+            "decode": self.decode,
+            "helpers": self.history,
+            "active": None if self.active is None else self.active.receipt(),
+            "cleanup": self.clock.receipt(),
+        }

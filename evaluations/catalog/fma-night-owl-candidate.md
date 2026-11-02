@@ -99,6 +99,15 @@ access-ready claim or availability promotion. The dated catalog digest is unchan
 
 ## Reproduce the unadmitted snapshot
 
+Issue [#44](https://github.com/slackysoba/sobafm/issues/44) now supplies the
+[concrete validation source and packet contract](../fma_validation/README.md).
+Its synthetic tests do not inspect this recording. Fresh topology/native-filter
+qualification, exact source/image/target/window review and storage allocation
+remain required before actual intake. The supplied file's tag size is unknown;
+the supported Mutagen path explicitly rejects tags above 512 KiB within its
+1 MiB absolute framing cap. No actual embedded-credit or decode verdict is claimed,
+and this catalog remains unchanged and unadmitted.
+
 Use the unchanged importer with the
 [observed manifest](import-fma-night-owl-observed.json) and
 [dated context](import-fma-night-owl-context.json):

@@ -283,3 +283,11 @@ mutation/substitution, repeated cancellation, mid-copy and pending expiry,
 wall-clock rollback, failed close/deletion, failed state sync, restart binding and
 original preservation. They establish local ownership behavior only, not music
 quality, recording validity, Linux containment or release readiness.
+
+The concrete [#44 validation consumer](../fma_validation/README.md) uses this
+contract with a separately contained metadata helper, then a fresh streaming
+decoder runner. A trusted enclosing evaluation may convey an earlier UTC cleanup
+start to `LocalIntake.cancel(started_at=...)`; it can only tighten the original
+deadline, never repair unknown recovery timing. Successful read completion must
+be observed before that cancellation request. Actual native/source execution
+requires the separately reviewed finite packet described there.
