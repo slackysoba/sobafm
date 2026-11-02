@@ -267,7 +267,9 @@ owned-synthetic mount/permissions/inode/close/cleanup preflight under the exact
 future mounts and non-root settings. No actual recording read belongs in that
 preflight. Record volume name, creation time, mountpoint hash and namespace slot
 device/inode; these observed identities and the receipt hash are prerequisites
-for each reviewed qualification packet. Before actual Night Owl intake,
+for each reviewed qualification packet. Before any owned-audio qualification,
+require accepted exact-image PTY backing/accounting and a successful bounded
+no-media PTY preflight. Before actual Night Owl intake,
 separately review exact-image PTY backing/accounting, fresh init -> owner ->
 sequential-helper topology fit and native terminal-filter qualification evidence.
 No inherited real-file input is transported through Docker CLI descriptor numbers.
