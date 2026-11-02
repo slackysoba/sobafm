@@ -62,7 +62,6 @@ class StreamRun(CancelRun):
         case: CaseBinding = NIGHT_OWL,
     ) -> None:
         super().__init__("feed")
-        case.require_frozen()
         self.case = case
         self.init_pin, self.owner_pin, self.clock = init, owner, clock
         self.helper_pin = ProcessPin.capture(os.getpid())
@@ -422,7 +421,6 @@ def main() -> int:
     if not args.execute:
         parser.error("explicit finite native evaluation required")
     case = CaseBinding(cast(CaseId, args.case))
-    case.require_frozen()
     if os.read(args.admit_fd, 1) != b"x":
         return 1
     os.close(args.admit_fd)

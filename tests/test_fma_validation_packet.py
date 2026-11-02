@@ -10,7 +10,7 @@ from typing import cast
 
 import pytest
 
-from evaluations.fma_validation.cases import CaseBinding, OwnedQualificationRequest
+from evaluations.fma_validation.cases import BASE_SHA256, CaseBinding, OwnedQualificationRequest
 from evaluations.fma_validation.controller import Journal, creation_args
 from evaluations.fma_validation.limits import FILE_BYTES, FILE_SHA256, CaseClock, encode_report
 from evaluations.fma_validation.metadata import PARSER_TAG_BYTES, BoundedFile, preflight
@@ -178,19 +178,20 @@ def qualification_packet(packet_path: Path, name: str = "metadata-rejection") ->
         case,
         "2026-11-02T00:01:00Z",
         "2026-11-02T00:04:30Z",
-        FileIdentity(1, 2, case.bytes, 0, 0, case.sha256 or "0" * 64),
+        FileIdentity(1, 2, case.bytes, 0, 0, case.sha256),
     )
     raw.update(schema="sobafm-owned-qualification-case-1", request=request.manifest())
     packet_path.write_bytes(encode_report(raw))
     return packet_path
 
 
-def test_disjoint_qualification_request_and_entry_point(packet_path: Path) -> None:
+@pytest.mark.parametrize("name", ["metadata-rejection", "tagged-full", "first-write-cancel"])
+def test_disjoint_qualification_request_and_entry_point(packet_path: Path, name: str) -> None:
     original = packet_path.read_bytes()
-    qualification_packet(packet_path)
+    qualification_packet(packet_path, name)
     packet = load_qualification(packet_path, ROOT, now=NOW)
     assert isinstance(packet.request, OwnedQualificationRequest)
-    assert packet.case.name == "metadata-rejection"
+    assert packet.case.name == name
     assert "evaluations.fma_validation.qualification_owner" in creation_args(packet)
     assert not Path(packet.text("source_path")).exists()
     with pytest.raises(ProbeError):
@@ -201,18 +202,28 @@ def test_disjoint_qualification_request_and_entry_point(packet_path: Path) -> No
 
 
 @pytest.mark.parametrize("name", ["tagged-full", "first-write-cancel"])
-def test_unfrozen_derivatives_rejected_without_source_access(packet_path: Path, name: str) -> None:
+@pytest.mark.parametrize("digest", [None, BASE_SHA256, FILE_SHA256])
+def test_tagged_binding_rejects_unbound_or_substitute_input(
+    packet_path: Path, name: str, digest: str | None
+) -> None:
     qualification_packet(packet_path, name)
-    with pytest.raises(ProbeError, match="qualification_derivative_unfrozen"):
+    raw = cast(dict[str, object], json.loads(packet_path.read_bytes()))
+    request = cast(dict[str, object], raw["request"])
+    cast(dict[str, object], request["case_binding"])["input_sha256"] = digest
+    cast(dict[str, object], request["file"])["sha256"] = digest
+    packet_path.write_bytes(encode_report(raw))
+    with pytest.raises(ProbeError, match="validation_case_binding"):
         load_qualification(packet_path, ROOT, now=NOW)
 
 
+@pytest.mark.parametrize("name", ["metadata-rejection", "tagged-full", "first-write-cancel"])
 @pytest.mark.parametrize("mutation", ["purpose", "case", "hash", "field", "expiry"])
 def test_qualification_cannot_substitute_identity_or_renew_expiry(
     packet_path: Path,
+    name: str,
     mutation: str,
 ) -> None:
-    qualification_packet(packet_path)
+    qualification_packet(packet_path, name)
     raw = cast(dict[str, object], json.loads(packet_path.read_bytes()))
     request = cast(dict[str, object], raw["request"])
     binding = cast(dict[str, object], request["case_binding"])

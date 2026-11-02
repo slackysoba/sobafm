@@ -362,7 +362,6 @@ def main() -> int:
     if not args.execute or sys.platform != "linux":
         parser.error("explicit Linux evaluation required")
     case = CaseBinding(cast(CaseId, args.case))
-    case.require_frozen()
     try:
         contain()
         if os.read(args.admit_fd, 1) != b"x":

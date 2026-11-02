@@ -38,7 +38,9 @@ three finite case identities. `LocalRequest` shares ownership operations between
 the existing FMA request and a separate synthetic request; FMA v1/v2 serialized
 records and expiry semantics are unchanged. Synthetic request/ledger/report
 namespaces cannot enter the production parser. Tagged-input and cancellation
-derivatives remain unexecutable until their exact hashes are separately frozen.
+cases bind the same exact derivative from the
+[reviewed byte-integrity derivation](../evaluations/fma_validation/results/2026-11-02-owned-tagged-derivation.yaml).
+Their parser/decoder qualification still requires separate reviewed execution.
 Failure terminal envelopes preserve role/case-bound cleanup timing independently
 of successful decode acceptance and retain actual resource debt through join.
 

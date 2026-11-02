@@ -2,6 +2,7 @@
   "schema": "sobafm-owned-qualification-recipes-1",
   "purpose": "owned-synthetic-qualification",
   "source_receipt": "evaluations/linux_resource/results/2026-10-28-owned-mp3-decode-confirmation.yaml",
+  "derivation_receipt": "evaluations/fma_validation/results/2026-11-02-owned-tagged-derivation.yaml",
   "base": {
     "bytes": 1920768,
     "sha256": "1a431c03098d8be79a522a3b1f64a8182445a8bf6c009f54c1b3bb1f6dad044d", "sha256_note": "Owned fixture integrity, not a credential. # pragma: allowlist secret"
@@ -13,8 +14,8 @@
     "suffix_bytes": 128,
     "suffix_sha256": "5f02aaf60474d450ebf0c3c1d7909b4c8aed43ee0c160b95c37ba8369d03e98a", "suffix_sha256_note": "Synthetic integrity, not a credential. # pragma: allowlist secret",
     "bytes": 2445184,
-    "sha256": null,
-    "binding_status": "unfrozen; derivation and exact hashing require separate release",
+    "sha256": "2a589e0025dbc09b7fae0f5ce45a6b00e75fe27d0c5b9e3474d5f526ef914480", "sha256_note": "Observed owned derivative integrity, not a credential. # pragma: allowlist secret",
+    "binding_status": "frozen from reviewed derivation; native qualification remains pending",
     "expected_pcm_bytes": 23040000,
     "expected_pcm_sha256": "ce1390078e09a1b06bcb10d64515886ce4d865456346d7be1b70e455703062df", "expected_pcm_sha256_note": "Owned PCM integrity, not a credential. # pragma: allowlist secret"
   },
@@ -28,8 +29,8 @@
   "first-write-cancel": {
     "input": "tagged-full",
     "bytes": 2445184,
-    "sha256": null,
-    "binding_status": "unfrozen; same pending derivative as tagged-full",
+    "sha256": "2a589e0025dbc09b7fae0f5ce45a6b00e75fe27d0c5b9e3474d5f526ef914480", "sha256_note": "Observed owned derivative integrity, not a credential. # pragma: allowlist secret",
+    "binding_status": "frozen; same observed derivative as tagged-full; cancellation qualification remains pending",
     "checkpoint": "after native admission and first completed owner-to-helper write",
     "pipeline_passed": false
   }
