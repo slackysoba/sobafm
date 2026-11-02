@@ -53,6 +53,24 @@ bounded output counts and hashes survive retirement. A receipt never releases a
 still-owned descriptor or descendant. Rejection codes allow digits, preserving
 the explicit `unsupported_id3_text_encoding` result.
 
+Decoder admission and terminal records validate canonical ASCII JSON size,
+escaping, types and structure **before** serialization. Each record reserves its
+newline within 65,536 bytes; the helper's aggregate output cap still applies.
+Admission serialization occurs while the verified native process is stopped,
+before bank allocation or native resume. The temporary native-stat fields are
+released first; native mapping/security evidence remains in the record and its
+existing owner. Cancellation or expiry during preflight prevents resume.
+
+Charge the explicit serialized representations to the unchanged 786,432-byte
+runner partition: at most 65,535 bytes each for JSON text/ASCII bytes during
+encoding, then at most 65,535 plus 65,536 bytes when adding the newline. The
+synchronous writer retains that immutable line across partial/interrupted writes
+and uses memoryview slices without allocating payload tail copies. Cancellation
+does not renew its original clock or certify a held write as released. These
+local bounds do not establish the complete runner backing/copy maximum, encoder
+internal allocation, PTY accounting/release or native topology fit; those remain
+separate qualification gates. No reservation subdivision is adopted.
+
 The outer controller owns bounded Docker command launch, pipes, output and actual
 child exit. It journals intent before dispatch and records the full exact container
 ID before start. It verifies image, ownership labels, mounts, limits and entrypoint,
