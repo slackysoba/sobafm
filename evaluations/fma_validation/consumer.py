@@ -180,7 +180,7 @@ class ValidationConsumer:
         request = owner.request
         if (
             request.file.bytes != case.bytes
-            or (case.sha256 is not None and request.file.sha256 != case.sha256)
+            or request.file.sha256 != case.sha256
             or (isinstance(request, OwnedQualificationRequest) and request.case != case)
             or (isinstance(request, IntakeRequest) and case.synthetic)
         ):
@@ -203,7 +203,6 @@ class ValidationConsumer:
         return self._case
 
     def _start(self, role: str, args: list[str], inherited: tuple[int, ...] = ()) -> OwnedHelper:
-        self.case.require_frozen()
         with self.lock:
             if self.active is not None or self.clock.remaining() <= 0:
                 raise ProbeError("sequential_helper_not_admitted")

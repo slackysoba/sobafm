@@ -76,7 +76,6 @@ def preflight(packet: Packet) -> tuple[ProcessPin, ProcessPin]:
 
 
 def execute(packet: Packet) -> dict[str, object]:
-    packet.case.require_frozen()
     clock = CaseClock(packet.whole_end, packet.expires)
     init, owner_pin = preflight(packet)
     before = counters(read_text(Path("/sys/fs/cgroup/memory.events")))

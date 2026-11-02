@@ -1,4 +1,4 @@
-"""Closed evaluation identities; unfinished derivative bindings cannot execute.
+"""Closed evaluation identities bound to exact reviewed input digests.
 
 This is not a provider registry. Only Night Owl and the three reviewed #44
 qualification recipes exist. No caller can supply a replacement digest/oracle.
@@ -27,6 +27,9 @@ BASE_BYTES = 1_920_768
 # Public owned-fixture integrity digests, never credentials.
 BASE_SHA256 = (
     "1a431c03098d8be79a522a3b1f64a8182445a8bf6c009f54c1b3bb1f6dad044d"  # pragma: allowlist secret
+)
+TAGGED_SHA256 = (
+    "2a589e0025dbc09b7fae0f5ce45a6b00e75fe27d0c5b9e3474d5f526ef914480"  # pragma: allowlist secret
 )
 PCM_SHA256 = (
     "ce1390078e09a1b06bcb10d64515886ce4d865456346d7be1b70e455703062df"  # pragma: allowlist secret
@@ -92,15 +95,10 @@ class CaseBinding:
         )
 
     @property
-    def sha256(self) -> str | None:
+    def sha256(self) -> str:
         if self.name == "metadata-rejection":
             return REJECTION_SHA256
-        # Deliberately unbound: hashing the base cannot establish derivative identity.
-        return None if self.synthetic else FILE_SHA256
-
-    def require_frozen(self) -> None:
-        if self.sha256 is None:
-            raise ProbeError("qualification_derivative_unfrozen")
+        return TAGGED_SHA256 if self.synthetic else FILE_SHA256
 
     def schema(self, component: str) -> str:
         namespace = "owned-qualification" if self.synthetic else "fma"
@@ -168,7 +166,6 @@ class OwnedQualificationRequest:
         return hashlib.sha256(encode_report(self.manifest())).hexdigest()
 
     def validate(self, now: datetime, *, recovery: bool = False) -> None:
-        self.case.require_frozen()
         start, end = utc_seconds(self.created_at), utc_seconds(self.expires_at)
         if (
             not self.case.synthetic
