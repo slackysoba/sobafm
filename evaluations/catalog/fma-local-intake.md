@@ -232,6 +232,10 @@ read, seek, metadata-allocation and time limits. Stream counters cover the later
 incremental pass only. Data and downstream results remain provisional until
 `reader.join(timeout)` observes actual settlement and its safe report says
 `completed: true`. Even that result establishes byte-stream integrity only.
+The read handle's timeout includes waiting for cancellation-worker startup and
+the final ownership check. A pending startup returns `False` when that wait
+expires; it cannot produce a released verdict or a new cleanup deadline. Worker
+joins run outside the owner lock against a stable, fully started target.
 
 A maintained `subprocess.Popen(..., pass_fds=(fd,))` without `preexec_fn` can pass
 the descriptor to an owned **fresh local Linux helper**. That helper can inspect

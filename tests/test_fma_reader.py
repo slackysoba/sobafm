@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -786,6 +787,86 @@ def test_reader_thread_start_failure_never_launches_consumer_work(
     assert not consumer.inspected.is_set() and consumer.count == 0
     assert owner.report()["released"] is True
     assert owner.failure == "reader_start_failed"
+
+
+@pytest.mark.parametrize("fail_start", [False, True])
+@pytest.mark.parametrize("timeout", [0, 0.05])
+def test_public_join_during_cancel_start_retains_original_owner(
+    case: Case,
+    monkeypatch: pytest.MonkeyPatch,
+    owners: list[intake.LocalIntake],
+    fail_start: bool,
+    timeout: float,
+) -> None:
+    owner = start(case, owners)
+    assert owner.pending.wait(5)
+    consumer = Consumer()
+    inspecting, inspected = threading.Event(), threading.Event()
+    starting, started = threading.Event(), threading.Event()
+    retrying, retried = threading.Event(), threading.Event()
+    original = threading.Thread.start
+    attempts = 0
+
+    def pause_start(thread: threading.Thread) -> None:
+        nonlocal attempts
+        if thread.name == "fma-consumer-cancel":
+            attempts += 1
+            if attempts == 1:
+                starting.set()
+                assert started.wait(5)
+                if fail_start:
+                    raise RuntimeError("synthetic cancellation-thread start failure")
+            elif attempts == 2:
+                retrying.set()
+                assert retried.wait(5)
+        original(thread)
+
+    def inspect(_fd: int) -> None:
+        inspecting.set()
+        assert inspected.wait(5)
+
+    def observe_pending_start() -> None:
+        before = time.monotonic()
+        assert not reader.join(timeout)
+        assert time.monotonic() - before < 0.5
+        assert not consumer.cancelled.is_set()
+        assert owner.cleanup_deadline == 103
+        assert owner.released_at is None
+        assert (case.slot / "payload").exists()
+
+    monkeypatch.setattr(threading.Thread, "start", pause_start)
+    monkeypatch.setattr(consumer, "inspect", inspect)
+    reader = owner.read_into(consumer)
+    try:
+        assert inspecting.wait(5)
+        owner.cancel()
+        assert starting.wait(5)
+        case.clock.advance(4)
+        observe_pending_start()
+        started.set()
+        if fail_start:
+            assert retrying.wait(5)
+            observe_pending_start()
+            retried.set()
+        assert consumer.cancelled.wait(5)
+        assert not reader.join(timeout)
+        assert reader.report()["descriptor_retained"] is True
+        assert owner.report()["released"] is False
+        assert owner.report()["cleanup_deadline_met"] is False
+        owner.cancel()
+        assert owner.cleanup_deadline == 103
+    finally:
+        started.set()
+        retried.set()
+        inspected.set()
+    assert owner.join(5)
+    assert reader.join()
+    assert reader.report()["descriptor_retained"] is False
+    assert owner.report()["released"] is True
+    assert owner.report()["cleanup_deadline_met"] is False
+    assert consumer.count == 0
+    assert attempts == (2 if fail_start else 1)
+    assert case.source.read_bytes() == case.data
 
 
 def test_cancel_thread_start_failure_retains_then_settles_same_owner(

@@ -423,13 +423,24 @@ class OwnedRead:
     def join(self, timeout: float = 0) -> bool:
         """Observe actual read/cancel worker exit; this does not request cancellation."""
         deadline = time.monotonic() + max(0, timeout)
-        if not self._started.wait(max(0, timeout)):
+        if not self._started.wait(max(0, deadline - time.monotonic())):
             return False
-        if self._thread is not None:
-            self._thread.join(max(0, deadline - time.monotonic()))
-        if self._cancel_thread is not None:
-            self._cancel_thread.join(max(0, deadline - time.monotonic()))
-        with self._owner.lock:
+        # Registration and Thread.start share this gate. Snapshot only a settled
+        # start outcome, including failure, without exceeding the caller's wait.
+        if not self._owner.lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            return False
+        try:
+            workers = (self._thread, self._cancel_thread)
+        finally:
+            self._owner.lock.release()
+        for worker in workers:
+            if worker is not None:
+                worker.join(max(0, deadline - time.monotonic()))
+        # Cancellation can register after the snapshot; its start and actual
+        # exit must also be observed before certifying release.
+        if not self._owner.lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            return False
+        try:
             settled = (
                 self._finished
                 and self._consumer_released
@@ -440,6 +451,8 @@ class OwnedRead:
             if settled and self._verified and self._error is None and not self._owner.stop.is_set():
                 self._completed = True
             return settled
+        finally:
+            self._owner.lock.release()
 
     def report(self) -> dict[str, object]:
         with self._owner.lock:
