@@ -1,16 +1,21 @@
 # Bounded local FMA intake preparation
 
-Issue [#40](https://github.com/slackysoba/sobafm/issues/40) implements an offline,
-explicitly invoked Linux intake for the nominated **Night Owl by Broke For Free**
-recording. Development and regression tests use synthetic bytes only. No actual
-recording file has been supplied or acquired, and this implementation does not
-release an actual intake, decode, playback, admission review or provider request.
+Issues [#40](https://github.com/slackysoba/sobafm/issues/40) and
+[#42](https://github.com/slackysoba/sobafm/issues/42) implement an explicitly invoked
+Linux intake and one owned validation reader for **Night Owl by Broke For Free**.
+Development and regression tests use synthetic bytes only. The maintainer supplied
+an original on 2026-11-02: 8,054,458 bytes, SHA-256
+`7952dce61b28f454ff3ee0183f85df52b2a9f2edfcd6a0ebafc12f981f666ed5`.
+Read-only identity preparation did not establish format, complete-file integrity
+or embedded notices. Keep that original alone until a bounded inspection consumer
+and its exact execution scope are reviewed. No actual copy, parsing, decode,
+playback, admission review or provider request is released here.
 
 ## Operator acquisition boundary
 
 An operator may propose one file obtained through FMA's ordinary permitted web
 workflow. Before a real run, supply its exact local file, canonical recording URL,
-actual acquisition UTC time, requested absolute expiry, current metadata/credit
+versioned acquisition evidence, requested absolute expiry, current metadata/credit
 snapshot and complete download-time notices for a concrete scope review. Do not
 infer acquisition time from filesystem timestamps. Keep credentials, cookies,
 private filesystem locations and the original recording outside Git and public
@@ -61,12 +66,17 @@ files, zero bytes and over-limit inputs are rejected.
 
 ```json
 {
-  "schema": "sobafm-fma-intake-1",
+  "schema": "sobafm-fma-intake-2",
   "source_url": "https://freemusicarchive.org/music/Broke_For_Free/Directionless_EP/Broke_For_Free_-_Directionless_EP_-_01_Night_Owl/",
   "metadata_digest": "<current parsed recording digest listed above>",
   "credit_snapshot": "fma-aba6502c18a4540d8394516aca393cbba8dda7c4dfa417f97aa379e0e366d483",
-  "acquired_at": "<actual acquisition in YYYY-MM-DDTHH:MM:SS[.ffffff]Z>",
-  "expires_at": "<reviewed absolute UTC expiry, at most seven days after acquisition>",
+  "acquisition": {
+    "schema": "sobafm-acquisition-1",
+    "retention_anchor_utc": "<reviewed exact instant or conservative lower bound, UTC Z>",
+    "basis": "conservative_lower_bound",
+    "operator_evidence": "<bounded operator report and explanation of the chosen bound>"
+  },
+  "expires_at": "<fixed absolute UTC expiry, at most seven days after the anchor>",
   "download_notices": ["<complete actual download-time notice>"],
   "file": {
     "device": "<integer>",
@@ -86,6 +96,31 @@ notices require a scope decision rather than silent truncation. The whole
 manifest is limited to 16,384 bytes; duplicate or unknown fields fail validation.
 The current catalog must independently match the fixed recording digest and
 credit snapshot. A changed snapshot requires reviewed code/evidence changes.
+
+The acquisition record is closed and versioned. `basis` is either `exact` or
+`conservative_lower_bound`; operator evidence is a nonempty, trimmed, control-free
+string of at most 1,024 characters and 4,096 encoded bytes. The anchor, basis and
+evidence all bind the request fingerprint and durable ownership record. Safe
+receipts retain the anchor/basis and evidence hash, not the raw evidence text.
+An exact anchor claims an actual instant. A conservative anchor is explicitly an
+earlier retention bound, never a fabricated precise acquisition timestamp.
+
+For the supplied original, the maintainer reports downloading just before sending
+the path on **2026-11-02 America/Los_Angeles**. Exact seconds are unknown. The
+conservative lower bound **2026-11-02T00:00:00Z** permits expiry no later than
+**2026-11-09T00:00:00Z**. Retain that report and the lower-bound explanation in
+`operator_evidence`; prefer a much shorter fixed execution window. No filesystem
+timestamp supplies acquisition evidence. The reported download notice says the
+artist should be attributed: preserve this as an operator-reported paraphrase,
+not literal independently captured FMA text. Complete credits through `/now`
+remain required; bot status is best effort and cannot substitute for them.
+
+Historical `sobafm-fma-intake-1` manifests keep their original `acquired_at` exact
+instant semantics, original fingerprint and v1 state/receipt shape. They encode
+no operator acquisition evidence and cannot obtain a reader handoff. Existing v1
+intake and cleanup-only recovery remain supported; v1 is never silently converted
+to a conservative estimate. New reader work requires v2. Cross-version or changed
+anchor/basis/evidence recovery fails closed with unresolved debt.
 
 After an actual file and scope have been released, the operator invokes:
 
@@ -110,7 +145,7 @@ analysis, provider adapter, SDK, service or new dependency.
 The command **stays alive** as the pending copy's expiry and cleanup owner. A
 pending receipt does not end its responsibility. Keep the process and original
 manifest available until cleanup settles. The expiry is absolute, strictly after
-acquisition and no more than seven days later. An in-process monotonic deadline
+the retention anchor and no more than seven days later. An in-process monotonic deadline
 also prevents a wall-clock rollback from extending it. Copying, retrying and
 restarting cannot renew it. An expiry detected during copying or state persistence
 cannot produce a valid pending receipt.
@@ -156,11 +191,76 @@ The slot remains single-use; the implementation does not automatically retire
 records or start another intake. Any later retirement or new allocation requires
 the applicable scoped authorization and storage accounting.
 
+## One owned seek/stream consumer
+
+From a live validated v2 pending owner, `owner.read_into(consumer)` atomically
+admits one initially inert `ReadConsumer` and returns an `OwnedRead` handle. A
+second handoff is rejected. The caller retains responsibility for construction
+failure or rejected admission: construction must not already launch a child or
+acquire backing. The owner persists `reader_state: owned` before opening the
+reader or calling the consumer. Registration is revoked if cancellation wins
+before start; the inert consumer is then released without invoking it.
+
+The consumer implements five small operations:
+
+| Operation | Ownership contract |
+| --- | --- |
+| `inspect(fd)` | Synchronously inspect the borrowed, registered `O_RDONLY` descriptor using maintained seekable file facilities. Do not close or replace it. Return only after all inspection reads/seeks, inherited/duplicated handles and helper operations actually settle. Raise on failed, late or uncertain inspection. |
+| `write(chunk)` | Accept one stream chunk of at most 65,536 bytes. Consume it synchronously, or retain it only within an explicit prepaid consumer backing limit; do not accumulate a whole-file snapshot. |
+| `finish()` | End input and signal downstream completion. Returning does not certify child exit, file completeness, credits or admission. |
+| `cancel()` | Nonblocking, idempotent cancellation of every downstream operation. It may run concurrently with the other callbacks. |
+| `join(timeout)` | Wait at most the supplied timeout. Return `True` only after all downstream processes, readers, writes, descriptors and retained chunk/backing references actually settle. |
+
+Callbacks run outside the owner lock. Only operation admission/registration uses
+the lock: cancellation revokes new admissions but does not pretend an already
+admitted blocking call ended. The owner retains both the reader and cancellation
+worker if a consumer violates the nonblocking/timed contract. A held read, inspect,
+write, finish, cancel, close or join remains cleanup debt under the original
+deadline; there is no additional reader grace period or capacity-free verdict.
+
+The descriptor always refers to the same pending inode. After inspection, the
+owner checks its access mode, identity/size/timestamps and the named payload, then
+rewinds it for bounded incremental delivery. It checks identity around each read
+and verifies the entire streamed count and SHA-256 against the pending copy before
+calling `finish`. A truncated, mutated or substituted file cannot complete the
+handoff. A consumer that closes/replaces the borrowed descriptor causes uncertain
+descriptor debt, not permission to close an unrelated replacement.
+
+Inspection's extra reads/seeks are **not** bounded or counted by the raw descriptor
+itself. The concrete inspection consumer must enforce and report its cumulative
+read, seek, metadata-allocation and time limits. Stream counters cover the later
+incremental pass only. Data and downstream results remain provisional until
+`reader.join(timeout)` observes actual settlement and its safe report says
+`completed: true`. Even that result establishes byte-stream integrity only.
+The read handle's timeout includes waiting for cancellation-worker startup and
+the final ownership check. A pending startup returns `False` when that wait
+expires; it cannot produce a released verdict or a new cleanup deadline. Worker
+joins run outside the owner lock against a stable, fully started target.
+
+A maintained `subprocess.Popen(..., pass_fds=(fd,))` without `preexec_fn` can pass
+the descriptor to an owned **fresh local Linux helper**. That helper can inspect
+seekably; a future fresh single-threaded native-proof runner can fork its decoder
+before starting input/read threads. Do not fork native proof code from the live
+multithreaded intake process. The synthetic tests exercise local seekable helper
+settlement only. Inheriting a host descriptor does not carry it across Docker's
+daemon/container boundary. A later container topology needs independently reviewed
+same-inode access and actual container settlement; no extra payload, untracked
+path opening, procfd workaround or generic container/IPC machinery is supplied here.
+
+The controller polls the read handle and owner, requests `owner.cancel()` on
+failure, expiry or completion of the finite evaluation, and retains both until
+actual join/release. The owner deletes the payload only after its registered
+reader, downstream operations and descriptors settle. Persisted `reader_state:
+owned` after interruption means uncertain external ownership: cleanup-only
+recovery refuses to delete/reuse that slot. It does not assume process exit closed
+a separately launched child or its handles. A settled reader is durably recorded
+as `released`; the one-use slot and original expiry remain unchanged.
+
 ## What the receipt establishes
 
 Receipts are bounded and contain no source/destination paths or raw notices. They
 bind the file byte count/hash, canonical source, metadata/credit snapshot, notice
-count/hash, original acquisition/expiry, owner, retained work and actual release
+count/hash, versioned acquisition evidence/expiry, owner, retained work and actual release
 or cleanup debt. Keep the original bounded manifest for notice review. The durable
 state is an ownership ledger; the final process receipt additionally accounts for
 descriptor closure and the worker's actual exit. A `pending_valid` observation
@@ -169,9 +269,13 @@ is time-specific and expires at the original deadline.
 The copy is **pending review**. Complete-file and embedded-notice inspection,
 recording correspondence, conflicts in credit evidence and an exact trusted
 admission review remain separate. No availability, access-ready or complete-credit
-claim is promoted. The reported **194 seconds** exceed the earlier **150-second /
-28,800,000-byte PCM** decoder case. Intake neither truncates the recording nor
-expands that case, and permits no native decoder execution.
+claim is promoted. The reported **194 seconds of audio** and the earlier decoder
+case's **150-second operation wall-clock deadline** are different quantities;
+194 seconds alone establishes neither fit nor incompatibility. The existing
+case's PCM limits and all source/image/target-bound proof records remain unchanged.
+A real-file evaluation must review its own complete-input/output bounds without
+truncating the recording or implicitly expanding the earlier case. No native
+decoder execution is permitted here.
 
 The deterministic tests use small synthetic files, explicit read/deletion barriers
 and an interrupted synthetic child process. They exercise partial copy/write,

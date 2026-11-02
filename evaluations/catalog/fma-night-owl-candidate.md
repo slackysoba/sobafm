@@ -1,6 +1,6 @@
 # Observed FMA Night Owl metadata
 
-Status: **web metadata prepared; no audio copy or admission**.
+Status: **web metadata prepared; operator original supplied; no project audio copy or admission**.
 Issue [#31](https://github.com/slackysoba/sobafm/issues/31). Observed
 **2026-10-31 America/Los_Angeles** (2026-11-01 UTC). This dated follow-up
 resolves the web-notice and license gaps for Night Owl in the unchanged
@@ -71,15 +71,31 @@ catalog/evidence snapshot above remains unchanged.
 
 Accepted preparation for one operator-hosted evaluation copy is limited to
 **20,000,000 bytes / seven days**, with exact file identity/integrity, acquisition
-time, absolute expiry and accountable cleanup ownership still required before
-intake. No file was acquired or quarantine created. This acceptance releases no
-import, playback or expansion of the existing **150-second / 28,800,000-byte PCM**
-decoder case; the source's reported 194 seconds exceed that case.
+evidence, absolute expiry and accountable cleanup ownership required before
+intake. No project copy or quarantine has been created. This acceptance releases
+no import, playback or decoder-case expansion. The source's reported **194 seconds
+of audio** is distinct from the existing decoder case's **150-second operation
+wall-clock deadline**; duration alone establishes neither fit nor incompatibility.
+All existing PCM limits, native bounds and proof results remain unchanged.
 
 Issue [#40](https://github.com/slackysoba/sobafm/issues/40) supplies an opt-in
 [bounded local intake owner](fma-local-intake.md), tested with synthetic files.
-A later real run still needs an exact operator-supplied file and concrete released
-scope. A successful pending copy creates no admission review or access-ready claim.
+The maintainer supplied an original on **2026-11-02**, reporting acquisition just
+before supplying it and an artist-attribution download notice. The exact time is
+unknown and the notice is a maintainer-reported paraphrase, not an independently
+captured literal upstream notice. Read-only preparation recorded **8,054,458 bytes**
+and SHA-256 `7952dce61b28f454ff3ee0183f85df52b2a9f2edfcd6a0ebafc12f981f666ed5`;
+its location remains private. No format, complete-file or embedded-notice review
+is implied. Keep complete credits through `/now`; status remains best effort.
+
+Issue [#42](https://github.com/slackysoba/sobafm/issues/42) binds a neutral retention
+anchor, exact/lower-bound basis and bounded operator evidence in v2 intake records,
+and keeps one seek/stream validation consumer owned through actual cleanup. The
+conservative anchor **2026-11-02T00:00:00Z** permits expiry no later than
+**2026-11-09T00:00:00Z**; it is not an actual timestamp claim. Keep only the original
+until a concrete consumer and finite source/image-bound execution are reviewed.
+A successful pending copy or byte-stream verification creates no admission review,
+access-ready claim or availability promotion. The dated catalog digest is unchanged.
 
 ## Reproduce the unadmitted snapshot
 

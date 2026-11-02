@@ -21,7 +21,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Literal, Protocol, cast
 
 from sobafm.catalog import Catalog, CatalogInputError, Source, metadata_digest, parse_catalog
 
@@ -119,14 +119,70 @@ class FileIdentity:
 
 
 @dataclass(frozen=True)
+class Acquisition:
+    retention_anchor_utc: str
+    basis: Literal["exact", "conservative_lower_bound"]
+    operator_evidence: str | None
+
+    def validate(self, *, legacy: bool = False) -> None:
+        _utc(self.retention_anchor_utc)
+        if legacy:
+            if self.basis != "exact" or self.operator_evidence is not None:
+                raise IntakeError("v1_requires_original_exact_time")
+            return
+        evidence = self.operator_evidence
+        if (
+            self.basis not in ("exact", "conservative_lower_bound")
+            or not isinstance(evidence, str)
+            or not 1 <= len(evidence) <= 1024
+            or len(_encoded(evidence)) > 4096
+            or evidence != evidence.strip()
+            or any(unicodedata.category(c).startswith("C") for c in evidence)
+        ):
+            raise IntakeError("invalid_acquisition_evidence")
+
+    def record(self, *, safe: bool = False) -> dict[str, object]:
+        result: dict[str, object] = {
+            "schema": "sobafm-acquisition-summary-1" if safe else "sobafm-acquisition-1",
+            "retention_anchor_utc": self.retention_anchor_utc,
+            "basis": self.basis,
+        }
+        if safe:
+            result["operator_evidence_sha256"] = hashlib.sha256(
+                _encoded(self.operator_evidence)
+            ).hexdigest()
+        else:
+            result["operator_evidence"] = self.operator_evidence
+        return result
+
+
+@dataclass(frozen=True)
 class IntakeRequest:
     source_url: str
     metadata_digest: str
     credit_snapshot: str
-    acquired_at: str
+    acquisition: Acquisition
     expires_at: str
     download_notices: tuple[str, ...]
     file: FileIdentity
+    version: Literal[1, 2] = 2
+
+    def time_fields(self, *, safe: bool = False) -> dict[str, object]:
+        if self.version == 1:
+            return {"acquired_at": self.acquisition.retention_anchor_utc}
+        return {"acquisition": self.acquisition.record(safe=safe)}
+
+    def manifest(self) -> dict[str, object]:
+        return {
+            "schema": f"sobafm-fma-intake-{self.version}",
+            "source_url": self.source_url,
+            "metadata_digest": self.metadata_digest,
+            "credit_snapshot": self.credit_snapshot,
+            **self.time_fields(),
+            "expires_at": self.expires_at,
+            "download_notices": self.download_notices,
+            "file": asdict(self.file),
+        }
 
     def validate(self, now: datetime, *, recovery: bool = False) -> None:
         if (
@@ -135,7 +191,10 @@ class IntakeRequest:
             or self.credit_snapshot != CREDIT_SNAPSHOT
         ):
             raise IntakeError("metadata_credit_mismatch")
-        acquired, expires = _utc(self.acquired_at), _utc(self.expires_at)
+        if type(self.version) is not int or self.version not in (1, 2):
+            raise IntakeError("invalid_request_version")
+        self.acquisition.validate(legacy=self.version == 1)
+        acquired, expires = _utc(self.acquisition.retention_anchor_utc), _utc(self.expires_at)
         if (
             now.tzinfo is None
             or acquired > now
@@ -165,26 +224,38 @@ class IntakeRequest:
 
     @property
     def fingerprint(self) -> str:
-        return hashlib.sha256(_encoded(asdict(self))).hexdigest()
+        fields = self.manifest()
+        if self.version == 1:
+            # Preserve historical v1 fingerprints byte-for-byte; never reinterpret time.
+            del fields["schema"]
+        return hashlib.sha256(_encoded(fields)).hexdigest()
 
 
 def parse_request(
     payload: bytes, catalog: Catalog, now: datetime, *, recovery: bool = False
 ) -> IntakeRequest:
+    raw = _decode(payload)
+    if not isinstance(raw, dict):
+        raise IntakeError("invalid_fields")
+    schema = cast(dict[str, object], raw).get("schema")
+    if schema not in ("sobafm-fma-intake-1", "sobafm-fma-intake-2"):
+        raise IntakeError("invalid_request_version")
+    version: Literal[1, 2] = 1 if schema == "sobafm-fma-intake-1" else 2
+    time_key = "acquired_at" if version == 1 else "acquisition"
     data = _object(
-        _decode(payload),
+        cast(dict[str, object], raw),
         {
             "schema",
             "source_url",
             "metadata_digest",
             "credit_snapshot",
-            "acquired_at",
+            time_key,
             "expires_at",
             "download_notices",
             "file",
         },
     )
-    if data["schema"] != "sobafm-fma-intake-1" or data["source_url"] != SOURCE_URL:
+    if data["source_url"] != SOURCE_URL:
         raise IntakeError("wrong_recording")
     recordings = [
         r
@@ -201,15 +272,23 @@ def parse_request(
         or data["credit_snapshot"] != CREDIT_SNAPSHOT
     ):
         raise IntakeError("metadata_credit_mismatch")
-    acquired, expires = _utc(data["acquired_at"]), _utc(data["expires_at"])
-    if (
-        now.tzinfo is None
-        or acquired > now
-        or not acquired < expires <= acquired + timedelta(days=7)
-    ):
-        raise IntakeError("invalid_retention_window")
-    if not recovery and now >= expires:
-        raise IntakeError("expired")
+    if version == 1:
+        acquisition = Acquisition(_timestamp(_utc(data["acquired_at"])), "exact", None)
+    else:
+        record = _object(
+            data["acquisition"], {"schema", "retention_anchor_utc", "basis", "operator_evidence"}
+        )
+        if (
+            record["schema"] != "sobafm-acquisition-1"
+            or record["basis"] not in ("exact", "conservative_lower_bound")
+            or not isinstance(record["operator_evidence"], str)
+        ):
+            raise IntakeError("invalid_acquisition_evidence")
+        acquisition = Acquisition(
+            _timestamp(_utc(record["retention_anchor_utc"])),
+            record["basis"],
+            record["operator_evidence"],
+        )
     raw_notices = data["download_notices"]
     if not isinstance(raw_notices, list) or not 1 <= len(cast(list[object], raw_notices)) <= 16:
         raise IntakeError("invalid_notices")
@@ -236,15 +315,271 @@ def parse_request(
     )
     if identity.bytes > MAX_BYTES:
         raise IntakeError("input_oversize")
-    return IntakeRequest(
+    request = IntakeRequest(
         SOURCE_URL,
         METADATA_DIGEST,
         CREDIT_SNAPSHOT,
-        _timestamp(acquired),
-        _timestamp(expires),
+        acquisition,
+        _timestamp(_utc(data["expires_at"])),
         tuple(notices),
         identity,
+        version,
     )
+    request.validate(now, recovery=recovery)
+    return request
+
+
+class ReadConsumer(Protocol):
+    """Initially inert. Own all downstream work/backing until join returns True.
+
+    write consumes one bounded chunk synchronously; retained copies must have an
+    explicit consumer capacity reservation. cancel must be nonblocking and may
+    overlap write/finish/join. No path opening, preexec_fn, or fork of Python
+    native-proof code from this multithreaded process is part of this contract.
+    """
+
+    def inspect(self, fd: int) -> None:
+        """Borrow the owned read-only fd; settle inspection seeks/reads before return."""
+        ...
+
+    def write(self, chunk: bytes) -> None: ...
+    def finish(self) -> None: ...
+    def cancel(self) -> None: ...
+    def join(self, timeout: float) -> bool: ...
+
+
+class OwnedRead:
+    """One capability returned by LocalIntake.read_into; exposes no path or fd."""
+
+    def __init__(self, owner: LocalIntake, consumer: ReadConsumer, expected: FileIdentity) -> None:
+        self._owner, self._consumer, self._expected = owner, consumer, expected
+        self._thread: threading.Thread | None = None
+        self._cancel_thread: threading.Thread | None = None
+        self._fd: int | None = None
+        self._io: str | None = None
+        self._error: str | None = None
+        self._read_bytes = 0
+        self._delivered_bytes = 0
+        self._sha256: str | None = None
+        self._verified = False
+        self._consumer_released = False
+        self._finished = False
+        self._completed = False
+        self._retry = threading.Event()
+        self._started = threading.Event()
+
+    def _start(self) -> None:
+        with self._owner.lock:
+            self._owner._check_stop()  # pyright: ignore[reportPrivateUsage]
+            self._thread = threading.Thread(target=self._run, name="fma-owned-read", daemon=False)
+            try:
+                self._thread.start()
+            except RuntimeError as error:
+                self._thread = None
+                self._consumer_released = self._finished = True
+                raise IntakeError("reader_start_failed") from error
+            finally:
+                self._started.set()
+
+    def _admit(self, operation: str) -> None:
+        # Linearize ownership, then release the gate before any blocking call.
+        with self._owner.lock:
+            self._owner._check_stop()  # pyright: ignore[reportPrivateUsage]
+            self._io = operation
+
+    def _check_identity(self) -> None:
+        assert self._fd is not None
+        if (fcntl.fcntl(self._fd, fcntl.F_GETFL) & os.O_ACCMODE) != os.O_RDONLY:
+            raise IntakeError("reader_descriptor_changed")
+        if not self._expected.matches(os.fstat(self._fd)) or not self._expected.matches(
+            os.stat("payload", dir_fd=self._owner.fds["directory"], follow_symlinks=False)
+        ):
+            raise IntakeError("reader_payload_changed")
+
+    def _cancel(self) -> None:
+        with self._owner.lock:
+            if self._thread is None:
+                # Registration was revoked before any consumer operation. It is inert.
+                self._consumer_released = self._finished = True
+                self._started.set()
+            elif self._cancel_thread is None and not self._consumer_released:
+                self._cancel_thread = threading.Thread(
+                    target=self._cancel_consumer, name="fma-consumer-cancel", daemon=False
+                )
+                try:
+                    self._cancel_thread.start()
+                except RuntimeError:
+                    self._cancel_thread = None
+                    self._error = self._error or "consumer_cancel_start_failed"
+
+    def _cancel_consumer(self) -> None:
+        try:
+            self._consumer.cancel()
+        except Exception:
+            self._error = "consumer_cancel_failed"
+        finally:
+            self._owner.wake.set()
+
+    def join(self, timeout: float = 0) -> bool:
+        """Observe actual read/cancel worker exit; this does not request cancellation."""
+        deadline = time.monotonic() + max(0, timeout)
+        if not self._started.wait(max(0, deadline - time.monotonic())):
+            return False
+        # Registration and Thread.start share this gate. Snapshot only a settled
+        # start outcome, including failure, without exceeding the caller's wait.
+        if not self._owner.lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            return False
+        try:
+            workers = (self._thread, self._cancel_thread)
+        finally:
+            self._owner.lock.release()
+        for worker in workers:
+            if worker is not None:
+                worker.join(max(0, deadline - time.monotonic()))
+        # Cancellation can register after the snapshot; its start and actual
+        # exit must also be observed before certifying release.
+        if not self._owner.lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            return False
+        try:
+            settled = (
+                self._finished
+                and self._consumer_released
+                and self._fd is None
+                and (self._thread is None or not self._thread.is_alive())
+                and (self._cancel_thread is None or not self._cancel_thread.is_alive())
+            )
+            if settled and self._verified and self._error is None and not self._owner.stop.is_set():
+                self._completed = True
+            return settled
+        finally:
+            self._owner.lock.release()
+
+    def report(self) -> dict[str, object]:
+        with self._owner.lock:
+            settled = self.join()
+            return {
+                "request_sha256": self._owner.request.fingerprint,
+                "expected_bytes": self._expected.bytes,
+                "expected_sha256": self._expected.sha256,
+                "payload_identity": [self._expected.device, self._expected.inode],
+                "read_bytes": self._read_bytes,
+                "delivered_bytes": self._delivered_bytes,
+                "read_sha256": self._sha256,
+                "stream_verified": self._verified,
+                "completed": self._completed,
+                "failure": self._error,
+                "in_flight": self._io,
+                "descriptor_retained": self._fd is not None,
+                "consumer_released": self._consumer_released,
+                "settled": settled,
+                "reader_alive": self._thread is not None and self._thread.is_alive(),
+                "cancel_alive": self._cancel_thread is not None and self._cancel_thread.is_alive(),
+            }
+
+    def _run(self) -> None:
+        try:
+            self._admit("reader_open")
+            self._fd = os.open(
+                "payload",
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=self._owner.fds["directory"],
+            )
+            self._check_identity()
+            self._admit("consumer_inspect")
+            self._consumer.inspect(self._fd)
+            self._check_identity()
+            self._admit("reader_rewind")
+            os.lseek(self._fd, 0, os.SEEK_SET)
+            digest = hashlib.sha256()
+            while True:
+                self._admit("reader_read")
+                chunk = os.read(
+                    self._fd, min(CHUNK_BYTES, self._expected.bytes - self._read_bytes + 1)
+                )
+                self._read_bytes += len(chunk)
+                self._check_identity()
+                self._owner._check_stop()  # pyright: ignore[reportPrivateUsage]
+                if self._read_bytes > self._expected.bytes:
+                    raise IntakeError("reader_input_oversize")
+                digest.update(chunk)
+                if not chunk:
+                    break
+                self._admit("consumer_write")
+                self._consumer.write(chunk)
+                self._delivered_bytes += len(chunk)
+                chunk = b""
+            self._sha256 = digest.hexdigest()
+            if self._read_bytes != self._expected.bytes or self._sha256 != self._expected.sha256:
+                raise IntakeError("reader_integrity_failed")
+            self._admit("consumer_finish")
+            self._verified = True
+            self._consumer.finish()
+            self._owner._check_stop()  # pyright: ignore[reportPrivateUsage]
+        except IntakeError as error:
+            self._error = str(error)
+            self._owner.cancel("reader_failed")
+        except Exception:
+            self._error = "reader_or_consumer_failed"
+            self._owner.cancel("reader_failed")
+        finally:
+            self._settle()
+
+    def _settle(self) -> None:
+        # The original owner retains this worker even if a consumer violates the
+        # nonblocking cancel/timed join contract. No timeout releases backing.
+        while not self._consumer_released:
+            if self._owner.stop.is_set():
+                self._cancel()
+            self._io = "consumer_join"
+            try:
+                released = self._consumer.join(0.05)
+                if type(released) is not bool:
+                    raise IntakeError("invalid_consumer_join_result")
+                with self._owner.lock:
+                    self._consumer_released = released
+            except Exception:
+                self._error = self._error or "consumer_join_failed"
+                self._owner.cancel("reader_failed")
+            if not self._consumer_released:
+                self._retry.wait(0.05)
+        # Cancellation itself may still own access to the borrowed descriptor.
+        # consumer_released is serialized with cancel registration above.
+        while self._cancel_thread is not None and self._cancel_thread.is_alive():
+            self._io = "consumer_cancel_join"
+            self._cancel_thread.join(0.05)
+        while self._fd is not None:
+            self._io = "reader_close"
+            try:
+                observed_fd = os.fstat(self._fd)
+                if (observed_fd.st_dev, observed_fd.st_ino) != (
+                    self._expected.device,
+                    self._expected.inode,
+                ):
+                    raise IntakeError("reader_descriptor_identity_debt")
+            except OSError, IntakeError:
+                # A consumer closed/replaced the borrowed descriptor. Do not close
+                # a different descriptor or certify uncertain backing as released.
+                self._error = "reader_descriptor_identity_debt"
+                self._owner.cancel("reader_failed")
+                self._retry.wait(0.05)
+                continue
+            try:
+                os.close(self._fd)
+            except OSError:
+                try:
+                    os.fstat(self._fd)
+                except OSError as observed:
+                    if observed.errno == errno.EBADF:
+                        self._fd = None
+                        break
+                self._error = self._error or "reader_close_failed"
+                self._owner.cancel("reader_failed")
+                self._retry.wait(0.05)
+            else:
+                self._fd = None
+        self._io = None
+        self._finished = True
+        self._owner.wake.set()
 
 
 class LocalIntake:
@@ -289,6 +624,9 @@ class LocalIntake:
         self.temp_identity: tuple[int, int] | None = None
         self.payload_identity: tuple[int, int] | None = None
         self.payload_retained = False
+        self._payload_file: FileIdentity | None = None
+        self._reader: OwnedRead | None = None
+        self._reader_state: Literal["none", "owned", "released"] = "none"
         self.owns_slot = False
         self.state_released = False
         self.unresolved_slot = recovery
@@ -323,6 +661,31 @@ class LocalIntake:
             self.stop.set()
             self.wake.set()
 
+    def read_into(self, consumer: ReadConsumer) -> OwnedRead:
+        """Transfer one inert consumer after atomic admission; no caller-owned I/O."""
+        with self.lock:
+            self._check_stop()
+            if not all(
+                callable(getattr(consumer, name, None))
+                for name in ("inspect", "write", "finish", "cancel", "join")
+            ):
+                raise IntakeError("invalid_reader_consumer")
+            if (
+                self.recovery
+                or self.request.version != 2
+                or not self.pending.is_set()
+                or self.thread is None
+                or not self.thread.is_alive()
+                or self._payload_file is None
+                or self._reader is not None
+            ):
+                raise IntakeError("reader_handoff_not_available")
+            reader = OwnedRead(self, consumer, self._payload_file)
+            self._reader = reader
+            self._reader_state = "owned"
+            self.wake.set()
+            return reader
+
     def join(self, timeout: float = 0) -> bool:
         self._expire()
         if self.thread is not None:
@@ -342,6 +705,7 @@ class LocalIntake:
                 and not self.fds
                 and not self.payload_retained
                 and not self.unresolved_slot
+                and (self._reader is None or self._reader.join())
                 and self.phase in ("released", "rejected")
                 and self.released_at is None
             ):
@@ -364,7 +728,7 @@ class LocalIntake:
                 and not self.unresolved_slot
             )
             result: dict[str, object] = {
-                "schema": "sobafm-fma-pending-intake-1",
+                "schema": f"sobafm-fma-pending-intake-{self.request.version}",
                 "owner_id": self.owner_id,
                 "phase": self.phase,
                 "failure": self.failure,
@@ -372,7 +736,7 @@ class LocalIntake:
                 "source_url": self.request.source_url,
                 "metadata_digest": self.request.metadata_digest,
                 "credit_snapshot": self.request.credit_snapshot,
-                "acquired_at": self.request.acquired_at,
+                **self.request.time_fields(safe=True),
                 "expires_at": self.request.expires_at,
                 "notices_count": len(self.request.download_notices),
                 "notices_sha256": hashlib.sha256(
@@ -402,6 +766,8 @@ class LocalIntake:
                 "recording_correspondence": "unverified",
                 "file_integrity_and_embedded_notices": "review_required",
             }
+            if self.request.version == 2:
+                result["reader"] = None if self._reader is None else self._reader.report()
             if len(_encoded(result)) > MAX_MANIFEST_BYTES:
                 raise IntakeError("report_oversize")
             return result
@@ -518,10 +884,10 @@ class LocalIntake:
         self.io = "state_persistence"
         self.phase = phase
         state = {
-            "schema": "sobafm-fma-owned-slot-1",
+            "schema": f"sobafm-fma-owned-slot-{self.request.version}",
             "owner_id": self.owner_id,
             "request_sha256": self.request.fingerprint,
-            "acquired_at": self.request.acquired_at,
+            **self.request.time_fields(),
             "expires_at": self.request.expires_at,
             "phase": phase,
             "directory_identity": self.fd_identities["directory"],
@@ -532,6 +898,8 @@ class LocalIntake:
             "cleanup_started_utc": self.cleanup_started_utc,
             "cleanup_missed": self.cleanup_missed,
         }
+        if self.request.version == 2:
+            state["reader_state"] = self._reader_state
         data = _encoded(state)
         assert len(data) <= MAX_MANIFEST_BYTES
         self._remove_temp()
@@ -639,13 +1007,14 @@ class LocalIntake:
             or stat.S_IMODE(info.st_mode) != 0o600
         ):
             raise IntakeError("invalid_recovery_state")
+        time_key = "acquired_at" if self.request.version == 1 else "acquisition"
         state = _object(
             _decode(os.read(fd, MAX_MANIFEST_BYTES + 1)),
             {
                 "schema",
                 "owner_id",
                 "request_sha256",
-                "acquired_at",
+                time_key,
                 "expires_at",
                 "phase",
                 "payload_identity",
@@ -655,12 +1024,13 @@ class LocalIntake:
                 "cleanup_missed",
                 "directory_identity",
                 "lock_identity",
-            },
+            }
+            | ({"reader_state"} if self.request.version == 2 else set()),
         )
         if (
-            state["schema"] != "sobafm-fma-owned-slot-1"
+            state["schema"] != f"sobafm-fma-owned-slot-{self.request.version}"
             or state["request_sha256"] != self.request.fingerprint
-            or state["acquired_at"] != self.request.acquired_at
+            or state[time_key] != self.request.time_fields()[time_key]
             or state["expires_at"] != self.request.expires_at
             or state["directory_identity"] != list(self.fd_identities["directory"])
             or state["lock_identity"] != list(self.fd_identities["lock"])
@@ -670,6 +1040,10 @@ class LocalIntake:
             or re.fullmatch(r"[a-f0-9]{32}", state["owner_id"]) is None
         ):
             raise IntakeError("recovery_binding_mismatch")
+        if self.request.version == 2 and state["reader_state"] not in ("none", "released"):
+            raise IntakeError("uncertain_reader_ownership_debt")
+        if self.request.version == 2:
+            self._reader_state = cast(Literal["none", "released"], state["reader_state"])
         original_start = state["cleanup_started_utc"]
         original = None if original_start is None else _utc(original_start)
         if original is not None and original > self.utc_now():
@@ -776,12 +1150,34 @@ class LocalIntake:
         ):
             raise IntakeError("payload_changed")
         self._check_stop()
+        self._payload_file = FileIdentity(
+            copied.st_dev,
+            copied.st_ino,
+            copied.st_size,
+            copied.st_mtime_ns,
+            copied.st_ctime_ns,
+            self.copied_sha256,
+        )
         self._save("pending_review")
         self._check_stop()
         self.pending.set()
         while not self.stop.is_set():
             self._check_stop()
-            self.wake.wait(min(1.0, max(0, self.expires_monotonic - self.monotonic())))
+            reader = self._reader
+            if reader is not None:
+                if reader._thread is None and not reader._finished:  # pyright: ignore[reportPrivateUsage]
+                    # Persist ownership before any consumer callback or descriptor opens.
+                    self._save("pending_review")
+                    reader._start()  # pyright: ignore[reportPrivateUsage]
+                elif reader.join() and self._reader_state == "owned":
+                    self._reader_state = "released"
+                    self._save("pending_review")
+            self.wake.wait(
+                min(
+                    0.05 if reader is not None else 1.0,
+                    max(0, self.expires_monotonic - self.monotonic()),
+                )
+            )
             self.wake.clear()
 
     def _delete_payload(self) -> None:
@@ -821,6 +1217,11 @@ class LocalIntake:
         while True:
             try:
                 self.io = "cleanup"
+                if self._reader is not None:
+                    self._reader._cancel()  # pyright: ignore[reportPrivateUsage]
+                    if not self._reader.join(0.05):
+                        raise IntakeError("reader_cleanup_debt")
+                    self._reader_state = "released"
                 for name in list(self.fds):
                     if name in ("lock", "directory", "payload"):
                         continue
