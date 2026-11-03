@@ -68,8 +68,9 @@ synchronous writer retains that immutable line across partial/interrupted writes
 and uses memoryview slices without allocating payload tail copies. Cancellation
 does not renew its original clock or certify a held write as released. These
 local bounds do not establish the complete runner backing/copy maximum, encoder
-internal allocation, PTY accounting/release or native topology fit; those remain
-separate qualification gates. No PTY reservation subdivision is adopted.
+internal allocation, PTY userspace settlement or native topology fit; those
+remain separate qualification gates. The [accepted narrow kernel exclusion](../../docs/decisions/0003-decoder-pty-exclusion.md)
+does not adopt a PTY reservation subdivision or claim kernel reclamation.
 
 ### Process observation transactions
 
@@ -121,7 +122,8 @@ backing and C-stack scratch stay inside the **full 90,177,536-byte group cap**.
 Maintained `os.readlink`, `os.stat` and `os.scandir` calls therefore do not require
 a proposed 32,768-byte whole-libc bridge bound. No such bound is claimed or used
 for admission. This supersedes that proposed prerequisite without changing the
-approved metric, group cap, copy partitions or PTY decision gate.
+group cap or copy partitions. The separate [decoder kernel PTY exclusion](../../docs/decisions/0003-decoder-pty-exclusion.md)
+does not expand the treatment of userspace payload as control scratch.
 
 Selected executable text, immutable pins, native map evidence and report copies
 remain payload. Each workspace prepays **8,192 bytes within its existing owner's
@@ -187,9 +189,10 @@ facts 32,768; pins 8,192; input bytes plus input buffer 131,072; two existing PC
 scratch chunks 131,072; three diagnostic extents 196,608; and three report extents
 196,608 (encoding pair plus a conservatively retained line). The PCM bank stays
 in its separate P reservation. This subtotal deliberately is **not full runner
-closure**: diagnostic parsing/string splits, encoder internals, other retained
-report evidence and asynchronous PTY backing still require their own complete
-accounting. The difference is not an unallocated allowance or execution release.
+closure**: diagnostic parsing/string splits, encoder internals and other retained
+userspace report evidence still require complete accounting. Decoder kernel PTY
+backing is separately excluded under the accepted contract, without a reclamation
+or backlog bound. The difference is not an unallocated allowance or execution release.
 
 Receiver copies coexist with the sender: the intake owner's existing partition
 charges its stdout buffer, raw copy, complete-prefix copy, split lines, JSON
@@ -329,7 +332,7 @@ Expected rejection/cancellation keeps pipeline `passed: false`. A separate
 `qualification_passed` requires the exact expected observation, valid original
 timing, all owner/reader/helper release evidence, no OOM/swap, and external
 container exit. Offline Python-child tests establish control flow only. They
-do not release another fixture derivation, image/build/volume work, PTY accounting,
+do not release another fixture derivation, image/build/volume work, PTY preflight,
 native qualification, supplied-file access or catalog admission.
 
 Before another serial case, separately review and release explicit reconciliation
@@ -355,13 +358,27 @@ aggregate copies = 98,979,840 bytes**. The single copy reservation is partitione
 
 These reservations include simultaneous input, parser byte buffers, projected
 reports, serialization and IPC copies. Parser object/allocator overhead remains
-in the whole-group charge. Approved kernel pipe/socket-buffer exclusions do not
-establish a PTY-backing exclusion. Concrete PTY backing accounting and containment
-remain an unreleased exact-target qualification gate within the unchanged
-98,979,840-byte capacity and existing approved exclusions. The code bounds I/O and
-report buffers, but exact parser allocation/copy overlap and the new process
-topology require fresh fit evidence. Old native proofs qualify only their exact
-unchanged source/image/target cases, not this topology.
+in the whole-group charge. The maintainer [accepted option 2's narrow decoder
+kernel PTY exclusion](https://github.com/slackysoba/sobafm/issues/44#issuecomment-6593814582),
+recorded in [ADR 0003](../../docs/decisions/0003-decoder-pty-exclusion.md), alongside
+the existing kernel pipe/socket exclusion. Only kernel backing is excluded;
+userspace diagnostic/audio/application/IPC payload stays charged. The stock
+decoder, 98,979,840-byte total and every partition above remain unchanged. The
+proposed 524,288-byte runner / 262,144-byte PTY subdivision is not adopted.
+
+A subsequent pair may be admitted only after actual userspace/process/FD
+settlement and all other applicable gates. Preserve the original cancellation
+clock, failed verdicts and retained userspace ownership/debt; timeout is not
+release. This does not claim prior excluded kernel objects were reclaimed.
+Close, EOF and helper/container exit do not prove kernel reclamation. Repeated
+sessions may leave an unquantified physical/kernel backlog; no three-second
+kernel-release bound or eventual reclamation result is established.
+
+The exclusion does not complete runner/other-owner accounting or qualify native
+execution. Exact parser allocation/copy overlap, userspace settlement and the new
+process topology still require fresh fit evidence. Old native proofs qualify
+only their exact unchanged source/image/target cases, not this topology. The
+separate #7 application-architecture decision remains open.
 
 The metadata reservation explicitly includes decoded Unicode backing and keys,
 not just raw bytes. Its conservative source-bound accounting is:
@@ -420,10 +437,13 @@ future mounts and non-root settings. No actual recording read belongs in that
 preflight. Record volume name, creation time, mountpoint hash and namespace slot
 device/inode; these observed identities and the receipt hash are prerequisites
 for each reviewed qualification packet. Before any owned-audio qualification,
-require accepted exact-image PTY backing/accounting and a successful bounded
-no-media PTY preflight. Before actual Night Owl intake,
-separately review exact-image PTY backing/accounting, fresh init -> owner ->
+review the exact-image implementation against the accepted narrow PTY exclusion,
+userspace accounting and actual process/FD settlement rules, and require a
+separately released, successful bounded no-media PTY preflight. Before actual
+Night Owl intake, separately review that evidence, fresh init -> owner ->
 sequential-helper topology fit and native terminal-filter qualification evidence.
+The contract acceptance itself releases none of these operations and does not
+renew the original **2026-11-09T00:00:00Z** recording expiry.
 No inherited real-file input is transported through Docker CLI descriptor numbers.
 
 `packet.py` defines a closed schema, including the complete fixed runtime source
