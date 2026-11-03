@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import sys
@@ -16,45 +15,31 @@ from sobafm.fma_intake import IntakeRequest, LocalIntake
 
 from .cases import NIGHT_OWL, PCM_SHA256, CaseBinding, OwnedQualificationRequest
 from .diagnostics import FORMAT
+from .ingress import Ingress, Record, discard_exception, pairs
 from .limits import (
     MAX_FRAMES,
     MAX_SEEKS,
     METADATA_SECONDS,
     PCM_LIMIT,
     READY_BYTES,
-    REPORT_BYTES,
     CaseClock,
     encode_report,
     json_size,
 )
 from .observation import ObservationWorkspace
 from .process import OwnedHelper, ProcessPin, inventory
-from .terminal import DECODE_FIELDS, validate_terminal
+from .terminal import DECODE_FIELDS, validate_envelope, validate_terminal
+
+object_pairs = pairs
 
 
-def object_pairs(items: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in items:
-        if key in result:
-            raise ProbeError("duplicate_report_field")
-        result[key] = value
-    return result
-
-
-def reports(raw: bytes) -> list[dict[str, object]]:
-    if len(raw) > REPORT_BYTES:
-        raise ProbeError("helper_report_bound")
-    records: list[dict[str, object]] = []
-    for line in raw.split(b"\n"):
-        if not line:
-            continue
-        value: object = json.loads(line, object_pairs_hook=object_pairs)
-        if not isinstance(value, dict):
-            raise ProbeError("helper_report_object_required")
-        records.append(cast(dict[str, object], value))
-        if len(records) > 2:
-            raise ProbeError("unexpected_helper_report")
-    return records
+def reports(raw: bytes, role: str = "metadata") -> list[dict[str, object]]:
+    ingress = Ingress(role)
+    ingress.feed(raw)
+    ingress.scan(final=True)
+    if ingress.error:
+        raise ProbeError(ingress.error)
+    return [record.value for record in ingress.records if record.value is not None]
 
 
 def validate_metadata(result: dict[str, object], case: CaseBinding = NIGHT_OWL) -> None:
@@ -204,6 +189,7 @@ class ValidationConsumer:
         self.finished = False
         self.terminal_error: str | None = None
         self.first_write_cancelled = False
+        self.terminal_record: Record | None = None
 
     @property
     def case(self) -> CaseBinding:
@@ -241,41 +227,47 @@ class ValidationConsumer:
         return helper
 
     def _capture(self, helper: OwnedHelper, *, final: bool = False) -> None:
-        if helper.role != "decoder":
+        if helper.role != "decoder" or helper.ingress.retired:
             return
-        raw = bytes(helper.stdout)
-        # A pump can stop halfway through a line. Do not interpret a partial
-        # record or certify absence until all output has actually drained.
-        complete = raw[: raw.rfind(b"\n") + 1]
+        helper.ingress.scan(final=final)
         try:
-            rows = reports(complete)
-            terminals = [row for row in rows if row.get("event") == "full_stream_result"]
+            rows = helper.ingress.records
+            terminals = [row for row in rows if row.family == "decode"]
             if not terminals:
-                if final:
+                if final or helper.ingress.error:
                     raise ProbeError("decoder_terminal_missing")
                 return
-            if len(terminals) != 1 or rows[-1] != terminals[0] or helper.pin is None:
-                raise ProbeError("decoder_terminal_sequence")
-            if len(rows) == 2 and (
-                rows[0].get("event") != "decoder_admitted"
-                or rows[0].get("case_binding") != self.case.record()
-                or ProcessPin.from_record(rows[0].get("runner")) != helper.pin
-            ):
-                raise ProbeError("decoder_terminal_admission")
-            result = terminals[0]
-            values = validate_terminal(result, self.case, helper.pin, self.clock)
-            if self.decode is not None and self.decode != result:
+            if helper.pin is None:
+                raise ProbeError("decoder_terminal_pin")
+            terminal = terminals[0]
+            if self.terminal_record is not None and self.terminal_record is not terminal:
                 raise ProbeError("decoder_terminal_changed")
-            self.decode = result
+            self.terminal_record = terminal
+            if terminal.envelope is None:
+                raise ProbeError("decoder_terminal_missing_envelope")
+            values = validate_envelope(terminal.envelope, self.case, helper.pin, self.clock)
             started = values["cleanup_start_utc"]
             if started is not None:
                 self.clock.adopt_cleanup(cast(float, started))
             self.clock.timing_unknown |= values["cleanup_timing_unknown"] is True
             self.clock.missed |= values["cleanup_deadline_met"] is not True
             self.clock.case_missed |= values["case_deadline_met"] is not True
-            if final and raw != complete:
-                raise ProbeError("decoder_terminal_partial")
-        except ValueError, TypeError, KeyError, RecursionError, ProbeError:
+            if len(terminals) != 1 or rows[-1] is not terminals[0]:
+                raise ProbeError("decoder_terminal_sequence")
+            if len(rows) == 2 and (
+                rows[0].envelope is None
+                or rows[0].envelope.get("event") != "decoder_admitted"
+                or rows[0].envelope.get("case_binding") != self.case.record()
+                or ProcessPin.from_record(rows[0].envelope.get("runner")) != helper.pin
+            ):
+                raise ProbeError("decoder_terminal_admission")
+            if terminal.value is not None and self.decode is None:
+                validate_terminal(terminal.value, self.case, helper.pin, self.clock)
+                self.decode = terminal.value
+            if helper.ingress.error or terminal.value is None:
+                raise ProbeError("decoder_terminal_invalid_detail_or_suffix")
+        except (ValueError, TypeError, KeyError, RecursionError, ProbeError) as error:
+            discard_exception(error)
             self.terminal_error = "invalid_or_missing_decoder_terminal"
             self.clock.timing_unknown = self.clock.missed = True
         # Do not revoke the owned reader inside its finish callback. The outer
@@ -302,9 +294,13 @@ class ValidationConsumer:
             cleanup=self.clock.cleanup_start_utc is not None,
         ):
             raise ProbeError("helper_descendant_debt")
-        self.history.append(helper.receipt())
-        helper.stdout.clear()
-        helper.stderr.clear()
+        with self.lock:
+            if not helper.receipt_published:
+                self.history.append(helper.receipt())
+                helper.receipt_published = True
+        helper.ingress.retire()
+        helper.errors.retire()
+        self.terminal_record = None
         with self.lock:
             self.active = None
 
@@ -319,9 +315,11 @@ class ValidationConsumer:
                 if self.clock.remaining(end) <= 0:
                     self.cancel()
                     raise ProbeError("metadata_deadline")
-            rows = reports(bytes(helper.stdout))
+            helper.ingress.scan(final=True)
+            rows = [record.value for record in helper.ingress.records if record.value is not None]
             if (
-                len(rows) != 1
+                helper.ingress.error
+                or len(rows) != 1
                 or rows[0].pop("case_binding", None) != self.case.record()
                 or helper.pin is None
                 or rows[0].pop("helper_pid", None) != helper.pin.pid
@@ -365,8 +363,10 @@ class ValidationConsumer:
                     str(self.clock.expires_utc),
                 ],
             )
-            while b"\n" not in helper.stdout:
+            helper.ingress.scan()
+            while not helper.ingress.records:
                 helper.pump()
+                helper.ingress.scan()
                 if (
                     self.clock.remaining() <= 0
                     or helper.process is None
@@ -374,10 +374,15 @@ class ValidationConsumer:
                     or helper.failure
                 ):
                     raise ProbeError("decoder_admission_failed")
-            ready = reports(bytes(helper.stdout))
-            if len(ready) != 1 or ready[0].get("event") != "decoder_admitted":
+            ready = helper.ingress.records
+            if (
+                helper.ingress.error
+                or len(ready) != 1
+                or ready[0].value is None
+                or ready[0].value.get("event") != "decoder_admitted"
+            ):
                 raise ProbeError("decoder_admission_record")
-            record = ready[0]
+            record = ready[0].value
             if set(record) != {
                 "event",
                 "case_binding",
@@ -408,6 +413,10 @@ class ValidationConsumer:
                 != {native_pid}
             ):
                 raise ProbeError("native_phase_inventory")
+            # The complete native gate was checked before stream handoff. Only
+            # case/runner/order facts are needed to authenticate a later terminal.
+            ready[0].envelope = {key: record[key] for key in ("event", "case_binding", "runner")}
+            ready[0].value = None
             self.phase = "streaming"
         finally:
             self.operation = False

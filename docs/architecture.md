@@ -70,6 +70,20 @@ Receiver JSON parsing and Unicode/shape-dependent peaks remain unproved within
 the intake/controller partitions. Sender construction does not pay for receiver
 copies, close full payload accounting, or establish native fit.
 
+The finite FMA ingress owner now retains each original bounded stream, admits
+closed producer shapes/domains before maintained JSON decoding, and caches each
+complete record once. It keeps original prefix counts/hashes and rejects later
+extra, changed or partial records. Cleanup envelopes remain independent of
+successful detail validation, preserving earlier clocks through rejection.
+Selected Docker projections separate cleanup identity/exit facts from initial
+configuration; obsolete setup and completed exception payloads end before
+cleanup. Helper retirement publishes history once, while active process/FD and
+journal operation debt remain owned. Unicode paths, Latin-1 notices and broader
+qualification timestamps retain distinct supported domains. Receiver conversion
+peaks and retained packet/report/receipt overlap still require an actual ledger;
+there is no `J <= 2R`, fixed `F` or full native-fit claim. Public intake and
+operator packet/recovery loaders remain outside this receiver change.
+
 The [accepted decoder-PTY amendment](decisions/0003-decoder-pty-exclusion.md)
 excludes only kernel PTY backing alongside kernel pipe/socket storage. It keeps
 the stock decoder, all userspace partitions and the 98,979,840-byte total. A

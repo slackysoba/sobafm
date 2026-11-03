@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 
 from evaluations.fma_validation.diagnostics import DECODER, TAG_PREFIXES, validate
+from evaluations.fma_validation.ingress import decode
 from evaluations.fma_validation.limits import COPY_PARTITIONS, CaseClock, encode_report
 from evaluations.fma_validation.metadata import BoundedFile, inspect, preflight
 from evaluations.linux_resource.owned_mp3_decode import BANNER
@@ -66,6 +67,7 @@ def test_metadata_preserves_notices_versions_conflicts_and_unknowns(tmp_path: Pa
     assert "TIT2" in cast(list[str], result["conflicting_frame_ids"])
     assert result["unknown_frames"]
     encoded = encode_report(result)
+    assert decode(encoded, "metadata") == result
     assert b"Credit the artist" in encoded
     assert b"https://example.invalid/not-a-fetch" in encoded
     assert result["credits_complete"] is False and result["links_followed"] is False

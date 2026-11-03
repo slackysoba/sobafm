@@ -117,6 +117,20 @@ The bounded construction component does not establish receiver `J(shape, wire)`
 for parsed values, rejected inputs or widening Unicode. Keep that gap explicit
 within the unchanged intake/controller partitions.
 
+Receiver tests must exercise predecode rejection, not only validation after
+`json.loads`: wide escaped values and keys, unknown/deep/duplicate structures,
+scalar domains and actual producer failure/null variants. Preserve Latin-1
+notice variants, Unicode packet-bound paths and noncanonical meaningful JSON
+numbers; long finite float tokens have their own bounded conversion transient.
+Cache completed records once while checking every suffix and aggregate stream
+cap. Hash original received bytes. Distinguish metadata final EOF from terminal
+LF, and keep the earliest authenticated cleanup envelope when detail fails.
+Verify interrupted helper retirement cannot publish history twice. Exercise
+setup/configuration graph retirement, held attach plus cleanup, completed
+exception payloads with GC disabled and retained journal worker/record debt.
+Neither selected projection size nor source-path aliases close decoder `J` or
+the complete retained-fact ledger; public intake serialization remains separate.
+
 Its failure regressions include nonzero helper exit after full delivery, early
 write exit with immediately available or later-drained terminal evidence,
 simultaneous helper failure, absent/partial/malformed/cross-case records, repeated

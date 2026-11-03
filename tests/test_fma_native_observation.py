@@ -5,13 +5,14 @@ from __future__ import annotations
 import hashlib
 import signal
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
 import pytest
 
 from evaluations.fma_validation import decoder
+from evaluations.fma_validation.cases import NIGHT_OWL
 from evaluations.fma_validation.consumer import reports
 from evaluations.fma_validation.limits import COPY_PARTITIONS, CaseClock, json_size
 from evaluations.fma_validation.native_records import (
@@ -625,7 +626,7 @@ def test_stream_report_failure_retains_complete_selected_maps_before_any_resume(
     assert run.cancel.started == uptime and run.cancel.deadline == uptime + 3
 
 
-def test_selected_payload_projections_and_receiver_overlap_fit_named_reservations() -> None:
+def test_selected_payload_component_and_complete_admission_wire() -> None:
     h = harness()
     h.streams.files[b"/proc/4/maps"] = maps(MAP_ROWS, 512)
     limits, selected = h.admit()
@@ -643,19 +644,41 @@ def test_selected_payload_projections_and_receiver_overlap_fit_named_reservation
         and row["bytes"] is original.size
         for row, original in zip(projected, selected.records, strict=True)
     )
-    encoded = decoder.report_line(value)
-    received = reports(encoded)
-    assert received == [value] and len(encoded) < 8192
+
+    def admission(selected_value: Mapping[str, object]) -> dict[str, object]:
+        return {
+            "event": "decoder_admitted",
+            "case_binding": NIGHT_OWL.record(),
+            "init": h.roles[0].record(),
+            "owner": h.roles[1].record(),
+            "runner": h.roles[2].record(),
+            "native_gate": {
+                "pid": 4,
+                "start_ticks": 30,
+                "state": "stopped",
+                "native_address_spaces": 1,
+                "input_bytes": 0,
+                **selected_value,
+            },
+        }
+
+    record = admission(value)
+    encoded = decoder.report_line(record)
+    received = reports(encoded, "decoder")
+    assert received == [record] and len(encoded) < 8192
     # A subsequent parse owns new values while the prior record remains retained.
     h.streams.files[b"/proc/4/maps"] = maps(MAP_ROWS, 512).replace(b" ", b"\t", 1)
     new_limits, new_selected = h.admit()
     new_value = {"rlimits": new_limits.record(), "mappings": new_selected.record()}
-    new_received = reports(decoder.report_line(new_value))
-    assert new_received == [new_value] and new_received != received
-    assert received == [value] and selected.sha256 != new_selected.sha256
+    new_record = admission(new_value)
+    new_received = reports(decoder.report_line(new_record), "decoder")
+    assert new_received == [new_record] and new_received != received
+    assert received == [record] and selected.sha256 != new_selected.sha256
     # Known simultaneous payload components, not full runner/encoder/PTY closure.
     known_runner = (
         NATIVE_RECORD_BYTES + SELECTED_PIN_BYTES + 2 * 65_536 + 2 * 65_536 + 3 * 65_536 + 3 * 65_536
     )
     assert known_runner == 696_320 < COPY_PARTITIONS["decoder_runner"] == 786_432
-    assert COPY_PARTITIONS["intake_owner"] > 7 * 65_536 + NATIVE_RECORD_BYTES == 491_520
+    # The former seven-R receiver subtotal does not prove decoder J or retained
+    # F. Keep only the original partition here, not a receiver-fit assertion.
+    assert COPY_PARTITIONS["intake_owner"] == 786_432

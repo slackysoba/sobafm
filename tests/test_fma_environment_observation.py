@@ -25,6 +25,7 @@ from evaluations.fma_validation.observation import (
 from evaluations.fma_validation.packet import Packet
 from evaluations.linux_resource import owned_mp3_cancel as cancellation
 from evaluations.linux_resource.probe import ProbeError
+from tests.test_fma_failure_receipts import terminal
 from tests.test_fma_native_observation import NativeStreams
 from tests.test_fma_process_observation import Bridge, MonotonicClock
 
@@ -381,8 +382,10 @@ def test_resource_overlap_stays_inside_original_partitions(monkeypatch: pytest.M
     env.streams.files[EVENTS] = maximum_events(1)
     after = env.observation.resources()
     delta = after.delta(before)
-    wire = encode_report({"memory_event_delta": delta, "swap_current": str(after.swap)})
-    received = reports(wire)
+    record = terminal(ProcessPin(2, 1, 1, "/python", 1, 2, 1000, "/"))
+    record.update(memory_event_delta=delta, swap_current=str(after.swap))
+    wire = encode_report(record, newline=True)
+    received = reports(wire, "decoder")
     assert received[0]["memory_event_delta"] == delta
     assert before.events[-1][1] == 0 and after.events[-1][1] == 1
     assert 4 * 32 * (32 + 32) + 1024 <= SELECTED_RESOURCE_BYTES == 16_384

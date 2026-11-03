@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import errno
-import hashlib
 import os
 import select
 import signal
@@ -14,6 +13,7 @@ import time
 
 from evaluations.linux_resource.probe import ProbeError
 
+from .ingress import Ingress
 from .limits import CHUNK_BYTES, REPORT_BYTES, CaseClock
 from .observation import ObservationWorkspace
 from .observation import ProcessPin as ProcessPin
@@ -53,8 +53,10 @@ class OwnedHelper:
         self.busy: set[int] = set()
         self.fds: set[int] = set()
         self.uncertain: set[int] = set()
-        self.stdout = bytearray()
-        self.stderr = bytearray()
+        self.ingress = Ingress(role)
+        self.errors = Ingress("opaque")
+        self.stdout = self.ingress.raw
+        self.stderr = self.errors.raw
         self.output_eof = self.error_eof = False
         self.cancel_read: int | None = None
         self.cancel_write: int | None = None
@@ -63,6 +65,7 @@ class OwnedHelper:
         self.cancel_sent = False
         self.kill_sent = False
         self.failure: str | None = None
+        self.receipt_published = False
 
     def launch(self, argv: list[str], inherited: tuple[int, ...] = ()) -> None:
         with self.lock:
@@ -196,7 +199,7 @@ class OwnedHelper:
         process = self.process
         if process is None:
             return
-        streams = [(process.stdout, self.stdout, "output"), (process.stderr, self.stderr, "error")]
+        streams = [(process.stdout, self.ingress, "output"), (process.stderr, self.errors, "error")]
         active = [
             (stream, target, name)
             for stream, target, name in streams
@@ -210,12 +213,13 @@ class OwnedHelper:
             with self.lock:
                 self.busy.add(fd)
             try:
-                data = os.read(fd, min(4096, REPORT_BYTES - len(target) + 1))
-                if len(target) + len(data) > REPORT_BYTES:
+                data = os.read(
+                    fd, 4096 if target.error else min(4096, REPORT_BYTES - len(target.raw) + 1)
+                )
+                target.feed(data)
+                if target.error:
                     self.failure = "helper_output_overrun"
                     self.cancel()
-                    continue
-                target.extend(data)
                 if not data:
                     if name == "output":
                         self.output_eof = True
@@ -291,10 +295,12 @@ class OwnedHelper:
             self.pump(min(0.01, max(0, deadline - time.monotonic())))
 
     def receipt(self) -> dict[str, object]:
+        self.ingress.check_prefix()
+        self.errors.check_prefix()
         return {
             "role": self.role,
-            "stdout_bytes": len(self.stdout),
-            "stderr_bytes": len(self.stderr),
+            "stdout_bytes": self.ingress.count,
+            "stderr_bytes": self.errors.count,
             "process": None if self.pin is None else self.pin.record(),
             "exit_code": None if self.process is None else self.process.poll(),
             "launching": self.launching,
@@ -303,7 +309,7 @@ class OwnedHelper:
             "uncertain_closes": sorted(self.uncertain),
             "stdout_eof": self.output_eof,
             "stderr_eof": self.error_eof,
-            "stdout_sha256": hashlib.sha256(self.stdout).hexdigest(),
-            "stderr_sha256": hashlib.sha256(self.stderr).hexdigest(),
+            "stdout_sha256": self.ingress.digest.hexdigest(),
+            "stderr_sha256": self.errors.digest.hexdigest(),
             "failure": self.failure,
         }

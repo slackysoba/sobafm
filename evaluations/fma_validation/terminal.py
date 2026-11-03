@@ -40,6 +40,53 @@ DECODE_FIELDS = {
 }
 
 
+def validate_envelope(
+    result: dict[str, object], case: CaseBinding, runner: ProcessPin, clock: CaseClock
+) -> dict[str, object]:
+    if (
+        result.get("event") != "full_stream_result"
+        or result.get("schema") != case.schema("decode")
+        or result.get("case_binding") != case.record()
+        or ProcessPin.from_record(result.get("runner")) != runner
+    ):
+        raise ProbeError("decoder_terminal_binding")
+    return validate_clock(result.get("cleanup"), clock)
+
+
+def validate_clock(value: object, clock: CaseClock) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ProbeError("decoder_terminal_clock_binding")
+    values = cast(dict[str, object], value)
+    if (
+        set(values)
+        != {
+            "whole_end_utc",
+            "expires_utc",
+            "cleanup_start_utc",
+            "cleanup_deadline_met",
+            "cleanup_timing_unknown",
+            "case_deadline_met",
+        }
+        or values["whole_end_utc"] != clock.whole_end_utc
+        or values["expires_utc"] != clock.expires_utc
+        or any(
+            type(values[key]) is not bool
+            for key in ("cleanup_deadline_met", "cleanup_timing_unknown", "case_deadline_met")
+        )
+    ):
+        raise ProbeError("decoder_terminal_clock_binding")
+    started = values["cleanup_start_utc"]
+    if started is None and values["cleanup_timing_unknown"] is True:
+        return values
+    if (
+        type(started) not in (int, float)
+        or not math.isfinite(cast(float, started))
+        or not 0 <= cast(float, started) <= clock.wall()
+    ):
+        raise ProbeError("decoder_terminal_clock")
+    return values
+
+
 def validate_terminal(
     result: dict[str, object],
     case: CaseBinding,
@@ -108,34 +155,6 @@ def validate_terminal(
         or re.fullmatch("[a-f0-9]{64}", str(diagnostic["sha256"])) is None
     ):
         raise ProbeError("decoder_terminal_diagnostics")
-    values = cast(dict[str, object], timing)
-    if (
-        set(values)
-        != {
-            "whole_end_utc",
-            "expires_utc",
-            "cleanup_start_utc",
-            "cleanup_deadline_met",
-            "cleanup_timing_unknown",
-            "case_deadline_met",
-        }
-        or values["whole_end_utc"] != clock.whole_end_utc
-        or values["expires_utc"] != clock.expires_utc
-        or any(
-            type(values[key]) is not bool
-            for key in ("cleanup_deadline_met", "cleanup_timing_unknown", "case_deadline_met")
-        )
-        or result["catalog_admitted"] is not False
-        or result["listening"] is not False
-    ):
+    if result["catalog_admitted"] is not False or result["listening"] is not False:
         raise ProbeError("decoder_terminal_clock_binding")
-    started = values["cleanup_start_utc"]
-    if started is None and values["cleanup_timing_unknown"] is True:
-        return values
-    if (
-        type(started) not in (int, float)
-        or not math.isfinite(cast(float, started))
-        or not 0 <= cast(float, started) <= clock.wall()
-    ):
-        raise ProbeError("decoder_terminal_clock")
-    return values
+    return validate_clock(timing, clock)
