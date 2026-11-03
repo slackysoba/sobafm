@@ -22,7 +22,7 @@ from typing import cast
 from evaluations.linux_resource.probe import ProbeError
 
 from .consumer import expected_outcome, object_pairs, reports, validate_decode, validate_metadata
-from .limits import REPORT_BYTES, CaseClock, encode_report
+from .limits import REPORT_BYTES, CaseClock, encode_report, json_size
 from .packet import Packet, load, load_qualification, read_bounded, string
 from .process import ProcessPin
 from .terminal import validate_terminal
@@ -166,6 +166,7 @@ class Journal:
         self.path = path
         self.worker: threading.Thread | None = None
         self.error: Exception | None = None
+        self.record: bytes | None = None
         self.data: dict[str, object] = {
             "schema": packet.case.schema("controller-ledger"),
             "case_binding": packet.case.record(),
@@ -193,7 +194,9 @@ class Journal:
             raise ProbeError("journal_operation_retained")
         if self.error is not None:
             raise self.error
+        self.record = None  # Previous worker and fsync actually settled.
         data = encode_report(self.data)
+        self.record = data
 
         def write() -> None:
             try:
@@ -208,17 +211,23 @@ class Journal:
             raise ProbeError("journal_operation_retained")
         if self.error is not None:
             raise self.error
+        self.record = None
 
     def _write(self, data: bytes) -> None:
         info = self.path.lstat()
         if (info.st_dev, info.st_ino) != self.identity or info.st_nlink != 1:
             raise ProbeError("journal_identity_debt")
         offset = 0
-        while offset < len(data):
-            written = os.pwrite(self.fd, data[offset:], offset)
-            if written <= 0:
-                raise ProbeError("journal_write_failed")
-            offset += written
+        with memoryview(data) as view:
+            while offset < len(view):
+                with view[offset:] as remaining:
+                    try:
+                        written = os.pwrite(self.fd, remaining, offset)
+                    except InterruptedError:
+                        continue
+                    if type(written) is not int or not 0 < written <= len(remaining):
+                        raise ProbeError("journal_write_failed")
+                offset += written
         os.ftruncate(self.fd, len(data))
         os.fsync(self.fd)
 
@@ -462,7 +471,7 @@ class Controller:
             if len(records) != 1:
                 raise ProbeError("owner_report_count")
             report = records[0]
-            encode_report(report)
+            json_size(report)
             if (
                 set(report)
                 != OWNER_FIELDS

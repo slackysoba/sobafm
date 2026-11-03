@@ -9,7 +9,7 @@ from typing import cast
 from evaluations.linux_resource.probe import ProbeError
 
 from .cases import CaseBinding
-from .limits import CHUNK_BYTES, PCM_LIMIT, REPORT_BYTES, CaseClock, encode_report
+from .limits import CHUNK_BYTES, PCM_LIMIT, REPORT_BYTES, CaseClock, json_size
 from .process import ProcessPin
 
 DECODE_FIELDS = {
@@ -46,7 +46,7 @@ def validate_terminal(
     runner: ProcessPin,
     clock: CaseClock,
 ) -> dict[str, object]:
-    encode_report(result)
+    json_size(result)
     if (
         set(result) != DECODE_FIELDS
         or result["event"] != "full_stream_result"

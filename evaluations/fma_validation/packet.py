@@ -33,6 +33,7 @@ SOURCE_FILES = (
         for name in (
             "__init__",
             "limits",
+            "report_io",
             "packet",
             "metadata",
             "process",

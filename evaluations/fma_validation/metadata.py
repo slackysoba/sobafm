@@ -11,13 +11,16 @@ import resource
 import signal
 import stat
 import sys
+import traceback
 from collections import Counter
 from collections.abc import Mapping
 from typing import Protocol, cast
 
 from evaluations.linux_resource.probe import ProbeError
 
+from .cases import CASE_IDS, CaseBinding, CaseId
 from .limits import MAX_FRAMES, MAX_SEEKS, REPORT_BYTES, TAG_BYTES, encode_report, json_size
+from .report_io import RecordWrite
 
 ADDRESS_BYTES = 67_108_864
 DATA_BYTES = 50_331_648
@@ -38,14 +41,69 @@ COPY_ACCOUNTING = {
     "tag_slices_and_opaque_frames": 3 * PARSER_TAG_BYTES,
     "decoded_frame_transients_and_keys": 24 * DECODED_SOURCE_BYTES,
     "projection_framing_and_hashes": 2 * REPORT_BYTES,
-    "serialized_string_bytes_and_write_slice": 2 * REPORT_BYTES,
-    "remaining_fixed_margin": 65_536,
+    # Assign the old 2R serialization + R fixed margin, without a new pool.
+    "report_work_immutable_and_prior_record": 3 * REPORT_BYTES,
 }
 assert sum(COPY_ACCOUNTING.values()) == 2_097_152
 
 
 class MetadataRejected(ProbeError):
     """Only source-independent codes from this module may be returned to owner."""
+
+
+REJECTION_REASONS = frozenset(
+    {
+        *UNSUPPORTED_FRAMES.values(),
+        "metadata_file_binding",
+        "metadata_read_limit",
+        "metadata_seek_limit",
+        "metadata_seek_mode",
+        "metadata_seek_extent",
+        "invalid_id3_size",
+        "unsupported_id3_version",
+        "unsupported_id3_header_flags",
+        "metadata_tag_limit",
+        "metadata_copy_reservation",
+        "id3_nonzero_padding",
+        "metadata_frame_limit",
+        "unsupported_id3_frame_id",
+        "unsupported_id3_frame_transform",
+        "invalid_id3_frame_extent",
+        "unresolved_duplicate_frame_id",
+        "metadata_decoded_payload_reservation",
+        "unsupported_id3_text_encoding",
+        "metadata_notice_exceeds_supported_bound",
+        "unsupported_notice_field",
+        "metadata_dependency_version",
+        "unsupported_textual_frame",
+        "unresolved_dropped_or_changed_notice",
+        "unresolved_opaque_frame_loss",
+        "metadata_admission_revoked",
+        "invalid_report_limit",
+        "report_capacity_exceeded",
+        "report_structure_limit",
+        "report_integer_limit",
+        "report_nonfinite_number",
+        "report_string_key_required",
+        "unsupported_report_value",
+        "report_changed_during_encoding",
+    }
+)
+
+
+def discard_failure(error: BaseException) -> None:
+    """Drop completed parser/build frames and exception links before fallback."""
+    pending = [error]
+    while pending:
+        current = pending.pop()
+        traceback.clear_frames(current.__traceback__)
+        cause, context = current.__cause__, current.__context__
+        current.__traceback__ = current.__cause__ = current.__context__ = None
+        current.args = ()
+        # Sever before following, so even linked cycles terminate without GC.
+        for linked in (cause, context):
+            if linked is not None and linked is not current:
+                pending.append(linked)
 
 
 def selected_id(name: str) -> bool:
@@ -349,9 +407,18 @@ def contain() -> None:
     signal.alarm(30)
 
 
-def main() -> int:
-    from .cases import CASE_IDS, CaseBinding, CaseId
+def inspection_record(owned_fd: int, admit_fd: int, case: CaseBinding) -> bytes:
+    contain()
+    if os.read(admit_fd, 1) != b"x":
+        raise ProbeError("metadata_admission_revoked")
+    os.close(admit_fd)
+    result = inspect(owned_fd, case.bytes)
+    result["schema"] = case.schema("metadata")
+    result.update(case_binding=case.record(), helper_pid=os.getpid())
+    return encode_report(result, newline=True)
 
+
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owned-fd", type=int, required=True)
     parser.add_argument("--case", choices=CASE_IDS, default="night-owl")
@@ -362,40 +429,51 @@ def main() -> int:
     if not args.execute or sys.platform != "linux":
         parser.error("explicit Linux evaluation required")
     case = CaseBinding(cast(CaseId, args.case))
+    data: bytes | None = None
+    reason: str | None = None
     try:
-        contain()
-        if os.read(args.admit_fd, 1) != b"x":
-            raise ProbeError("metadata_admission_revoked")
-        os.close(args.admit_fd)
-        result = inspect(args.owned_fd, case.bytes)
-        result["schema"] = case.schema("metadata")
-        result.update(case_binding=case.record(), helper_pid=os.getpid())
-        data = encode_report(result) + b"\n"
-        offset = 0
-        while offset < len(data):
-            amount = os.write(1, data[offset:])
-            if amount <= 0:
-                raise ProbeError("metadata_report_write")
-            offset += amount
-        return 0
+        data = inspection_record(args.owned_fd, args.admit_fd, case)
     except Exception as error:
         # Parser exceptions can contain source text; never print or trust them.
-        reason = str(error) if isinstance(error, ProbeError) else "metadata_inspection_failed"
-        os.write(
-            1,
-            encode_report(
+        reason = "metadata_inspection_failed"
+        if isinstance(error, ProbeError) and len(error.args) == 1:
+            code = error.args[0]
+            if type(code) is str and len(code) <= 80 and code in REJECTION_REASONS:
+                reason = code
+            code = None
+        discard_failure(error)
+    failed = reason is not None
+    # Outside the except suite: no active parser/build exception becomes the
+    # rejection's context, and rejected backing is released before allocation.
+    if failed:
+        try:
+            data = encode_report(
                 {
                     "schema": case.schema("metadata-rejection"),
                     "reason": reason,
                     "credits_complete": False,
                     "case_binding": case.record(),
                     "helper_pid": os.getpid(),
-                }
+                },
+                newline=True,
             )
-            + b"\n",
-        )
+        except Exception as error:
+            discard_failure(error)
+            os.write(2, b"metadata_inspection_failed\n")
+            return 1
+    assert data is not None
+    record = RecordWrite(data, "metadata_report_write")
+    try:
+        record.write(1)
+    except Exception as error:
+        # Even offset zero may mean an uncertain first submission. Never build
+        # or append another terminal after this point. Keep record/data owned.
+        discard_failure(error)
+        failed = True
+    if failed:
         os.write(2, b"metadata_inspection_failed\n")
         return 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -102,6 +102,21 @@ after fork, exact-cap sentinel reads, held read/hash/write ownership and cached
 facts retained after report rejection. Producer/FD settlement alone does not
 refund diagnostic backing or immutable report aliases.
 
+Canonical reports preflight exact size, then recheck bounded exact builtin
+values while filling an indexed arena. Stable caller ownership is required;
+same-size concurrent mutation is not a synchronization contract. Compare bytes
+against stdlib JSON across Unicode key order, controls, surrogate cases, numeric
+spellings and newline capacity. Keep scalar/sort scopes out of immutable freeze
+and verify rejected arenas release with GC disabled and retained tracebacks.
+Clear completed parser/build exception frames and context links before fallback.
+Once a success record may have been submitted, including an uncertain first
+write at cursor zero, metadata cannot append a rejection terminal. Retain the
+immutable record through partial/EINTR/held/error writes and journal fsync/close;
+deadline expiry or failed close never renews the clock or releases live debt.
+The bounded construction component does not establish receiver `J(shape, wire)`
+for parsed values, rejected inputs or widening Unicode. Keep that gap explicit
+within the unchanged intake/controller partitions.
+
 Its failure regressions include nonzero helper exit after full delivery, early
 write exit with immediately available or later-drained terminal evidence,
 simultaneous helper failure, absent/partial/malformed/cross-case records, repeated

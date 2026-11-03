@@ -59,17 +59,50 @@ newline within 65,536 bytes; the helper's aggregate output cap still applies.
 Admission serialization occurs while the verified native process is stopped,
 before bank allocation or native resume. Native mapping/security evidence remains
 in the record and its existing owner. Cancellation or expiry during preflight
-prevents resume.
+prevents resume. Admission-report entry, successful return and exceptional
+return observe the original preparation phase before failure or bank allocation;
+a late report build cannot start a later cleanup clock.
 
-Charge the explicit serialized representations to the unchanged 786,432-byte
-runner partition: at most 65,535 bytes each for JSON text/ASCII bytes during
-encoding, then at most 65,535 plus 65,536 bytes when adding the newline. The
-synchronous writer retains that immutable line across partial/interrupted writes
-and uses memoryview slices without allocating payload tail copies. Cancellation
-does not renew its original clock or certify a held write as released. These
-local bounds do not establish the complete runner backing/copy maximum, encoder
-internal allocation, PTY userspace settlement or native topology fit; those
-remain separate qualification gates. The [accepted narrow kernel exclusion](../../docs/decisions/0003-decoder-pty-exclusion.md)
+`encode_report(value, limit=65536)` retains canonical no-newline bytes for hashes,
+argv and journals. `newline=True` includes LF in that same limit. `json_size`
+checks exact builtins, depth 12, 8,192 value nodes, 128-bit integers, finite floats
+and the full escaped size before allocating backing. Fill repeats those checks,
+uses indexed writes into the exactly proved bytearray and verifies the final
+offset before `bytes(memoryview(...))`. There is no whole-document `dumps`,
+iterencoder chunk, encoded text or extra newline copy. Controls, DEL, BMP,
+non-BMP and lone-surrogate escapes, Unicode key sorting and maintained builtin
+integer/float spellings preserve the prior stdlib JSON bytes, including negative
+zero. Inputs must remain stable and caller-owned during both passes; the checks
+do not promise detection of every same-size concurrent mutation.
+
+For R = 65,536, construction owns work R + immutable result R = **2R**.
+At most one prior failed immutable record adds R, for **196,608 bytes (3R)**.
+Scalar-conversion and sorted-key scopes end before freeze; sort containers alias
+the original strings. Source facts retain their separate payload charge.
+The empty owner is constructed before backing allocation, which is inside its
+`try/finally`; even a failed owner constructor cannot retain an unprotected arena.
+Rejected work backing is cleared in `finally`, including when an exception is
+retained. There is no recursive encoder closure cycle holding its arena. Before
+metadata fallback, completed parser/build frames, exception arguments and
+cause/context links are explicitly released, outside the next construction's
+exception context. These properties are tested with garbage collection disabled.
+
+The shared FMA `RecordWrite` retains one immutable record across partial/EINTR,
+held, zero and failed writes, using borrowed memoryview tails. Submission is
+sticky before the syscall: offset zero does not prove that nothing was sent.
+Metadata chooses a bounded rejection only before success-record submission; any
+confirmed prefix or uncertain first write fails without a second terminal.
+Rejection construction/write failure cannot trigger another fallback. The failed
+record remains owned through actual synchronous settlement. Journals likewise
+use memoryview `pwrite` tails, retaining the record through worker, identity,
+truncate/fsync and error handling; a live worker or error bars replacement.
+Historical Linux probe emitters remain unchanged.
+
+The runner's existing three-report reservation covers this component without
+changing its 786,432-byte partition. Cancellation does not renew its original
+clock or certify held operations as released. Complete retained-fact/receiver
+accounting, PTY userspace settlement and native topology fit remain separate
+gates. The [accepted narrow kernel exclusion](../../docs/decisions/0003-decoder-pty-exclusion.md)
 does not adopt a PTY reservation subdivision or claim kernel reclamation.
 
 ### Process observation transactions
@@ -188,19 +221,22 @@ The known simultaneous runner payload subtotal is 712,704 bytes: selected native
 facts 32,768; pins 8,192; selected resources 16,384 (detailed below);
 input bytes plus input buffer 131,072; two existing PCM
 scratch chunks 131,072; the original diagnostic reservation 196,608; and three report extents
-196,608 (encoding pair plus a conservatively retained line). The PCM bank stays
+196,608 (proved work/result pair plus a conservatively retained line). The PCM bank stays
 in its separate P reservation. This subtotal deliberately is **not full runner
-closure**: JSON encoder internals and other retained
-userspace report evidence still require complete accounting. Decoder kernel PTY
+closure**: other retained userspace report evidence and receiver parsing still
+require complete accounting. Decoder kernel PTY
 backing is separately excluded under the accepted contract, without a reclamation
 or backlog bound. The difference is not an unallocated allowance or execution release.
 
-Receiver copies coexist with the sender: the intake owner's existing partition
-charges its stdout buffer, raw copy, complete-prefix copy, split lines, JSON
-decoding, newly parsed values and prior retained record at a conservative seven
-65,536-byte extents, plus 32,768 selected native bytes and 16,384 for its own
-selected resources (507,904 total for this receive/resource overlap).
-Other intake-owner payload remains separate pending work.
+Receiver copies coexist with the sender. The earlier intake receive/resource
+subtotal, seven R extents plus 32,768 selected native bytes and 16,384 selected
+resources = 507,904, is a **preliminary ledger, not a proved receiver peak**.
+In particular, assigning JSON decoding and newly parsed values one R extent
+each does not establish their actual shape-dependent peak `J(shape, wire)`.
+Rejected input and widening Unicode backing must be covered too. Intake's
+786,432-byte and the controller's 524,288-byte partitions remain unclosed;
+fixed ingress/parse-once alternatives are not implemented by this report-I/O
+change. Other intake-owner source/fact payload remains separately charged.
 No receiver copy is hidden in the sender's alias accounting. Tests preserve every
 selected record through serialization/receive and exercise old/staged evidence,
 report rejection before bank allocation/resume and original cleanup deadlines.
@@ -272,11 +308,12 @@ headers and discarded raw parsing remain in the full G charge.
 
 Adding this reservation makes the known runner subtotal **712,704 bytes**
 (696,320 + 16,384), and the known intake receive/own-resource overlap **507,904
-bytes** (491,520 + 16,384). Report serialization and receiver byte/text/parsed
-copies still coexist under their separate existing extents; outer received
-records remain charged there too. These are partial subtotals, not full runner,
-intake or controller closure. JSON encoder internals and other retained
-payload still need complete accounting and exact-image native fit. No reservation
+bytes** (491,520 + 16,384), subject to the unproved receiver `J(shape, wire)`
+assignment above. Report construction and receiver byte/text/parsed copies
+coexist under separate charges; outer received records remain charged too.
+These are partial subtotals, not full runner, intake or controller closure.
+Receiver parsing and other retained payload still need complete accounting and
+exact-image native fit. No reservation
 is expanded, and no new pool or residual allowance is created.
 
 The outer controller owns bounded Docker command launch, pipes, output and actual
@@ -349,8 +386,9 @@ caller caches one validation, not a history. Headers, indices and regex
 bookkeeping remain in G; diagnostic/tag text and selected facts remain in C.
 This does not subdivide/reallocate the reservation or make its unused portion
 a residual pool. The known runner subtotal remains **712,704 bytes** within
-786,432, explicitly partial; JSON encoder and owner/metadata/controller report
-overlap remain later work. G/P/C and their 98,979,840-byte total are unchanged.
+786,432, explicitly partial; bounded canonical construction fits its existing
+three-report reservation, while owner/controller receiver parsing and retained
+fact overlap remain pending. G/P/C and their 98,979,840-byte total are unchanged.
 
 Deterministic synthetic regressions cover near-cap six-tag input, line/read
 fragmentation, exact/+1 capacity, long completion digits, hashes/wire parity,
@@ -527,8 +565,7 @@ not just raw bytes. Its conservative source-bound accounting is:
 | Original tag, shrinking slices, current/retained opaque frames: `3 * 524288` | 1,572,864 |
 | Admitted raw/text/Unicode/key transients: `24 * 8192` | 196,608 |
 | Projected fields, framing IDs, opaque hashes and v1 evidence | 131,072 |
-| Serialized string plus bytes, or bytes plus the current write slice | 131,072 |
-| Fixed margin | 65,536 |
+| Report construction/rejection: work R + immutable R + at most one prior record R | 196,608 |
 | Total metadata partition | 2,097,152 |
 
 For pinned v2.3 `read_frames`, original input plus current/replacement slices and
@@ -544,15 +581,14 @@ Projection reuses these bounded text values, exports
 no library key and limits frames/hashes separately. Only object headers, container
 overhead and allocator overhead remain solely in the whole-group charge.
 
-Before `json.dumps` can allocate an escaped result, an allocation-light traversal
-checks exact canonical ASCII JSON size, builtin value types, depth, node count,
-integer width and finite numbers. It counts controls, DEL, surrogates and non-BMP
-escapes without allocating their expansion; an iterencoder alone would still
-allow an oversized single string chunk. Serialization is then at most 64 KiB
-each for the string and bytes. The selected notice projection has a 32 KiB
-encoded bound. These gates apply to rejected inputs too: near-limit wide text
+The construction/rejection row explicitly assigns the former two-R serialization
+allowance and one-R fixed margin; there is no capacity increase or residual pool.
+The indexed canonical construction and owned writer above replace the old
+materialized JSON string, newline concatenation and write-tail copies. The
+selected notice projection retains its 32 KiB encoded bound. These gates apply
+to rejected inputs too: near-limit wide text
 and cumulative selected payloads fail before the library, while oversized
-escaped reports fail before materialization. Source tracing and synthetic
+escaped reports fail before work-buffer allocation. Source tracing and synthetic
 counterexamples support review of these bounds; they are not measured whole-group
 fit or actual-recording qualification. Independent exact-head review remains required.
 

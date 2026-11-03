@@ -36,33 +36,23 @@ from .limits import (
     PCM_LIMIT,
     PREPARE_SECONDS,
     READY_BYTES,
-    REPORT_BYTES,
     CaseClock,
     encode_report,
 )
 from .observation import ObservationWorkspace, ResourceFacts
 from .process import ProcessPin, inventory
 from .pty_channel import open_diagnostics
+from .report_io import RecordWrite
 
 
 def report_line(value: object) -> bytes:
     """Reserve newline space before JSON serialization, including escaped text."""
-    return encode_report(value, REPORT_BYTES - 1) + b"\n"
+    return encode_report(value, newline=True)
 
 
 def write_report(data: bytes) -> None:
     """Own one immutable record until every partial synchronous write settles."""
-    offset = 0
-    with memoryview(data) as view:
-        while offset < len(view):
-            with view[offset:] as remaining:
-                try:
-                    amount = os.write(1, remaining)
-                except InterruptedError:
-                    continue
-                if not 0 < amount <= len(remaining):
-                    raise ProbeError("decoder_report_write")
-                offset += amount
+    RecordWrite(data, "decoder_report_write").write(1)
 
 
 class StreamRun(CancelRun):
@@ -227,17 +217,26 @@ class StreamRun(CancelRun):
     def admit_stream(self) -> None:
         """Preflight the full admission record while the verified native is stopped."""
         assert self.pipes is not None
-        data = report_line(
-            {
-                "event": "decoder_admitted",
-                "case_binding": self.case.record(),
-                "native_gate": self.native_gate,
-                "init": self.init_pin.record(),
-                "owner": self.owner_pin.record(),
-                "runner": self.helper_pin.record(),
-            }
-        )
-        self.preparation_remaining()
+        try:
+            if self.clock.remaining(self.phase_deadline) <= 0:
+                raise ProbeError("decoder preparation expired or was cancelled")
+            self.preparation_remaining()
+            data = report_line(
+                {
+                    "event": "decoder_admitted",
+                    "case_binding": self.case.record(),
+                    "native_gate": self.native_gate,
+                    "init": self.init_pin.record(),
+                    "owner": self.owner_pin.record(),
+                    "runner": self.helper_pin.record(),
+                }
+            )
+            if self.clock.remaining(self.phase_deadline) <= 0:
+                raise ProbeError("decoder preparation expired or was cancelled")
+            self.preparation_remaining()
+        except BaseException:
+            self.clock.remaining(self.phase_deadline)
+            raise
         self.buffers = [bytearray(PCM_BYTES), bytearray(2 * CHUNK_BYTES)]
         for buffer in self.buffers:
             for offset in range(0, len(buffer), 4096):
