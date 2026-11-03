@@ -10,9 +10,9 @@ import weakref
 
 import pytest
 
-from evaluations.fma_validation import limits
 from evaluations.fma_validation.limits import REPORT_BYTES, digest, encode_report, json_size
 from evaluations.linux_resource.probe import ProbeError
+from sobafm import json_records
 
 
 @pytest.mark.parametrize(
@@ -71,7 +71,7 @@ def test_exact_record_and_one_byte_overflow_before_allocation(
     def forbidden(_size: int) -> bytearray:
         pytest.fail("overflow reached work backing allocation")
 
-    monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
+    monkeypatch.setattr(json_records, "bytearray", forbidden, raising=False)
     with pytest.raises(ProbeError, match="report_capacity_exceeded"):
         encode_report(value + "x", newline=newline)
 
@@ -114,7 +114,7 @@ def test_scalar_limits_precede_backing_allocation(
     def forbidden(_size: int) -> bytearray:
         pytest.fail("invalid scalar reached work backing")
 
-    monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
+    monkeypatch.setattr(json_records, "bytearray", forbidden, raising=False)
     with pytest.raises(ProbeError):
         encode_report(value)
 
@@ -126,10 +126,12 @@ def test_mutation_between_proof_and_fill_rejects_before_freeze(
     monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
     value: dict[object, object] = {"v": "x"}
-    actual_size = json_size
+    actual_size = json_records.json_size
 
-    def changed(item: object, limit: int = REPORT_BYTES) -> int:
-        size = actual_size(item, limit)
+    def changed(
+        item: object, limit: int, *, policy: json_records.Policy = json_records.COMPACT_POLICY
+    ) -> int:
+        size = actual_size(item, limit, policy=policy)
         if change == "key":
             value.clear()
             value[1] = "x"
@@ -152,8 +154,8 @@ def test_mutation_between_proof_and_fill_rejects_before_freeze(
     def forbidden(_view: memoryview) -> bytes:
         pytest.fail("changed report reached immutable freeze/output")
 
-    monkeypatch.setattr(limits, "json_size", changed)
-    monkeypatch.setattr(limits, "bytes", forbidden, raising=False)
+    monkeypatch.setattr(json_records, "json_size", changed)
+    monkeypatch.setattr(json_records, "bytes", forbidden, raising=False)
     with pytest.raises(ProbeError):
         encode_report(value)
 
@@ -170,7 +172,7 @@ def track_arenas(monkeypatch: pytest.MonkeyPatch) -> list[weakref.ReferenceType[
         arenas.append(weakref.ref(result))
         return result
 
-    monkeypatch.setattr(limits, "bytearray", allocate, raising=False)
+    monkeypatch.setattr(json_records, "bytearray", allocate, raising=False)
     return arenas
 
 
@@ -179,10 +181,10 @@ def test_repeated_arenas_release_without_gc_even_with_retained_tracebacks(
     monkeypatch: pytest.MonkeyPatch, failure: bool
 ) -> None:
     arenas = track_arenas(monkeypatch)
-    original = limits.JsonBuffer.walk
+    original = json_records.JsonBuffer.walk
     retained: list[Exception] = []
 
-    def walk(self: limits.JsonBuffer, item: object, depth: int) -> None:
+    def walk(self: json_records.JsonBuffer, item: object, depth: int) -> None:
         original(self, item, depth)
         if failure and depth == 0 and self.backing is not None:
             try:
@@ -190,7 +192,7 @@ def test_repeated_arenas_release_without_gc_even_with_retained_tracebacks(
             except RuntimeError as error:
                 raise ProbeError("synthetic_fill_failure") from error
 
-    monkeypatch.setattr(limits.JsonBuffer, "walk", walk)
+    monkeypatch.setattr(json_records.JsonBuffer, "walk", walk)
     enabled = gc.isenabled()
     gc.disable()
     try:
@@ -220,13 +222,13 @@ def test_old_record_work_and_immutable_overlap_is_three_capacities(
         assert view.obj is arenas[0]() and len(view) == REPORT_BYTES
         frame = inspect.currentframe()
         while frame is not None:
-            assert frame.f_code is not limits.JsonBuffer.walk.__code__
+            assert frame.f_code is not json_records.JsonBuffer.walk.__code__
             frame = frame.f_back
         result = actual_bytes(view)
         overlaps.append(len(old) + len(view) + len(result))
         return result
 
-    monkeypatch.setattr(limits, "bytes", freeze, raising=False)
+    monkeypatch.setattr(json_records, "bytes", freeze, raising=False)
     result = encode_report("y" * (REPORT_BYTES - 2))
     assert overlaps == [3 * REPORT_BYTES] and result is not old
     assert arenas[0]() is None
@@ -240,7 +242,7 @@ def test_freeze_failure_releases_arena_and_borrowed_view(monkeypatch: pytest.Mon
         views.append(view)
         raise MemoryError("synthetic immutable allocation failure")
 
-    monkeypatch.setattr(limits, "bytes", freeze, raising=False)
+    monkeypatch.setattr(json_records, "bytes", freeze, raising=False)
     with pytest.raises(MemoryError):
         encode_report({"v": "x"})
     assert len(arenas) == 1 and arenas[0]() is None
@@ -252,17 +254,23 @@ def test_owner_construction_failure_cannot_retain_preallocated_arena(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arenas = track_arenas(monkeypatch)
-    original = limits.JsonBuffer.__init__
+    original = json_records.JsonBuffer.__init__
     calls = 0
 
-    def initialize(self: limits.JsonBuffer, limit: int, backing: bytearray | None = None) -> None:
+    def initialize(
+        self: json_records.JsonBuffer,
+        limit: int | None,
+        *,
+        policy: json_records.Policy = json_records.COMPACT_POLICY,
+        hashed: bool = False,
+    ) -> None:
         nonlocal calls
         calls += 1
-        original(self, limit, backing)
+        original(self, limit, policy=policy, hashed=hashed)
         if calls == 2:  # First construction was the allocation-free size pass.
             raise MemoryError("synthetic work owner construction failure")
 
-    monkeypatch.setattr(limits.JsonBuffer, "__init__", initialize)
+    monkeypatch.setattr(json_records.JsonBuffer, "__init__", initialize)
     enabled = gc.isenabled()
     gc.disable()
     try:

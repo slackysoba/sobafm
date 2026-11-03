@@ -133,6 +133,7 @@ def test_runtime_source_change_and_missing_binding_fail(packet_path: Path, name:
         "evaluations/fma_validation/limits.py",
         "evaluations/fma_validation/report_io.py",
         "evaluations/fma_validation/ingress.py",
+        "src/sobafm/json_records.py",
     ],
 )
 def test_runtime_policy_binding_rejects_before_controller_resources(

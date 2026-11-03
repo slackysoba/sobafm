@@ -22,6 +22,16 @@ The audio callback consumes prepared PCM without blocking. Producers and cleanup
 
 The separate Linux-only `fma_intake.py` evaluation owns one explicitly supplied local Night Owl copy in one private destination slot. Its closed v2 request binds the unadmitted catalog, notices, exact file identity/hash, a neutral retention anchor with exact/lower-bound basis and bounded operator evidence, and fixed expiry. Historical v1 records retain exact-time semantics and fingerprints. One initially inert validation consumer may borrow the registered read-only descriptor for synchronous seekable inspection, then receive a bounded, identity/hash/count-verified stream. Reader and downstream handles, operations and backing remain owned across cancellation until actual join/close; blocking callbacks never hold the admission lock. Recovery is cleanup-only and refuses uncertain persisted reader ownership. A fresh local helper may inherit the descriptor through maintained process facilities; this does not establish Docker descriptor transport or authorize native execution. The supplied original remains untouched during this synthetic implementation work, and no catalog admission or availability changes. See the [operator workflow and reader contract](../evaluations/catalog/fma-local-intake.md).
 
+Compact intake persistence, size gates and canonical hashes share one production
+`json_records.py` traversal with thin strict evaluation adapters. State is proved
+within 16,384 bytes before temporary-file mutation, then written through borrowed
+views while the original owner retains file/worker debt. Canonical fingerprints
+use fixed 4,096-byte hash backing without a new fingerprint-size or 128-bit scalar
+restriction. Per-operation state scalar and freeze phases have separate 3L and
+2L bounds; source facts and concurrent report/hash work remain additional charges.
+The ordinary CLI's spaced output/flush ownership, complete J/F accounting and
+native qualification remain open. See the evaluation's compact-record ledger.
+
 ## Decisions to establish first
 
 The opt-in [Night Owl validation evaluation](../evaluations/fma_validation/README.md)

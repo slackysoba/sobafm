@@ -12,12 +12,13 @@ from typing import cast
 
 import pytest
 
-from evaluations.fma_validation import decoder, limits
+from evaluations.fma_validation import decoder
 from evaluations.fma_validation.limits import REPORT_BYTES, CaseClock
 from evaluations.fma_validation.observation import ObservationWorkspace
 from evaluations.fma_validation.process import ProcessPin
 from evaluations.linux_resource.owned_mp3_overlap import make_pipes
 from evaluations.linux_resource.probe import ProbeError
+from sobafm import json_records
 from tests.test_fma_diagnostic_capture import runner
 
 
@@ -39,7 +40,7 @@ def test_decoder_rejects_before_allocating_report_backing(
     def forbidden(*_args: object, **_kwargs: object) -> str:
         pytest.fail("rejected report reached work backing allocation")
 
-    monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
+    monkeypatch.setattr(json_records, "bytearray", forbidden, raising=False)
     with pytest.raises(ProbeError):
         decoder.report_line(value)
 
@@ -56,7 +57,7 @@ def test_report_limit_includes_the_newline(escaped: bool, monkeypatch: pytest.Mo
     def forbidden(*_args: object, **_kwargs: object) -> str:
         pytest.fail("newline overflow reached work backing allocation")
 
-    monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
+    monkeypatch.setattr(json_records, "bytearray", forbidden, raising=False)
     with pytest.raises(ProbeError, match="report_capacity_exceeded"):
         decoder.report_line({"value": value + "a"})
 
@@ -221,7 +222,7 @@ def test_admission_rejection_precedes_bank_allocation_and_native_resume(
 
     if failure == "capacity":
         run.native_gate = {"oversized": "\x00" * REPORT_BYTES}
-        monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
+        monkeypatch.setattr(json_records, "bytearray", forbidden, raising=False)
     else:
         monkeypatch.setattr(decoder, "report_line", prepare)
     monkeypatch.setattr(decoder, "bytearray", forbidden, raising=False)

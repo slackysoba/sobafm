@@ -63,6 +63,9 @@ prevents resume. Admission-report entry, successful return and exceptional
 return observe the original preparation phase before failure or bank allocation;
 a late report build cannot start a later cleanup clock.
 
+The single traversal/escaping/count/fixed-backing implementation now lives in
+production `sobafm.json_records`; evaluation adapters retain their strict policy
+and `ProbeError` codes. Production never imports the evaluation.
 `encode_report(value, limit=65536)` retains canonical no-newline bytes for hashes,
 argv and journals. `newline=True` includes LF in that same limit. `json_size`
 checks exact builtins, depth 12, 8,192 value nodes, 128-bit integers, finite floats
@@ -223,12 +226,58 @@ facts `F <= 3R`/`2R`, or full intake/controller fit. Prior records, selected fac
 parsed graphs, conversion scratch and rejected exceptions remain in the ledger.
 Supported Unicode paths/timestamps can widen decoded backing. Normal packet raw
 notice/evidence strings and the separately parsed request do not all alias;
-qualification has broader timestamp/integer admission boundaries. Public
-`LocalIntake` report/persistence serialization and fingerprint/notice temporaries
-remain unchanged and unclosed. Selected fact subtotals do not pay for them.
+qualification has broader timestamp/integer admission boundaries. Compact
+`LocalIntake` construction has the separate phase bounds below; selected fact
+subtotals do not pay for its source graphs or concurrent operations.
 Pinned decoder-source binding/accounting and final controller serialization
 remain separate open work.
 No partition, dependency, residual pool or runtime qualification is added.
+
+### Compact intake records and hashes
+
+`LocalIntake` uses the same production traversal for its existing 4,096-byte
+acquisition/notice gates, 16,384-byte compact report gate and state construction.
+Canonical fingerprints and notice/evidence hashes stream sorted ASCII bytes
+through one fixed `H = 4,096` buffer, using borrowed views for hash updates.
+Ordering is explicit in every sink mode. There is no new fingerprint-output cap;
+v1 still omits the schema field from its historical fingerprint, while v2 keeps
+its exact wire. Integer identities above 128 bits, maintained builtin numeric
+spellings, reachable nonfinite literals, tuple/list values and accepted string
+data preserve intake compatibility. String subclasses use underlying codepoints
+without added conversion/iteration hooks or a full-string normalization copy.
+The evaluation's exact-builtin, finite, 128-bit policy is unchanged.
+
+Let `L = 16,384` for state/report and `B = 4,096` for notice/evidence gates.
+Source values and maintained conversion scratch are additional terms throughout:
+
+| Compact operation phase | Visible construction payload |
+| --- | --- |
+| Size-only gate | No whole-document backing/result. Scalar spelling is still charged: conservatively at most 2L (or 2B for that gate). An impossible integer bit-length lower bound rejects before decimal conversion; the interpreter's own conversion failure remains effective. |
+| State fill | Exact proved work backing at most L plus current scalar spelling at most 2L: conservative **3L = 49,152**. Sorted-key containers retain aliases. |
+| State immutable freeze | Scalar/sort frames have ended: work at most L plus result at most L, **2L = 32,768**. |
+| State persistence | One immutable record at most L, with short-lived borrowed write views. It remains owned through write, fsync, close, identity check, replace and parent fsync. |
+| Canonical hash | H document bytes plus current scalar conversion/source facts. H is not a global bound on arbitrary directly constructed huge scalars, retained exceptions or whole-owner fit. |
+
+State construction/rejection completes before temporary-file removal or open.
+Neutral encoding failures cross the existing `IntakeError` workflow boundary
+without retaining the completed failure as implicit context. Rejected arenas
+and hash views release in `finally`; a completed persistence call drops its
+immutable-record reference even when its traceback is retained. Held operations
+retain their actual backing and views until return. Failed/uncertain file close,
+temporary identity and worker/reader debt remain with the original owner and
+clock; record retirement does not certify descriptor or slot release.
+
+Buffers are per operation. A report/hash can overlap a worker's state operation,
+so those phases and retained source/receipt graphs must be added, not assigned
+one shared allowance. These bounds do not close J/F or the complete intake
+786,432-byte reservation. The contained owner constructs `LocalIntake` directly,
+joins its worker before the final report and uses the existing bounded evaluation
+writer. The ordinary CLI still uses its insertion-order/spaced `json.dumps` and
+`print(..., flush=True)` path. Its text/encoded/transport buffers, partial or
+uncertain submission, flush/cancellation ownership and output error/terminal
+behavior remain explicit follow-up work; compact gates do not bound that output.
+Packet source closure now includes `src/sobafm/json_records.py`. Native topology,
+interpreter/decoder-source binding, recording expiry and #7 gates are unchanged.
 
 ### Process observation transactions
 

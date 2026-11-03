@@ -129,7 +129,21 @@ Verify interrupted helper retirement cannot publish history twice. Exercise
 setup/configuration graph retirement, held attach plus cleanup, completed
 exception payloads with GC disabled and retained journal worker/record debt.
 Neither selected projection size nor source-path aliases close decoder `J` or
-the complete retained-fact ledger; public intake serialization remains separate.
+the complete retained-fact ledger; compact intake phases retain separate charges.
+
+Keep compact intake and evaluation reports on one production-owned encoder with
+distinct caller policies. Verify historical v1/v2 fingerprint vectors and stdlib
+wire parity, Unicode/surrogates, accepted string data and integers above 128 bits.
+Hash through fixed borrowed chunks in canonical order without a fingerprint-size
+cap. Size-only gates still own scalar spellings; reject impossible sized integers
+before conversion and retain maintained conversion failures. Distinguish state
+work-plus-scalar 3L from work-plus-result 2L, with source graphs and concurrent
+operations separate. Construction must precede temp removal/open. Exercise actual
+partial/EINTR/invalid writes and held write/fsync/close/replace/parent-fsync under
+the original clock. Test arena/view release with retained exceptions and disabled
+GC; translate encoding failures into the cleanup boundary. Bind the shared module
+in the packet. Ordinary CLI formatting, submission and flush ownership remain a
+separate output obligation; these compact checks do not qualify that path.
 
 Exercise fixed receive capacity separately from used bytes, including empty
 responses, dirty unfilled tails, fragmented prefix overflow and retained views.
