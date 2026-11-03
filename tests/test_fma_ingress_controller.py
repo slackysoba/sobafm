@@ -158,8 +158,8 @@ def test_projection_templates_omit_unrelated_docker_graphs() -> None:
 @pytest.mark.parametrize(
     "case_name", ["night-owl", "tagged-full", "metadata-rejection", "first-write-cancel"]
 )
-@pytest.mark.parametrize("phase", ["inert", "metadata", "decoder"])
-def test_actual_owner_failure_null_and_partial_producer_states(
+@pytest.mark.parametrize("phase", ["inert", "metadata", "decoder", "released", "rejected"])
+def test_actual_owner_null_partial_and_settled_producer_states(
     packet_path: Path, tmp_path: Path, case_name: str, phase: str
 ) -> None:
     from datetime import UTC, datetime
@@ -184,8 +184,18 @@ def test_actual_owner_failure_null_and_partial_producer_states(
         utc_now=lambda: datetime.fromtimestamp(NOW, UTC),
         monotonic=lambda: 10.0,
     )
+    settled = phase in ("released", "rejected")
+    if settled:
+        # A real completed thread lets report() observe release itself; do not
+        # assign released_at or substitute a hand-written intake report.
+        intake.phase = phase
+        intake.thread = threading.Thread()
+        intake.thread.start()
+        intake.thread.join(3)
+        assert not intake.thread.is_alive()
+        clock.cancel()
     consumer = ValidationConsumer(intake, init, pin, clock, packet.case)
-    if phase != "inert":
+    if phase in ("metadata", "decoder"):
         consumer.phase = phase
         consumer.active = OwnedHelper(clock, phase)
         if phase == "decoder":
@@ -212,7 +222,28 @@ def test_actual_owner_failure_null_and_partial_producer_states(
     }
     if packet.case.synthetic:
         record["qualification_passed"] = False
-    assert decode(encode_report(record), "owner") == record
+    wire = encode_report(record, newline=True)
+    assert decode(wire, "owner") == record
+    if settled:
+        assert intake.released_at == 10.0
+
+        class NoLaunch(Command):
+            def _launch(self) -> None:
+                pass
+
+        command = NoLaunch(["synthetic-owner-output"])
+        command.worker.join(3)
+        assert not command.worker.is_alive()
+        command.owner_output = True
+        command.ingress.feed(wire)
+        outer = controller(packet, tmp_path / "capture-ledger")
+        try:
+            outer.capture_owner(command, final=True)
+            assert outer.owner_report == record
+            assert not outer.clock.timing_unknown and not outer.clock.missed
+            assert outer.clock.cleanup_start_utc == NOW + 1
+        finally:
+            outer.journal.close()
 
 
 @pytest.mark.parametrize("created", ["x" * 4096, "\u6f22" * 100, "\U00010000" * 4096])

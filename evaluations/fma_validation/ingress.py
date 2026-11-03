@@ -325,7 +325,7 @@ INTAKE = obj(
         "pending_valid": BOOL,
         "unresolved_previous_slot": BOOL,
         "cleanup_deadline_met": BOOL,
-        "released_at": text(40, nullable=True),
+        "released_at": OPTIONAL_NUMBER,
         "released": BOOL,
         "cleanup_debt": BOOL,
         "slot_reusable": BOOL,

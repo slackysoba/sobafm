@@ -130,6 +130,8 @@ string/list/nested-list variants with 128-item limits, v1/v2 conflicts and opaqu
 frame evidence. Resource deltas retain up to 32 unique, 32-character ASCII
 alphanumeric/underscore keys and values through `2**63`, including empty failed
 observations. Failure, null and absent optional producer states remain distinct.
+Settled intake reports retain the producer's finite numeric monotonic
+`released_at`; an unobserved release remains null.
 
 The cleanup envelope is checked independently of successful detail validation.
 A complete, role/case/pin-bound envelope can tighten the original clock even
