@@ -359,7 +359,11 @@ def stopped_native_gate(
     admitted_pids: frozenset[int] | None = None,
     decoder: NativeDecoder | None = None,
     identity_gate: Callable[[], dict[str, int]] | None = None,
+    *,
+    observation_gate: Callable[[], tuple[dict[str, int], dict[str, object]]] | None = None,
 ) -> dict[str, object]:
+    if identity_gate is not None and observation_gate is not None:
+        raise ProbeError("conflicting native observation gates")
     expected = admitted_pids if admitted_pids is not None else frozenset({child.pid})
     if child.pid not in expected or not 1 <= len(expected) <= 2 or min(expected) <= 0:
         raise ProbeError("invalid fixed decoder admission inventory")
@@ -375,19 +379,22 @@ def stopped_native_gate(
     else:
         raise ProbeError("native stopped-state deadline exceeded")
     root = Path(f"/proc/{child.pid}")
-    if identity_gate is None:
-        if read_start_identity(child.pid) != ("T", start_ticks):
-            raise ProbeError("native PID/start/stopped identity differs")
-        argv = decoder.argv if decoder is not None else ARGV
-        if os.readlink(root / "exe") != argv[0] or len(list((root / "task").iterdir())) != 1:
-            raise ProbeError("native executable or thread identity differs")
-        if frozenset(native_processes()) != expected or group_members(child.pid) != [child.pid]:
-            raise ProbeError("unexpected retained native address space")
-        limits = verify_child(child.pid, True)
+    if observation_gate is not None:
+        limits, mappings = observation_gate()
     else:
-        limits = identity_gate()
-    verify_core_limit(read_text(root / "limits"))
-    mappings = parse_maps(read_text(root / "maps"), decoder)
+        if identity_gate is None:
+            if read_start_identity(child.pid) != ("T", start_ticks):
+                raise ProbeError("native PID/start/stopped identity differs")
+            argv = decoder.argv if decoder is not None else ARGV
+            if os.readlink(root / "exe") != argv[0] or len(list((root / "task").iterdir())) != 1:
+                raise ProbeError("native executable or thread identity differs")
+            if frozenset(native_processes()) != expected or group_members(child.pid) != [child.pid]:
+                raise ProbeError("unexpected retained native address space")
+            limits = verify_child(child.pid, True)
+        else:
+            limits = identity_gate()
+        verify_core_limit(read_text(root / "limits"))
+        mappings = parse_maps(read_text(root / "maps"), decoder)
     if time.monotonic() >= deadline:
         raise ProbeError("native identity observation exceeded preparation deadline")
     return {

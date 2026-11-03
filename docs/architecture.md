@@ -33,6 +33,13 @@ fresh topology fit, native terminal-filter qualification and actual recording
 validation remain separate pending execution gates. This adds no playback service
 or catalog admission and does not alter the accepted resource ADR.
 
+Its native admission uses bounded, original-clock process observations. One
+limits scan per phase preserves the exact resource policy; the stopped scan
+retains every admitted map row and its original-byte digest between complete
+identity/inventory brackets. Selected map/limit facts, projections and receiver
+copies remain charged separately from contained raw control scratch. This local
+boundary does not close the full runner/PTY accounting or release native work.
+
 The explicit owned-synthetic qualification entries reuse this same pipeline with
 three finite case identities. `LocalRequest` shares ownership operations between
 the existing FMA request and a separate synthetic request; FMA v1/v2 serialized

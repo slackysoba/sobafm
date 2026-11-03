@@ -106,17 +106,84 @@ def test_packet_rejects_changed_scope_before_resource_creation(
         load(packet_path, ROOT, now=NOW)
 
 
-def test_runtime_source_change_and_missing_binding_fail(packet_path: Path) -> None:
+@pytest.mark.parametrize("name", [SOURCE_FILES[0], "evaluations/fma_validation/native_records.py"])
+def test_runtime_source_change_and_missing_binding_fail(packet_path: Path, name: str) -> None:
+    assert name in SOURCE_FILES
     raw = cast(dict[str, object], json.loads(packet_path.read_bytes()))
     hashes = cast(dict[str, object], raw["source_hashes"])
-    hashes[SOURCE_FILES[0]] = "0" * 64
+    hashes[name] = "0" * 64
     packet_path.write_bytes(encode_report(raw))
     with pytest.raises(ProbeError, match="reviewed_source_changed"):
         load(packet_path, ROOT, now=NOW)
-    del hashes[SOURCE_FILES[0]]
+    del hashes[name]
     packet_path.write_bytes(encode_report(raw))
     with pytest.raises(ProbeError, match="packet_fields"):
         load(packet_path, ROOT, now=NOW)
+
+
+@pytest.mark.parametrize("qualification", [False, True])
+@pytest.mark.parametrize("change", ["omitted", "digest", "module_bytes"])
+def test_native_policy_binding_rejects_before_controller_resources(
+    packet_path: Path,
+    tmp_path: Path,
+    qualification: bool,
+    change: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from evaluations.fma_validation import controller
+    from evaluations.fma_validation import packet as packet_module
+
+    name = "evaluations/fma_validation/native_records.py"
+    assert name in SOURCE_FILES
+    if qualification:
+        qualification_packet(packet_path)
+    raw = cast(dict[str, object], json.loads(packet_path.read_bytes()))
+    hashes = cast(dict[str, object], raw["source_hashes"])
+    if change == "omitted":
+        del hashes[name]
+    elif change == "digest":
+        hashes[name] = "0" * 64
+    packet_path.write_bytes(encode_report(raw))
+    actual_read = packet_module.read_bounded
+
+    def read(path: Path, limit: int = 65_536) -> bytes:
+        value = actual_read(path, limit)
+        if change == "module_bytes" and path == ROOT / name:
+            return value + b"\n# synthetic source mutation\n"
+        return value
+
+    selected_load = load_qualification if qualification else load
+
+    def load_now(path: Path, root: Path, *, recovery: bool = False) -> Packet:
+        return selected_load(path, root, now=NOW, recovery=recovery)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("unbound policy reached journal/controller resource creation")
+
+    journal = tmp_path / "never-created-journal"
+    monkeypatch.setattr(packet_module, "read_bounded", read)
+    monkeypatch.setattr(controller, "load_qualification" if qualification else "load", load_now)
+    monkeypatch.setattr(controller, "Journal", forbidden)
+    monkeypatch.setattr(controller, "Controller", forbidden)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "controller",
+            "--packet",
+            str(packet_path),
+            "--journal",
+            str(journal),
+            "--execute-reviewed-packet",
+        ],
+    )
+    expected = "packet_fields" if change == "omitted" else "reviewed_source_changed"
+    with pytest.raises(ProbeError, match=expected):
+        controller.main(qualification=qualification)
+    assert not journal.exists()
+    assert not Path(cast(str, raw["source_path"])).exists()
 
 
 def test_journal_is_durable_non_reusable_and_rejects_path_substitution(

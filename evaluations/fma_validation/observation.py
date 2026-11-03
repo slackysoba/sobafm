@@ -6,15 +6,29 @@ evidence and report copies remain charged payload in their existing partitions.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, cast
 
 from evaluations.linux_resource.probe import ProbeError
 
 from .limits import CaseClock
+from .native_records import (
+    ADDRESS_SPACE_BYTES,
+    ELF_PATHS,
+    LIMIT_KEYS,
+    MAP_PATHS,
+    MAP_PERMISSIONS,
+    MAP_ROWS,
+    NATIVE_RECORD_BYTES,
+    SPECIAL_MAPS,
+    NativeLimits,
+    NativeMap,
+    NativeMaps,
+)
 
 INPUT_LIMIT = 65_536
 SELECTED_PIN_BYTES = 8192
@@ -261,6 +275,8 @@ class ObservationFacts:
     pins: tuple[ProcessPin, ...] = ()
     stats: tuple[StatFacts, ...] = ()
     members: tuple[int, ...] = ()
+    limits: NativeLimits | None = None
+    maps: NativeMaps | None = None
 
 
 class ObservationWorkspace:
@@ -286,6 +302,7 @@ class ObservationWorkspace:
         )
         self.io = ProcFileIO() if io is None else io
         self.selected_pin_capacity = SELECTED_PIN_BYTES
+        self.selected_native_capacity = NATIVE_RECORD_BYTES
         self.arena = bytearray(8192)
         self.lock = threading.Lock()
         self.fd: int | None = None
@@ -294,9 +311,11 @@ class ObservationWorkspace:
         self.failure: str | None = None
         self.input_bytes = 0
         self.cleanup = False
+        self.phase_end: float | None = None
         self.committed = ObservationFacts()
         self.staged = ObservationFacts()
         self.pending: StatFacts | SecurityFacts | tuple[int, ...] | None = None
+        self.pending_maps: tuple[NativeMap, ...] = ()
 
     @property
     def debt(self) -> bool:
@@ -313,16 +332,19 @@ class ObservationWorkspace:
 
     def _check(self) -> None:
         self.clock.observe()
-        if not self.cleanup and self.clock.remaining() <= 0:
+        if not self.cleanup and self.clock.remaining(self.phase_end) <= 0:
             raise ProbeError("observation_cancelled")
 
-    def _run(self, action: Callable[[], None], cleanup: bool = False) -> ObservationFacts:
+    def _run(
+        self, action: Callable[[], None], cleanup: bool = False, phase_end: float | None = None
+    ) -> ObservationFacts:
         if not self.lock.acquire(blocking=False):
             raise ProbeError("observation_lease_retained")
         if self.debt:
             self.lock.release()
             raise ProbeError("observation_debt_retained")
         self.active, self.cleanup = True, cleanup
+        self.phase_end = phase_end
         self.input_bytes = 0
         self.staged = ObservationFacts()
         failed = False
@@ -350,6 +372,7 @@ class ObservationWorkspace:
             if not self.uncertain_close and not bridge_debt:
                 self.staged = ObservationFacts()
                 self.pending = None
+                self.pending_maps = ()
             self.lock.release()
         if failed:
             raise ProbeError(self.failure or "process_observation_failed")
@@ -361,6 +384,7 @@ class ObservationWorkspace:
         limit: int,
         consume: Callable[[int], None],
         finish: Callable[[], None] | None = None,
+        chunk: Callable[[memoryview], None] | None = None,
     ) -> None:
         self._check()
         self.fd = self.io.open(path)
@@ -383,6 +407,9 @@ class ObservationWorkspace:
                     self._check()
                     break
                 self._check()
+                if chunk is not None:
+                    with memoryview(self.arena)[:amount] as view:
+                        chunk(view)
                 for index in range(amount):
                     consume(self.arena[index])
         except BaseException:
@@ -428,6 +455,7 @@ class ObservationWorkspace:
         width: int,
         row: Callable[[int], None],
         finish: Callable[[], None] | None = None,
+        chunk: Callable[[memoryview], None] | None = None,
     ) -> None:
         count = used = 0
 
@@ -451,7 +479,7 @@ class ObservationWorkspace:
             if finish is not None:
                 finish()
 
-        self._file(path, limit, consume, complete)
+        self._file(path, limit, consume, complete, chunk)
 
     def _number(
         self, start: int, end: int, maximum: int, signed: bool = False, base: int = 10
@@ -472,6 +500,141 @@ class ObservationWorkspace:
                 raise ProbeError("observation_number_range")
             value = value * base + digit
         return -value if negative else value
+
+    def _matches(self, start: int, end: int, expected: bytes) -> bool:
+        return end - start == len(expected) and all(
+            self.arena[start + index] == value for index, value in enumerate(expected)
+        )
+
+    def _tokens(self, start: int, end: int, count: int) -> tuple[list[tuple[int, int]], int]:
+        # At most five bounded spans, never a decoded row or an unbounded split.
+        values: list[tuple[int, int]] = []
+        while start < end and len(values) < count:
+            while start < end and self.arena[start] in (9, 32):
+                start += 1
+            stop = start
+            while stop < end and self.arena[stop] not in (9, 32):
+                stop += 1
+            if start < stop:
+                values.append((start, stop))
+            start = stop
+        while start < end and self.arena[start] in (9, 32):
+            start += 1
+        return values, start
+
+    def _limits(self, pid: int) -> None:
+        bounded_integer(pid, PID_MAX, 1)
+        values = [0] * len(LIMIT_KEYS)
+        seen = 0
+
+        def row(size: int) -> None:
+            nonlocal seen
+            end = 4096 + size
+            for index, (key, expected) in enumerate(LIMIT_KEYS):
+                key_end = 4096 + len(key)
+                if key_end >= end or not self._matches(4096, key_end, key):
+                    continue
+                if self.arena[key_end] not in (9, 32):
+                    raise ProbeError("observation_limit_key")
+                if seen & (1 << index):
+                    raise ProbeError("observation_duplicate_limit")
+                tokens, tail = self._tokens(key_end, end, 3)
+                if len(tokens) != 3 or tail != end or not self._matches(*tokens[2], b"bytes"):
+                    raise ProbeError("observation_limit_units")
+                soft, hard = (self._number(*token, WORD_MAX) for token in tokens[:2])
+                if (
+                    soft != expected
+                    or hard != expected
+                    or any(stop - start != len(str(expected)) for start, stop in tokens[:2])
+                ):
+                    raise ProbeError("observation_limit_value")
+                values[index] = soft
+                seen |= 1 << index
+                return
+
+        def complete() -> None:
+            if seen != (1 << len(LIMIT_KEYS)) - 1:
+                raise ProbeError("observation_limit_missing")
+            self.staged = replace(self.staged, limits=NativeLimits(tuple(values)))
+
+        self._lines(f"/proc/{pid}/limits".encode("ascii"), 16_384, 64, 256, row, complete)
+
+    def native_limits(self, pid: int, deadline: float) -> NativeLimits:
+        result = self._run(lambda: self._limits(pid), phase_end=deadline).limits
+        assert result is not None
+        return result
+
+    def _hex(self, start: int, end: int, width: int = 16) -> int:
+        if end - start > width or any(
+            not (48 <= self.arena[index] <= 57 or 97 <= self.arena[index] <= 102)
+            for index in range(start, end)
+        ):
+            raise ProbeError("observation_map_hex")
+        return self._number(start, end, WORD_MAX, base=16)
+
+    def _maps(self, pid: int) -> None:
+        bounded_integer(pid, PID_MAX, 1)
+        digest = hashlib.sha256()
+        previous = ordinary = special = 0
+        files: set[str] = set()
+        self.pending_maps = ()
+
+        def row(size: int) -> None:
+            nonlocal previous, ordinary, special
+            if len(self.pending_maps) == MAP_ROWS:
+                raise ProbeError("observation_map_count")
+            end = 4096 + size
+            tokens, path_start = self._tokens(4096, end, 5)
+            if len(tokens) != 5:
+                raise ProbeError("observation_map_fields")
+            address, permissions, offset, device, inode_span = tokens
+            dash = self.arena.find(b"-", *address)
+            colon = self.arena.find(b":", *device)
+            if dash < 0 or colon < 0:
+                raise ProbeError("observation_map_fields")
+            low, high = self._hex(address[0], dash), self._hex(dash + 1, address[1])
+            self._hex(*offset)
+            self._hex(device[0], colon, 8)
+            self._hex(colon + 1, device[1], 8)
+            inode = self._number(*inode_span, WORD_MAX)
+            perms = next(
+                (text for raw, text in MAP_PERMISSIONS if self._matches(*permissions, raw)), None
+            )
+            name = next(
+                (text for raw, text in MAP_PATHS if self._matches(path_start, end, raw)), None
+            )
+            if perms is None or name is None:
+                raise ProbeError("observation_map_scope")
+            extent = high - low
+            if extent <= 0 or low < previous or low % 4096 or high % 4096:
+                raise ProbeError("observation_map_extent")
+            previous = high
+            if name in SPECIAL_MAPS:
+                if "w" in perms or inode != 0:
+                    raise ProbeError("observation_special_map")
+                special = bounded_integer(special + extent, WORD_MAX)
+            else:
+                ordinary = bounded_integer(ordinary + extent, ADDRESS_SPACE_BYTES)
+                if name in ELF_PATHS:
+                    if inode == 0:
+                        raise ProbeError("observation_map_inode")
+                    files.add(name)
+                elif inode != 0 or "x" in perms:
+                    raise ProbeError("observation_anonymous_map")
+            # Every admitted row is selected, including anonymous/special rows.
+            self.pending_maps = (*self.pending_maps, NativeMap(name or "anonymous", perms, extent))
+
+        def complete() -> None:
+            if files != set(ELF_PATHS) or not self.pending_maps:
+                raise ProbeError("observation_map_inventory")
+            self.staged = replace(
+                self.staged,
+                maps=NativeMaps(self.pending_maps, ordinary, special, digest.hexdigest()),
+            )
+
+        self._lines(
+            f"/proc/{pid}/maps".encode("ascii"), 65_536, MAP_ROWS, 512, row, complete, digest.update
+        )
 
     def _stat(self, pid: int) -> StatFacts:
         bounded_integer(pid, PID_MAX, 1)
@@ -677,9 +840,7 @@ class ObservationWorkspace:
             1000,
             "/",
         )
-        self.staged = ObservationFacts(
-            (*self.staged.pins, pin), self.staged.stats, self.staged.members
-        )
+        self.staged = replace(self.staged, pins=(*self.staged.pins, pin))
         return pin
 
     def _cgroup(self, pid: int) -> None:
@@ -787,38 +948,72 @@ class ObservationWorkspace:
         owner: ProcessPin,
         runner: ProcessPin,
     ) -> None:
-        def action() -> None:
-            if init.pid != 1 or owner.parent != 1 or runner.parent != owner.pid:
-                raise ProbeError("native_role_topology")
-            roles = (init, owner, runner)
-            if len({pin.pid for pin in roles}) != 3 or pid in {pin.pid for pin in roles}:
-                raise ProbeError("native_role_topology")
-            for pin in roles:
-                if self._capture(pin.pid) != pin:
-                    raise ProbeError("process_identity_changed")
-            native = self._capture(pid)
-            stopped = self._stat(pid)
-            if (
-                native.start != start
-                or native.parent != runner.pid
-                or native.executable != executable
-                or stopped.state != "T"
-                or stopped.group != pid
-                or stopped.start != start
-                or self._directory(pid, "task", 1) != (pid,)
-                or set(self._pids()) != {init.pid, owner.pid, runner.pid, pid}
-            ):
-                raise ProbeError("native_stopped_identity")
-            members: list[int] = []
-            for member in self._directory(None, "proc", 64):
-                first = self._stat(member)
-                last = self._stat(member)
-                if (first.start, first.group) != (last.start, last.group):
-                    raise ProbeError("process_inventory_unknown")
-                if first.group == pid:
-                    members.append(member)
-            if members != [pid]:
-                raise ProbeError("native_group_members")
-            self.staged = ObservationFacts(self.staged.pins, (stopped,), (pid,))
+        self._run(lambda: self._stopped_identity(pid, start, executable, init, owner, runner))
 
-        self._run(action)
+    def _stopped_identity(
+        self,
+        pid: int,
+        start: int,
+        executable: str,
+        init: ProcessPin,
+        owner: ProcessPin,
+        runner: ProcessPin,
+    ) -> None:
+        self.staged = replace(self.staged, pins=(), stats=(), members=())
+        if init.pid != 1 or owner.parent != 1 or runner.parent != owner.pid:
+            raise ProbeError("native_role_topology")
+        roles = (init, owner, runner)
+        if len({pin.pid for pin in roles}) != 3 or pid in {pin.pid for pin in roles}:
+            raise ProbeError("native_role_topology")
+        for pin in roles:
+            if self._capture(pin.pid) != pin:
+                raise ProbeError("process_identity_changed")
+        native = self._capture(pid)
+        stopped = self._stat(pid)
+        if (
+            native.start != start
+            or native.parent != runner.pid
+            or native.executable != executable
+            or stopped.state != "T"
+            or stopped.group != pid
+            or stopped.start != start
+            or self._directory(pid, "task", 1) != (pid,)
+            or set(self._pids()) != {init.pid, owner.pid, runner.pid, pid}
+        ):
+            raise ProbeError("native_stopped_identity")
+        members: list[int] = []
+        for member in self._directory(None, "proc", 64):
+            first = self._stat(member)
+            last = self._stat(member)
+            if (first.start, first.group) != (last.start, last.group):
+                raise ProbeError("process_inventory_unknown")
+            if first.group == pid:
+                members.append(member)
+        if members != [pid]:
+            raise ProbeError("native_group_members")
+        self.staged = replace(self.staged, stats=(stopped,), members=(pid,))
+
+    def stopped_native(
+        self,
+        pid: int,
+        start: int,
+        executable: str,
+        init: ProcessPin,
+        owner: ProcessPin,
+        runner: ProcessPin,
+        deadline: float,
+    ) -> tuple[NativeLimits, NativeMaps]:
+        def action() -> None:
+            self._stopped_identity(pid, start, executable, init, owner, runner)
+            identity = self.staged.pins[-1]
+            self._limits(pid)
+            self._maps(pid)
+            # A complete second bracket covers identity, security, threads and
+            # namespace membership after evidence reads, under the same budget.
+            self._stopped_identity(pid, start, executable, init, owner, runner)
+            if self.staged.pins[-1] != identity:
+                raise ProbeError("process_identity_changed")
+
+        result = self._run(action, phase_end=deadline)
+        assert result.limits is not None and result.maps is not None
+        return result.limits, result.maps
