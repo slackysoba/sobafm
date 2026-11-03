@@ -132,6 +132,7 @@ def test_runtime_source_change_and_missing_binding_fail(packet_path: Path, name:
         "evaluations/fma_validation/decoder.py",
         "evaluations/fma_validation/limits.py",
         "evaluations/fma_validation/report_io.py",
+        "evaluations/fma_validation/ingress.py",
     ],
 )
 def test_runtime_policy_binding_rejects_before_controller_resources(
@@ -320,7 +321,9 @@ def test_qualification_cannot_substitute_identity_or_renew_expiry(
         load_qualification(packet_path, ROOT, now=NOW)
 
 
-@pytest.mark.parametrize("kind", ["nonzero", "partial", "cross_case", "absent"])
+@pytest.mark.parametrize(
+    "kind", ["nonzero", "partial", "cross_case", "absent", "bad_body", "bad_verdict"]
+)
 def test_outer_terminal_capture_survives_nonzero_or_late_drain(
     packet_path: Path,
     tmp_path: Path,
@@ -328,25 +331,38 @@ def test_outer_terminal_capture_survives_nonzero_or_late_drain(
 ) -> None:
     import sys
     import time
+    from datetime import UTC, datetime
 
+    from evaluations.fma_validation.consumer import ValidationConsumer
     from evaluations.fma_validation.controller import Command, Controller
     from evaluations.fma_validation.process import ProcessPin
+    from sobafm.fma_intake import LocalIntake
 
     packet = load(packet_path, ROOT, now=NOW)
     journal = Journal(tmp_path / "outer-ledger", packet)
     controller = Controller(packet, journal)
     controller.clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 5, lambda: 15.0)
+    init = ProcessPin(1, 1, 0, "/init", 1, 1, 1000, "/")
+    owner_pin = ProcessPin(2, 1, 1, "/python", 1, 2, 1000, "/")
+    owner = LocalIntake(
+        tmp_path,
+        None,
+        packet.request,
+        utc_now=lambda: datetime.fromtimestamp(NOW, UTC),
+        monotonic=lambda: 10.0,
+    )
+    consumer = ValidationConsumer(owner, init, owner_pin, controller.clock, packet.case)
     record: dict[str, object] = {
         "schema": packet.case.schema("owner"),
         "case_binding": packet.case.record(),
         "packet_sha256": packet.fingerprint,
         "passed": False,
         "failure": "validation_owner_failed",
-        "init": ProcessPin(1, 1, 0, "/init", 1, 1, 1000, "/").record(),
-        "owner": ProcessPin(2, 1, 1, "/python", 1, 2, 1000, "/").record(),
-        "intake": {},
+        "init": init.record(),
+        "owner": owner_pin.record(),
+        "intake": {} if kind == "bad_body" else owner.report(),
         "reader": None,
-        "validation": {},
+        "validation": consumer.receipt(),
         "memory_event_delta": {},
         "cleanup": {
             "whole_end_utc": packet.whole_end,
@@ -361,6 +377,8 @@ def test_outer_terminal_capture_survives_nonzero_or_late_drain(
     }
     if kind == "cross_case":
         record["case_binding"] = CaseBinding("metadata-rejection").record()
+    elif kind == "bad_verdict":
+        record["passed"] = "unsupported"
     raw = b"" if kind == "absent" else encode_report(record) + (b"" if kind == "partial" else b"\n")
     command = Command(
         [
@@ -384,6 +402,9 @@ def test_outer_terminal_capture_survives_nonzero_or_late_drain(
             assert controller.owner_report is not None
             assert controller.clock.cleanup_start_utc == NOW and controller.clock.missed
             assert not controller.clock.timing_unknown
+        elif kind in ("bad_body", "bad_verdict"):
+            assert controller.owner_report is None and controller.clock.timing_unknown
+            assert controller.clock.cleanup_start_utc == NOW and controller.clock.missed
         else:
             assert controller.clock.timing_unknown and controller.clock.missed
             assert controller.owner_report is None

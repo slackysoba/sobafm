@@ -105,6 +105,79 @@ accounting, PTY userspace settlement and native topology fit remain separate
 gates. The [accepted narrow kernel exclusion](../../docs/decisions/0003-decoder-pty-exclusion.md)
 does not adopt a PTY reservation subdivision or claim kernel reclamation.
 
+### Bounded receive ownership
+
+`ingress.py` admits only the finite FMA producer and selected Docker families
+before calling the maintained JSON decoder. Each original stdout/stderr stream
+has one aggregate **65,536-byte** prefix budget, including empty lines. Parsing
+and retiring a record never refund this budget. A sentinel read detects excess;
+receipts count and hash the original retained prefix, without normalization or
+re-encoding. Raw backing remains owned until retirement. Completed records are
+materialized once into at most one metadata/owner slot or two decoder slots.
+Later chunks, extra records, changed cached prefixes and partial EOF remain
+errors. Metadata retains its final-record-without-LF behavior; decoder and owner
+terminals require LF. Empty lines remain permitted and charged.
+
+Generated report channels require ASCII JSON/LF; selected Docker output requires
+strict UTF-8. UTF-16/32 and BOM autodetection are not framed-channel contracts.
+Whitespace, key order, JSON escapes and meaningful finite numeric spellings do
+not need to be canonical. Escaped-equivalent duplicate keys are rejected. The
+index-based pass bounds depth, nodes, keys, collections, scalars and decoded
+string domains before materialization, including unsupported/rejected fields.
+Unknown or huge keys and allocation-amplifying unsupported wide values never
+reach `json.loads`. Metadata preserves Latin-1 notices up to 4,096 characters,
+string/list/nested-list variants with 128-item limits, v1/v2 conflicts and opaque
+frame evidence. Resource deltas retain up to 32 unique, 32-character ASCII
+alphanumeric/underscore keys and values through `2**63`, including empty failed
+observations. Failure, null and absent optional producer states remain distinct.
+Settled intake reports retain the producer's finite numeric monotonic
+`released_at`; an unobserved release remains null.
+
+The cleanup envelope is checked independently of successful detail validation.
+A complete, role/case/pin-bound envelope can tighten the original clock even
+when its detail is rejected. Invalid syntax cannot authenticate a new envelope;
+earlier trusted timing remains, with sticky unknown/missed evidence. A malformed
+or partial later suffix cannot renew or erase that clock. Admission graphs are
+retired only after gate/identity checks, preserving case/runner/order facts.
+Helper history publication is idempotent across interrupted retirement; the
+active process, descriptor and raw owners remain until actual settlement.
+
+Docker projects fields before transfer: cleanup keeps ID/name/image, exactly
+three ownership labels and Running/Pid/Status/ExitCode/OOMKilled. Initial
+configuration additionally keeps every existing security/resource/restart/log,
+entrypoint and four-mount comparison. Bind mounts export Source, volume mounts
+export Name; unrelated extensions are omitted. Engine security is the selected
+builtin-seccomp predicate. Image and volume reports contain only compared fields.
+Packet-bound paths and volume CreatedAt retain their existing 4,096-character
+non-control Unicode domain and exact codepoints/UTF-8 hashing. Operator packet
+and recovery loaders are unchanged. Qualification raw timestamps retain their
+broader date/time domain, including a Unicode date/time separator and long
+fractional spelling within the aggregate wire cap; normal intake's short
+timestamp assumptions do not apply to them.
+
+Setup response graphs end before attach; completed exception arguments and
+frames and traceback links are released before ordinary cleanup outside the
+active exception suite. A pending KeyboardInterrupt/SystemExit keeps its original
+verdict and arguments until actual command drain, with completed setup frames
+detached; a rejected drained record cannot sanitize that pending verdict. Finished
+launch argv copies are dropped, while retained attach/cleanup commands and
+journal record/worker/error debt remain owned. There are still at most two live
+management owners and 20 operations; up to two older retained-command receipt
+snapshots also remain relevant. Final controller serialization is unchanged.
+
+These component changes **do not prove `J(shape, wire) <= 2R`**, fixed retained
+facts `F <= 3R`/`2R`, or full intake/controller fit. Raw bytearray growth, read
+chunks, record bytes/text, maintained decoder scratch and parsed values, prior
+records, envelope recovery and rejected exceptions need phase-specific overlap
+accounting. A long valid float spelling can use an additional token of up to R
+bytes during predecode conversion; that scope ends before whole-record decoding.
+Supported Unicode paths/timestamps can widen decoded backing. Normal packet raw
+notice/evidence strings and the separately parsed request do not all alias;
+qualification has broader timestamp/integer admission boundaries. Public
+`LocalIntake` report/persistence serialization and fingerprint/notice temporaries
+remain unchanged and unclosed. Selected fact subtotals do not pay for them.
+No partition, dependency, residual pool or runtime qualification is added.
+
 ### Process observation transactions
 
 `ObservationWorkspace` is specific to this evaluation. The intake owner creates

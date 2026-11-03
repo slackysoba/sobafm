@@ -34,6 +34,7 @@ SOURCE_FILES = (
             "__init__",
             "limits",
             "report_io",
+            "ingress",
             "packet",
             "metadata",
             "process",

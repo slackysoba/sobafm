@@ -15,17 +15,19 @@ import stat
 import subprocess
 import threading
 import time
+import traceback
 from pathlib import Path
 from types import FrameType
 from typing import cast
 
 from evaluations.linux_resource.probe import ProbeError
 
-from .consumer import expected_outcome, object_pairs, reports, validate_decode, validate_metadata
-from .limits import REPORT_BYTES, CaseClock, encode_report, json_size
+from .consumer import expected_outcome, object_pairs, validate_decode, validate_metadata
+from .ingress import Ingress, decode, discard_exception
+from .limits import REPORT_BYTES, CaseClock, encode_report
 from .packet import Packet, load, load_qualification, read_bounded, string
 from .process import ProcessPin
-from .terminal import validate_terminal
+from .terminal import validate_clock, validate_terminal
 
 
 class Command:
@@ -36,8 +38,10 @@ class Command:
         self.owner_output = False
         self.process: subprocess.Popen[bytes] | None = None
         self.error: str | None = None
-        self.output = bytearray()
-        self.diagnostic = bytearray()
+        self.ingress = Ingress("owner")
+        self.errors = Ingress("opaque")
+        self.output = self.ingress.raw
+        self.diagnostic = self.errors.raw
         self.retained: set[int] = set()
         self.uncertain: set[int] = set()
         self.descriptors: dict[str, int] = {}
@@ -76,9 +80,13 @@ class Command:
         if self.worker.is_alive():
             return
         self.worker.join(0)
+        # Launch is complete; commands and Popen do not need the copied bind
+        # arguments for direct-child signals, polling or descriptor settlement.
+        self.argv = []
         process = self.process
         if process is None:
             return
+        process.args = []
         if self.stopping is not None and process.poll() is None:
             # Direct unreaped Popen child only. No PID/name reuse targeting.
             if time.monotonic() - self.stopping >= 0.25:
@@ -86,8 +94,8 @@ class Command:
             else:
                 process.terminate()
         for name, stream, target in (
-            ("stdout", process.stdout, self.output),
-            ("stderr", process.stderr, self.diagnostic),
+            ("stdout", process.stdout, self.ingress),
+            ("stderr", process.stderr, self.errors),
         ):
             assert stream is not None
             fd = self.descriptors.get(name)
@@ -111,14 +119,15 @@ class Command:
             if not select.select([fd], [], [], 0)[0]:
                 continue
             try:
-                data = os.read(fd, min(4096, REPORT_BYTES - len(target) + 1))
+                data = os.read(
+                    fd, 4096 if target.error else min(4096, REPORT_BYTES - len(target.raw) + 1)
+                )
             except BlockingIOError, InterruptedError:
                 continue
-            if len(target) + len(data) > REPORT_BYTES:
+            target.feed(data)
+            if target.error:
                 self.error = "management_output_limit"
                 self.stop()
-            else:
-                target.extend(data)
             if not data:
                 try:
                     stream.close()
@@ -137,6 +146,8 @@ class Command:
         )
 
     def receipt(self) -> dict[str, object]:
+        self.ingress.check_prefix()
+        self.errors.check_prefix()
         return {
             "pid": None if self.process is None else self.process.pid,
             "launch_alive": self.worker.is_alive(),
@@ -144,10 +155,10 @@ class Command:
             "uncertain_closes": sorted(self.uncertain),
             "settled": self.settled(),
             "exit_code": None if self.process is None else self.process.poll(),
-            "output_bytes": len(self.output),
-            "diagnostic_bytes": len(self.diagnostic),
-            "output_sha256": hashlib.sha256(self.output).hexdigest(),
-            "diagnostic_sha256": hashlib.sha256(self.diagnostic).hexdigest(),
+            "output_bytes": self.ingress.count,
+            "diagnostic_bytes": self.errors.count,
+            "output_sha256": self.ingress.digest.hexdigest(),
+            "diagnostic_sha256": self.errors.digest.hexdigest(),
             "error": self.error,
         }
 
@@ -239,11 +250,47 @@ class Journal:
         os.close(self.fd)
 
 
-INSPECT = (
+OWNERSHIP = (
     '{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},'
-    '"labels":{{json .Config.Labels}},"state":{{json .State}},"mounts":{{json .Mounts}},'
-    '"host":{{json .HostConfig}},"user":{{json .Config.User}},"path":{{json .Path}},'
+    '"labels":{"org.sobafm.project":{{json (index .Config.Labels "org.sobafm.project")}},'
+    '"org.sobafm.issue":{{json (index .Config.Labels "org.sobafm.issue")}},'
+    '"org.sobafm.packet":{{json (index .Config.Labels "org.sobafm.packet")}}},'
+    '"state":{"Running":{{json .State.Running}},"Pid":{{json .State.Pid}},'
+    '"Status":{{json .State.Status}},"ExitCode":{{json .State.ExitCode}},'
+    '"OOMKilled":{{json .State.OOMKilled}}}'
+)
+CLEANUP_INSPECT = OWNERSHIP + "}"
+INSPECT = (
+    OWNERSHIP + ',"mounts":[{{range $i,$m := .Mounts}}{{if $i}},{{end}}'
+    '{"Type":{{json $m.Type}},"Destination":{{json $m.Destination}},"RW":{{json $m.RW}}'
+    '{{if eq $m.Type "volume"}},"Name":{{json $m.Name}}{{else}},"Source":{{json $m.Source}}{{end}}}'
+    '{{end}}],"host":{'
+    + ",".join(
+        '"' + key + '":{{json .HostConfig.' + key + "}}"
+        for key in (
+            "Init",
+            "ReadonlyRootfs",
+            "Privileged",
+            "NetworkMode",
+            "CgroupnsMode",
+            "Memory",
+            "MemorySwap",
+            "PidsLimit",
+            "NanoCpus",
+            "CapDrop",
+            "CapAdd",
+            "SecurityOpt",
+        )
+    )
+    + ',"RestartPolicy":{"Name":{{json .HostConfig.RestartPolicy.Name}}},'
+    '"LogConfig":{"Type":{{json .HostConfig.LogConfig.Type}}}},'
+    '"user":{{json .Config.User}},"path":{{json .Path}},'
     '"args":{{json .Args}},"workdir":{{json .Config.WorkingDir}}}'
+)
+VOLUME = (
+    '{"Name":{{json .Name}},"CreatedAt":{{json .CreatedAt}},'
+    '"Mountpoint":{{json .Mountpoint}},"Labels":{'
+    '"org.sobafm.issue":{{json (index .Labels "org.sobafm.issue")}}}}'
 )
 
 
@@ -462,53 +509,25 @@ class Controller:
         """Adopt failure timing before command acceptance or final retirement."""
         if not command.owner_output:
             return
-        raw = bytes(command.output)
-        complete = raw[: raw.rfind(b"\n") + 1]
-        if not complete and not final:
+        command.ingress.scan(final=final)
+        records = command.ingress.records
+        if not records and not final and command.ingress.error is None:
             return
         try:
-            records = reports(complete)
             if len(records) != 1:
                 raise ProbeError("owner_report_count")
-            report = records[0]
-            json_size(report)
+            report = records[0].envelope
+            if report is None:
+                raise ProbeError("owner_terminal_missing_envelope")
             if (
-                set(report)
-                != OWNER_FIELDS
-                | ({"qualification_passed"} if self.packet.case.synthetic else set())
-                or report.get("packet_sha256") != self.packet.fingerprint
+                report.get("packet_sha256") != self.packet.fingerprint
                 or report.get("schema") != self.packet.case.schema("owner")
                 or report.get("case_binding") != self.packet.case.record()
                 or ProcessPin.from_record(report.get("init")).pid != 1
                 or ProcessPin.from_record(report.get("owner")).pid <= 1
-                or type(report.get("passed")) is not bool
-                or report.get("catalog_admitted") is not False
-                or report.get("container_exit_observed") is not False
             ):
                 raise ProbeError("owner_terminal_binding")
-            timing = mapping(report.get("cleanup"))
-            if (
-                set(timing)
-                != {
-                    "whole_end_utc",
-                    "expires_utc",
-                    "cleanup_start_utc",
-                    "cleanup_deadline_met",
-                    "cleanup_timing_unknown",
-                    "case_deadline_met",
-                }
-                or timing["whole_end_utc"] != self.clock.whole_end_utc
-                or timing["expires_utc"] != self.clock.expires_utc
-                or any(
-                    type(timing[key]) is not bool
-                    for key in (
-                        "cleanup_deadline_met",
-                        "cleanup_timing_unknown",
-                        "case_deadline_met",
-                    )
-                )
-            ):
-                raise ProbeError("owner_terminal_window")
+            timing = validate_clock(report.get("cleanup"), self.clock)
             started = timing["cleanup_start_utc"]
             if started is not None:
                 if (
@@ -523,26 +542,37 @@ class Controller:
             self.clock.timing_unknown |= timing["cleanup_timing_unknown"] is True
             self.clock.missed |= timing["cleanup_deadline_met"] is not True
             self.clock.case_missed |= timing["case_deadline_met"] is not True
-            self.owner_report = report
-            if final and raw != complete:
-                raise ProbeError("owner_terminal_partial")
-        except ValueError, KeyError, TypeError, RecursionError, ProbeError:
+            if records[0].value is not None:
+                if self.owner_report is not None and self.owner_report is not records[0].value:
+                    raise ProbeError("owner_terminal_changed")
+                self.owner_report = records[0].value
+            if command.ingress.error or records[0].value is None:
+                raise ProbeError("owner_terminal_invalid_detail_or_suffix")
+        except (ValueError, KeyError, TypeError, RecursionError, ProbeError) as error:
+            discard_exception(error)
             self.clock.timing_unknown = self.clock.missed = True
             self.journal.data["owner_terminal_error"] = "invalid_or_missing_owner_terminal"
 
     def persist(self, *, cleanup: bool = False) -> None:
         try:
             self.journal.save()
-        except Exception:
+        except Exception as error:
             if not cleanup:
                 raise
             # The earlier durable intent already retains this exact case. A
             # stuck evidence write must not prevent stopping an owned container.
             self.clock.missed = True
+            discard_exception(error)
 
     def run(
-        self, args: list[str], seconds: float = 5, *, cleanup: bool = False, attach: bool = False
-    ) -> bytes:
+        self,
+        args: list[str],
+        seconds: float = 5,
+        *,
+        cleanup: bool = False,
+        attach: bool = False,
+        family: str | None = None,
+    ) -> bytes | dict[str, object]:
         if len(self.command_receipts) + len(self.commands) >= 20:
             raise ProbeError("management_operation_limit")
         if len(self.commands) >= 2:
@@ -554,6 +584,7 @@ class Controller:
         )
         self.persist(cleanup=cleanup)
         command = Command([self.docker, *args])
+        args = []
         command.owner_output = attach
         self.commands.append(command)
         end = time.monotonic() + seconds
@@ -586,7 +617,16 @@ class Controller:
                     or command.diagnostic
                 ):
                     raise ProbeError("management_command_failed")
-                return bytes(command.output)
+                result = (
+                    decode(command.output, family)
+                    if family is not None
+                    else b""
+                    if attach
+                    else bytes(command.output)
+                )
+                command.ingress.retire()
+                command.errors.retire()
+                return result
             if time.monotonic() >= end:
                 self.clock.adopt_cleanup(
                     min(self.clock.wall(), self.clock.wall() + end - time.monotonic())
@@ -603,13 +643,17 @@ class Controller:
         if self.container is None:
             raise ProbeError("container_identity_unknown")
         record = mapping(
-            json.loads(
-                self.run(
-                    ["container", "inspect", "--format", INSPECT, self.container],
-                    1 if cleanup else 5,
-                    cleanup=cleanup,
-                ),
-                object_pairs_hook=object_pairs,
+            self.run(
+                [
+                    "container",
+                    "inspect",
+                    "--format",
+                    CLEANUP_INSPECT if cleanup else INSPECT,
+                    self.container,
+                ],
+                1 if cleanup else 5,
+                cleanup=cleanup,
+                family="cleanup" if cleanup else "config",
             )
         )
         labels = mapping(record.get("labels"))
@@ -681,102 +725,104 @@ class Controller:
         ):
             raise ProbeError("volume_mount_changed")
 
-    def execute(self) -> dict[str, object]:
+    def prepare(self) -> None:
+        """Setup responses have no lifetime across attach or cleanup."""
+        self.verify_engine()
+        self.verify_image()
+        self.verify_volume()
+        self.journal.data["phase"] = "creating_container"
+        self.journal.save()
+        identifier = cast(bytes, self.run(creation_args(self.packet))).decode("ascii").strip()
+        if re.fullmatch("[0-9a-f]{64}", identifier) is None:
+            raise ProbeError("container_identifier_unknown")
+        self.container = identifier
+        self.journal.data["container_id"] = identifier
+        self.journal.save()
+        self.verify_configuration(self.inspect())
+
+    def verify_engine(self) -> None:
+        info = mapping(
+            self.run(
+                [
+                    "info",
+                    "--format",
+                    "{{$seccomp := false}}{{range .SecurityOptions}}"
+                    '{{if eq . "name=seccomp,profile=builtin"}}{{$seccomp = true}}{{end}}{{end}}'
+                    '{"architecture":{{json .Architecture}},"os":{{json .OSType}},'
+                    '"seccomp":{{$seccomp}}}',
+                ],
+                family="info",
+            )
+        )
+        if (
+            info.get("architecture") != "x86_64"
+            or info.get("os") != "linux"
+            or info.get("seccomp") is not True
+        ):
+            raise ProbeError("native_default_seccomp_engine_required")
+
+    def verify_image(self) -> None:
+        image = mapping(
+            self.run(
+                [
+                    "image",
+                    "inspect",
+                    "--format",
+                    '{"id":{{json .Id}},"architecture":{{json .Architecture}},"os":{{json .Os}}}',
+                    self.packet.text("image"),
+                ],
+                family="image",
+            )
+        )
+        if image != {"id": self.packet.text("image"), "architecture": "amd64", "os": "linux"}:
+            raise ProbeError("native_image_target_changed")
+
+    def verify_volume(self) -> None:
+        volume = mapping(
+            self.run(
+                ["volume", "inspect", "--format", VOLUME, self.packet.text("volume")],
+                family="volume",
+            )
+        )
+        if (
+            volume.get("Name") != self.packet.text("volume")
+            or volume.get("CreatedAt") != self.packet.text("volume_created")
+            or hashlib.sha256(string(volume.get("Mountpoint")).encode()).hexdigest()
+            != self.packet.text("volume_mountpoint_sha256")
+            or mapping(volume.get("Labels")).get("org.sobafm.issue") != "44"
+        ):
+            raise ProbeError("persistent_volume_binding")
+
+    def evaluate(self) -> tuple[str | None, bool]:
         failed: str | None = None
         stopped = False
         try:
-            info = mapping(
-                json.loads(
-                    self.run(
-                        [
-                            "info",
-                            "--format",
-                            '{"architecture":{{json .Architecture}},"os":{{json .OSType}},'
-                            '"security":{{json .SecurityOptions}}}',
-                        ]
-                    )
-                )
-            )
-            if (
-                info.get("architecture") != "x86_64"
-                or info.get("os") != "linux"
-                or "name=seccomp,profile=builtin"
-                not in cast(list[object], info.get("security", []))
-            ):
-                raise ProbeError("native_default_seccomp_engine_required")
-            image = mapping(
-                json.loads(
-                    self.run(
-                        [
-                            "image",
-                            "inspect",
-                            "--format",
-                            '{"id":{{json .Id}},"architecture":{{json .Architecture}},'
-                            '"os":{{json .Os}}}',
-                            self.packet.text("image"),
-                        ]
-                    )
-                )
-            )
-            if image != {"id": self.packet.text("image"), "architecture": "amd64", "os": "linux"}:
-                raise ProbeError("native_image_target_changed")
-            volume = mapping(
-                json.loads(
-                    self.run(
-                        ["volume", "inspect", "--format", "{{json .}}", self.packet.text("volume")]
-                    )
-                )
-            )
-            if (
-                volume.get("Name") != self.packet.text("volume")
-                or volume.get("CreatedAt") != self.packet.text("volume_created")
-                or hashlib.sha256(string(volume.get("Mountpoint")).encode()).hexdigest()
-                != self.packet.text("volume_mountpoint_sha256")
-                or mapping(volume.get("Labels")).get("org.sobafm.issue") != "44"
-            ):
-                raise ProbeError("persistent_volume_binding")
-            self.journal.data["phase"] = "creating_container"
-            self.journal.save()
-            identifier = self.run(creation_args(self.packet)).decode("ascii").strip()
-            if re.fullmatch("[0-9a-f]{64}", identifier) is None:
-                raise ProbeError("container_identifier_unknown")
-            self.container = identifier
-            self.journal.data["container_id"] = identifier
-            self.journal.save()
-            self.verify_configuration(self.inspect())
-            self.run(["start", "--attach", identifier], max(0, self.clock.remaining()), attach=True)
-            final = self.inspect(cleanup=True)
-            state = mapping(final.get("state"))
-            stopped = (
-                state.get("Running") is False
-                and state.get("Pid") == 0
-                and state.get("Status") == "exited"
-            )
-            if (
-                not stopped
-                or state.get("ExitCode") != 0
-                or state.get("OOMKilled") is not False
-                or self.owner_report is None
-            ):
-                raise ProbeError("container_exit_not_qualified")
-            validate_owner(self.owner_report, self.packet)
-        except Exception:
+            self.prepare()
+            stopped = self.complete()
+        except Exception as error:
             failed = "case_failed_or_incomplete"
             self.clock.cancel()
-            if self.container is not None:
-                try:
-                    state = mapping(self.inspect(cleanup=True).get("state"))
-                    if state.get("Running") is True:
-                        self.run(["stop", "--time=1", self.container], 1.5, cleanup=True)
-                    state = mapping(self.inspect(cleanup=True).get("state"))
-                    stopped = (
-                        state.get("Running") is False
-                        and state.get("Pid") == 0
-                        and state.get("Status") == "exited"
-                    )
-                except Exception:
-                    stopped = False
-        finally:
+            # Clear completed setup/decoder frames before entering a new cleanup
+            # operation. Journal.record and pending command/FD owners stay held.
+            discard_exception(error)
+        if failed is not None and self.container is not None:
+            try:
+                state = mapping(self.inspect(cleanup=True).get("state"))
+                if state.get("Running") is True:
+                    self.run(["stop", "--time=1", self.container], 1.5, cleanup=True)
+                state = mapping(self.inspect(cleanup=True).get("state"))
+                stopped = (
+                    state.get("Running") is False
+                    and state.get("Pid") == 0
+                    and state.get("Status") == "exited"
+                )
+            except Exception as error:
+                stopped = False
+                discard_exception(error)
+        return failed, stopped
+
+    def drain(self) -> None:
+        try:
             for command in self.commands:
                 command.stop()
             while self.commands:
@@ -786,10 +832,38 @@ class Controller:
                     if command.settled():
                         self.command_receipts.append(command.receipt())
                         self.commands.remove(command)
+                        command.ingress.retire()
+                        command.errors.retire()
                 self.clock.observe()
                 if self.commands:
                     select.select([], [], [], 0.01)
             self.clock.observe()
+        finally:
+            # Pending owners are never erased by an exceptional drain.
+            self.clock.observe()
+
+    def execute(self) -> dict[str, object]:
+        failed: str | None = None
+        stopped = False
+        interrupted: BaseException | None = None
+        try:
+            try:
+                failed, stopped = self.evaluate()
+            except BaseException as error:
+                # Preserve the original exceptional verdict, including SystemExit
+                # arguments, but end completed setup frames before actual drain.
+                interrupted = error
+                if error.__traceback__ is not None:
+                    traceback.clear_frames(error.__traceback__)
+                error.__traceback__ = None
+        finally:
+            # KeyboardInterrupt/SystemExit still propagate, but cannot abandon
+            # a launched command, held pipe or incomplete launch operation. The
+            # catch scope has ended: a malformed drained record cannot acquire
+            # and sanitize the propagating verdict as its exception context.
+            self.drain()
+        if interrupted is not None:
+            raise interrupted
         accepted = (
             failed is None
             and stopped
@@ -814,6 +888,22 @@ class Controller:
             self.journal.data["qualification_passed"] = accepted
         self.journal.save()
         return self.journal.data
+
+    def complete(self) -> bool:
+        assert self.container is not None
+        self.run(["start", "--attach", self.container], max(0, self.clock.remaining()), attach=True)
+        state = mapping(self.inspect(cleanup=True).get("state"))
+        if (
+            state.get("Running") is not False
+            or state.get("Pid") != 0
+            or state.get("Status") != "exited"
+            or state.get("ExitCode") != 0
+            or state.get("OOMKilled") is not False
+            or self.owner_report is None
+        ):
+            raise ProbeError("container_exit_not_qualified")
+        validate_owner(self.owner_report, self.packet)
+        return True
 
 
 def main(*, qualification: bool = False) -> int:
