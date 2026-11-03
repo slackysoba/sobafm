@@ -51,6 +51,15 @@ affected original owner partition, separately from pins/maps and report copies.
 The updated partial runner subtotal is 712,704 bytes; remaining payload closure
 and native fit are still pending.
 
+FMA diagnostic capture uses fixed 65,536-byte backing plus a 4,096-byte slab,
+allocated after the native fork. A logical count distinguishes received bytes
+from capacity; a sentinel read rejects overflow. Range-based grammar validation
+hashes original views, retains bounded immutable facts and runs once at actual
+stream/native completion. Terminal projection reuses those facts. Diagnostic
+backing and aliases remain owned through reporting after producer settlement.
+The existing 196,608-byte diagnostic reservation and partial 712,704-byte runner
+subtotal remain unchanged; encoder/report overlap and native fit remain pending.
+
 The [accepted decoder-PTY amendment](decisions/0003-decoder-pty-exclusion.md)
 excludes only kernel PTY backing alongside kernel pipe/socket storage. It keeps
 the stock decoder, all userspace partitions and the 98,979,840-byte total. A

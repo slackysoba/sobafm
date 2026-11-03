@@ -93,6 +93,15 @@ cannot reset the first cancellation clock or turn unknown timing into success.
 Do not retry a failed final snapshot or hide sender/receiver resource payload
 inside raw control scratch. These offline checks do not qualify native behavior.
 
+Keep diagnostic source bytes in their fixed charged backing. Range scans must
+preserve six complete labeled tag rows, optional final newline and exact raw/tag
+hashes without copying a suffix, split values or joined block. The format regex
+only receives its bounded 34-byte alternative; long completion-minute digits
+must not become an unbounded integer/string conversion. Test capture allocation
+after fork, exact-cap sentinel reads, held read/hash/write ownership and cached
+facts retained after report rejection. Producer/FD settlement alone does not
+refund diagnostic backing or immutable report aliases.
+
 Its failure regressions include nonzero helper exit after full delivery, early
 write exit with immediately available or later-drained terminal evidence,
 simultaneous helper failure, absent/partial/malformed/cross-case records, repeated

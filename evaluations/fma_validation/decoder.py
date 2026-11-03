@@ -19,7 +19,6 @@ from typing import cast
 from evaluations.linux_resource.owned_mp3_cancel import CancelRun
 from evaluations.linux_resource.owned_mp3_decode import (
     decoder_child,
-    receive_banner,
     stopped_native_gate,
     verify_native_files,
 )
@@ -30,7 +29,7 @@ from evaluations.linux_resource.probe import (
 )
 
 from .cases import CASE_IDS, NIGHT_OWL, CaseBinding, CaseId
-from .diagnostics import DECODER, validate
+from .diagnostics import DECODER, DIAGNOSTIC_BYTES, READ_BYTES, DiagnosticFacts, scan
 from .limits import (
     CHUNK_BYTES,
     DECODE_SECONDS,
@@ -99,6 +98,11 @@ class StreamRun(CancelRun):
         self.pty_slave_identity: tuple[int, int] | None = None
         self.resources_before: ResourceFacts | None = None
         self.final_resources_attempted = False
+        # The inherited empty stderr becomes fixed backing only after fork.
+        self.stderr_count = 0
+        self.diagnostic_slab: bytearray | None = None
+        self.diagnostic_facts: DiagnosticFacts | None = None
+        self.diagnostic_attempted = self.diagnostic_active = False
 
     def members(self) -> set[int]:
         return inventory(
@@ -173,6 +177,7 @@ class StreamRun(CancelRun):
             )
             os._exit(125)
         self.child.pid = pid
+        self.allocate_diagnostics()
         _, self.start_ticks = self.process_start_identity(pid)
         for fd in pipes.child_ends():
             self.close(fd)
@@ -187,9 +192,7 @@ class StreamRun(CancelRun):
             raise ProbeError("exec_gate_write")
         self.exec_released = True
         self.close(pipes.gate_write)
-        self.stderr = receive_banner(
-            self.child, pipes.output_read, master, self.phase_deadline, DECODER
-        )
+        self.receive_diagnostic_banner()
         self.native_gate = stopped_native_gate(
             self.child,
             self.start_ticks,
@@ -283,15 +286,133 @@ class StreamRun(CancelRun):
         finally:
             self.busy.remove(fd)
 
-    def read_error(self) -> None:
+    def allocate_diagnostics(self) -> None:
+        if self.child.pid <= 0 or self.stderr or self.diagnostic_slab is not None:
+            raise ProbeError("diagnostic_backing_owner")
+        self.stderr = bytearray(DIAGNOSTIC_BYTES)
+        self.diagnostic_slab = bytearray(READ_BYTES)
+
+    def diagnostic_check(self, live: bool = False) -> None:
+        self.clock.observe()
+        if live or self.cancel.started is None:
+            if (
+                self.clock.remaining(
+                    self.phase_deadline if not self.input_released else self.decode_end
+                )
+                <= 0
+            ):
+                raise ProbeError("diagnostic_deadline_or_cancel")
+            if not self.input_released:
+                self.preparation_remaining()
+
+    def read_diagnostic_bytes(self, limit: int, *, preparing: bool = False) -> None:
+        if self.pipes is None or self.diagnostic_slab is None:
+            raise ProbeError("diagnostic_backing_missing")
+        fd = self.pipes.error_read
+        self.busy.add(fd)
         try:
-            super().read_error()
-        except OSError as error:
-            # Linux PTY EOF is EIO only after every slave writer closes. This is
-            # diagnostic EOF, never evidence of process or payload release.
-            if error.errno != errno.EIO:
-                raise
-            self.error_eof = True
+            self.diagnostic_check(preparing)
+            room = DIAGNOSTIC_BYTES - self.stderr_count
+            request = min(READ_BYTES, limit, room + 1)
+            try:
+                with memoryview(self.diagnostic_slab)[:request] as target:
+                    amount = os.readv(fd, [target])
+            except BlockingIOError, InterruptedError:
+                return
+            except OSError as error:
+                if error.errno != errno.EIO:
+                    raise
+                amount = 0
+            if not 0 <= amount <= request:
+                raise ProbeError("diagnostic_read_contract")
+            kept = min(amount, room)
+            with (
+                memoryview(self.stderr) as backing,
+                memoryview(self.diagnostic_slab)[:kept] as part,
+            ):
+                backing[self.stderr_count : self.stderr_count + kept] = part
+            self.stderr_count += kept
+            if amount > room:
+                raise ProbeError("diagnostic_overflow")
+            if amount == 0:
+                # EOF/EIO describes the channel, never payload/process release.
+                self.error_eof = True
+            self.diagnostic_check(preparing)
+        except BaseException:
+            # An error after a held read may also cross the original phase
+            # deadline. Adopt that earlier obligation before the caller closes.
+            self.clock.remaining(
+                self.phase_deadline if not self.input_released else self.decode_end
+            )
+            self.fail("diagnostic_capture_failed")
+            raise
+        finally:
+            self.clock.observe()
+            self.busy.remove(fd)
+
+    def read_error(self) -> None:
+        self.read_diagnostic_bytes(READ_BYTES)
+
+    def receive_diagnostic_banner(self) -> None:
+        assert self.pipes is not None
+        banner = DECODER.banner
+        while self.stderr_count < len(banner):
+            self.diagnostic_check(live=True)
+            self.child.reap()
+            if self.child.exit_code is not None:
+                raise ProbeError("native_exit_before_banner")
+            ready, _, _ = select.select(
+                [self.pipes.output_read, self.pipes.error_read],
+                [],
+                [],
+                min(0.05, self.preparation_remaining()),
+            )
+            if self.pipes.output_read in ready:
+                raise ProbeError("native_stdout_before_input_gate")
+            if self.pipes.error_read in ready:
+                self.read_diagnostic_bytes(len(banner) - self.stderr_count, preparing=True)
+                if self.error_eof or any(
+                    self.stderr[index] != banner[index] for index in range(self.stderr_count)
+                ):
+                    raise ProbeError("native_banner_absent_or_changed")
+        self.diagnostic_check(live=True)
+
+    def complete_diagnostics(self) -> None:
+        if self.diagnostic_attempted:
+            raise ProbeError("diagnostic_validation_already_attempted")
+        self.diagnostic_attempted = self.diagnostic_active = True
+        try:
+            if not (
+                self.input_complete
+                and self.output_eof
+                and self.error_eof
+                and self.child.exit_code == 0
+            ):
+                raise ProbeError("diagnostic_completion_before_settlement")
+            self.diagnostic_check(live=True)
+            with memoryview(self.stderr)[: self.stderr_count] as data:
+                facts = scan(data)
+            self.diagnostic_check(live=True)
+            self.diagnostic_facts = facts
+        except BaseException:
+            self.fail("diagnostic_validation_failed")
+            raise
+        finally:
+            self.diagnostic_active = False
+
+    def diagnostic_report(self, passed: bool) -> dict[str, object]:
+        if passed:
+            assert self.diagnostic_facts is not None
+            return self.diagnostic_facts.record()
+        if self.diagnostic_facts is not None:
+            return {"bytes": self.diagnostic_facts.count, "sha256": self.diagnostic_facts.sha256}
+        self.diagnostic_active = True
+        try:
+            with memoryview(self.stderr)[: self.stderr_count] as data:
+                return {"bytes": self.stderr_count, "sha256": hashlib.sha256(data).hexdigest()}
+        finally:
+            self.clock.observe()
+            self.diagnostic_active = False
 
     def can_feed(self) -> bool:
         return self.cancel.started is None and self.input_offset < len(self.input_buffer)
@@ -370,7 +491,7 @@ class StreamRun(CancelRun):
                 or self.output_count < READY_BYTES
             ):
                 raise ProbeError("incomplete_full_stream")
-            validate(bytes(self.stderr))
+            self.complete_diagnostics()
             self.request("complete")
 
     def release_if_done(self) -> bool:
@@ -381,6 +502,7 @@ class StreamRun(CancelRun):
         if (
             self.cancel.started is None
             or self.busy
+            or self.diagnostic_active
             or self.observation.debt
             or self.fds
             or (self.child.pid and self.child.exit_code is None)
@@ -417,8 +539,10 @@ class StreamRun(CancelRun):
 
     def finish(self) -> dict[str, object]:
         self.require_released()
+        self.clock.observe()
         passed = (
             self.failure is None
+            and self.diagnostic_facts is not None
             and not self.clock.missed
             and not self.clock.case_missed
             and not self.clock.timing_unknown
@@ -426,6 +550,9 @@ class StreamRun(CancelRun):
             and self.memory_delta.get("oom_kill") == 0
             and self.swap == "0"
         )
+        # A failure-prefix hash may block too. Observe its actual completion
+        # before projecting cleanup timing; never export a pre-hash verdict.
+        diagnostic = self.diagnostic_report(passed)
         return {
             "event": "full_stream_result",
             "schema": self.case.schema("decode"),
@@ -448,9 +575,7 @@ class StreamRun(CancelRun):
             "cleanup_debt": not self.released,
             "memory_event_delta": self.memory_delta,
             "swap_current": self.swap,
-            "diagnostics": validate(bytes(self.stderr))
-            if passed
-            else {"bytes": len(self.stderr), "sha256": hashlib.sha256(self.stderr).hexdigest()},
+            "diagnostics": diagnostic,
             "catalog_admitted": False,
             "listening": False,
         }

@@ -187,10 +187,10 @@ remain charged during held reads/closes, failed reports and snapshot replacement
 The known simultaneous runner payload subtotal is 712,704 bytes: selected native
 facts 32,768; pins 8,192; selected resources 16,384 (detailed below);
 input bytes plus input buffer 131,072; two existing PCM
-scratch chunks 131,072; three diagnostic extents 196,608; and three report extents
+scratch chunks 131,072; the original diagnostic reservation 196,608; and three report extents
 196,608 (encoding pair plus a conservatively retained line). The PCM bank stays
 in its separate P reservation. This subtotal deliberately is **not full runner
-closure**: diagnostic parsing/string splits, encoder internals and other retained
+closure**: JSON encoder internals and other retained
 userspace report evidence still require complete accounting. Decoder kernel PTY
 backing is separately excluded under the accepted contract, without a reclamation
 or backlog bound. The difference is not an unallocated allowance or execution release.
@@ -275,7 +275,7 @@ Adding this reservation makes the known runner subtotal **712,704 bytes**
 bytes** (491,520 + 16,384). Report serialization and receiver byte/text/parsed
 copies still coexist under their separate existing extents; outer received
 records remain charged there too. These are partial subtotals, not full runner,
-intake or controller closure. Diagnostic parsing/encoding and other retained
+intake or controller closure. JSON encoder internals and other retained
 payload still need complete accounting and exact-image native fit. No reservation
 is expanded, and no new pool or residual allowance is created.
 
@@ -289,6 +289,68 @@ the finite verdict; durable debt survives controller loss or OOM. Host command
 outputs are capped, and at most two unsettled management commands are retained.
 
 ## Metadata and native diagnostics
+
+FMA captures diagnostics into a **fixed 65,536-byte backing** with a separate
+**4,096-byte read/overflow slab** and a logical received count. Both allocations
+occur after the native fork and before banner reception; the child does not
+inherit this backing. Reads use bounded views and `readv`, never bytearray growth.
+At capacity the next read requests one sentinel byte: any extra byte fails,
+retaining only the exact bounded prefix for failure count/hash. Unused capacity
+is never received data or EOF evidence. Banner reception preserves exact bytes,
+stdout silence, native exit and original preparation deadline gates. Zero/EIO
+means diagnostic EOF; EAGAIN/EINTR does not. No channel outcome proves actual
+descriptor, child, kernel PTY or payload release.
+
+The validator scans indices and transient views over that backing. It does not
+copy the complete suffix, split lines, copy tag values or join the tag block.
+All six full labeled tag rows remain printable ASCII with no new small value
+limit. Their hash consumes the original row views separated by exactly five LF
+bytes, without a trailing LF. Raw SHA-256 consumes the received-prefix view.
+Only a candidate format line of at most **34 bytes** enters the small regex and
+ASCII conversion. Completion-minute digits are scanned without whole decimal
+copying/conversion. Existing blank/order/repetition/completion behavior and an
+optional final newline remain unchanged; source text never becomes control text.
+Bytes-based `validate`/`check` callers retain the same report fields and hashes.
+
+The runner validates once after actual input/output/error completion and native
+exit, then retains immutable `DiagnosticFacts`. Terminal projection reuses those
+facts; `finish()` neither copies nor reparses the diagnostics. Failure projection
+contains only the bounded prefix count/hash, reusing validated hashes when
+available. A required failure-prefix hash finishes before terminal cleanup timing
+is projected, so a held hash cannot publish its earlier clock verdict. Held reads own their FD and slab
+view; held validation/hash owns its borrowed view and blocks local producer
+release. Failed/uncertain close retains the original descriptor/debt. Cancellation
+uses the first clock, including after blocked operations return. The backing,
+slab, cached facts and report aliases remain owned through report rejection or
+write completion, even after producer settlement; EOF and `released=True` do not
+refund this payload. The runner never clears/resizes diagnostic backing during
+PCM retirement. FMA overrides capture, admission and finish paths; historical
+Linux probe defaults remain unchanged.
+
+The **existing 196,608-byte diagnostic reservation stays unchanged**. Its bounded
+implementation target is **73,728 bytes**: backing 65,536 + slab 4,096 + selected
+facts/format temporaries 4,096. A conservative facts calculation is
+`2 * (4 * (34 + 64 + 64 + 86) + 32) + 34 + 4 * 34 + 2 * 32 + 512 = 2794`:
+two current/staged fact versions cover a 34-character format, two 64-character
+hashes, 86 characters of fixed projection keys and a bounded count, charging four
+bytes per character; the remainder covers simultaneous small format bytes/text
+and bounded scalar temporaries. The additional 512 bytes conservatively charge
+eight 64-byte SHA-256 blocks for partial/final block and copied-context payload
+overlap in the two digests; borrowed input views retain the original backing.
+Failure projection's shorter keys/hash fit this
+same envelope. Dictionary projections alias immutable values and the actual
+caller caches one validation, not a history. Headers, indices and regex
+bookkeeping remain in G; diagnostic/tag text and selected facts remain in C.
+This does not subdivide/reallocate the reservation or make its unused portion
+a residual pool. The known runner subtotal remains **712,704 bytes** within
+786,432, explicitly partial; JSON encoder and owner/metadata/controller report
+overlap remain later work. G/P/C and their 98,979,840-byte total are unchanged.
+
+Deterministic synthetic regressions cover near-cap six-tag input, line/read
+fragmentation, exact/+1 capacity, long completion digits, hashes/wire parity,
+invalid framing/ASCII/schedules, EOF/retry distinctions, held reads/hashes/writes,
+failed close, retained facts after rejected reports and original-clock races.
+They do not establish native terminal filtering, useful fit or execution release.
 
 [Dependency review and notices](NOTICE.md) document the exact Mutagen artifacts.
 Before parsing, the helper applies AS 67,108,864 bytes, DATA 50,331,648 bytes, ten

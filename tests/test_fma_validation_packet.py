@@ -128,6 +128,8 @@ def test_runtime_source_change_and_missing_binding_fail(packet_path: Path, name:
     [
         "evaluations/fma_validation/native_records.py",
         "evaluations/fma_validation/observation.py",
+        "evaluations/fma_validation/diagnostics.py",
+        "evaluations/fma_validation/decoder.py",
     ],
 )
 def test_observation_policy_binding_rejects_before_controller_resources(
