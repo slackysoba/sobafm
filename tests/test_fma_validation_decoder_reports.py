@@ -18,6 +18,7 @@ from evaluations.fma_validation.observation import ObservationWorkspace
 from evaluations.fma_validation.process import ProcessPin
 from evaluations.linux_resource.owned_mp3_overlap import make_pipes
 from evaluations.linux_resource.probe import ProbeError
+from tests.test_fma_diagnostic_capture import runner
 
 
 @pytest.mark.parametrize(
@@ -32,13 +33,13 @@ from evaluations.linux_resource.probe import ProbeError
         {1: "invalid key"},
     ],
 )
-def test_decoder_rejects_before_calling_json_encoder(
+def test_decoder_rejects_before_allocating_report_backing(
     value: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def forbidden(*_args: object, **_kwargs: object) -> str:
-        pytest.fail("rejected report reached the JSON encoder")
+        pytest.fail("rejected report reached work backing allocation")
 
-    monkeypatch.setattr(limits.json, "dumps", forbidden)
+    monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
     with pytest.raises(ProbeError):
         decoder.report_line(value)
 
@@ -53,9 +54,9 @@ def test_report_limit_includes_the_newline(escaped: bool, monkeypatch: pytest.Mo
     assert data.count(b"\n") == 1 and json.loads(data) == {"value": value}
 
     def forbidden(*_args: object, **_kwargs: object) -> str:
-        pytest.fail("newline overflow reached the JSON encoder")
+        pytest.fail("newline overflow reached work backing allocation")
 
-    monkeypatch.setattr(limits.json, "dumps", forbidden)
+    monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
     with pytest.raises(ProbeError, match="report_capacity_exceeded"):
         decoder.report_line({"value": value + "a"})
 
@@ -143,6 +144,43 @@ def test_report_zero_write_is_failure(monkeypatch: pytest.MonkeyPatch) -> None:
         decoder.write_report(decoder.report_line({"event": "synthetic"}))
 
 
+@pytest.mark.parametrize("stage", ["entry", "return", "error"])
+def test_admission_report_expiry_keeps_original_phase_before_bank_or_close(
+    monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    run, env = runner(monkeypatch)
+    run.phase_deadline = 115
+    actual_report = decoder.report_line
+    calls: list[str] = []
+
+    def report(value: object) -> bytes:
+        calls.append("report")
+        env.now[0] = 119
+        if stage == "error":
+            raise RuntimeError("synthetic late report build")
+        return actual_report(value)
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("expired report reached allocation, resume or write")
+
+    if stage == "entry":
+        env.now[0] = 119
+    monkeypatch.setattr(decoder, "report_line", report)
+    monkeypatch.setattr(decoder, "bytearray", forbidden, raising=False)
+    monkeypatch.setattr(decoder.os, "kill", forbidden)
+    monkeypatch.setattr(decoder.os, "set_blocking", forbidden)
+    monkeypatch.setattr(decoder, "write_report", forbidden)
+    with pytest.raises((ProbeError, RuntimeError)):
+        try:
+            run.admit_stream()
+        except Exception as error:
+            run.fail(error)
+            raise
+    assert calls == ([] if stage == "entry" else ["report"])
+    assert run.clock.cleanup_start_utc == 115 and run.cancel.deadline == 118
+    assert run.clock.missed and run.failure and not run.buffers and not run.input_released
+
+
 @pytest.fixture
 def stopped_run(monkeypatch: pytest.MonkeyPatch) -> Iterator[decoder.StreamRun]:
     def capture(_cls: type[ProcessPin], pid: int, _workspace: ObservationWorkspace) -> ProcessPin:
@@ -183,7 +221,7 @@ def test_admission_rejection_precedes_bank_allocation_and_native_resume(
 
     if failure == "capacity":
         run.native_gate = {"oversized": "\x00" * REPORT_BYTES}
-        monkeypatch.setattr(limits.json, "dumps", forbidden)
+        monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
     else:
         monkeypatch.setattr(decoder, "report_line", prepare)
     monkeypatch.setattr(decoder, "bytearray", forbidden, raising=False)

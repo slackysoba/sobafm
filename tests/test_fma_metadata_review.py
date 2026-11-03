@@ -231,13 +231,13 @@ def test_precomputed_json_size_matches_exact_escaping(value: object) -> None:
         encode_report(value, len(encoded) - 1)
 
 
-def test_rejected_escaped_output_never_calls_materializing_encoder(
+def test_rejected_escaped_output_never_allocates_work_backing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def forbidden(*_args: object, **_kwargs: object) -> str:
-        pytest.fail("oversized output reached json.dumps")
+        pytest.fail("oversized output reached work backing allocation")
 
-    monkeypatch.setattr(limits.json, "dumps", forbidden)
+    monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
     with pytest.raises(ProbeError, match="report_capacity_exceeded"):
         encode_report(["\x01" * 4096] * 64, 32_768)
 

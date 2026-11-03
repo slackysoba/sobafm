@@ -25,6 +25,7 @@ from .limits import (
     REPORT_BYTES,
     CaseClock,
     encode_report,
+    json_size,
 )
 from .observation import ObservationWorkspace
 from .process import OwnedHelper, ProcessPin, inventory
@@ -103,7 +104,7 @@ def validate_metadata(result: dict[str, object], case: CaseBinding = NIGHT_OWL) 
                 or not isinstance(frame["fields"], dict)
             ):
                 raise ProbeError("metadata_report_frame")
-    encode_report(result)
+    json_size(result)
 
 
 def validate_decode(result: dict[str, object], case: CaseBinding = NIGHT_OWL) -> None:

@@ -58,7 +58,17 @@ hashes original views, retains bounded immutable facts and runs once at actual
 stream/native completion. Terminal projection reuses those facts. Diagnostic
 backing and aliases remain owned through reporting after producer settlement.
 The existing 196,608-byte diagnostic reservation and partial 712,704-byte runner
-subtotal remain unchanged; encoder/report overlap and native fit remain pending.
+subtotal remain unchanged. Canonical report construction now uses an exact
+proved-size work buffer and immutable result, with newline included in the same
+record limit. FMA helper writers retain one immutable record through borrowed
+partial writes; metadata never emits a second terminal after possible submission.
+Journal workers retain their record through actual write/fsync/error settlement.
+The construction ceiling of work + result + one prior failed record is 196,608
+bytes inside existing report reservations. Metadata explicitly assigns its old
+serialization allowance and fixed margin to that ceiling; no partition grows.
+Receiver JSON parsing and Unicode/shape-dependent peaks remain unproved within
+the intake/controller partitions. Sender construction does not pay for receiver
+copies, close full payload accounting, or establish native fit.
 
 The [accepted decoder-PTY amendment](decisions/0003-decoder-pty-exclusion.md)
 excludes only kernel PTY backing alongside kernel pipe/socket storage. It keeps

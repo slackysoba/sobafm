@@ -130,9 +130,11 @@ def test_runtime_source_change_and_missing_binding_fail(packet_path: Path, name:
         "evaluations/fma_validation/observation.py",
         "evaluations/fma_validation/diagnostics.py",
         "evaluations/fma_validation/decoder.py",
+        "evaluations/fma_validation/limits.py",
+        "evaluations/fma_validation/report_io.py",
     ],
 )
-def test_observation_policy_binding_rejects_before_controller_resources(
+def test_runtime_policy_binding_rejects_before_controller_resources(
     packet_path: Path,
     tmp_path: Path,
     qualification: bool,

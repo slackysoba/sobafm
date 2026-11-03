@@ -11,14 +11,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 
-from evaluations.linux_resource.probe import ProbeError, emit
+from evaluations.linux_resource.probe import ProbeError
 from sobafm.fma_intake import LocalIntake, OwnedRead
 
 from .consumer import ValidationConsumer, expected_outcome
-from .limits import CaseClock, encode_report
+from .limits import CaseClock, json_size
 from .observation import ObservationWorkspace
 from .packet import Packet, integer, load, load_qualification
 from .process import ProcessPin, inventory
+from .report_io import emit
 
 ROOT = Path("/source")
 SLOT = Path("/pending/slot")
@@ -155,7 +156,7 @@ def execute(packet: Packet) -> dict[str, object]:
         result["qualification_passed"] = settled and expected_outcome(
             consumer.receipt(), packet.case
         )
-    encode_report(result)
+    json_size(result)
     return result
 
 

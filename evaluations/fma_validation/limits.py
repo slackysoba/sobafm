@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import threading
 import time
@@ -42,79 +41,141 @@ assert sum(COPY_PARTITIONS.values()) == COPY_BYTES
 assert GROUP_BYTES + PCM_BYTES + COPY_BYTES == 98_979_840
 
 
-def encode_report(value: object, limit: int = REPORT_BYTES) -> bytes:
-    json_size(value, limit)
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
-    ).encode("ascii")
+_HEX = b"0123456789abcdef"
+_SHORT_ESCAPES = {34: 34, 92: 92, 8: 98, 12: 102, 10: 110, 13: 114, 9: 116}
 
 
-def json_size(value: object, limit: int = REPORT_BYTES) -> int:
-    """Check canonical ASCII JSON before allocating any escaped string/chunk.
+class JsonBuffer:
+    """One bounded traversal; no recursive closure can retain its work arena."""
 
-    Only closed builtin JSON values are accepted. Depth, nodes, scalar integer
-    width and cumulative output are bounded, including rejected inputs. A JSON
-    iterencoder alone does not bound the size of its individual string chunks.
-    """
-    if not 0 <= limit <= REPORT_BYTES:
-        raise ProbeError("invalid_report_limit")
-    total = nodes = 0
+    def __init__(self, limit: int, backing: bytearray | None = None) -> None:
+        self.limit, self.backing = limit, backing
+        self.offset = self.nodes = 0
 
-    def charge(amount: int) -> None:
-        nonlocal total
-        total += amount
-        if total > limit:
+    def put(self, number: int) -> None:
+        if self.offset >= self.limit:
             raise ProbeError("report_capacity_exceeded")
+        if self.backing is not None:
+            self.backing[self.offset] = number
+        self.offset += 1
 
-    def string_size(text: str) -> None:
-        charge(2)
+    def ascii(self, text: str) -> None:
+        # Only fixed literals or bounded builtin int/float spellings enter here.
+        for char in text:
+            self.put(ord(char))
+
+    def hex_escape(self, number: int) -> None:
+        self.put(92)
+        self.put(117)
+        for shift in (12, 8, 4, 0):
+            self.put(_HEX[(number >> shift) & 15])
+
+    def string(self, text: str) -> None:
+        self.put(34)
         for char in text:
             number = ord(char)
-            if char in '\\"\b\f\n\r\t':
-                charge(2)
+            short = _SHORT_ESCAPES.get(number)
+            if short is not None:
+                self.put(92)
+                self.put(short)
             elif 32 <= number <= 126:
-                charge(1)
+                self.put(number)
+            elif number <= 0xFFFF:
+                self.hex_escape(number)
             else:
-                charge(6 if number <= 0xFFFF else 12)
+                number -= 0x10000
+                self.hex_escape(0xD800 | (number >> 10))
+                self.hex_escape(0xDC00 | (number & 1023))
+        self.put(34)
 
-    def walk(item: object, depth: int) -> None:
-        nonlocal nodes
-        nodes += 1
-        if depth > 12 or nodes > 8192:
+    def walk(self, item: object, depth: int) -> None:
+        self.nodes += 1
+        if depth > 12 or self.nodes > 8192:
             raise ProbeError("report_structure_limit")
         if item is None:
-            charge(4)
+            self.ascii("null")
         elif type(item) is bool:
-            charge(4 if item else 5)
+            self.ascii("true" if item else "false")
         elif type(item) is str:
-            string_size(item)
+            self.string(item)
         elif type(item) is int:
             if item.bit_length() > 128:
                 raise ProbeError("report_integer_limit")
-            charge(len(str(item)))
+            self.ascii(str(item))
         elif type(item) is float:
             if not math.isfinite(item):
                 raise ProbeError("report_nonfinite_number")
-            charge(len(repr(item)))
+            self.ascii(repr(item))
         elif type(item) in (list, tuple):
             values = cast(list[object] | tuple[object, ...], item)
-            charge(2 + max(0, len(values) - 1))
-            for child in values:
-                walk(child, depth + 1)
+            if len(values) > 8192 - self.nodes:
+                raise ProbeError("report_structure_limit")
+            self.put(91)
+            for index, child in enumerate(values):
+                if index:
+                    self.put(44)
+                self.walk(child, depth + 1)
+            self.put(93)
         elif type(item) is dict:
             fields = cast(dict[object, object], item)
-            charge(2 + max(0, len(fields) - 1))
-            for key, child in fields.items():
+            if len(fields) > 8192 - self.nodes:
+                raise ProbeError("report_structure_limit")
+            for key in fields:
                 if type(key) is not str:
                     raise ProbeError("report_string_key_required")
-                string_size(key)
-                charge(1)
-                walk(child, depth + 1)
+            strings = cast(dict[str, object], fields)
+            # Sorting retains aliases to original exact strings, never copies.
+            keys = strings if self.backing is None else sorted(strings)
+            self.put(123)
+            for index, key in enumerate(keys):
+                if type(key) is not str:
+                    raise ProbeError("report_string_key_required")
+                if index:
+                    self.put(44)
+                self.string(key)
+                self.put(58)
+                self.walk(strings[key], depth + 1)
+            self.put(125)
         else:
             raise ProbeError("unsupported_report_value")
 
-    walk(value, 0)
-    return total
+
+def json_size(value: object, limit: int = REPORT_BYTES) -> int:
+    """Validate closed exact builtins before allocating a record-sized buffer."""
+    if type(limit) is not int or not 0 <= limit <= REPORT_BYTES:
+        raise ProbeError("invalid_report_limit")
+    counter = JsonBuffer(limit)
+    counter.walk(value, 0)
+    return counter.offset
+
+
+def encode_report(value: object, limit: int = REPORT_BYTES, *, newline: bool = False) -> bytes:
+    """Canonical ASCII JSON from stable caller-owned values, with optional LF.
+
+    Fill revalidates shape/scalars and the proved length before output. This is
+    not synchronization or detection of every same-size concurrent mutation.
+    Scalar spellings and sorted-key scopes end before the immutable freeze.
+    """
+    if type(newline) is not bool or type(limit) is not int or not 0 <= limit <= REPORT_BYTES:
+        raise ProbeError("invalid_report_limit")
+    if limit < int(newline):
+        raise ProbeError("report_capacity_exceeded")
+    size = json_size(value, limit - int(newline)) + int(newline)
+    work = JsonBuffer(size)
+    try:
+        work.backing = bytearray(size)
+        work.walk(value, 0)
+        if newline:
+            work.put(10)
+        if work.offset != size:
+            raise ProbeError("report_changed_during_encoding")
+        assert work.backing is not None
+        with memoryview(work.backing) as view:
+            return bytes(view)
+    finally:
+        # Also release rejected arenas when an exception/traceback is retained.
+        # No fill frame keeps a separate alias to backing or a recursive closure.
+        work.backing = None
 
 
 def digest(value: object) -> str:
