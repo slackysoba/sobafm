@@ -13,6 +13,7 @@ from evaluations.fma_validation import decoder, owner
 from evaluations.fma_validation import observation as observation_module
 from evaluations.fma_validation.cases import NIGHT_OWL
 from evaluations.fma_validation.consumer import reports
+from evaluations.fma_validation.diagnostics import DiagnosticFacts
 from evaluations.fma_validation.limits import COPY_PARTITIONS, CaseClock, encode_report
 from evaluations.fma_validation.observation import (
     INPUT_LIMIT,
@@ -434,16 +435,15 @@ def settled_decoder(monkeypatch: pytest.MonkeyPatch, env: Environment) -> decode
     def members() -> set[int]:
         return set()
 
-    def diagnostics(_raw: bytes) -> dict[str, object]:
-        return {}
-
     monkeypatch.setattr(ProcessPin, "capture", classmethod(capture))
     monkeypatch.setattr(cancellation, "time", MonotonicClock(env.now))
     monkeypatch.setattr(decoder, "time", MonotonicClock(env.now))
-    monkeypatch.setattr(decoder, "validate", diagnostics)
     run = decoder.StreamRun(pin, pin, env.observation.clock, -1, workspace=env.observation)
     run.fds.clear()  # Synthetic descriptors were never opened.
     run.resources_before = env.observation.resources()
+    # This fixture starts after successful diagnostic validation; resource
+    # settlement tests neither reparse nor synthesize a native decode.
+    run.diagnostic_facts = DiagnosticFacts("MPEG 1.0 L III vbr 44100 j-s", 0, "0" * 64, None)
     run.request("complete")
     monkeypatch.setattr(run, "members", members)
     return run
