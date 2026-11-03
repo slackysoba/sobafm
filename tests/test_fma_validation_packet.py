@@ -123,11 +123,19 @@ def test_runtime_source_change_and_missing_binding_fail(packet_path: Path, name:
 
 @pytest.mark.parametrize("qualification", [False, True])
 @pytest.mark.parametrize("change", ["omitted", "digest", "module_bytes"])
-def test_native_policy_binding_rejects_before_controller_resources(
+@pytest.mark.parametrize(
+    "name",
+    [
+        "evaluations/fma_validation/native_records.py",
+        "evaluations/fma_validation/observation.py",
+    ],
+)
+def test_observation_policy_binding_rejects_before_controller_resources(
     packet_path: Path,
     tmp_path: Path,
     qualification: bool,
     change: str,
+    name: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import sys
@@ -135,7 +143,6 @@ def test_native_policy_binding_rejects_before_controller_resources(
     from evaluations.fma_validation import controller
     from evaluations.fma_validation import packet as packet_module
 
-    name = "evaluations/fma_validation/native_records.py"
     assert name in SOURCE_FILES
     if qualification:
         qualification_packet(packet_path)

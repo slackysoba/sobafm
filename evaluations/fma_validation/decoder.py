@@ -27,9 +27,6 @@ from evaluations.linux_resource.owned_mp3_overlap import make_pipes
 from evaluations.linux_resource.probe import (
     PCM_BYTES,
     ProbeError,
-    counters,
-    observe,
-    read_text,
 )
 
 from .cases import CASE_IDS, NIGHT_OWL, CaseBinding, CaseId
@@ -44,7 +41,7 @@ from .limits import (
     CaseClock,
     encode_report,
 )
-from .observation import ObservationWorkspace
+from .observation import ObservationWorkspace, ResourceFacts
 from .process import ProcessPin, inventory
 from .pty_channel import open_diagnostics
 
@@ -100,6 +97,8 @@ class StreamRun(CancelRun):
         self.decode_end = min(clock.end_monotonic, self.started + DECODE_SECONDS)
         self.phase_deadline = min(clock.end_monotonic, self.started + PREPARE_SECONDS)
         self.pty_slave_identity: tuple[int, int] | None = None
+        self.resources_before: ResourceFacts | None = None
+        self.final_resources_attempted = False
 
     def members(self) -> set[int]:
         return inventory(
@@ -142,13 +141,11 @@ class StreamRun(CancelRun):
 
     def prepare(self) -> None:
         self.observation.single_thread(os.getpid())
-        observe()
+        self.observation.environment(intake=False, phase_end=self.phase_deadline)
         if os.uname().machine != "x86_64" or os.sysconf("SC_PAGE_SIZE") != 4096 or self.members():
             raise ProbeError("fresh_pinned_single_thread_runner_required")
-        if read_text(Path("/proc/sys/kernel/core_pattern")).strip() != "core":
-            raise ProbeError("core_route_changed")
         verify_native_files(DECODER)
-        self.memory_before = counters(read_text(Path("/sys/fs/cgroup/memory.events")))
+        self.resources_before = self.observation.resources(phase_end=self.phase_deadline)
         pipes = make_pipes(self.fds)
         self.pipes = pipes
         # Replace only stderr's channel. The slave must be a terminal to enable
@@ -399,6 +396,20 @@ class StreamRun(CancelRun):
         self.buffers.clear()
         self.input_buffer.clear()
         self.pcm_digest = self.pcm_hash.hexdigest()
+        if not self.final_resources_attempted:
+            # One attempt, after child/I/O settlement and before release. A
+            # held or uncertain close owns this workspace and container debt.
+            self.final_resources_attempted = True
+            try:
+                after = self.observation.resources(cleanup=True)
+                if self.resources_before is None:
+                    raise ProbeError("memory_baseline_missing")
+                self.memory_delta = after.delta(self.resources_before)
+                self.swap = str(after.swap)
+            except ProbeError:
+                self.fail("final_resources_failed")
+        if self.observation.debt:
+            return False
         self.released_at = time.monotonic()
         self.clock.observe()
         self.released = True
@@ -406,14 +417,6 @@ class StreamRun(CancelRun):
 
     def finish(self) -> dict[str, object]:
         self.require_released()
-        after = counters(read_text(Path("/sys/fs/cgroup/memory.events")))
-        if set(after) != set(self.memory_before) or any(
-            after[key] < self.memory_before[key] for key in after
-        ):
-            self.failure = self.failure or "memory_counters_changed"
-        else:
-            self.memory_delta = {key: after[key] - self.memory_before[key] for key in after}
-        self.swap = read_text(Path("/sys/fs/cgroup/memory.swap.current")).strip()
         passed = (
             self.failure is None
             and not self.clock.missed

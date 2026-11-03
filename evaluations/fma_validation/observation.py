@@ -1,4 +1,4 @@
-"""Finite FMA process observations with one retained owner and selection boundary.
+"""Finite FMA environment/process observations with one retained selection owner.
 
 Local proc/libc control scratch stays in the full group charge. Selected identity
 evidence and report copies remain charged payload in their existing partitions.
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
@@ -32,6 +33,7 @@ from .native_records import (
 
 INPUT_LIMIT = 65_536
 SELECTED_PIN_BYTES = 8192
+SELECTED_RESOURCE_BYTES = 16_384
 PID_MAX = (1 << 31) - 1
 WORD_MAX = (1 << 64) - 1
 PIN_KEYS = frozenset(
@@ -151,6 +153,25 @@ class DirectoryFacts:
     # Total includes discarded nonnumeric entries; enforce while enumerating.
     entries: int
     identifiers: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class ResourceFacts:
+    """Selected counter payload; immutable aliases keep the owner's reservation."""
+
+    events: tuple[tuple[str, int], ...]
+    swap: int
+
+    def delta(self, before: ResourceFacts) -> dict[str, int]:
+        if len(self.events) != len(before.events):
+            raise ProbeError("memory_counters_changed")
+        result: dict[str, int] = {}
+        for key, value in self.events:
+            previous = next((count for name, count in before.events if name == key), None)
+            if previous is None or not 0 <= value - previous <= 1 << 63:
+                raise ProbeError("memory_counters_changed")
+            result[key] = value - previous
+        return result
 
 
 class ObservationBridge(Protocol):
@@ -277,17 +298,20 @@ class ObservationFacts:
     members: tuple[int, ...] = ()
     limits: NativeLimits | None = None
     maps: NativeMaps | None = None
+    resources: ResourceFacts | None = None
 
 
 class ObservationWorkspace:
     """One actual caller's lease, including blocked reads/closes and staged facts.
 
     Fixed byte layout: [0:2048] read, [2048:4096] whole stat/cgroup,
-    [4096:4608] line carry; remaining bytes reserved, never a growth allowance.
+    [4096:5120] line carry; remaining bytes reserved, never a growth allowance.
     Committed + staged + temporary file facts coexist. Each snapshot has <=4
     pins, <=64 stat facts and <=64 PIDs; executable text <=64 ASCII characters.
     An 8192-byte selected-pin reservation is prepaid within this owner's existing
     copy partition, separate from report serialization/IPC and native map evidence.
+    Selected resource versions have a separate 16384-byte reservation within
+    that same original partition; no whole mount table is retained as payload.
     It remains charged with external immutable aliases after snapshot replacement.
     Raw local scan/token/stat/iterator scratch remains in the full group charge;
     these policy limits are neither universal proc maxima nor an RSS/fit proof.
@@ -303,6 +327,7 @@ class ObservationWorkspace:
         self.io = ProcFileIO() if io is None else io
         self.selected_pin_capacity = SELECTED_PIN_BYTES
         self.selected_native_capacity = NATIVE_RECORD_BYTES
+        self.selected_resource_capacity = SELECTED_RESOURCE_BYTES
         self.arena = bytearray(8192)
         self.lock = threading.Lock()
         self.fd: int | None = None
@@ -316,6 +341,7 @@ class ObservationWorkspace:
         self.staged = ObservationFacts()
         self.pending: StatFacts | SecurityFacts | tuple[int, ...] | None = None
         self.pending_maps: tuple[NativeMap, ...] = ()
+        self.pending_events: tuple[tuple[str, int], ...] = ()
 
     @property
     def debt(self) -> bool:
@@ -373,6 +399,7 @@ class ObservationWorkspace:
                 self.staged = ObservationFacts()
                 self.pending = None
                 self.pending_maps = ()
+                self.pending_events = ()
             self.lock.release()
         if failed:
             raise ProbeError(self.failure or "process_observation_failed")
@@ -507,7 +534,7 @@ class ObservationWorkspace:
         )
 
     def _tokens(self, start: int, end: int, count: int) -> tuple[list[tuple[int, int]], int]:
-        # At most five bounded spans, never a decoded row or an unbounded split.
+        # Caller-bounded spans, never a decoded row or an unbounded split.
         values: list[tuple[int, int]] = []
         while start < end and len(values) < count:
             while start < end and self.arena[start] in (9, 32):
@@ -521,6 +548,187 @@ class ObservationWorkspace:
         while start < end and self.arena[start] in (9, 32):
             start += 1
         return values, start
+
+    def _scalar(self, name: bytes, select: Callable[[int], None] | None = None) -> int:
+        value = 0
+
+        def complete(size: int) -> None:
+            nonlocal value
+            if size < 2 or self.arena[2048 + size - 1] != 10:
+                raise ProbeError("observation_scalar_record")
+            value = self._number(2048, 2048 + size - 1, WORD_MAX)
+            if select is not None:
+                select(value)
+
+        self._record(b"/sys/fs/cgroup/" + name, 64, complete)
+        return value
+
+    def _resources(self) -> None:
+        self.pending_events = ()
+
+        def row(size: int) -> None:
+            tokens, tail = self._tokens(4096, 4096 + size, 2)
+            if len(tokens) != 2 or tail != 4096 + size:
+                raise ProbeError("observation_event_fields")
+            start, end = tokens[0]
+            if not 1 <= end - start <= 32 or any(
+                not (48 <= byte <= 57 or 65 <= byte <= 90 or 97 <= byte <= 122 or byte == 95)
+                for byte in memoryview(self.arena)[start:end]
+            ):
+                raise ProbeError("observation_event_key")
+            # Selection boundary: <=32 ASCII bytes, their string and uint64.
+            key = bytes(memoryview(self.arena)[start:end]).decode("ascii")
+            if any(name == key for name, _ in self.pending_events):
+                raise ProbeError("observation_duplicate_event")
+            value = self._number(*tokens[1], WORD_MAX)
+            self.pending_events = (*self.pending_events, (key, value))
+
+        def complete() -> None:
+            if not all(
+                any(name == key for name, _ in self.pending_events) for key in ("oom", "oom_kill")
+            ):
+                raise ProbeError("observation_event_missing")
+
+        self._lines(b"/sys/fs/cgroup/memory.events", 4096, 32, 127, row, complete)
+
+        def select(swap: int) -> None:
+            self.staged = replace(self.staged, resources=ResourceFacts(self.pending_events, swap))
+
+        self._scalar(b"memory.swap.current", select)
+
+    def resources(self, cleanup: bool = False, phase_end: float | None = None) -> ResourceFacts:
+        result = self._run(self._resources, cleanup, phase_end).resources
+        assert result is not None
+        return result
+
+    def _mount_mode(self, span: tuple[int, int]) -> bool:
+        start, end = span
+        mode: bool | None = None
+        while start < end:
+            stop = self.arena.find(b",", start, end)
+            if stop < 0:
+                stop = end
+            if stop == start or self.arena[end - 1] == 44:
+                raise ProbeError("observation_mount_options")
+            for token, readonly in ((b"ro", True), (b"rw", False)):
+                if self._matches(start, stop, token):
+                    if mode is not None:
+                        raise ProbeError("observation_mount_options")
+                    mode = readonly
+            start = stop + 1
+        if mode is None:
+            raise ProbeError("observation_mount_options")
+        return mode
+
+    def _mounts(self, intake: bool) -> None:
+        required = (
+            b"/sys/fs/cgroup",
+            b"/source",
+            b"/input/original",
+            b"/case/packet.json",
+            b"/pending",
+        )
+        seen = 0
+
+        def row(size: int) -> None:
+            nonlocal seen
+            end = 4096 + size
+            fields, tail = self._tokens(4096, end, 64)
+            if len(fields) < 10 or tail != end:
+                raise ProbeError("observation_mount_fields")
+            separators = [index for index, span in enumerate(fields) if self._matches(*span, b"-")]
+            if separators != [len(fields) - 4] or separators[0] < 6:
+                raise ProbeError("observation_mount_separator")
+            self._number(*fields[0], WORD_MAX)
+            self._number(*fields[1], WORD_MAX)
+            major, device_end = fields[2]
+            colon = self.arena.find(b":", major, device_end)
+            if colon < 0:
+                raise ProbeError("observation_mount_device")
+            self._number(major, colon, WORD_MAX)
+            self._number(colon + 1, device_end, WORD_MAX)
+            start, stop = fields[4]
+            # Reject escaped/noncanonical destinations instead of decoding an
+            # ambiguous critical path or retaining a whole mount table.
+            if (
+                self.arena[start] != 47
+                or any(
+                    self.arena.find(token, start, stop) >= 0
+                    for token in (b"\\", b"//", b"/./", b"/../")
+                )
+                or any(
+                    stop - start >= len(token) and self._matches(stop - len(token), stop, token)
+                    for token in (b"/.", b"/..")
+                )
+                or (stop - start > 1 and self.arena[stop - 1] == 47)
+            ):
+                raise ProbeError("observation_mount_destination")
+            readonly = self._mount_mode(fields[5])
+            if intake and self._matches(start, min(stop, start + 9), b"/pending/"):
+                raise ProbeError("persistent_volume_mount_gate")
+            selected = next(
+                (index for index, path in enumerate(required) if self._matches(start, stop, path)),
+                None,
+            )
+            if selected is None or (not intake and selected != 0):
+                return
+            if seen & (1 << selected) or readonly != (selected != 4):
+                raise ProbeError("observation_mount_gate")
+            if selected == 0 and not self._matches(*fields[-3], b"cgroup2"):
+                raise ProbeError("observation_cgroup_mount")
+            seen |= 1 << selected
+
+        def complete() -> None:
+            if seen != (31 if intake else 1):
+                raise ProbeError("observation_mount_missing")
+
+        self._lines(b"/proc/self/mountinfo", 65_536, 256, 1024, row, complete)
+
+    def environment(self, intake: bool, phase_end: float | None = None) -> None:
+        def action() -> None:
+            if sys.platform != "linux" or os.uname().machine not in ("x86_64", "aarch64"):
+                raise ProbeError("observation_linux_target")
+            self._capture(os.getpid())
+            self._mounts(intake)
+            for name, expected in (
+                (b"memory.max", 90_177_536),
+                (b"memory.swap.max", 0),
+                (b"pids.max", 64),
+            ):
+                if self._scalar(name) != expected:
+                    raise ProbeError("observation_resource_limit")
+
+            def cpu(size: int) -> None:
+                if size < 2 or self.arena[2048 + size - 1] != 10:
+                    raise ProbeError("observation_cpu_record")
+                end = 2048 + size - 1
+                spans, tail = self._tokens(2048, end, 2)
+                if len(spans) != 2 or tail != end:
+                    raise ProbeError("observation_cpu_record")
+                quota, period = (self._number(*span, WORD_MAX) for span in spans)
+                if period == 0 or period > WORD_MAX // 2 or quota != 2 * period:
+                    raise ProbeError("observation_cpu_limit")
+
+            self._record(b"/sys/fs/cgroup/cpu.max", 64, cpu)
+            for name in (b"memory.max", b"memory.swap.max", b"pids.max", b"cpu.max"):
+                self._check()
+                if os.access(b"/sys/fs/cgroup/" + name, os.W_OK):
+                    raise ProbeError("observation_writable_limit")
+                self._check()
+            self._scalar(b"memory.current")
+            self._resources()
+            # These preflight values are not the later before/after baseline.
+            self.staged = replace(self.staged, resources=None)
+            self.pending_events = ()
+            if not intake:
+
+                def core(size: int) -> None:
+                    if not self._matches(2048, 2048 + size, b"core\n"):
+                        raise ProbeError("core_route_changed")
+
+                self._record(b"/proc/sys/kernel/core_pattern", 64, core)
+
+        self._run(action, phase_end=phase_end)
 
     def _limits(self, pid: int) -> None:
         bounded_integer(pid, PID_MAX, 1)
