@@ -140,7 +140,8 @@ def test_actual_contained_metadata_helper_settles_before_borrowed_fd_reuse(
             pass
         assert helper.join(0), helper.receipt()
         assert helper.process is not None and helper.process.returncode == 0
-        result = reports(bytes(helper.stdout))
+        with helper.ingress.view() as output:
+            result = reports(bytes(output))
         assert len(result) == 1 and result[0]["credits_complete"] is False
         assert helper.output_eof and helper.error_eof and not helper.fds
         os.fstat(fd)
@@ -215,7 +216,9 @@ def test_metadata_helper_reports_bounded_rejection_and_still_settles(
             pass
         assert helper.join(0) and helper.process is not None
         assert helper.process.returncode == 1
-        assert reports(bytes(helper.stdout)) == [
+        with helper.ingress.view() as output:
+            result = reports(bytes(output))
+        assert result == [
             {
                 "schema": "sobafm-owned-qualification-metadata-rejection-1",
                 "reason": "unsupported_id3_version",
@@ -364,6 +367,7 @@ def test_duplicate_and_extra_reports_fail_closed() -> None:
 
 def test_controller_command_bounds_output_and_observes_actual_exit() -> None:
     command = Command([sys.executable, "-c", "import os; os.write(1, b'x' * 70000)"])
+    command.launch()
     end = time.monotonic() + 5
     while not command.settled() and time.monotonic() < end:
         command.pump()
@@ -374,7 +378,7 @@ def test_controller_command_bounds_output_and_observes_actual_exit() -> None:
             command.pump()
     assert command.settled()
     assert command.error == "management_output_limit"
-    assert len(command.output) <= 65_536 and not command.retained
+    assert command.ingress.used <= 65_536 and not command.retained
 
 
 def test_stream_writer_continues_past_old_fixture_prefix(synthetic_pins: None) -> None:
@@ -455,6 +459,7 @@ def test_controller_uncertain_close_reconciles_original_fd_without_retry_or_assu
     schedule: str,
 ) -> None:
     command = Command([sys.executable, "-I", "-B", "-c", "pass"])
+    command.launch()
     command.worker.join(3)
     assert not command.worker.is_alive()
     process = command.process

@@ -145,7 +145,7 @@ def test_failed_helper_retains_original_clock_before_retirement(
         assert consumer.owner.cleanup_started_utc == "1970-01-01T00:01:40Z"
         assert consumer.owner.cleanup_missed
         assert not consumer.finished and consumer.active is None
-        assert consumer.history[-1]["exit_code"] == 1 and helper.stdout == b""
+        assert consumer.history[-1]["exit_code"] == 1 and not helper.ingress
         original = consumer.clock.cleanup_monotonic
         consumer.cancel()
         consumer.cancel()
@@ -185,7 +185,7 @@ def test_invalid_terminal_is_sticky_unknown_even_after_settlement(
     elif kind == "clock":
         cast(dict[str, object], row["cleanup"])["expires_utc"] = 301
     raw = encode_report(row) + (b"" if kind == "partial" else b"\n")
-    helper.stdout.extend(b"" if kind == "absent" else b"{}\n" if kind == "malformed" else raw)
+    helper.ingress.feed(b"" if kind == "absent" else b"{}\n" if kind == "malformed" else raw)
     consumer.active = helper
     assert consumer.join(0)
     assert consumer.terminal_error is not None and consumer.clock.timing_unknown
@@ -201,7 +201,7 @@ def test_unknown_and_missed_remain_sticky_when_later_valid_receipt_arrives(
     consumer.clock.timing_unknown = True
     helper = OwnedHelper(consumer.clock, "decoder")
     helper.pin = consumer.owner_pin
-    helper.stdout.extend(encode_report(terminal(helper.pin)) + b"\n")
+    helper.ingress.feed(encode_report(terminal(helper.pin)) + b"\n")
     consumer.active = helper
     assert consumer.join(0)
     consumer.cancel()
@@ -215,7 +215,7 @@ def test_valid_terminal_before_partial_trailer_preserves_earlier_clock(
 ) -> None:
     helper = OwnedHelper(consumer.clock, "decoder")
     helper.pin = consumer.owner_pin
-    helper.stdout.extend(encode_report(terminal(helper.pin)) + b"\n{partial")
+    helper.ingress.feed(encode_report(terminal(helper.pin)) + b"\n{partial")
     consumer.active = helper
     assert consumer.join(0)
     assert consumer.decode is not None and consumer.terminal_error is not None

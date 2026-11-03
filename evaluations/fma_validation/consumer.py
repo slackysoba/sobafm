@@ -338,7 +338,7 @@ class ValidationConsumer:
                 raise ProbeError("metadata_helper_rejected")
             if (
                 helper.failure
-                or helper.stderr
+                or helper.errors
                 or helper.process is None
                 or helper.process.returncode != 0
                 or len(rows) != 1
@@ -456,7 +456,7 @@ class ValidationConsumer:
             if (
                 self.decode is None
                 or self.terminal_error is not None
-                or helper.stderr
+                or helper.errors
                 or helper.failure
                 or helper.process is None
                 or helper.process.returncode != 0

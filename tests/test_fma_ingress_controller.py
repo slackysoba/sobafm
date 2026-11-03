@@ -232,18 +232,24 @@ def test_actual_owner_null_partial_and_settled_producer_states(
                 pass
 
         command = NoLaunch(["synthetic-owner-output"])
+        command.launch()
         command.worker.join(3)
         assert not command.worker.is_alive()
         command.owner_output = True
         command.ingress.feed(wire)
-        outer = controller(packet, tmp_path / "capture-ledger")
-        try:
-            outer.capture_owner(command, final=True)
-            assert outer.owner_report == record
-            assert not outer.clock.timing_unknown and not outer.clock.missed
-            assert outer.clock.cleanup_start_utc == NOW + 1
-        finally:
-            outer.journal.close()
+
+        class CaptureJournal(Journal):
+            def __init__(self) -> None:
+                # This boundary only records capture errors. Real journal write,
+                # fsync and retained-worker schedules have dedicated tests.
+                self.data = {}
+
+        outer = Controller(packet, CaptureJournal())
+        outer.clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 1, lambda: 10.0)
+        outer.capture_owner(command, final=True)
+        assert outer.owner_report == record
+        assert not outer.clock.timing_unknown and not outer.clock.missed
+        assert outer.clock.cleanup_start_utc == NOW + 1
 
 
 @pytest.mark.parametrize("created", ["x" * 4096, "\u6f22" * 100, "\U00010000" * 4096])
@@ -314,13 +320,20 @@ def test_retained_attach_and_cleanup_command_share_two_slots(
     held = HeldLaunch(["synthetic-held-attach"])
     held.owner_output = True
     owner.commands.append(held)
+    held.launch()
     assert entered.wait(2)
     actual = module.Command
     observed: list[int] = []
 
-    def create(argv: list[str]) -> Command:
+    def create(
+        argv: list[str],
+        *,
+        clock: CaseClock | None = None,
+        cleanup: bool = False,
+        deadline: float | None = None,
+    ) -> Command:
         observed.append(len(owner.commands))
-        return actual(argv)
+        return actual(argv, clock=clock, cleanup=cleanup, deadline=deadline)
 
     monkeypatch.setattr(module, "Command", create)
     try:
@@ -419,6 +432,7 @@ def test_base_exception_drains_retained_command_before_propagation(
             super().stop()
 
     command = HeldCommand(["synthetic"])
+    command.launch()
     command.owner_output = True
     command.ingress.feed(b"{}\n")  # Rejection during drain cannot sanitize the pending verdict.
     owner.commands.append(command)

@@ -84,6 +84,16 @@ peaks and retained packet/report/receipt overlap still require an actual ledger;
 there is no `J <= 2R`, fixed `F` or full native-fit claim. Public intake and
 operator packet/recovery loaders remain outside this receiver change.
 
+Receive stdout now has exact fixed R backing with an independent used extent;
+opaque helper/management stderr retains prefix facts only. Maintained strict
+buffer decoding removes the explicit whole-record conversion copy, without
+claiming no internal codec/JSON copies. The existing container-name grammar is
+bounded before materialization; real Unicode paths remain supported. Inert
+commands register before launch/allocation, original deadlines gate subsequent
+work, and exported views prevent backing retirement. Receipt publication is
+idempotent while partial owners stay registered. The evaluation's visible phase
+ledger replaces the old receive subtotal; complete J/F closure is still open.
+
 The [accepted decoder-PTY amendment](decisions/0003-decoder-pty-exclusion.md)
 excludes only kernel PTY backing alongside kernel pipe/socket storage. It keeps
 the stock decoder, all userspace partitions and the 98,979,840-byte total. A

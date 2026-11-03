@@ -13,8 +13,8 @@ import time
 
 from evaluations.linux_resource.probe import ProbeError
 
-from .ingress import Ingress
-from .limits import CHUNK_BYTES, REPORT_BYTES, CaseClock
+from .ingress import Ingress, Opaque
+from .limits import CHUNK_BYTES, CaseClock
 from .observation import ObservationWorkspace
 from .observation import ProcessPin as ProcessPin
 
@@ -53,10 +53,8 @@ class OwnedHelper:
         self.busy: set[int] = set()
         self.fds: set[int] = set()
         self.uncertain: set[int] = set()
-        self.ingress = Ingress(role)
-        self.errors = Ingress("opaque")
-        self.stdout = self.ingress.raw
-        self.stderr = self.errors.raw
+        self.ingress = Ingress(role, deferred=True)
+        self.errors = Opaque()
         self.output_eof = self.error_eof = False
         self.cancel_read: int | None = None
         self.cancel_write: int | None = None
@@ -73,6 +71,15 @@ class OwnedHelper:
                 raise ProbeError("helper_launch_not_admitted")
             self.launching = True
         try:
+            try:
+                self.ingress.allocate()
+            finally:
+                # Successful and exceptional late allocation both observe the
+                # original bound. The registered inert helper retains backing.
+                self.clock.remaining()
+                self.clock.observe()
+            if self.clock.remaining() <= 0:
+                raise ProbeError("helper_allocation_deadline")
             self.cancel_read, self.cancel_write = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
             self.fds.update((self.cancel_read, self.cancel_write))
             self.admit_read, self.admit_write = os.pipe2(os.O_CLOEXEC)
@@ -213,14 +220,21 @@ class OwnedHelper:
             with self.lock:
                 self.busy.add(fd)
             try:
-                data = os.read(
-                    fd, 4096 if target.error else min(4096, REPORT_BYTES - len(target.raw) + 1)
-                )
-                target.feed(data)
+                data = os.read(fd, target.read_size())
+                try:
+                    target.feed(data)
+                    eof = not data
+                except BaseException:
+                    self.failure = "helper_receive_failed"
+                    self.cancel()
+                    raise
+                finally:
+                    # End this immutable read before the next os.read result.
+                    del data
                 if target.error:
                     self.failure = "helper_output_overrun"
                     self.cancel()
-                if not data:
+                if eof:
                     if name == "output":
                         self.output_eof = True
                     else:
@@ -230,7 +244,7 @@ class OwnedHelper:
             finally:
                 with self.lock:
                     self.busy.remove(fd)
-            if not data:
+            if eof:
                 self.close(fd)
         process.poll()
         if self.clock.remaining() <= 0:
@@ -296,7 +310,6 @@ class OwnedHelper:
 
     def receipt(self) -> dict[str, object]:
         self.ingress.check_prefix()
-        self.errors.check_prefix()
         return {
             "role": self.role,
             "stdout_bytes": self.ingress.count,

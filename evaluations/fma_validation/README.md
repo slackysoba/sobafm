@@ -111,17 +111,38 @@ does not adopt a PTY reservation subdivision or claim kernel reclamation.
 before calling the maintained JSON decoder. Each original stdout/stderr stream
 has one aggregate **65,536-byte** prefix budget, including empty lines. Parsing
 and retiring a record never refund this budget. A sentinel read detects excess;
-receipts count and hash the original retained prefix, without normalization or
-re-encoding. Raw backing remains owned until retirement. Completed records are
+receipts count and hash the original accepted prefix, without normalization or
+re-encoding. Stdout uses one exact R-byte backing with a separate used extent;
+empty and small responses still own R. Scans, views, hashes and sentinel budgets
+use only that extent, never the unfilled tail. Opaque helper/management stderr
+keeps only count/hash/nonempty/error/EOF facts for the first `min(received, R)`
+bytes, including a chunk crossing the cap, then bounded discard/drain. Native
+decoder diagnostic text and its reservation are unchanged. Completed records are
 materialized once into at most one metadata/owner slot or two decoder slots.
 Later chunks, extra records, changed cached prefixes and partial EOF remain
 errors. Metadata retains its final-record-without-LF behavior; decoder and owner
 terminals require LF. Empty lines remain permitted and charged.
 
+Helpers are registered before backing allocation. Management commands are inert
+until registered, then explicitly start their owned launch worker. Allocation
+success and failure check original case/operation deadlines before process
+launch; interruption during start retains the registered command. An attempted
+start without both the launch target's completion signal and actual thread exit
+remains uncertain debt, even if an early thread identity is already visible.
+It never becomes an inert success or automatic retry. Held allocation/read/hash/close and actual
+process/descriptor settlement keep their owner. A borrowed stdout view prevents
+backing retirement; the unchanged backing, used extent and records remain
+charged until the borrow ends. Both helper and management receipt publication
+are idempotent across interrupted retirement.
+
 Generated report channels require ASCII JSON/LF; selected Docker output requires
 strict UTF-8. UTF-16/32 and BOM autodetection are not framed-channel contracts.
 Whitespace, key order, JSON escapes and meaningful finite numeric spellings do
 not need to be canonical. Escaped-equivalent duplicate keys are rejected. The
+maintained `str(buffer, encoding, 'strict')` route borrows the original buffer for
+complete documents and authenticated envelope spans. There is no explicit
+whole-record `bytes(...)` intermediate or fallback. This does not prove that the
+codec or JSON implementation makes no internal copy. The
 index-based pass bounds depth, nodes, keys, collections, scalars and decoded
 string domains before materialization, including unsupported/rejected fields.
 Unknown or huge keys and allocation-amplifying unsupported wide values never
@@ -148,6 +169,9 @@ configuration additionally keeps every existing security/resource/restart/log,
 entrypoint and four-mount comparison. Bind mounts export Source, volume mounts
 export Name; unrelated extensions are omitted. Engine security is the selected
 builtin-seccomp predicate. Image and volume reports contain only compared fields.
+The shared cleanup/configuration name field admits at most 43 ASCII characters,
+matching the existing `/' + case_id` domain; the exact ownership comparison
+still follows decoding. Escaped equivalents remain accepted without normalization.
 Packet-bound paths and volume CreatedAt retain their existing 4,096-character
 non-control Unicode domain and exact codepoints/UTF-8 hashing. Operator packet
 and recovery loaders are unchanged. Qualification raw timestamps retain their
@@ -165,17 +189,45 @@ journal record/worker/error debt remain owned. There are still at most two live
 management owners and 20 operations; up to two older retained-command receipt
 snapshots also remain relevant. Final controller serialization is unchanged.
 
+The visible receive phases now have these separate payload terms. Here `R =
+65,536`, `n <= R` is the used document/span size, `T` is decoded document text,
+`P` is the new parsed graph, `I` is maintained conversion/decoder scratch and `F`
+is already retained packet/report/receipt payload. Views alias fixed backing.
+
+| Phase | Known visible backing, before unclosed `P`, `I` and `F` |
+| --- | --- |
+| Inert owner, before allocation | No receive backing yet; the admitted slot reserves its future R. A pending launch cannot release that reservation. |
+| Active helper or one management command, including empty output | Exactly R stdout; no retained opaque stderr body. One executing pump retains at most one 4,096-byte `os.read` result; explicit `del` ends it before the next read. |
+| Two retained management owners | 2R stdout, including a settled command whose borrowed view prevents retirement. The one controller thread pumps sequentially; a retained owner does not retain an earlier successful read result. |
+| Whole FMA or selected ASCII cleanup document | Its R raw owner plus `T <= n`; cleanup may coexist with another R attach owner. Parsing adds `P + I`, with earlier records/envelopes in F. |
+| Valid initial configuration/volume Unicode document | One R command owner plus `T <= 4n` conservatively. These setup responses precede attach. Parsed path/CreatedAt/Mountpoint values and codec scratch remain separate charges. |
+| Lexical numeric conversion | One token of at most R bytes plus maintained numeric-conversion scratch, alongside all retained raw owners/F. This scope ends before whole-document text/JSON decoding. |
+| Rejected detail with authenticated envelope | Original raw owner(s), earlier cached graphs and accumulated envelope values coexist with one current borrowed-span text and decoder scratch. No joined envelope wire or explicit span bytes copy. |
+| Non-JSON create/stop response | R raw plus an immutable used-prefix result of at most R until raw retirement; subsequent caller text conversion still needs its own phase charge. |
+
+Held read/hash exceptions retain their actual argument/view until the operation
+ends and completed exception frames are cleared. They cannot be credited as
+released merely because the ordinary pump deletes its local read result. Opaque
+hash failure is sticky and cannot retry later bytes as a new accepted prefix.
+The fixed stdout backing can retire only after actual producer/FD settlement and
+all exports end; retirement never resizes or replaces backing beneath a borrow.
+
+The former `8R - 12` rejected-name diagnosis is no longer an admitted decoding
+path: non-ASCII cleanup names fail before materialization. Subtracting the removed
+stderr/copy extents to call `6R - 12` a surviving family maximum would be wrong.
+Valid Unicode setup families are tested separately and still widen text backing;
+the table is a conservative phase ledger, not a family-maximum proof.
+
 These component changes **do not prove `J(shape, wire) <= 2R`**, fixed retained
-facts `F <= 3R`/`2R`, or full intake/controller fit. Raw bytearray growth, read
-chunks, record bytes/text, maintained decoder scratch and parsed values, prior
-records, envelope recovery and rejected exceptions need phase-specific overlap
-accounting. A long valid float spelling can use an additional token of up to R
-bytes during predecode conversion; that scope ends before whole-record decoding.
+facts `F <= 3R`/`2R`, or full intake/controller fit. Prior records, selected facts,
+parsed graphs, conversion scratch and rejected exceptions remain in the ledger.
 Supported Unicode paths/timestamps can widen decoded backing. Normal packet raw
 notice/evidence strings and the separately parsed request do not all alias;
 qualification has broader timestamp/integer admission boundaries. Public
 `LocalIntake` report/persistence serialization and fingerprint/notice temporaries
 remain unchanged and unclosed. Selected fact subtotals do not pay for them.
+Pinned decoder-source binding/accounting and final controller serialization
+remain separate open work.
 No partition, dependency, residual pool or runtime qualification is added.
 
 ### Process observation transactions
@@ -308,8 +360,8 @@ In particular, assigning JSON decoding and newly parsed values one R extent
 each does not establish their actual shape-dependent peak `J(shape, wire)`.
 Rejected input and widening Unicode backing must be covered too. Intake's
 786,432-byte and the controller's 524,288-byte partitions remain unclosed;
-fixed ingress/parse-once alternatives are not implemented by this report-I/O
-change. Other intake-owner source/fact payload remains separately charged.
+The fixed receive/parse-once phases above supersede that preliminary assignment.
+Other intake-owner source/fact payload remains separately charged.
 No receiver copy is hidden in the sender's alias accounting. Tests preserve every
 selected record through serialization/receive and exercise old/staged evidence,
 report rejection before bank allocation/resume and original cleanup deadlines.
@@ -380,9 +432,9 @@ one final attempt, not an unbounded resource history. Container/object/allocator
 headers and discarded raw parsing remain in the full G charge.
 
 Adding this reservation makes the known runner subtotal **712,704 bytes**
-(696,320 + 16,384), and the known intake receive/own-resource overlap **507,904
-bytes** (491,520 + 16,384), subject to the unproved receiver `J(shape, wire)`
-assignment above. Report construction and receiver byte/text/parsed copies
+(696,320 + 16,384). The former intake receive/resource subtotal **507,904 bytes**
+(491,520 + 16,384) used an unproved receiver assignment and is superseded by the
+visible receive-phase ledger above. Report construction and receiver text/parsed copies
 coexist under separate charges; outer received records remain charged too.
 These are partial subtotals, not full runner, intake or controller closure.
 Receiver parsing and other retained payload still need complete accounting and

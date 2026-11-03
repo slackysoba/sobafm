@@ -23,8 +23,8 @@ from typing import cast
 from evaluations.linux_resource.probe import ProbeError
 
 from .consumer import expected_outcome, object_pairs, validate_decode, validate_metadata
-from .ingress import Ingress, decode, discard_exception
-from .limits import REPORT_BYTES, CaseClock, encode_report
+from .ingress import Ingress, Opaque, decode, discard_exception
+from .limits import CaseClock, encode_report
 from .packet import Packet, load, load_qualification, read_bounded, string
 from .process import ProcessPin
 from .terminal import validate_clock, validate_terminal
@@ -33,26 +33,88 @@ from .terminal import validate_clock, validate_terminal
 class Command:
     """Retain launch, original pipes and actual child through timeout/close debt."""
 
-    def __init__(self, argv: list[str]) -> None:
+    def __init__(
+        self,
+        argv: list[str],
+        *,
+        clock: CaseClock | None = None,
+        cleanup: bool = False,
+        deadline: float | None = None,
+    ) -> None:
         self.argv = argv
+        self.clock, self.cleanup = clock, cleanup
+        self.deadline = deadline
         self.owner_output = False
         self.process: subprocess.Popen[bytes] | None = None
         self.error: str | None = None
-        self.ingress = Ingress("owner")
-        self.errors = Ingress("opaque")
-        self.output = self.ingress.raw
-        self.diagnostic = self.errors.raw
+        self.ingress = Ingress("owner", deferred=True)
+        self.errors = Opaque()
+        self.receipt_published = False
         self.retained: set[int] = set()
         self.uncertain: set[int] = set()
         self.descriptors: dict[str, int] = {}
         self.stopping: float | None = None
+        self.launch_attempted = False
+        self.launch_finished = threading.Event()
         self.worker = threading.Thread(
-            target=self._launch, name="owned-docker-command", daemon=False
+            target=self._run_launch, name="owned-docker-command", daemon=False
         )
-        self.worker.start()
+
+    def _run_launch(self) -> None:
+        try:
+            self._launch()
+        finally:
+            self.launch_finished.set()
+
+    def launch(self) -> None:
+        """The controller must register this inert owner before attempting start."""
+        if self.launch_attempted or self.stopping is not None:
+            raise ProbeError("management_launch_not_admitted")
+        self.launch_attempted = True
+        try:
+            self.worker.start()
+        except BaseException:
+            self.error = "management_start_uncertain"
+            self.stop()
+            if self.clock is not None:
+                self.clock.cancel()
+            raise
+
+    @property
+    def launch_pending(self) -> bool:
+        # An early ident and a false is_alive() do not prove startup completed.
+        # Require the target's own completion signal and actual thread exit.
+        return self.launch_attempted and (
+            not self.launch_finished.is_set() or self.worker.is_alive()
+        )
+
+    def launch_admitted(self) -> bool:
+        if self.clock is not None:
+            if not self.cleanup and self.clock.remaining() <= 0:
+                self.stop()
+            self.clock.observe()
+        now = time.monotonic()
+        if self.deadline is not None and now >= self.deadline:
+            if self.clock is not None:
+                self.clock.adopt_cleanup(
+                    min(self.clock.wall(), self.clock.wall() + self.deadline - now)
+                )
+            self.stop()
+        if self.stopping is not None:
+            self.error = "management_allocation_revoked"
+            return False
+        return True
 
     def _launch(self) -> None:
         try:
+            if not self.launch_admitted():
+                return
+            try:
+                self.ingress.allocate()
+            finally:
+                admitted = self.launch_admitted()
+            if not admitted:
+                return
             self.process = subprocess.Popen(
                 self.argv,
                 stdin=subprocess.DEVNULL,
@@ -69,15 +131,18 @@ class Command:
             for stream in (self.process.stdout, self.process.stderr):
                 assert stream is not None
                 os.set_blocking(stream.fileno(), False)
-        except Exception:
+        except Exception as error:
+            discard_exception(error)
             self.error = "management_launch_failed"
+            if self.clock is not None:
+                self.clock.cancel()
 
     def stop(self) -> None:
         if self.stopping is None:
             self.stopping = time.monotonic()
 
     def pump(self) -> None:
-        if self.worker.is_alive():
+        if not self.launch_attempted or self.launch_pending:
             return
         self.worker.join(0)
         # Launch is complete; commands and Popen do not need the copied bind
@@ -119,16 +184,22 @@ class Command:
             if not select.select([fd], [], [], 0)[0]:
                 continue
             try:
-                data = os.read(
-                    fd, 4096 if target.error else min(4096, REPORT_BYTES - len(target.raw) + 1)
-                )
+                data = os.read(fd, target.read_size())
             except BlockingIOError, InterruptedError:
                 continue
-            target.feed(data)
+            try:
+                target.feed(data)
+                eof = not data
+            except BaseException:
+                self.error = "management_receive_failed"
+                self.stop()
+                raise
+            finally:
+                del data
             if target.error:
                 self.error = "management_output_limit"
                 self.stop()
-            if not data:
+            if eof:
                 try:
                     stream.close()
                     self.retained.remove(fd)
@@ -139,7 +210,7 @@ class Command:
 
     def settled(self) -> bool:
         return (
-            not self.worker.is_alive()
+            not self.launch_pending
             and not self.retained
             and not self.uncertain
             and (self.process is None or self.process.poll() is not None)
@@ -147,10 +218,9 @@ class Command:
 
     def receipt(self) -> dict[str, object]:
         self.ingress.check_prefix()
-        self.errors.check_prefix()
         return {
             "pid": None if self.process is None else self.process.pid,
-            "launch_alive": self.worker.is_alive(),
+            "launch_alive": self.launch_pending,
             "retained_fds": sorted(self.retained),
             "uncertain_closes": sorted(self.uncertain),
             "settled": self.settled(),
@@ -507,7 +577,7 @@ class Controller:
 
     def capture_owner(self, command: Command, *, final: bool = False) -> None:
         """Adopt failure timing before command acceptance or final retirement."""
-        if not command.owner_output:
+        if not command.owner_output or command.ingress.retired:
             return
         command.ingress.scan(final=final)
         records = command.ingress.records
@@ -583,13 +653,14 @@ class Controller:
             phase="management_dispatch", operation=args[0], cleanup=self.clock.receipt()
         )
         self.persist(cleanup=cleanup)
-        command = Command([self.docker, *args])
-        args = []
-        command.owner_output = attach
-        self.commands.append(command)
         end = time.monotonic() + seconds
         if not cleanup:
             end = min(end, self.clock.end_monotonic)
+        command = Command([self.docker, *args], clock=self.clock, cleanup=cleanup, deadline=end)
+        args = []
+        command.owner_output = attach
+        self.commands.append(command)
+        command.launch()
         while True:
             command.pump()
             self.capture_owner(command, final=command.settled())
@@ -605,27 +676,27 @@ class Controller:
             if command.settled():
                 if attach and self.owner_report is None:
                     self.clock.timing_unknown = self.clock.missed = True
-                receipt = command.receipt()
-                self.command_receipts.append(receipt)
-                self.commands.remove(command)
+                self.publish_command(command)
                 self.journal.data["commands"] = self.command_receipts
                 self.persist(cleanup=cleanup)
                 if (
                     command.error
                     or command.process is None
                     or command.process.returncode != 0
-                    or command.diagnostic
+                    or command.errors
                 ):
                     raise ProbeError("management_command_failed")
-                result = (
-                    decode(command.output, family)
-                    if family is not None
-                    else b""
-                    if attach
-                    else bytes(command.output)
-                )
+                with command.ingress.view() as output:
+                    result = (
+                        decode(output, family)
+                        if family is not None
+                        else b""
+                        if attach
+                        else bytes(output)
+                    )
                 command.ingress.retire()
                 command.errors.retire()
+                self.commands.remove(command)
                 return result
             if time.monotonic() >= end:
                 self.clock.adopt_cleanup(
@@ -821,6 +892,11 @@ class Controller:
                 discard_exception(error)
         return failed, stopped
 
+    def publish_command(self, command: Command) -> None:
+        if not command.receipt_published:
+            self.command_receipts.append(command.receipt())
+            command.receipt_published = True
+
     def drain(self) -> None:
         try:
             for command in self.commands:
@@ -830,10 +906,10 @@ class Controller:
                     command.pump()
                     self.capture_owner(command, final=command.settled())
                     if command.settled():
-                        self.command_receipts.append(command.receipt())
-                        self.commands.remove(command)
+                        self.publish_command(command)
                         command.ingress.retire()
                         command.errors.retire()
+                        self.commands.remove(command)
                 self.clock.observe()
                 if self.commands:
                     select.select([], [], [], 0.01)
