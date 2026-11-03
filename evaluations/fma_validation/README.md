@@ -320,7 +320,11 @@ available. A required failure-prefix hash finishes before terminal cleanup timin
 is projected, so a held hash cannot publish its earlier clock verdict. Held reads own their FD and slab
 view; held validation/hash owns its borrowed view and blocks local producer
 release. Failed/uncertain close retains the original descriptor/debt. Cancellation
-uses the first clock, including after blocked operations return. The backing,
+uses the first clock, including after blocked operations return. Normal and
+exceptional capture/validation returns adopt the original phase deadline before
+failure/close. Late allocation, banner reap/select, or scan/hash exceptions retain
+that original obligation and propagate the source exception; partial allocation
+also remains owned. The backing,
 slab, cached facts and report aliases remain owned through report rejection or
 write completion, even after producer settlement; EOF and `released=True` do not
 refund this payload. The runner never clears/resizes diagnostic backing during

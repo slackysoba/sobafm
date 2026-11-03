@@ -289,6 +289,121 @@ def test_banner_rejects_activity_missing_identity_and_deadline(
         assert reader.offset == 0
 
 
+@pytest.mark.parametrize("stage", ["stdout", "exit", "reap_error", "select_error"])
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_banner_exception_adopts_phase_before_close(
+    monkeypatch: pytest.MonkeyPatch, stage: str, close_fails: bool
+) -> None:
+    run, env = runner(monkeypatch)
+    run.phase_deadline = 115
+    backing, slab = run.stderr, run.diagnostic_slab
+    error = OSError(errno.EBADF, "synthetic late banner operation")
+    calls: list[str] = []
+
+    def reap(child: Child) -> None:
+        calls.append("reap")
+        if stage in ("exit", "reap_error"):
+            env.now[0] = 119
+            if stage == "reap_error":
+                raise error
+            child.exit_code = 0
+
+    def select(
+        _reads: list[int], _writes: list[int], _errors: list[int], _timeout: float
+    ) -> tuple[list[int], list[int], list[int]]:
+        calls.append("select")
+        assert stage in ("stdout", "select_error")
+        env.now[0] = 119
+        if stage == "select_error":
+            raise error
+        return [12], [], []
+
+    def readv(_fd: int, _views: list[memoryview]) -> int:
+        pytest.fail("banner error must not consume or fabricate diagnostics")
+
+    def close(_fd: int) -> None:
+        assert run.clock.cleanup_start_utc == 115 and run.cancel.deadline == 118
+        assert run.clock.missed and run.failure
+        if close_fails:
+            raise OSError(errno.EIO, "synthetic uncertain close")
+
+    monkeypatch.setattr(Child, "reap", reap)
+    monkeypatch.setattr(decoder.select, "select", select)
+    monkeypatch.setattr(decoder.os, "readv", readv)
+    monkeypatch.setattr(decoder.os, "close", close)
+    expected = {
+        "stdout": "native_stdout_before_input_gate",
+        "exit": "native_exit_before_banner",
+        "reap_error": "synthetic late banner operation",
+        "select_error": "synthetic late banner operation",
+    }
+    with pytest.raises((OSError, ProbeError), match=expected[stage]) as caught:
+        try:
+            run.receive_diagnostic_banner()
+        except Exception as failure:
+            run.fail(failure)  # Match main's outer failure path.
+            raise
+    if stage.endswith("error"):
+        assert caught.value is error
+    assert calls == (["reap"] if stage in ("exit", "reap_error") else ["reap", "select"])
+    assert run.clock.cleanup_start_utc == 115 and run.clock.cleanup_monotonic == 118
+    assert run.clock.missed and not run.error_eof and run.stderr_count == 0
+    assert run.stderr is backing and run.diagnostic_slab is slab
+    assert run.diagnostic_facts is None and not run.diagnostic_attempted
+    run.child.exit_code = 0  # Synthetic later child settlement; no native process.
+    run.close(14)
+    assert (14 in run.uncertain_closes) is close_fails
+    assert run.release_if_done() is not close_fails
+    assert run.failure and run.clock.cleanup_monotonic == 118 and run.clock.missed
+
+
+@pytest.mark.parametrize("failed_size", [DIAGNOSTIC_BYTES, READ_BYTES])
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_allocation_exception_adopts_phase_and_retains_partial_backing(
+    monkeypatch: pytest.MonkeyPatch, failed_size: int, close_fails: bool
+) -> None:
+    run, env = runner(monkeypatch, allocate=False)
+    run.phase_deadline = 115
+    error = MemoryError("synthetic late diagnostic allocation")
+    allocated: list[bytearray] = []
+
+    def allocate(size: int) -> bytearray:
+        if size == failed_size:
+            env.now[0] = 119
+            raise error
+        backing = bytearray(size)
+        allocated.append(backing)
+        return backing
+
+    def close(_fd: int) -> None:
+        assert run.clock.cleanup_start_utc == 115 and run.cancel.deadline == 118
+        assert run.clock.missed and run.failure
+        if close_fails:
+            raise OSError(errno.EIO, "synthetic uncertain close")
+
+    monkeypatch.setattr(decoder, "bytearray", allocate, raising=False)
+    monkeypatch.setattr(decoder.os, "close", close)
+    with pytest.raises(MemoryError) as caught:
+        try:
+            run.allocate_diagnostics()
+        except Exception as failure:
+            run.fail(failure)
+            raise
+    assert caught.value is error
+    assert run.clock.cleanup_start_utc == 115 and run.clock.cleanup_monotonic == 118
+    assert run.clock.missed and run.diagnostic_slab is None and run.stderr_count == 0
+    if failed_size == READ_BYTES:
+        assert len(allocated) == 1 and run.stderr is allocated[0]
+        assert len(run.stderr) == DIAGNOSTIC_BYTES
+    else:
+        assert not allocated and not run.stderr
+    run.child.exit_code = 0
+    run.close(14)
+    assert (14 in run.uncertain_closes) is close_fails
+    assert run.release_if_done() is not close_fails
+    assert run.failure and run.clock.cleanup_monotonic == 118 and run.clock.missed
+
+
 def test_prepare_allocates_diagnostics_only_after_native_fork(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -477,6 +592,51 @@ def test_held_hash_retains_view_and_rejects_cancelled_commit(
         _ = views[0].obj
     with pytest.raises(ProbeError, match="already_attempted"):
         run.complete_diagnostics()
+
+
+@pytest.mark.parametrize("stage", ["scan", "hash"])
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_validation_exception_adopts_phase_before_close(
+    monkeypatch: pytest.MonkeyPatch, stage: str, close_fails: bool
+) -> None:
+    run, env = runner(monkeypatch)
+    capture_all(monkeypatch, run, safe_diagnostics())
+    run.input_released = run.input_complete = run.output_eof = True
+    run.child.exit_code = 0
+    run.decode_end = 150
+    backing, slab = run.stderr, run.diagnostic_slab
+    calls: list[str] = []
+
+    def delayed_failure(data: memoryview) -> object:
+        assert data.obj is backing and run.diagnostic_active
+        calls.append(stage)
+        env.now[0] = 154
+        raise RuntimeError("synthetic scan/hash failure after original phase")
+
+    def close(_fd: int) -> None:
+        assert run.clock.cleanup_monotonic == 153 and run.cancel.deadline == 153
+        assert run.clock.missed and run.failure
+        if close_fails:
+            raise OSError(errno.EIO, "synthetic uncertain close")
+
+    if stage == "scan":
+        monkeypatch.setattr(decoder, "scan", delayed_failure)
+    else:
+        monkeypatch.setattr(diagnostics, "hashlib", SimpleNamespace(sha256=delayed_failure))
+    monkeypatch.setattr(decoder.os, "close", close)
+    with pytest.raises(RuntimeError, match="synthetic scan/hash"):
+        run.complete_diagnostics()
+    assert run.clock.cleanup_start_utc == 150
+    assert run.clock.cleanup_monotonic == 153 and run.clock.missed
+    assert run.diagnostic_facts is None and run.diagnostic_attempted and not run.diagnostic_active
+    assert run.stderr is backing and run.diagnostic_slab is slab
+    with pytest.raises(ProbeError, match="already_attempted"):
+        run.complete_diagnostics()
+    assert calls == [stage] and run.clock.cleanup_monotonic == 153
+    run.close(14)
+    assert (14 in run.uncertain_closes) is close_fails
+    assert run.release_if_done() is not close_fails
+    assert run.failure and run.clock.missed
 
 
 def test_failure_hash_completion_precedes_terminal_cleanup_clock(

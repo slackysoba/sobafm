@@ -287,10 +287,15 @@ class StreamRun(CancelRun):
             self.busy.remove(fd)
 
     def allocate_diagnostics(self) -> None:
-        if self.child.pid <= 0 or self.stderr or self.diagnostic_slab is not None:
-            raise ProbeError("diagnostic_backing_owner")
-        self.stderr = bytearray(DIAGNOSTIC_BYTES)
-        self.diagnostic_slab = bytearray(READ_BYTES)
+        try:
+            if self.child.pid <= 0 or self.stderr or self.diagnostic_slab is not None:
+                raise ProbeError("diagnostic_backing_owner")
+            self.stderr = bytearray(DIAGNOSTIC_BYTES)
+            self.diagnostic_slab = bytearray(READ_BYTES)
+        except BaseException:
+            self.clock.remaining(self.phase_deadline)
+            self.fail("diagnostic_allocation_failed")
+            raise
 
     def diagnostic_check(self, live: bool = False) -> None:
         self.clock.observe()
@@ -354,28 +359,33 @@ class StreamRun(CancelRun):
         self.read_diagnostic_bytes(READ_BYTES)
 
     def receive_diagnostic_banner(self) -> None:
-        assert self.pipes is not None
-        banner = DECODER.banner
-        while self.stderr_count < len(banner):
+        try:
+            assert self.pipes is not None
+            banner = DECODER.banner
+            while self.stderr_count < len(banner):
+                self.diagnostic_check(live=True)
+                self.child.reap()
+                if self.child.exit_code is not None:
+                    raise ProbeError("native_exit_before_banner")
+                ready, _, _ = select.select(
+                    [self.pipes.output_read, self.pipes.error_read],
+                    [],
+                    [],
+                    min(0.05, self.preparation_remaining()),
+                )
+                if self.pipes.output_read in ready:
+                    raise ProbeError("native_stdout_before_input_gate")
+                if self.pipes.error_read in ready:
+                    self.read_diagnostic_bytes(len(banner) - self.stderr_count, preparing=True)
+                    if self.error_eof or any(
+                        self.stderr[index] != banner[index] for index in range(self.stderr_count)
+                    ):
+                        raise ProbeError("native_banner_absent_or_changed")
             self.diagnostic_check(live=True)
-            self.child.reap()
-            if self.child.exit_code is not None:
-                raise ProbeError("native_exit_before_banner")
-            ready, _, _ = select.select(
-                [self.pipes.output_read, self.pipes.error_read],
-                [],
-                [],
-                min(0.05, self.preparation_remaining()),
-            )
-            if self.pipes.output_read in ready:
-                raise ProbeError("native_stdout_before_input_gate")
-            if self.pipes.error_read in ready:
-                self.read_diagnostic_bytes(len(banner) - self.stderr_count, preparing=True)
-                if self.error_eof or any(
-                    self.stderr[index] != banner[index] for index in range(self.stderr_count)
-                ):
-                    raise ProbeError("native_banner_absent_or_changed")
-        self.diagnostic_check(live=True)
+        except BaseException:
+            self.clock.remaining(self.phase_deadline)
+            self.fail("diagnostic_banner_failed")
+            raise
 
     def complete_diagnostics(self) -> None:
         if self.diagnostic_attempted:
@@ -395,6 +405,9 @@ class StreamRun(CancelRun):
             self.diagnostic_check(live=True)
             self.diagnostic_facts = facts
         except BaseException:
+            self.clock.remaining(
+                self.phase_deadline if not self.input_released else self.decode_end
+            )
             self.fail("diagnostic_validation_failed")
             raise
         finally:
