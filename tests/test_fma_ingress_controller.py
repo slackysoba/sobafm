@@ -237,14 +237,19 @@ def test_actual_owner_null_partial_and_settled_producer_states(
         assert not command.worker.is_alive()
         command.owner_output = True
         command.ingress.feed(wire)
-        outer = controller(packet, tmp_path / "capture-ledger")
-        try:
-            outer.capture_owner(command, final=True)
-            assert outer.owner_report == record
-            assert not outer.clock.timing_unknown and not outer.clock.missed
-            assert outer.clock.cleanup_start_utc == NOW + 1
-        finally:
-            outer.journal.close()
+
+        class CaptureJournal(Journal):
+            def __init__(self) -> None:
+                # This boundary only records capture errors. Real journal write,
+                # fsync and retained-worker schedules have dedicated tests.
+                self.data = {}
+
+        outer = Controller(packet, CaptureJournal())
+        outer.clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 1, lambda: 10.0)
+        outer.capture_owner(command, final=True)
+        assert outer.owner_report == record
+        assert not outer.clock.timing_unknown and not outer.clock.missed
+        assert outer.clock.cleanup_start_utc == NOW + 1
 
 
 @pytest.mark.parametrize("created", ["x" * 4096, "\u6f22" * 100, "\U00010000" * 4096])

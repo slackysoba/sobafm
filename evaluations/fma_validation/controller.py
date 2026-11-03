@@ -55,9 +55,16 @@ class Command:
         self.descriptors: dict[str, int] = {}
         self.stopping: float | None = None
         self.launch_attempted = False
+        self.launch_finished = threading.Event()
         self.worker = threading.Thread(
-            target=self._launch, name="owned-docker-command", daemon=False
+            target=self._run_launch, name="owned-docker-command", daemon=False
         )
+
+    def _run_launch(self) -> None:
+        try:
+            self._launch()
+        finally:
+            self.launch_finished.set()
 
     def launch(self) -> None:
         """The controller must register this inert owner before attempting start."""
@@ -75,9 +82,11 @@ class Command:
 
     @property
     def launch_pending(self) -> bool:
-        # A start exception with no observed thread identity cannot certify that
-        # the underlying launch never began. Retain that owner without retry.
-        return self.launch_attempted and (self.worker.ident is None or self.worker.is_alive())
+        # An early ident and a false is_alive() do not prove startup completed.
+        # Require the target's own completion signal and actual thread exit.
+        return self.launch_attempted and (
+            not self.launch_finished.is_set() or self.worker.is_alive()
+        )
 
     def launch_admitted(self) -> bool:
         if self.clock is not None:

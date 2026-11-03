@@ -127,8 +127,9 @@ Helpers are registered before backing allocation. Management commands are inert
 until registered, then explicitly start their owned launch worker. Allocation
 success and failure check original case/operation deadlines before process
 launch; interruption during start retains the registered command. An attempted
-start without an observed thread identity remains uncertain debt, never an inert
-success or an automatic retry. Held allocation/read/hash/close and actual
+start without both the launch target's completion signal and actual thread exit
+remains uncertain debt, even if an early thread identity is already visible.
+It never becomes an inert success or automatic retry. Held allocation/read/hash/close and actual
 process/descriptor settlement keep their owner. A borrowed stdout view prevents
 backing retirement; the unchanged backing, used extent and records remain
 charged until the borrow ends. Both helper and management receipt publication

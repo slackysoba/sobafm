@@ -531,3 +531,63 @@ def test_unobserved_attempted_thread_start_retains_uncertain_debt(
     assert command.receipt()["launch_alive"] is True and not command.ingress.raw
     with pytest.raises(ProbeError, match="management_launch_not_admitted"):
         command.launch()
+
+
+def test_interrupted_bootstrap_identity_does_not_establish_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = Command(["never-launch"])
+    joins: list[float] = []
+
+    class Bootstrap:
+        # Controlled public-state schedule: ident exists before the target has
+        # run or Thread's started/alive state can establish actual completion.
+        ident: int | None = None
+
+        def start(self) -> None:
+            self.ident = 123
+            raise KeyboardInterrupt("synthetic intermediate bootstrap")
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float) -> None:
+            joins.append(timeout)
+            raise RuntimeError("cannot join thread before it is started")
+
+    monkeypatch.setattr(command, "worker", Bootstrap())
+    with pytest.raises(KeyboardInterrupt):
+        command.launch()
+    assert command.launch_pending and not command.settled()
+    command.pump()
+    assert not joins and command.receipt()["launch_alive"] is True
+
+
+def test_launch_target_signal_still_requires_actual_thread_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+    actual = Command._run_launch  # pyright: ignore[reportPrivateUsage]
+
+    class NoLaunch(Command):
+        def _launch(self) -> None:
+            self.ingress.allocate()
+
+    def held_exit(command: Command) -> None:
+        actual(command)
+        entered.set()
+        assert release.wait(5)
+
+    monkeypatch.setattr(Command, "_run_launch", held_exit)
+    command = NoLaunch(["synthetic"])
+    command.launch()
+    try:
+        assert entered.wait(3) and command.launch_finished.is_set()
+        assert command.worker.is_alive() and command.launch_pending and not command.settled()
+        command.pump()
+        assert len(command.ingress.raw) == REPORT_BYTES
+    finally:
+        release.set()
+        command.worker.join(3)
+    assert command.settled() and not command.launch_pending
+    command.ingress.retire()
