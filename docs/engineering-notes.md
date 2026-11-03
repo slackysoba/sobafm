@@ -42,6 +42,17 @@ Exercise real parent-reader and dispatch boundaries where applicable. Do not use
 
 Use the exact controlled-capacity definition and exclusions in [requirements](requirements.md). Do not describe it as total RSS or a complete security sandbox. Account for retained workers, prepared replacements, copies and cleanup debt before new admission.
 
+The [accepted decoder-PTY exclusion](decisions/0003-decoder-pty-exclusion.md)
+covers kernel backing only. Userspace diagnostic/audio/application/IPC payload
+stays charged, with the original partitions and first-cancellation deadline.
+Require actual userspace/process/FD settlement before a subsequent pair; a
+closed descriptor, EOF or exited leader alone cannot establish that settlement
+or prove prior kernel objects were reclaimed. Preserve failed verdicts and
+retained userspace debt. No three-second kernel-release guarantee, eventual
+reclamation result or physical/kernel backlog bound is established. Exact-image
+native sanitization, complete payload accounting and useful-fit qualification
+remain separate requirements; the exclusion is not execution permission.
+
 Bound untrusted input, response sizes, queues, concurrency and retries independently of process limits. Qualify useful workloads and actual release behavior in the intended Linux container. If a requirement prevents a viable design, present one measured alternative and its tradeoff.
 
 ## Catalog quality and rights

@@ -149,7 +149,7 @@ Cancellation never implies a resource was freed. Join retained operations before
 
 For each playing server, all retained whole-worker caps plus prepaid parent PCM payload capacity plus reserved parent audio/IPC payload-copy capacities must remain **strictly below 100,000,000 decimal bytes**. Aggregate PCM capacity is **at most 34,560,000 bytes**. Charge retained producers, prepared replacements, spares, fades, in-flight copies and cleanup debt within that scope. Record shared process-wide capacity and admission rules so sharing cannot multiply an uncharged allowance.
 
-This is a controlled-capacity guarantee, not a total RSS or total physical-audio-memory ceiling. Parent allocator/object overhead, native voice encoding/encryption/packet backing, kernel pipe/socket storage and uncharged shared/mapped backing are explicitly excluded; total physical audio memory may exceed 100 MB. Keep exclusions visible in the operator and developer documentation.
+This is a controlled-capacity guarantee, not a total RSS or total physical-audio-memory ceiling. Parent allocator/object overhead, native voice encoding/encryption/packet backing, kernel pipe/socket storage, the narrow decoder kernel PTY backing defined in [ADR 0003](decisions/0003-decoder-pty-exclusion.md), and uncharged shared/mapped backing are explicitly excluded; total physical audio memory may exceed 100 MB. The PTY exclusion does not cover userspace audio, diagnostic, application or IPC payload. Repeated sessions may leave an unquantified physical/kernel backlog; no three-second kernel-release bound or eventual reclamation result is established. Keep exclusions visible in the operator and developer documentation.
 
 Derive a feasible configuration and qualify it in the intended container before making it an application-wide dependency. No baseline subtraction or unallocated “residual allowance” may disguise capacity. If the guarantee prevents a useful deployment, raise one concrete decision with a measured alternative before proceeding.
 
@@ -162,6 +162,8 @@ For the [approved #7 experiment](decisions/0001-linux-resource-proposal.md), the
 Use one cleanup owner and one original monotonic three-second total deadline for feed cancellation, closure, joins, bounded drains, process-tree termination and reaping. Repeated cancellation does not reset the deadline or abandon ownership.
 
 Deadline expiry is a failed cleanup verdict. Retain leases, debt and process slots until resources actually release. Do not free capacity merely to allow the next request. A timeout must leave the station's health and admission behavior understandable.
+
+Under the narrow decoder-PTY decision, a subsequent pair may be admitted only after actual userspace, process and file-descriptor settlement, subject to all other admission and qualification gates. This does not claim that prior excluded kernel objects were reclaimed. The original cancellation deadline, failed verdicts and retained userspace ownership/debt remain; close, EOF or process exit alone cannot certify all required settlement. The unchanged experiment remains 90,177,536 group + 4,608,000 PCM + 4,194,304 copies = 98,979,840 bytes, with all original userspace partitions and no new PTY pool.
 
 ## Feedback, metadata and credits
 

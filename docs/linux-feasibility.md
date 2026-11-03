@@ -274,11 +274,23 @@ runtime evidence outside the failed container; restart joins voice idle and
 never resumes the previous program.
 
 The product exclusions remain visible: parent allocator/object overhead, native
-voice encoding/encryption/packet backing, kernel pipe/socket storage and
-uncharged shared/mapped backing. They are not extra payload pools. Total physical
-audio memory may exceed 100 MB. This design is resource containment, not a
-complete security sandbox. Source storage limits and development disk budgets
-are separate from this memory calculation.
+voice encoding/encryption/packet backing, kernel pipe/socket storage, the narrow
+decoder kernel PTY backing in [ADR 0003](decisions/0003-decoder-pty-exclusion.md),
+and uncharged shared/mapped backing. They are not extra payload pools. Total
+physical audio memory may exceed 100 MB. This design is resource containment,
+not a complete security sandbox. Source storage limits and development disk
+budgets are separate from this memory calculation.
+
+The accepted PTY amendment keeps the stock decoder, G/P/C and all original
+userspace partitions. A subsequent pair may be admitted after actual
+userspace/process/FD settlement and the other applicable admission gates,
+without asserting prior excluded kernel reclamation. Original cancellation
+clocks, failed verdicts and retained userspace debt still apply. Repeated sessions
+may leave an unquantified physical/kernel backlog; no three-second kernel-release
+bound or eventual reclamation result is proved. Exact-source/image/native
+sanitization, complete payload accounting and useful fit remain qualification
+gates. This amendment neither extends the historical proof records below nor
+adopts the application architecture.
 
 ## Decoder supply and source obligations
 

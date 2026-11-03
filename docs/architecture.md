@@ -38,7 +38,16 @@ limits scan per phase preserves the exact resource policy; the stopped scan
 retains every admitted map row and its original-byte digest between complete
 identity/inventory brackets. Selected map/limit facts, projections and receiver
 copies remain charged separately from contained raw control scratch. This local
-boundary does not close the full runner/PTY accounting or release native work.
+boundary does not close full runner/userspace accounting or release native work.
+
+The [accepted decoder-PTY amendment](decisions/0003-decoder-pty-exclusion.md)
+excludes only kernel PTY backing alongside kernel pipe/socket storage. It keeps
+the stock decoder, all userspace partitions and the 98,979,840-byte total. A
+subsequent pair requires actual userspace/process/FD settlement and all other
+admission gates; prior excluded kernel objects may remain unreclaimed, with no
+physical/kernel backlog bound. Original cancellation clocks and userspace debt
+remain. This contract amendment does not qualify runtime fit or adopt the
+proposed application architecture.
 
 The explicit owned-synthetic qualification entries reuse this same pipeline with
 three finite case identities. `LocalRequest` shares ownership operations between
