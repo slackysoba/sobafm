@@ -32,6 +32,7 @@ from evaluations.fma_validation.observation import (
     ObservationWorkspace,
     ProcessPin,
 )
+from evaluations.linux_resource import owned_mp3_cancel as cancellation
 from evaluations.linux_resource import owned_mp3_decode as native
 from evaluations.linux_resource.decoder_startup import Child
 from evaluations.linux_resource.owned_mp3_overlap import Pipes
@@ -108,13 +109,14 @@ class Harness:
     now: list[float]
     roles: tuple[ProcessPin, ProcessPin, ProcessPin]
 
-    def admit(self, deadline: float = 150) -> tuple[NativeLimits, NativeMaps]:
-        return self.observation.stopped_native(4, 30, "/usr/bin/mpg123", *self.roles, deadline)
+    def admit(self, deadline: float | None = None) -> tuple[NativeLimits, NativeMaps]:
+        original = self.observation.clock.end_monotonic - 50 if deadline is None else deadline
+        return self.observation.stopped_native(4, 30, "/usr/bin/mpg123", *self.roles, original)
 
 
-def harness(chunk: int = 2048) -> Harness:
-    now = [100.0]
-    clock = CaseClock(200, 300, wall=lambda: now[0], monotonic=lambda: now[0])
+def harness(chunk: int = 2048, *, uptime: float = 100.0) -> Harness:
+    now = [uptime]
+    clock = CaseClock(uptime + 100, uptime + 200, wall=lambda: now[0], monotonic=lambda: now[0])
     streams, bridge = NativeStreams(chunk), NativeBridge()
     for pid in range(1, 6):
         streams.files[f"/proc/{pid}/stat".encode()] = stat(
@@ -561,10 +563,11 @@ def test_cancellation_cannot_replace_a_held_native_read() -> None:
 
 
 @pytest.mark.parametrize("fault", ["capacity", "cancel"])
+@pytest.mark.parametrize("uptime", [0.25, 500.0])
 def test_stream_report_failure_retains_complete_selected_maps_before_any_resume(
-    fault: str, monkeypatch: pytest.MonkeyPatch
+    fault: str, uptime: float, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    h = harness()
+    h = harness(uptime=uptime)
     h.streams.files[b"/proc/4/maps"] = maps(64, 512)
 
     def capture(_cls: type[ProcessPin], _pid: int, _workspace: ObservationWorkspace) -> ProcessPin:
@@ -574,10 +577,13 @@ def test_stream_report_failure_retains_complete_selected_maps_before_any_resume(
         pytest.fail("failed report allocated banks, resumed, or wrote")
 
     monkeypatch.setattr(ProcessPin, "capture", classmethod(capture))
+    # Use the real owner cancellation route and one clock on both sides of its
+    # inherited admission check, so host uptime cannot mask a missing request.
+    monkeypatch.setattr(cancellation, "time", MonotonicClock(h.now))
     run = decoder.StreamRun(
         h.roles[0], h.roles[1], h.observation.clock, -1, workspace=h.observation
     )
-    run.child.pid, run.start_ticks, run.phase_deadline = 4, 30, 150
+    run.child.pid, run.start_ticks = 4, 30
     limits, mappings = run.stopped_observation()
     run.native_gate = {"rlimits": limits, "mappings": mappings}
     run.pipes = Pipes(10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
@@ -587,7 +593,7 @@ def test_stream_report_failure_retains_complete_selected_maps_before_any_resume(
 
     def cancel(value: object) -> bytes:
         data = actual(value)
-        h.observation.clock.cancel()
+        run.request("synthetic_cancel")
         return data
 
     if fault == "capacity":
@@ -597,12 +603,26 @@ def test_stream_report_failure_retains_complete_selected_maps_before_any_resume(
     monkeypatch.setattr(decoder, "bytearray", forbidden, raising=False)
     monkeypatch.setattr(decoder.os, "kill", forbidden)
     monkeypatch.setattr(decoder, "write_report", forbidden)
-    with pytest.raises(ProbeError) as error:
+    assert run.preparation_remaining() == 15 and run.cancel.started is None
+    expected = (
+        "report_capacity_exceeded"
+        if fault == "capacity"
+        else "decoder preparation expired or was cancelled"
+    )
+    with pytest.raises(ProbeError, match=f"^{expected}$") as error:
         run.admit_stream()
+    assert h.now[0] == uptime and run.phase_deadline - h.now[0] == 15
+    if fault == "capacity":
+        assert run.cancel.started is None and h.observation.clock.cleanup_start_utc is None
+    else:
+        assert run.cancel.started == uptime and h.observation.clock.cleanup_start_utc == uptime
     run.fail(error.value)
     assert not run.buffers and not run.input_released
     assert h.observation.committed.maps is selected and run.native_gate["mappings"] is mappings
-    assert mappings == selected.record() and h.observation.clock.cleanup_monotonic == 103
+    assert mappings == selected.record() and h.observation.clock.cleanup_monotonic == uptime + 3
+    h.now[0] = uptime + 2
+    run.request("repeat")
+    assert run.cancel.started == uptime and run.cancel.deadline == uptime + 3
 
 
 def test_selected_payload_projections_and_receiver_overlap_fit_named_reservations() -> None:
