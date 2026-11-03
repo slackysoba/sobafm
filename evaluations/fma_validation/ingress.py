@@ -404,7 +404,7 @@ HOST = obj(
     }
 )
 DOCKER_CLEANUP = obj(
-    {"id": HASH, "name": PATH, "image": text(71), "labels": LABELS, "state": STATE}
+    {"id": HASH, "name": text(43), "image": text(71), "labels": LABELS, "state": STATE}
 )
 DOCKER_CONFIG = obj(
     {
@@ -779,7 +779,7 @@ def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
 
 def materialize(data: memoryview, *, utf8: bool = False) -> dict[str, object]:
     value: object = json.loads(
-        bytes(data).decode("utf-8" if utf8 else "ascii"), object_pairs_hook=pairs
+        str(data, "utf-8" if utf8 else "ascii", "strict"), object_pairs_hook=pairs
     )
     if type(value) is not dict:
         raise ProbeError("helper_report_object_required")
@@ -807,6 +807,46 @@ class Record:
     family: str
 
 
+class Opaque:
+    """Original accepted-prefix facts only; no opaque stderr payload retention."""
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.digest = hashlib.sha256()
+        self.error: str | None = None
+        self.eof = False
+        self.retired = False
+
+    def __bool__(self) -> bool:
+        return self.count != 0
+
+    def read_size(self) -> int:
+        return 4096 if self.error else min(4096, REPORT_BYTES - self.count + 1)
+
+    def feed(self, data: bytes) -> None:
+        if self.retired or self.eof:
+            self.error = self.error or "ingress_after_eof"
+            return
+        if self.error == "opaque_hash_failed":
+            self.eof = not data
+            return
+        remaining = REPORT_BYTES - self.count
+        with memoryview(data)[:remaining] as part:
+            if part:
+                try:
+                    self.digest.update(part)
+                except BaseException:
+                    self.error = self.error or "opaque_hash_failed"
+                    raise
+            self.count += len(part)
+        if len(data) > remaining:
+            self.error = self.error or "helper_report_bound"
+        self.eof = not data
+
+    def retire(self) -> None:
+        self.retired = True
+
+
 class Ingress:
     """One original stream budget, two finite slots and sticky suffix failure.
 
@@ -814,9 +854,10 @@ class Ingress:
     externally visible backing is checked for mutation before using cached facts.
     """
 
-    def __init__(self, role: str) -> None:
+    def __init__(self, role: str, *, deferred: bool = False) -> None:
         self.role = role
         self.raw = bytearray()
+        self.used = 0
         self.count = 0
         self.digest = hashlib.sha256()
         self.offset = 0
@@ -824,21 +865,49 @@ class Ingress:
         self.error: str | None = None
         self.retired = False
         self.final = False
+        self.eof = False
+        if not deferred:
+            self.allocate()
+
+    def allocate(self) -> None:
+        if self.retired:
+            raise ProbeError("ingress_retired")
+        if not self.raw:
+            # Runtime owners register themselves before this fallible operation,
+            # and check the original clock before any subsequent process launch.
+            self.raw = bytearray(REPORT_BYTES)
+
+    def __bool__(self) -> bool:
+        return self.used != 0
+
+    def read_size(self) -> int:
+        return 4096 if self.error else min(4096, REPORT_BYTES - self.used + 1)
+
+    def view(self) -> memoryview:
+        """Caller must release this borrow before retiring the charged backing."""
+        return memoryview(self.raw)[: self.used]
 
     def feed(self, data: bytes) -> None:
-        if self.retired or self.final:
+        if self.retired or self.final or self.eof:
             self.error = "ingress_after_eof"
             return
-        remaining = REPORT_BYTES - len(self.raw)
+        self.allocate()
+        remaining = REPORT_BYTES - self.used
         with memoryview(data)[:remaining] as part:
-            self.raw.extend(part)
+            with memoryview(self.raw)[self.used : self.used + len(part)] as target:
+                target[:] = part
+            self.used += len(part)
         if len(data) > remaining:
             self.error = "helper_report_bound"
+        self.eof = not data
 
     def check_prefix(self) -> bool:
         if self.retired:
             return False
-        with memoryview(self.raw) as view:
+        if len(self.raw) not in (0, REPORT_BYTES) or not 0 <= self.used <= len(self.raw):
+            self.error = "ingress_storage_changed"
+            return False
+        with self.view() as view:
             if (
                 len(view) < self.count
                 or hashlib.sha256(view[: self.count]).digest() != self.digest.digest()
@@ -856,15 +925,15 @@ class Ingress:
         if not self.check_prefix():
             return
         self.final |= final
-        while self.offset < len(self.raw):
-            end = self.raw.find(b"\n", self.offset)
+        while self.offset < self.used:
+            end = self.raw.find(b"\n", self.offset, self.used)
             if end < 0:
                 if not final:
                     break
                 if self.role != "metadata":
                     self.error = self.error or "ingress_partial_record"
                     break
-                end = len(self.raw)
+                end = self.used
             start, self.offset = self.offset, end + 1
             if end == start:
                 continue
@@ -898,9 +967,10 @@ class Ingress:
                 if family in ("decode", "owner") and scan.envelope_valid:
                     envelope: dict[str, object] = {}
                     for key, (start, end) in scan.spans.items():
-                        envelope[key] = json.loads(
-                            bytes(view[start:end]).decode("ascii"), object_pairs_hook=pairs
-                        )
+                        with view[start:end] as span:
+                            envelope[key] = json.loads(
+                                str(span, "ascii", "strict"), object_pairs_hook=pairs
+                            )
                     record = Record(None, envelope, family)
             if record is None:
                 record = Record(None, None, self.role)
@@ -913,7 +983,12 @@ class Ingress:
         self.records.append(record)
 
     def retire(self) -> None:
+        if self.retired:
+            return
         self.check_prefix()
+        # bytearray refuses resize while any exported view remains. On that
+        # failure the same fixed backing, used extent and records stay owned.
         self.raw.clear()
+        self.used = 0
         self.records.clear()
         self.retired = True

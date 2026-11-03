@@ -390,6 +390,7 @@ def test_outer_terminal_capture_survives_nonzero_or_late_drain(
         ]
     )
     command.owner_output = True
+    command.launch()
     try:
         command.worker.join(3)
         assert command.process is not None and command.process.wait(timeout=3) == 1

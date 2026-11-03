@@ -232,6 +232,7 @@ def test_actual_owner_null_partial_and_settled_producer_states(
                 pass
 
         command = NoLaunch(["synthetic-owner-output"])
+        command.launch()
         command.worker.join(3)
         assert not command.worker.is_alive()
         command.owner_output = True
@@ -314,13 +315,20 @@ def test_retained_attach_and_cleanup_command_share_two_slots(
     held = HeldLaunch(["synthetic-held-attach"])
     held.owner_output = True
     owner.commands.append(held)
+    held.launch()
     assert entered.wait(2)
     actual = module.Command
     observed: list[int] = []
 
-    def create(argv: list[str]) -> Command:
+    def create(
+        argv: list[str],
+        *,
+        clock: CaseClock | None = None,
+        cleanup: bool = False,
+        deadline: float | None = None,
+    ) -> Command:
         observed.append(len(owner.commands))
-        return actual(argv)
+        return actual(argv, clock=clock, cleanup=cleanup, deadline=deadline)
 
     monkeypatch.setattr(module, "Command", create)
     try:
@@ -419,6 +427,7 @@ def test_base_exception_drains_retained_command_before_propagation(
             super().stop()
 
     command = HeldCommand(["synthetic"])
+    command.launch()
     command.owner_output = True
     command.ingress.feed(b"{}\n")  # Rejection during drain cannot sanitize the pending verdict.
     owner.commands.append(command)

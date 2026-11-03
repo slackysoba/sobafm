@@ -13,7 +13,7 @@ import pytest
 from evaluations.fma_validation import ingress as module
 from evaluations.fma_validation.cases import CASE_IDS, NIGHT_OWL, CaseBinding, CaseId
 from evaluations.fma_validation.consumer import ValidationConsumer
-from evaluations.fma_validation.ingress import Ingress, decode
+from evaluations.fma_validation.ingress import Ingress, Opaque, decode
 from evaluations.fma_validation.limits import REPORT_BYTES, encode_report
 from evaluations.fma_validation.process import OwnedHelper, ProcessPin
 from evaluations.linux_resource.probe import ProbeError
@@ -452,10 +452,10 @@ def test_helper_retirement_failure_publishes_one_receipt(
     helper.pin = consumer.owner_pin
     helper.ingress.feed(encode_report(terminal(helper.pin), newline=True))
     consumer.active = helper
-    actual = Ingress.retire
+    actual = Opaque.retire
     attempts = 0
 
-    def fail_once(owner: Ingress) -> None:
+    def fail_once(owner: Opaque) -> None:
         nonlocal attempts
         if owner is helper.errors:
             attempts += 1
@@ -463,7 +463,7 @@ def test_helper_retirement_failure_publishes_one_receipt(
                 raise ProbeError("synthetic_retirement_failure")
         actual(owner)
 
-    monkeypatch.setattr(Ingress, "retire", fail_once)
+    monkeypatch.setattr(Opaque, "retire", fail_once)
     with pytest.raises(ProbeError, match="synthetic_retirement_failure"):
         consumer.join(0)
     assert consumer.active is helper and len(consumer.history) == 1

@@ -131,6 +131,18 @@ exception payloads with GC disabled and retained journal worker/record debt.
 Neither selected projection size nor source-path aliases close decoder `J` or
 the complete retained-fact ledger; public intake serialization remains separate.
 
+Exercise fixed receive capacity separately from used bytes, including empty
+responses, dirty unfilled tails, fragmented prefix overflow and retained views.
+Opaque stderr hashes only its accepted prefix and retains no body. Block real
+pipe read/hash/close operations across cancellation; verify no capacity or owner
+release and no new prefix after hash failure. Late/failing allocation and an
+interrupted thread start must preserve registered owners and original deadlines.
+Retirement under a borrowed view cannot drop backing or publish another receipt.
+Count immutable read results until their explicit end, and distinguish the
+removed explicit bytes conversion from unproved codec/JSON internal copies.
+Test rejected wide cleanup names and valid Unicode setup families separately;
+the old rejected-input subtotal is not a surviving family maximum or fit proof.
+
 Its failure regressions include nonzero helper exit after full delivery, early
 write exit with immediately available or later-drained terminal evidence,
 simultaneous helper failure, absent/partial/malformed/cross-case records, repeated
