@@ -40,6 +40,17 @@ identity/inventory brackets. Selected map/limit facts, projections and receiver
 copies remain charged separately from contained raw control scratch. This local
 boundary does not close full runner/userspace accounting or release native work.
 
+Environment preflight and resource counters now use that same bounded workspace.
+Mount/security/limit input shares one cumulative transaction; only gate bits and
+bounded immutable counter facts cross selection. Intake and decoder final
+resource observations precede clean-settlement decisions, including actual
+close and the original-clock check. Uncertain final observations retain debt;
+the decoder makes one final attempt and performs no fresh resource read in its
+terminal-report method. Selected resources reserve 16,384 bytes within each
+affected original owner partition, separately from pins/maps and report copies.
+The updated partial runner subtotal is 712,704 bytes; remaining payload closure
+and native fit are still pending.
+
 The [accepted decoder-PTY amendment](decisions/0003-decoder-pty-exclusion.md)
 excludes only kernel PTY backing alongside kernel pipe/socket storage. It keeps
 the stock decoder, all userspace partitions and the 98,979,840-byte total. A

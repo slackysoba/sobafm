@@ -83,6 +83,16 @@ native fit evidence before source intake; synthetic tests and unchanged native
 ELF hashes cannot substitute for it. Mutagen remains a pinned evaluation-only
 dependency with preserved GPL notices and explicit pre-parser allocation limits.
 
+Environment/counter regressions use synthetic fragmented streams and controlled
+read/close schedules. Cover the cumulative transaction budget as well as each
+record limit, conflicting/escaped/duplicate mount destinations, CPU overflow,
+counter key-set changes/decreases and terminal delta overflow. Final resource
+observation must finish before any clean-settlement claim. A held or uncertain
+final close retains its descriptor and staged facts; a late cleanup observation
+cannot reset the first cancellation clock or turn unknown timing into success.
+Do not retry a failed final snapshot or hide sender/receiver resource payload
+inside raw control scratch. These offline checks do not qualify native behavior.
+
 Its failure regressions include nonzero helper exit after full delivery, early
 write exit with immediately available or later-drained terminal evidence,
 simultaneous helper failure, absent/partial/malformed/cross-case records, repeated

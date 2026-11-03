@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 
-from evaluations.linux_resource.probe import ProbeError, counters, emit, observe, read_text
+from evaluations.linux_resource.probe import ProbeError, emit
 from sobafm.fma_intake import LocalIntake, OwnedRead
 
 from .consumer import ValidationConsumer, expected_outcome
@@ -27,7 +27,7 @@ CONFIG = Path("/case/packet.json")
 
 
 def preflight(packet: Packet, workspace: ObservationWorkspace) -> tuple[ProcessPin, ProcessPin]:
-    observe()
+    workspace.environment(intake=True)
     if os.getpid() == 1 or os.uname().machine != "x86_64":
         raise ProbeError("separate_native_amd64_owner_required")
     init, owner = ProcessPin.capture(1, workspace), ProcessPin.capture(os.getpid(), workspace)
@@ -55,24 +55,6 @@ def preflight(packet: Packet, workspace: ObservationWorkspace) -> tuple[ProcessP
         or os.statvfs(SLOT).f_flag & os.ST_RDONLY
     ):
         raise ProbeError("persistent_private_slot_binding")
-    # Before LocalIntake opens the original, require separately bound read-only
-    # source/config/original mounts and no unexpected mount below the volume.
-    mounts = read_text(Path("/proc/self/mountinfo")).splitlines()
-    destinations: dict[str, set[str]] = {}
-    for line in mounts:
-        parts = line.split()
-        if len(parts) < 10:
-            raise ProbeError("mount_inventory_unknown")
-        destinations[parts[4]] = set(parts[5].split(","))
-    if any(
-        "ro" not in destinations.get(path, set())
-        for path in ("/source", str(ORIGINAL), str(CONFIG))
-    ):
-        raise ProbeError("readonly_bind_gate")
-    if "rw" not in destinations.get("/pending", set()) or any(
-        name.startswith("/pending/") for name in destinations
-    ):
-        raise ProbeError("persistent_volume_mount_gate")
     return init, owner
 
 
@@ -80,7 +62,7 @@ def execute(packet: Packet) -> dict[str, object]:
     clock = CaseClock(packet.whole_end, packet.expires)
     workspace = ObservationWorkspace(clock)
     init, owner_pin = preflight(packet, workspace)
-    before = counters(read_text(Path("/sys/fs/cgroup/memory.events")))
+    before = workspace.resources()
     owner = LocalIntake(SLOT, ORIGINAL, packet.request)
     consumer = ValidationConsumer(owner, init, owner_pin, clock, packet.case, workspace=workspace)
     reader: OwnedRead | None = None
@@ -129,9 +111,15 @@ def execute(packet: Packet) -> dict[str, object]:
         # finite controller may stop this exact container, retaining its volume.
         while not owner.join(0.01):
             clock.observe()
-    after = counters(read_text(Path("/sys/fs/cgroup/memory.events")))
-    memory_ok = set(before) == set(after) and all(after[key] >= before[key] for key in before)
-    delta = {key: after[key] - before[key] for key in before} if memory_ok else {}
+    delta: dict[str, int] = {}
+    swap: int | None = None
+    try:
+        after = workspace.resources(cleanup=True)
+        delta, swap = after.delta(before), after.swap
+    except ProbeError:
+        failure = failure or "validation_resources_failed"
+    # All observations precede the debt/clock verdict. A failed final read is
+    # never replaced by a fresh snapshot or a cached zero-swap observation.
     report = owner.report()
     reader_report = None if reader is None else reader.report()
     settled = (
@@ -144,7 +132,7 @@ def execute(packet: Packet) -> dict[str, object]:
         and not clock.timing_unknown
         and delta.get("oom") == 0
         and delta.get("oom_kill") == 0
-        and read_text(Path("/sys/fs/cgroup/memory.swap.current")).strip() == "0"
+        and swap == 0
     )
     passed = settled and failure is None and consumer.finished
     result: dict[str, object] = {

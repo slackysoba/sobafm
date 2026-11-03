@@ -184,8 +184,9 @@ attempt; this is not permission to retain an unbounded history. Container/object
 headers remain in G. Selected facts, partial rows and external immutable aliases
 remain charged during held reads/closes, failed reports and snapshot replacement.
 
-The known simultaneous runner payload subtotal is 696,320 bytes: selected native
-facts 32,768; pins 8,192; input bytes plus input buffer 131,072; two existing PCM
+The known simultaneous runner payload subtotal is 712,704 bytes: selected native
+facts 32,768; pins 8,192; selected resources 16,384 (detailed below);
+input bytes plus input buffer 131,072; two existing PCM
 scratch chunks 131,072; three diagnostic extents 196,608; and three report extents
 196,608 (encoding pair plus a conservatively retained line). The PCM bank stays
 in its separate P reservation. This subtotal deliberately is **not full runner
@@ -197,16 +198,86 @@ or backlog bound. The difference is not an unallocated allowance or execution re
 Receiver copies coexist with the sender: the intake owner's existing partition
 charges its stdout buffer, raw copy, complete-prefix copy, split lines, JSON
 decoding, newly parsed values and prior retained record at a conservative seven
-65,536-byte extents, plus 32,768 selected native bytes (491,520 total for this
-native receive overlap). Other intake-owner payload remains separate pending work.
+65,536-byte extents, plus 32,768 selected native bytes and 16,384 for its own
+selected resources (507,904 total for this receive/resource overlap).
+Other intake-owner payload remains separate pending work.
 No receiver copy is hidden in the sender's alias accounting. Tests preserve every
 selected record through serialization/receive and exercise old/staged evidence,
 report rejection before bank allocation/resume and original cleanup deadlines.
 
-Counters, mountinfo and the preliminary legacy environment probe remain later
-capacity work. No full runner envelope, native fit, Linux containment or release
+The bounded environment/counter observations below replace the preliminary
+legacy environment probe in FMA only. No full runner envelope, native fit, Linux containment or release
 qualification follows from these deterministic tests. The runner remains
 786,432 bytes and the total remains 98,979,840 bytes, with no residual pool.
+
+### Environment, mount and resource observations
+
+FMA environment preflight uses the same `ObservationWorkspace`, one arena and
+one descriptor/lease. Self identity/security/cgroup, mountinfo, effective limits,
+current memory/events/swap and the decoder's core route share one cumulative
+**65,536-byte** transaction, including overflow probes and complete EOF. The
+existing 8,192-byte arena's line region extends to `[4096:5120]`; no extra read
+thread or nested transaction is introduced. Component maxima cannot all coexist.
+The historical Linux probes are unchanged. Unused version/hash projections are
+omitted, while authenticated packet source hashes, native/runtime identity,
+amd64/topology, single-thread, 4096-byte page and slot/statvfs gates remain.
+
+The preflight requires all self UID/GID values 1000, NNP=1, seccomp=2, CapEff=0 and
+exact `0::/` membership. Mountinfo admits at most 256 complete rows, 1,024 bytes
+per row, 64 spans per row and an exact separator with three trailing fields.
+Only required gate bits are retained. Destinations must be absolute and
+unescaped/canonical; duplicate required destinations, ambiguous paths and
+conflicting/duplicate `ro`/`rw` option tokens fail. `/sys/fs/cgroup` must be
+read-only cgroup2. Intake additionally requires read-only `/source`,
+`/input/original` and `/case/packet.json`, writable `/pending`, and no mount below
+`/pending`. No whole mount table becomes selected payload.
+
+Scalars are complete newline-terminated ASCII records of at most 64 bytes,
+with at most 20 decimal digits and overflow-safe uint64 parsing. Required limits
+remain memory.max=90,177,536, memory.swap.max=0, pids.max=64 and exactly two
+numeric cpu.max tokens with quota twice a positive period. `max` and overflow
+fail; all four limit files must be unwritable by the application. The decoder's
+core route is exactly `core` plus newline. Preflight validates memory.current,
+events and swap but discards those control values; the separate baseline remains
+at the original point immediately before intake/native preparation.
+
+Resource observations combine events and swap in one transaction. Events admit
+at most 4,096 bytes, 32 unique keys of at most 32 ASCII alphanumeric/underscore
+characters, 127 bytes per row, and uint64 values. `oom` and `oom_kill` are required;
+other keys are retained. Baseline/final key sets must match, counts cannot
+decrease, and deltas cannot exceed the existing terminal wire ceiling `2**63`.
+Immutable `ResourceFacts` retain selected event pairs and swap; the existing
+`memory_event_delta` dictionary and decimal `swap_current` string remain on wire.
+
+The owner takes final resources after intake joins and before its clean/debt
+decision. The decoder takes one final snapshot after child/I/O settlement and
+before setting `released` or committing a clean terminal result; `finish()`
+performs no fresh resource reads. Failure never triggers a fresh-snapshot retry.
+Held operations keep the workspace lease, descriptor, arena and old/new selected
+facts; uncertain close retains debt and prevents local release. The first error
+starts cleanup before close, and original-clock checks continue through EOF,
+parse, close and commit. Cleanup observations may settle later ownership without
+erasing missed/unknown timing or a failed verdict.
+
+Each affected workspace prepays **16,384 selected-resource bytes within its
+original owner partition**, separately from pins, native records and report/IPC
+copies. A conservative four-version allowance is `4 * 32 * (32 + 32) = 8192`
+bytes for keys and bounded integers: retained baseline, prior committed evidence,
+staged/partial final evidence and delta/projection overlap. Immutable aliases do
+not create new payload backing, but this calculation charges them conservatively.
+Another 1,024 bytes covers bounded selected key conversion, swap/scalar fields
+and fixed projection keys. Actual callers retain only preflight, baseline and
+one final attempt, not an unbounded resource history. Container/object/allocator
+headers and discarded raw parsing remain in the full G charge.
+
+Adding this reservation makes the known runner subtotal **712,704 bytes**
+(696,320 + 16,384), and the known intake receive/own-resource overlap **507,904
+bytes** (491,520 + 16,384). Report serialization and receiver byte/text/parsed
+copies still coexist under their separate existing extents; outer received
+records remain charged there too. These are partial subtotals, not full runner,
+intake or controller closure. Diagnostic parsing/encoding and other retained
+payload still need complete accounting and exact-image native fit. No reservation
+is expanded, and no new pool or residual allowance is created.
 
 The outer controller owns bounded Docker command launch, pipes, output and actual
 child exit. It journals intent before dispatch and records the full exact container
