@@ -10,9 +10,10 @@ from typing import cast
 
 import pytest
 
-from evaluations.fma_validation import limits, metadata
+from evaluations.fma_validation import metadata
 from evaluations.fma_validation.limits import encode_report, json_size
 from evaluations.linux_resource.probe import ProbeError
+from sobafm import json_records
 
 
 def safe_size(size: int) -> bytes:
@@ -237,7 +238,7 @@ def test_rejected_escaped_output_never_allocates_work_backing(
     def forbidden(*_args: object, **_kwargs: object) -> str:
         pytest.fail("oversized output reached work backing allocation")
 
-    monkeypatch.setattr(limits, "bytearray", forbidden, raising=False)
+    monkeypatch.setattr(json_records, "bytearray", forbidden, raising=False)
     with pytest.raises(ProbeError, match="report_capacity_exceeded"):
         encode_report(["\x01" * 4096] * 64, 32_768)
 

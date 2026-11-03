@@ -22,6 +22,7 @@ SOURCE_FILES = (
     "src/sobafm/__init__.py",
     "src/sobafm/catalog.py",
     "src/sobafm/fma_intake.py",
+    "src/sobafm/json_records.py",
     "evaluations/linux_resource/mp3_vbr_contract.py",
     "evaluations/linux_resource/probe.py",
     "evaluations/linux_resource/decoder_startup.py",

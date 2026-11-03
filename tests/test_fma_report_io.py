@@ -21,6 +21,7 @@ from evaluations.fma_validation.limits import CaseClock, encode_report
 from evaluations.fma_validation.packet import Packet
 from evaluations.fma_validation.report_io import RecordWrite
 from evaluations.linux_resource.probe import ProbeError
+from sobafm import json_records
 from tests.test_fma_report_encoding import track_arenas
 
 
@@ -275,12 +276,12 @@ def test_metadata_releases_rejected_arena_and_exception_context_before_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arenas = track_arenas(monkeypatch)
-    original_walk = limits.JsonBuffer.walk
+    original_walk = json_records.JsonBuffer.walk
     original_encode = encode_report
     failures: list[BaseException] = []
     build = 0
 
-    def walk(self: limits.JsonBuffer, item: object, depth: int) -> None:
+    def walk(self: json_records.JsonBuffer, item: object, depth: int) -> None:
         original_walk(self, item, depth)
         if build % 2 == 1 and depth == 0 and self.backing is not None:
             cause = RuntimeError("synthetic source context")
@@ -307,7 +308,7 @@ def test_metadata_releases_rejected_arena_and_exception_context_before_fallback(
     def write(_fd: int, data: bytes | memoryview) -> int:
         return len(data)
 
-    monkeypatch.setattr(limits.JsonBuffer, "walk", walk)
+    monkeypatch.setattr(json_records.JsonBuffer, "walk", walk)
     monkeypatch.setattr(metadata, "encode_report", encode)
     metadata_syscalls(monkeypatch, write)
     enabled = gc.isenabled()

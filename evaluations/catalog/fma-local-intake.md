@@ -142,6 +142,28 @@ analysis, provider adapter, SDK, service or new dependency.
 
 ## Pending lifetime, cancellation and recovery
 
+Compact record checks and persistence use the production `json_records` encoder.
+Acquisition evidence/notices retain their 4,096-byte gates, and reports/state
+retain 16,384 bytes. Canonical hashes use fixed 4,096-byte document backing with
+no new fingerprint-output cap or evaluation-only scalar restrictions. Historical
+v1 schema omission and v2 fingerprints remain byte-exact. State preflight/build
+finishes before removing/opening its temporary file; writes borrow the immutable
+record through partial/interrupted calls. The original write/fsync/close/identity/
+replace/parent-fsync order and retained ownership remain in force.
+
+For state limit L, size/fill can retain a scalar spelling of up to 2L in addition
+to work L; immutable freeze separately owns work L plus result L. Source facts,
+maintained conversion scratch and concurrent report/hash operations are separate
+charges. Fixed hash backing does not bound every huge directly constructed scalar
+or establish full resource fit. The [evaluation ledger](../fma_validation/README.md#compact-intake-records-and-hashes)
+records the remaining accounting obligations.
+
+Ordinary CLI output is unchanged: insertion-order/spaced JSON and print/flush
+still need a separate construction/transport and cancellation-ownership review.
+The compact report gate alone does not bound that representation or certify
+output settlement. The contained evaluation instead joins the intake worker and
+uses its already bounded evaluation writer for the final report.
+
 The command **stays alive** as the pending copy's expiry and cleanup owner. A
 pending receipt does not end its responsibility. Keep the process and original
 manifest available until cleanup settles. The expiry is absolute, strictly after

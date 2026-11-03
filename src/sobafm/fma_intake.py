@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
+from sobafm import json_records
 from sobafm.catalog import Catalog, CatalogInputError, Source, metadata_digest, parse_catalog
 
 MAX_BYTES = 20_000_000
@@ -95,8 +96,38 @@ def _digest(value: object) -> str:
     return value
 
 
-def _encoded(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+def _fits_record(value: object, limit: int) -> bool:
+    try:
+        json_records.json_size(value, limit)
+        return True
+    except json_records.RecordError as error:
+        if str(error) == "capacity_exceeded":
+            return False
+    except TypeError, ValueError, RecursionError:
+        pass
+    # Raise outside the handler: a completed encoder failure is not a new
+    # workflow error's implicit context. Existing cleanup catches IntakeError.
+    raise IntakeError("invalid_json_record")
+
+
+def _record_hash(value: object) -> str:
+    try:
+        return json_records.canonical_digest(value)
+    except TypeError, ValueError, RecursionError:
+        pass
+    raise IntakeError("invalid_json_record")
+
+
+def _state_record(value: object) -> bytes:
+    failure = "invalid_json_record"
+    try:
+        return json_records.encode_record(value, MAX_MANIFEST_BYTES)
+    except json_records.RecordError as error:
+        if str(error) == "capacity_exceeded":
+            failure = "state_oversize"
+    except TypeError, ValueError, RecursionError:
+        pass
+    raise IntakeError(failure)
 
 
 @dataclass(frozen=True)
@@ -135,7 +166,7 @@ class Acquisition:
             self.basis not in ("exact", "conservative_lower_bound")
             or not isinstance(evidence, str)
             or not 1 <= len(evidence) <= 1024
-            or len(_encoded(evidence)) > 4096
+            or not _fits_record(evidence, 4096)
             or evidence != evidence.strip()
             or any(unicodedata.category(c).startswith("C") for c in evidence)
         ):
@@ -148,9 +179,7 @@ class Acquisition:
             "basis": self.basis,
         }
         if safe:
-            result["operator_evidence_sha256"] = hashlib.sha256(
-                _encoded(self.operator_evidence)
-            ).hexdigest()
+            result["operator_evidence_sha256"] = _record_hash(self.operator_evidence)
         else:
             result["operator_evidence"] = self.operator_evidence
         return result
@@ -178,7 +207,7 @@ class IntakeRequest:
             "credit_snapshot": self.credit_snapshot,
             **self.time_fields(safe=True),
             "notices_count": len(self.download_notices),
-            "notices_sha256": hashlib.sha256(_encoded(self.download_notices)).hexdigest(),
+            "notices_sha256": _record_hash(self.download_notices),
         }
 
     def reader_fields(self) -> dict[str, object]:
@@ -222,7 +251,7 @@ class IntakeRequest:
             raise IntakeError("expired")
         if (
             not 1 <= len(self.download_notices) <= 16
-            or len(_encoded(self.download_notices)) > 4096
+            or not _fits_record(self.download_notices, 4096)
             or any(
                 not 1 <= len(n) <= 1024
                 or n != n.strip()
@@ -245,7 +274,7 @@ class IntakeRequest:
         if self.version == 1:
             # Preserve historical v1 fingerprints byte-for-byte; never reinterpret time.
             del fields["schema"]
-        return hashlib.sha256(_encoded(fields)).hexdigest()
+        return _record_hash(fields)
 
 
 def parse_request(
@@ -319,7 +348,7 @@ def parse_request(
         ):
             raise IntakeError("invalid_notices")
         notices.append(notice)
-    if len(_encoded(notices)) > 4096:
+    if not _fits_record(notices, 4096):
         raise IntakeError("notices_oversize")
     raw_file = _object(data["file"], {"device", "inode", "bytes", "mtime_ns", "ctime_ns", "sha256"})
     identity = FileIdentity(
@@ -823,7 +852,7 @@ class LocalIntake:
             }
             if self.request.version == 2:
                 result["reader"] = None if self._reader is None else self._reader.report()
-            if len(_encoded(result)) > MAX_MANIFEST_BYTES:
+            if not _fits_record(result, MAX_MANIFEST_BYTES):
                 raise IntakeError("report_oversize")
             return result
 
@@ -954,42 +983,54 @@ class LocalIntake:
         }
         if self.request.version == 2:
             state["reader_state"] = self._reader_state
-        data = _encoded(state)
-        assert len(data) <= MAX_MANIFEST_BYTES
-        self._remove_temp()
-        fd = os.open(
-            "state.tmp",
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=self.fds["directory"],
-        )
-        self._own("state_write", fd)
-        self.temp_identity = self.fd_identities["state_write"]
-        offset = 0
-        while offset < len(data):
-            amount = os.write(fd, data[offset:])
-            if amount <= 0:
-                raise IntakeError("state_write_failed")
-            offset += amount
-        os.fsync(fd)
-        self._close("state_write")
-        if self.state_identity is not None:
-            existing = os.stat("state.json", dir_fd=self.fds["directory"], follow_symlinks=False)
-            if (
-                (existing.st_dev, existing.st_ino) != self.state_identity
-                or existing.st_nlink != 1
-                or not stat.S_ISREG(existing.st_mode)
-            ):
-                raise IntakeError("state_identity_debt")
-        os.replace(
-            "state.tmp",
-            "state.json",
-            src_dir_fd=self.fds["directory"],
-            dst_dir_fd=self.fds["directory"],
-        )
-        self.state_identity, self.temp_identity = self.temp_identity, None
-        os.fsync(self.fds["directory"])
-        self.io = None
+        data = _state_record(state)
+        try:
+            self._remove_temp()
+            fd = os.open(
+                "state.tmp",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=self.fds["directory"],
+            )
+            self._own("state_write", fd)
+            self.temp_identity = self.fd_identities["state_write"]
+            offset = 0
+            with memoryview(data) as view:
+                while offset < len(data):
+                    with view[offset:] as remaining:
+                        try:
+                            amount = os.write(fd, remaining)
+                        except InterruptedError:
+                            continue
+                    if type(amount) is not int or not 0 < amount <= len(data) - offset:
+                        raise IntakeError("state_write_failed")
+                    offset += amount
+            os.fsync(fd)
+            self._close("state_write")
+            if self.state_identity is not None:
+                existing = os.stat(
+                    "state.json", dir_fd=self.fds["directory"], follow_symlinks=False
+                )
+                if (
+                    (existing.st_dev, existing.st_ino) != self.state_identity
+                    or existing.st_nlink != 1
+                    or not stat.S_ISREG(existing.st_mode)
+                ):
+                    raise IntakeError("state_identity_debt")
+            os.replace(
+                "state.tmp",
+                "state.json",
+                src_dir_fd=self.fds["directory"],
+                dst_dir_fd=self.fds["directory"],
+            )
+            self.state_identity, self.temp_identity = self.temp_identity, None
+            os.fsync(self.fds["directory"])
+            self.io = None
+        finally:
+            # A completed failed persistence operation must not retain its old
+            # record in a traceback while cleanup constructs the next record.
+            # FD/temp identity debt remains with the intake owner.
+            data = b""
 
     def _claim(self) -> None:
         self._open_directory(self.directory, "directory")
