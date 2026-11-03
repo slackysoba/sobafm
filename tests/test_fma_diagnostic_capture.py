@@ -404,6 +404,107 @@ def test_allocation_exception_adopts_phase_and_retains_partial_backing(
     assert run.failure and run.clock.cleanup_monotonic == 118 and run.clock.missed
 
 
+@pytest.mark.parametrize("stage", ["before", "backing", "slab"])
+@pytest.mark.parametrize("close_fails", [False, True])
+@pytest.mark.parametrize("returned_at,cancel_at", [(115, None), (119, None), (119, 101)])
+def test_allocation_deadline_boundaries_stop_before_caller_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    close_fails: bool,
+    returned_at: float,
+    cancel_at: float | None,
+) -> None:
+    run, env = runner(monkeypatch, allocate=False)
+    run.phase_deadline = 115
+    allocated: list[bytearray] = []
+    continuation: list[str] = []
+    original = 115 if cancel_at is None else cancel_at
+    deadline = original + 3
+    missed = returned_at > deadline
+
+    def advance() -> None:
+        if cancel_at is not None:
+            env.now[0] = cancel_at
+            run.request("synthetic_cancel_during_allocation")
+        env.now[0] = returned_at
+
+    if stage == "before":
+        advance()
+
+    def allocate(size: int) -> bytearray:
+        backing = bytearray(size)
+        allocated.append(backing)
+        if (stage == "backing" and size == DIAGNOSTIC_BYTES) or (
+            stage == "slab" and size == READ_BYTES
+        ):
+            advance()
+        return backing
+
+    def identity(_pid: int) -> tuple[str, int]:
+        continuation.append("identity")
+        return "synthetic", 1
+
+    def close(_fd: int) -> None:
+        assert run.clock.cleanup_start_utc == original and run.cancel.deadline == deadline
+        assert run.clock.missed is missed and run.failure
+        if close_fails:
+            raise OSError(errno.EIO, "synthetic uncertain close")
+
+    monkeypatch.setattr(decoder, "bytearray", allocate, raising=False)
+    monkeypatch.setattr(run, "process_start_identity", identity)
+    monkeypatch.setattr(decoder.os, "close", close)
+    with pytest.raises(ProbeError, match="diagnostic_deadline_or_cancel"):
+        run.allocate_diagnostics()
+        # prepare's next operation must not run after late allocation success.
+        run.process_start_identity(run.child.pid)
+    assert not continuation
+    assert run.clock.cleanup_start_utc == original and run.clock.cleanup_monotonic == deadline
+    assert run.clock.missed is missed and run.stderr_count == 0 and not run.diagnostic_attempted
+    count = {"before": 0, "backing": 1, "slab": 2}[stage]
+    assert len(allocated) == count
+    if count:
+        assert run.stderr is allocated[0] and len(run.stderr) == DIAGNOSTIC_BYTES
+    else:
+        assert not run.stderr
+    if count == 2:
+        assert run.diagnostic_slab is not None
+        assert run.diagnostic_slab is allocated[1] and len(run.diagnostic_slab) == READ_BYTES
+    else:
+        assert run.diagnostic_slab is None
+    run.child.exit_code = 0
+    run.close(14)
+    assert (14 in run.uncertain_closes) is close_fails
+    assert run.release_if_done() is not close_fails
+    assert run.failure and run.clock.cleanup_monotonic == deadline and run.clock.missed is missed
+
+
+@pytest.mark.parametrize("stage", ["before", "backing", "slab"])
+def test_allocation_succeeds_before_phase_boundary(
+    monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    run, env = runner(monkeypatch, allocate=False)
+    run.phase_deadline = 115
+    allocated: list[bytearray] = []
+    if stage == "before":
+        env.now[0] = 114
+
+    def allocate(size: int) -> bytearray:
+        backing = bytearray(size)
+        allocated.append(backing)
+        if (stage == "backing" and size == DIAGNOSTIC_BYTES) or (
+            stage == "slab" and size == READ_BYTES
+        ):
+            env.now[0] = 114
+        return backing
+
+    monkeypatch.setattr(decoder, "bytearray", allocate, raising=False)
+    run.allocate_diagnostics()
+    assert len(allocated) == 2 and run.stderr is allocated[0]
+    assert run.diagnostic_slab is allocated[1] and run.stderr_count == 0
+    assert run.failure is None and run.cancel.started is None
+    assert run.clock.cleanup_start_utc is None and not run.clock.missed
+
+
 def test_prepare_allocates_diagnostics_only_after_native_fork(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

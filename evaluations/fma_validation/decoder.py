@@ -290,8 +290,11 @@ class StreamRun(CancelRun):
         try:
             if self.child.pid <= 0 or self.stderr or self.diagnostic_slab is not None:
                 raise ProbeError("diagnostic_backing_owner")
+            self.diagnostic_check(live=True)
             self.stderr = bytearray(DIAGNOSTIC_BYTES)
+            self.diagnostic_check(live=True)
             self.diagnostic_slab = bytearray(READ_BYTES)
+            self.diagnostic_check(live=True)
         except BaseException:
             self.clock.remaining(self.phase_deadline)
             self.fail("diagnostic_allocation_failed")

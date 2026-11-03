@@ -324,7 +324,9 @@ uses the first clock, including after blocked operations return. Normal and
 exceptional capture/validation returns adopt the original phase deadline before
 failure/close. Late allocation, banner reap/select, or scan/hash exceptions retain
 that original obligation and propagate the source exception; partial allocation
-also remains owned. The backing,
+also remains owned. Live checks before, between and after the two allocations
+stop expired/cancelled preparation before more allocation, identity observation
+or descriptor close, including after successful allocation returns. The backing,
 slab, cached facts and report aliases remain owned through report rejection or
 write completion, even after producer settlement; EOF and `released=True` do not
 refund this payload. The runner never clears/resizes diagnostic backing during
