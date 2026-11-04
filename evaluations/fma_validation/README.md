@@ -101,6 +101,13 @@ Rejection construction/write failure cannot trigger another fallback. The failed
 record remains owned through actual synchronous settlement. Journals likewise
 use memoryview `pwrite` tails, retaining the record through worker, identity,
 truncate/fsync and error handling; a live worker or error bars replacement.
+A journal save begun during the case waits for its write under the case's
+original `CaseClock`, not a fixed time (#76): until the case ends or cleanup
+begins. One begun in cleanup keeps the unchanged 0.25-second bound, capped by
+the original cleanup window, so a slow evidence write cannot spend the stop
+budget. A write outliving its bound fails with `journal_operation_retained` and
+keeps its worker and record. The controller and preflight share the journal's
+clock.
 Historical Linux probe emitters remain unchanged.
 
 The runner's existing three-report reservation covers this component without

@@ -51,6 +51,14 @@ The initial development dependency review was performed on 2026-10-27 against up
 
 Direct tool pins and all transitive distributions/hashes are recorded in `uv.lock`; the build backend and uv version are pinned in `pyproject.toml`. GitHub Actions are pinned to verified commit IDs. PyPI's advisory metadata had no entries for the selected direct pins at review time; this limited check is not a complete security audit and does not cover bundled Node components or future application/native dependencies.
 
+The application runtime dependency was reviewed on 2026-11-04. [ADR 0005](docs/decisions/0005-discord-voice-library.md) records the sources, the rejected options and the risks:
+
+| Dependency | Pin | Rationale and maintenance/license assessment |
+| --- | --- | --- |
+| [disnake](https://github.com/DisnakeDev/disnake) `[voice]` | 2.12.2 | MIT; actively released, Python 3.14 supported. Discord voice with the required `aead_xchacha20_poly1305_rtpsize` transport mode and DAVE end-to-end encryption, which Discord requires for voice since 2026-03-01. The voice extra locks [PyNaCl](https://github.com/pyca/pynacl) 1.6.2 (Apache-2.0, bundled libsodium ISC; first release without CVE-2025-69277), [dave.py](https://github.com/DisnakeDev/dave.py) 1.1.0 (MIT) and audioop-lts 0.2.2 (PSF-2.0). |
+
+The native components in that closure are dave.py's statically linked libdave (MIT), mlspp (BSD-2-Clause), nanobind (BSD-3-Clause), nlohmann-json (MIT) and OpenSSL 3.0.7 libcrypto (Apache-2.0); PyNaCl's libsodium; and C extensions in cffi (MIT-0), audioop-lts, aiohttp (Apache-2.0 AND MIT, including llhttp), multidict, yarl, propcache and frozenlist (Apache-2.0). All ship as wheels for amd64 and arm64. libopus is loaded from the system and is not in the lock; the application image must provide and record it. The bundled OpenSSL 3.0.7 is a pin inherited from Discord's libdave that only a dave.py release can update. Recheck it on every dave.py update.
+
 For an update, review upstream maintenance, release notes, licenses and security advisories, change the relevant pins, regenerate with `uv lock`, inspect the lock diff, then run the full required checks. Review the Node binary wheel and its bundled components alongside Pyright. Do not enable Pyright's automatic version override. Use `uv run ruff check --fix` and `uv run ruff format` for intentional Python fixes; CI only checks formatting. Keep dependency-update and application behavior changes separately reviewable.
 
 ## Review and integration
