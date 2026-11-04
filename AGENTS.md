@@ -50,7 +50,7 @@ The maintainer's session list should show only work in progress or awaiting thei
 
 A session is fully complete when all of these hold:
 
-- Its assigned work is finished: any issue it worked under is closed, superseded or owned by someone else, any PR is merged or closed, and any review it posted has its findings resolved or owned elsewhere.
+- Its assigned work is finished: any issue it worked under is closed, superseded or owned by someone else, any PR it owns is merged or closed, and any review it posted has its findings resolved or owned elsewhere.
 - Its result has reached whoever needs it. For a worker, that is the coordinator. For a session the maintainer started, it is the maintainer, shown by their own later message in that session or by a coordinator report carrying the result.
 - Its handoff is preserved in the issue, PR or coordinator roster.
 - Nothing waits on it: no unfinished work, open PR it owns, running operation, unanswered question or pending decision.
