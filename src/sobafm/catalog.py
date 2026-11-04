@@ -275,7 +275,8 @@ def _seconds(value: object) -> int | None:
     return value
 
 
-def _url(value: object) -> str:
+def credential_free_url(value: object) -> str:
+    """Return a bounded HTTPS URL without credentials, nonstandard port, query or fragment."""
     text = _text(value, 512)
     try:
         url = urlsplit(text)
@@ -327,7 +328,7 @@ def _credit(value: object) -> CreditSnapshot | None:
     fields = {"snapshot_id", "notices", "license_label", "license_url"}
     data = _object(value, fields, fields)
     label = _optional_text(data["license_label"])
-    url = None if data["license_url"] is None else _url(data["license_url"])
+    url = None if data["license_url"] is None else credential_free_url(data["license_url"])
     if (label is None) != (url is None):
         raise CatalogInputError("license label and URL must be supplied together")
     return CreditSnapshot(
@@ -371,7 +372,7 @@ def _recording(value: object, source: Source) -> Recording:
                 Feature(_choice(fact["feature"], tuple(Feature))),
                 _boolean(fact["value"]),
                 Strength(_choice(fact["strength"], tuple(Strength))),
-                _url(fact["evidence"]),
+                credential_free_url(fact["evidence"]),
             )
         )
     if len({f.feature for f in facts}) != len(facts):
@@ -381,9 +382,9 @@ def _recording(value: object, source: Source) -> Recording:
         _text(data["title"]),
         artist,
         creators,
-        _url(data["provenance"]),
+        credential_free_url(data["provenance"]),
         RecordingKind(_choice(data["kind"], tuple(RecordingKind))),
-        _url(data["kind_evidence"]),
+        credential_free_url(data["kind_evidence"]),
         _seconds(data["duration_seconds"]),
         Availability(_choice(data["availability"], tuple(Availability))),
         _optional_text(data["composition"]),
@@ -466,7 +467,7 @@ def parse_reviews(payload: str) -> tuple[AdmissionReview, ...]:
                 _boolean(review["credits_complete"]),
                 _boolean(review["access_ready"]),
                 _boolean(review["synthetic"]),
-                _url(review["evidence"]),
+                credential_free_url(review["evidence"]),
                 _optional_text(review.get("note")),
             )
         )
@@ -657,7 +658,7 @@ def select(
     if len(reviews) > 3 * MAX_RECORDS_PER_SOURCE or len({r.key for r in reviews}) != len(reviews):
         raise CatalogInputError("too many or duplicate admission reviews")
     for review in reviews:
-        _url(review.evidence)
+        credential_free_url(review.evidence)
         if re.fullmatch(r"[a-f0-9]{64}", review.metadata_digest) is None:
             raise CatalogInputError("invalid review digest")
         for flag in (review.credits_complete, review.access_ready, review.synthetic):
