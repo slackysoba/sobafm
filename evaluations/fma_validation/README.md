@@ -366,7 +366,27 @@ writer. The ordinary CLI still uses its insertion-order/spaced `json.dumps` and
 uncertain submission, flush/cancellation ownership and output error/terminal
 behavior remain explicit follow-up work; compact gates do not bound that output.
 Packet source closure now includes `src/sobafm/json_records.py`. Native topology,
-interpreter/decoder-source binding, recording expiry and #7 gates are unchanged.
+decoder-source binding, recording expiry and #7 gates are unchanged; the
+interpreter gate is described below.
+
+### Interpreter facts
+
+The receiver ledger's CPython-dependent assumptions hold only for the pinned
+image's interpreter. Besides the packet's interpreter executable hash, the owner
+preflight observes four facts once, before any environment observation, and
+rejects unless all match ([#67](https://github.com/slackysoba/sobafm/issues/67)):
+version `3.14.7` (a pre-release spelling such as `3.14.7rc1` does not match),
+empty `sys.abiflags`, a non-debug build (no `sys.gettotalrefcount`) and a GIL
+build (`Py_GIL_DISABLED` exactly 0; an absent value fails closed). Each fact has
+its own rejection code. The owner report carries the same observation as a closed
+`interpreter` object, and the controller rejects a report whose facts differ.
+
+The frozen runtime-identity packet and a CPython producer lookup are not gates on
+the first real-file evaluation: no requirement names them and no code reads their
+output. The evaluation's CPython-dependent bounds stay explicitly conditional on
+these facts, as retained debt that a later release claim can discharge if needed.
+These checks run inside the reviewed image only; Linux tests here fake the
+observation and do not qualify the image.
 
 ### Process observation transactions
 

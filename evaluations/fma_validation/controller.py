@@ -31,6 +31,7 @@ from .consumer import (
 )
 from .ingress import Ingress, Opaque, decode, discard_exception
 from .limits import CLEANUP_SECONDS, CaseClock, encode_report
+from .owner import INTERPRETER_FACTS
 from .packet import Packet, load, load_qualification, read_bounded, string
 from .process import ProcessPin
 from .terminal import validate_clock, validate_terminal
@@ -420,6 +421,7 @@ OWNER_FIELDS = {
     "failure",
     "init",
     "owner",
+    "interpreter",
     "intake",
     "reader",
     "validation",
@@ -444,6 +446,8 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
         or report["container_exit_observed"] is not False
     ):
         raise ProbeError("owner_result_failed")
+    if report["interpreter"] != INTERPRETER_FACTS:
+        raise ProbeError("owner_interpreter_facts_failed")
     intake = mapping(report["intake"])
     reader = mapping(report["reader"])
     validation = mapping(report["validation"])
