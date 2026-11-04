@@ -305,7 +305,8 @@ class ObservationWorkspace:
     """One actual caller's lease, including blocked reads/closes and staged facts.
 
     Fixed byte layout: [0:2048] read, [2048:4096] whole stat/cgroup,
-    [4096:5120] line carry; remaining bytes reserved, never a growth allowance.
+    [4096:6144] line carry (only mountinfo rows use the upper half, [5120:6144],
+    formerly reserved); remaining [6144:8192] reserved, never a growth allowance.
     Committed + staged + temporary file facts coexist. Each snapshot has <=4
     pins, <=64 stat facts and <=64 PIDs; executable text <=64 ASCII characters.
     An 8192-byte selected-pin reservation is prepaid within this owner's existing
@@ -682,7 +683,7 @@ class ObservationWorkspace:
             if seen != (31 if intake else 1):
                 raise ProbeError("observation_mount_missing")
 
-        self._lines(b"/proc/self/mountinfo", 65_536, 256, 1024, row, complete)
+        self._lines(b"/proc/self/mountinfo", 65_536, 256, 2048, row, complete)
 
     def environment(self, intake: bool, phase_end: float | None = None) -> None:
         def action() -> None:

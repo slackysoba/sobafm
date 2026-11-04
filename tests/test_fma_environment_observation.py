@@ -199,29 +199,43 @@ def test_mounts_reject_duplicate_conflicting_escaped_and_incomplete_destinations
     assert env.streams.closed == env.streams.opened
 
 
-def padding_mounts(size: int) -> bytes:
-    rows = (size + 1024) // 1025
+def padding_mounts(size: int, maximum: int = 1025) -> bytes:
+    rows = (size + maximum - 1) // maximum
     result: list[bytes] = []
     for index in range(rows):
         width = size // (rows - index)
         row = f"10 0 0:1 / /other{index} rw - tmpfs tmpfs rw\n".encode()
-        assert len(row) <= width <= 1025
+        assert len(row) <= width <= maximum
         result.append(row[:-1] + b" " * (width - len(row)) + b"\n")
         size -= width
     return b"".join(result)
 
 
-def test_environment_shares_exact_combined_byte_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("maximum", [1025, 2049])
+def test_environment_shares_exact_combined_byte_budget(
+    monkeypatch: pytest.MonkeyPatch, maximum: int
+) -> None:
     env = environment(monkeypatch)
     env.observation.environment(False)
     extra = INPUT_LIMIT - env.observation.input_bytes
-    env.streams.files[MOUNTS] += padding_mounts(extra)
+    env.streams.files[MOUNTS] += padding_mounts(extra, maximum)
     env.observation.environment(False)
     assert env.observation.input_bytes == INPUT_LIMIT
     env.streams.files[MOUNTS] = b" " + env.streams.files[MOUNTS]
     with pytest.raises(ProbeError):
         env.observation.environment(False)
     assert env.observation.input_bytes == INPUT_LIMIT + 1
+
+
+def overlay_root_row(width: int) -> bytes:
+    """A containerd-snapshotter root overlay row: 12 lowerdirs under snapshot paths."""
+    snapshots = "/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs"
+    lower = ":".join(f"{snapshots}/snapshots/{index}/fs" for index in range(101, 113))
+    prefix = f"6 1 0:3 / / ro,relatime - overlay overlay rw,lowerdir={lower},upperdir="
+    suffix = f",workdir={snapshots}/snapshots/113/work"
+    fill = width - len(prefix) - len(suffix)
+    assert fill > 0
+    return f"{prefix}{snapshots}/snapshots/113/{'f' * fill}{suffix}".encode()[:width]
 
 
 @pytest.mark.parametrize("count", [256, 257])
@@ -235,16 +249,35 @@ def test_mount_row_boundary(monkeypatch: pytest.MonkeyPatch, count: int) -> None
             env.observation.environment(True)
 
 
-@pytest.mark.parametrize("width", [1024, 1025])
+@pytest.mark.parametrize("width", [1024, 2048, 2049])
 def test_mount_line_boundary(monkeypatch: pytest.MonkeyPatch, width: int) -> None:
     env = environment(monkeypatch)
     row, rest = MOUNT_TABLE.split(b"\n", 1)
     env.streams.files[MOUNTS] = row + b" " * (width - len(row)) + b"\n" + rest
-    if width == 1024:
+    if width <= 2048:
         env.observation.environment(True)
     else:
         with pytest.raises(ProbeError):
             env.observation.environment(True)
+    assert env.streams.closed == env.streams.opened
+
+
+@pytest.mark.parametrize("width", [1353, 2048, 2049])
+@pytest.mark.parametrize("chunk", [7, 2048])
+def test_overlay_root_mount_row_boundary(
+    monkeypatch: pytest.MonkeyPatch, width: int, chunk: int
+) -> None:
+    env = environment(monkeypatch, chunk)
+    row = overlay_root_row(width)
+    assert len(row) == width and row.count(b"lowerdir=") == 1 and row.count(b"/fs:") == 11
+    env.streams.files[MOUNTS] = row + b"\n" + MOUNT_TABLE
+    if width <= 2048:
+        env.observation.environment(True)
+        assert len(env.observation.arena) == 8192 and not env.observation.debt
+    else:
+        with pytest.raises(ProbeError):
+            env.observation.environment(True)
+    assert env.streams.closed == env.streams.opened
 
 
 @pytest.mark.parametrize(
@@ -587,7 +620,7 @@ def test_owner_final_observation_precedes_clean_decision(
     intake = Intake()
 
     def preflight(
-        _packet: Packet, _workspace: ObservationWorkspace
+        _packet: Packet, _workspace: ObservationWorkspace, _interpreter: dict[str, object]
     ) -> tuple[ProcessPin, ProcessPin]:
         return pin, pin
 

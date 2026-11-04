@@ -5,7 +5,7 @@ body:
     id: outcome
     attributes:
       label: Outcome and scope
-      description: Link the parent outcome and relevant requirements.
+      description: Name the parent outcome and relevant requirements, then link this issue as a native sub-issue. Body text does not create the link.
     validations:
       required: true
   - type: textarea
