@@ -80,7 +80,7 @@ subtotal remain unchanged. Canonical report construction now uses an exact
 proved-size work buffer and immutable result, with newline included in the same
 record limit. FMA helper writers retain one immutable record through borrowed
 partial writes; metadata never emits a second terminal after possible submission.
-Journal workers retain their record through actual write/fsync/error settlement.
+Journal workers retain their record through actual write/fsync/error settlement; case-phase saves wait under the original case clock rather than a fixed time, while cleanup saves keep their short bound.
 The construction ceiling of work + result + one prior failed record is 196,608
 bytes inside existing report reservations. Metadata explicitly assigns its old
 serialization allowance and fixed margin to that ceiling; no partition grows.
@@ -134,7 +134,7 @@ of successful decode acceptance and retain actual resource debt through join.
 
 - Source-specific acquisition/storage implementations for the accepted three-source pool, with complete recording credits and access evidence.
 - The simplest viable non-root Docker resource model under the approved capacity definition: accepted for amd64 in [ADR 0004](decisions/0004-amd64-whole-service-adoption.md); application qualification remains open and native arm64 is on hold ([#60](https://github.com/slackysoba/sobafm/issues/60)).
-- Supported dependencies and decoder distribution without a bespoke supply system by default.
+- Supported dependencies and decoder distribution without a bespoke supply system by default. The Discord voice library is selected and locked: disnake with DAVE through dave.py ([ADR 0005](decisions/0005-discord-voice-library.md)). No application module uses it yet. The decoder distribution remains open.
 
 Record those decisions with evidence. Update this document to describe actual modules and data flow as they are implemented; do not pre-create a framework from this outline.
 
