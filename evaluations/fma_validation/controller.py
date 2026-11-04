@@ -37,6 +37,8 @@ from .terminal import validate_clock, validate_terminal
 
 # Re-check granularity only. The original clock, not this, bounds journal waits.
 JOURNAL_CLOCK_POLL_SECONDS = 0.05
+# Unchanged pre-#76 cleanup bound; preserves the stop budget.
+CLEANUP_JOURNAL_WAIT_SECONDS = 0.25
 
 
 class Command:
@@ -245,7 +247,8 @@ class Command:
 class Journal:
     """A new private inode per attempt. Existing/partial journals block new work.
 
-    Each write is waited for under the case's original clock, never a fixed time.
+    A case-phase write is waited for under the case's original clock; a cleanup
+    write gets at most the unchanged short bound inside the cleanup window.
     """
 
     def __init__(self, path: Path, record: Packet | dict[str, object], clock: CaseClock) -> None:
@@ -304,13 +307,15 @@ class Journal:
             except Exception as error:
                 self.error = error
 
-        # A save begun in cleanup gets the cleanup window; one begun in the case
-        # ends when the case does or cleanup begins, keeping that window intact.
+        # A save begun in the case waits while the original case clock allows it.
+        # One begun in cleanup keeps the old short bound so the stop budget stays.
         cleanup = self._cleanup_started()
         self.worker = threading.Thread(target=write, name="owned-journal-write", daemon=False)
         self.worker.start()
+        if cleanup:
+            self.worker.join(max(0.0, min(CLEANUP_JOURNAL_WAIT_SECONDS, self._cleanup_remaining())))
         while self.worker.is_alive():
-            remaining = self._remaining(cleanup=cleanup)
+            remaining = 0 if cleanup else self.clock.remaining()
             if remaining <= 0:
                 raise ProbeError("journal_operation_retained")
             # Re-read the clock: cancellation or an adopted start can tighten it.
@@ -323,14 +328,9 @@ class Journal:
         self.clock.remaining()  # Case expiry adopts cleanup; nothing renews it.
         return self.clock.cleanup_start_utc is not None
 
-    def _remaining(self, *, cleanup: bool) -> float:
+    def _cleanup_remaining(self) -> float:
         clock = self.clock
         with clock.lock:
-            if self._cleanup_started() != cleanup:
-                return 0
-            if not cleanup:
-                case_end = min(clock.whole_end_utc, clock.expires_utc)
-                return min(clock.end_monotonic - clock.monotonic(), case_end - clock.wall())
             start, end = clock.cleanup_start_utc, clock.cleanup_monotonic
             if start is None or end is None:
                 return 0

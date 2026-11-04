@@ -72,7 +72,7 @@ subtotal remain unchanged. Canonical report construction now uses an exact
 proved-size work buffer and immutable result, with newline included in the same
 record limit. FMA helper writers retain one immutable record through borrowed
 partial writes; metadata never emits a second terminal after possible submission.
-Journal workers retain their record through actual write/fsync/error settlement; saves wait under the original case clock rather than a fixed time.
+Journal workers retain their record through actual write/fsync/error settlement; case-phase saves wait under the original case clock rather than a fixed time, while cleanup saves keep their short bound.
 The construction ceiling of work + result + one prior failed record is 196,608
 bytes inside existing report reservations. Metadata explicitly assigns its old
 serialization allowance and fixed margin to that ceiling; no partition grows.

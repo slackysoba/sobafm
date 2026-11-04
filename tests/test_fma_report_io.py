@@ -430,16 +430,12 @@ def test_journal_failure_bars_replacement_and_retains_record(
     assert calls == previous_calls and journal.record is record and journal.error is error
 
 
-@pytest.mark.parametrize("cleanup", [False, True])
 def test_journal_waits_for_slow_write_while_original_clock_has_time(
     journal: Journal,
     monkeypatch: pytest.MonkeyPatch,
-    cleanup: bool,
 ) -> None:
     now = [100.0]
     journal.clock = CaseClock(200, 300, lambda: now[0], lambda: now[0])
-    if cleanup:
-        journal.clock.cancel()  # Three cleanup seconds remain from now.
     release = threading.Event()
     actual = os.pwrite
 
@@ -462,8 +458,42 @@ def test_journal_waits_for_slow_write_while_original_clock_has_time(
     assert journal.path.read_bytes() == expected
     assert journal.record is None and journal.error is None
     assert journal.worker is not None and not journal.worker.is_alive()
-    assert (journal.clock.cleanup_start_utc is not None) is cleanup
+    assert journal.clock.cleanup_start_utc is None
     assert not journal.clock.missed and not journal.clock.case_missed
+
+
+def test_journal_cleanup_save_keeps_short_bound_for_the_stop_budget(
+    journal: Journal,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [100.0]
+    clock = CaseClock(200, 300, lambda: now[0], lambda: now[0])
+    clock.cancel()  # Three original cleanup seconds remain; the save gets 0.25.
+    journal.clock = clock
+    entered, release = threading.Event(), threading.Event()
+    actual = os.pwrite
+
+    def pwrite(fd: int, view: memoryview, offset: int) -> int:
+        entered.set()
+        assert release.wait(3)  # Held until after the bound has expired.
+        return actual(fd, view, offset)
+
+    journal.data["phase"] = "synthetic-cleanup-phase"
+    expected = encode_report(journal.data)
+    monkeypatch.setattr(controller.os, "pwrite", pwrite)
+    try:
+        with pytest.raises(ProbeError, match="journal_operation_retained"):
+            journal.save()
+        assert entered.is_set()
+        assert journal.worker is not None and journal.worker.is_alive()
+        assert journal.record == expected and journal.error is None
+        assert clock.cleanup_monotonic == 103 and not clock.missed
+    finally:
+        release.set()
+        assert journal.worker is not None
+        journal.worker.join(3)
+        assert not journal.worker.is_alive()
+    assert journal.path.read_bytes() == expected
 
 
 @pytest.mark.parametrize("deadline", ["case_end", "cancelled", "cleanup_end"])
