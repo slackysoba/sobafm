@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import signal
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Self
+from typing import NoReturn, Self
 
 import pytest
 
@@ -646,3 +647,36 @@ def test_stopped_gate_keeps_exact_roles_security_and_namespace_members(fault: st
             observation.stopped_identity(4, 30, "/usr/bin/mpg123", *roles)
         assert not observation.committed.pins
     assert streams.opened == streams.closed and not observation.debt
+
+
+def test_helper_launch_environment_names_the_image_source_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The image imports sobafm from /source rather than an installed package (#91)."""
+    from evaluations.fma_validation import process as process_module
+    from evaluations.fma_validation.process import OwnedHelper
+
+    launched: list[dict[str, object]] = []
+
+    def fake_popen(*_args: object, **kwargs: object) -> NoReturn:
+        launched.append(kwargs)
+        raise OSError("synthetic launch refusal")
+
+    monkeypatch.setattr(process_module.subprocess, "Popen", fake_popen)
+    helper = OwnedHelper(CaseClock(time.time() + 60, time.time() + 60), "metadata")
+    with pytest.raises(OSError, match="synthetic launch refusal"):
+        helper.launch(["python", "-m", "helper"])
+    try:
+        assert len(launched) == 1
+        assert launched[0]["env"] == {
+            "PATH": "/usr/bin:/bin",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "HOME": "/nonexistent",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": "/source/src:/source",
+        }
+        assert helper.process is None and not helper.launching
+    finally:
+        assert helper.join(1)
+        helper.ingress.retire()
