@@ -36,7 +36,9 @@ an independent exact PCM oracle.
 
 The first failure, expiry or normal completion starts one **three-second cleanup
 obligation**, conveyed across helpers as an original UTC timestamp and locally
-bounded by monotonic time. Later phases only tighten it. The successful reader
+bounded by monotonic time. Later phases only tighten it. A decoder phase expiry
+noticed late, including readiness, setup-wait and stopped-native gates, starts
+the obligation at the phase deadline rather than at its observation. The successful reader
 is observed complete before intake cancellation adopts the decoder's earlier
 clock. Unknown timing and missed deadlines remain sticky after eventual physical
 release. A signal without a trusted cross-process timing record is unknown timing.
@@ -809,7 +811,9 @@ owned-synthetic mount/permissions/inode/close/cleanup preflight under the exact
 future mounts and non-root settings. No actual recording read belongs in that
 preflight. Record volume name, creation time, mountpoint hash and namespace slot
 device/inode; these observed identities and the receipt hash are prerequisites
-for each reviewed qualification packet. Before any owned-audio qualification,
+for each reviewed qualification packet. `preflight.py` implements this slot
+preflight at the owner's `/pending/slot` together with the PTY preflight below.
+Before any owned-audio qualification,
 review the exact-image implementation against the accepted narrow PTY exclusion,
 userspace accounting and actual process/FD settlement rules, and require a
 separately released, successful bounded no-media PTY preflight. Before actual
@@ -818,6 +822,42 @@ sequential-helper topology fit and native terminal-filter qualification evidence
 The contract acceptance itself releases none of these operations and does not
 renew the original **2026-11-09T00:00:00Z** recording expiry.
 No inherited real-file input is transported through Docker CLI descriptor numbers.
+
+### No-media preflight and packet freeze
+
+[#63](https://github.com/slackysoba/sobafm/issues/63) adds `preflight.py` for the
+facts no other repository tool collects. The **operator order is preflight,
+freeze, then owned cases**; each step is one explicit invocation after its own
+release, and nothing here runs in ordinary CI, where Docker is a local fake.
+
+1. **Preflight** (`preflight run --execute-preflight`) is one finite Docker
+   operation under one original `CaseClock` (90 seconds, three-second cleanup
+   obligation) and the existing management owners: at most two live commands
+   and 20 operations, no retries. It verifies the engine and image, creates one
+   new volume labeled for #44 and this run's random identity (an existing
+   volume of the same name lacks that label and fails), then runs two
+   containers with the owner container's limits, read-only bind mounts and
+   volume mount. The setup container is the only root process, restricted to
+   `CAP_CHOWN`, and creates the UID/GID 1000, mode 0700 slot. The probe
+   container runs as UID/GID 1000. Both stat the slot and the input without
+   opening it; the slot and input identities must match across the two
+   containers. The probe also hashes the init and interpreter executables and,
+   with synthetic bytes only, checks PTY raw readback, write backpressure within
+   1 MiB and that EOF arrives only after the last held slave closes. A failure
+   stops a running container once under the original clock; containers and the
+   volume are never removed, and debt stays in the receipt.
+2. The private ledger written through the existing `Journal` is the bounded
+   receipt. **Freeze** (`preflight freeze`) accepts only a settled, passed,
+   debt-free receipt for this checkout, writes one new mode 0600 packet at a
+   chosen end time T with `synthetic_preflight_sha256` set to the receipt's
+   SHA-256, and immediately round-trips it through `load()` or
+   `load_qualification()`. T must fall within 210 seconds of that load and the
+   request expiry, so freeze directly before the controller.
+3. Run the owned cases with the controller invocation below.
+
+This preflight is not native qualification or execution permission. Its PTY
+facts do not establish kernel PTY reclamation, and executing it locally is a
+separate, later step.
 
 `packet.py` defines a closed schema, including the complete fixed runtime source
 file/hash set, source commit/tree, exact image ID/amd64 target, interpreter and
