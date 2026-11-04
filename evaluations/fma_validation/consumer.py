@@ -7,7 +7,6 @@ import math
 import re
 import sys
 import threading
-import time
 from datetime import UTC, datetime
 from typing import cast
 
@@ -340,7 +339,8 @@ class ValidationConsumer:
             self.phase = "metadata"
             helper = self._start("metadata", ["--owned-fd", str(fd)], (fd,))
             helper.finish_input()
-            end = time.monotonic() + METADATA_SECONDS
+            # The phase bound uses the same monotonic source as the case clock.
+            end = self.clock.monotonic() + METADATA_SECONDS
             while not helper.join(0.01):
                 if self.clock.remaining(end) <= 0:
                     self.cancel()
