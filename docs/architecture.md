@@ -1,6 +1,6 @@
 # Architecture
 
-The offline catalog selector is implemented. The Docker resource model for the first amd64 playback slice is [accepted](decisions/0004-amd64-whole-service-adoption.md) but not yet implemented or qualified. The rest of the station, playback and deployment architecture below remains proposed and unqualified.
+The offline catalog selector and the pure station-fact and credit-rendering logic are implemented. The Docker resource model for the first amd64 playback slice is [accepted](decisions/0004-amd64-whole-service-adoption.md) but not yet implemented or qualified. The rest of the station, playback and deployment architecture below remains proposed and unqualified.
 
 SobaFM has one station/player per server. Commands validate access and intent. A mode-specific interpreter produces a validated musical plan. Catalog selection or generated production prepares audio; the connected player settles what listeners actually hear. Settings and remembered channels persist in SQLite.
 
@@ -31,6 +31,12 @@ restriction. Per-operation state scalar and freeze phases have separate 3L and
 2L bounds; source facts and concurrent report/hash work remain additional charges.
 The ordinary CLI's spaced output/flush ownership, complete J/F accounting and
 native qualification remain open. See the evaluation's compact-record ledger.
+
+## Implemented station facts and credits
+
+`station.py` keeps one server's desired program, prepared audio, claimed switch and heard source as separate facts in a single-owner `Station`. Each accepted request gets an increasing generation and reports the unheard program whose work the caller must cancel. Preparation results, failures and switch reports carry their program or claimed audio; anything for a superseded program is returned as stale and changes nothing. Prepared audio is recorded only after its credits render. The player claims ready audio and then reports an actual switch or failure; only the switch changes the heard source. A failed, rejected or cancelled replacement reverts the desired program to the one still heard and leaves its credits unchanged. Stop ends the desired program; the heard source clears only when the player reports silence. The module holds no audio, tasks, threads, persistence or clock, and has no member queue, skip, replacement scheduling, generated mode or settings.
+
+`credits.py` renders a recording's existing `catalog.py` credit snapshot: title, creators, source backlink, license and every notice. Provider text has bidirectional controls stripped, other control and line/paragraph separators replaced by spaces, and Discord markdown, mention, emoji and autolink characters backslash-escaped. Links are rendered only after the catalog's credential-free HTTPS validation plus an RFC 3986 character check, inside angle brackets. Pages are filled continuously up to 1,968 UTF-16 code units plus a footer, within Discord's 2,000-unit message limit; credits needing more than 16 pages raise `CreditRejected`, and the station treats that as a rejected candidate rather than truncating notices. Each page states that mentions are disallowed and previews suppressed for the Discord layer. `CreditViews` retains at most 256 caller-bound views, each expiring a fixed time after opening (600 seconds by default, at most 900) under injected monotonic time; when full it evicts expired then oldest views. Wrong-caller, unknown/expired and out-of-range requests receive refusals without page content.
 
 ## Decisions to establish first
 
