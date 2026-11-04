@@ -355,3 +355,18 @@ def test_producer_misuse_is_rejected() -> None:
         bank.mark_decoder_complete()
     bank.cancel()
     assert bank.facts().cancelled_at is None
+
+
+def test_wait_writable_reports_space_or_a_stopped_stream() -> None:
+    pool, bank = fresh_bank()
+    assert bank.wait_writable(0)
+    assert bank.write(pattern(BANK_BYTES)) == BANK_BYTES
+    assert not bank.wait_writable(0)  # full: a producer would wait
+    assert bank.read_frame() is not None
+    assert bank.wait_writable(0)
+    assert bank.write(pattern(FRAME_BYTES)) == FRAME_BYTES
+    assert not bank.wait_writable(0)
+    bank.cancel()
+    assert bank.wait_writable(0)  # cancelled: the next write fails at once
+    assert bank.release() and pool.leased == 0
+    assert bank.wait_writable(0)
