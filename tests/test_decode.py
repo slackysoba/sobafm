@@ -374,7 +374,10 @@ def test_full_bank_waits_for_the_consumer(tmp_path: Path, pool: PcmBankPool) -> 
     owner.join(30)
     [report] = reports
     assert report.cleanup == "clean" and report.failure is None
-    assert report.pcm is not None and report.pcm.pcm_valid and report.pcm.audible_drain
+    assert report.pcm is not None and report.pcm.pcm_valid
+    # ``finish`` may snapshot before the consumer reads the last frames, so
+    # drain is observed on the bank once the consumer has seen the end.
+    assert bank.facts().audible_drain
     assert frames == total // FRAME_BYTES
     assert producer.release()
 
