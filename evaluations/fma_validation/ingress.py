@@ -442,6 +442,58 @@ DOCKER_VOLUME = obj(
         "Labels": obj({"org.sobafm.issue": text(8)}),
     }
 )
+# #63 preflight: the new volume must carry this run's identity label, and each
+# no-media probe container reports only fixed scalar facts.
+PREFLIGHT_VOLUME = obj(
+    {
+        "Name": text(128),
+        "CreatedAt": PATH,
+        "Mountpoint": PATH,
+        "Labels": obj({"org.sobafm.issue": text(8), "org.sobafm.preflight": HASH}),
+    }
+)
+PREFLIGHT_STAT = Wire("int", maximum=2**64 - 1)
+PREFLIGHT = obj(
+    {
+        "schema": text(40),
+        "mode": text(8),
+        "failure": CODE,
+        "uid": FD,
+        "gid": FD,
+        "slot": obj(
+            {
+                "device": PREFLIGHT_STAT,
+                "inode": PREFLIGHT_STAT,
+                "mode": UINT,
+                "uid": FD,
+                "gid": FD,
+                "writable": BOOL,
+            }
+        ),
+        "input": obj(
+            {
+                "device": PREFLIGHT_STAT,
+                "inode": PREFLIGHT_STAT,
+                "bytes": PREFLIGHT_STAT,
+                "mode": UINT,
+                "mtime_ns": PREFLIGHT_STAT,
+                "ctime_ns": PREFLIGHT_STAT,
+            }
+        ),
+        "init_sha256": OPTIONAL_HASH,
+        "python_sha256": OPTIONAL_HASH,
+        "pty": obj(
+            {
+                "raw_readback": BOOL,
+                "backpressure_reached": BOOL,
+                "backpressure_bytes": UINT,
+                "drained": BOOL,
+                "held_slave_open": BOOL,
+                "eof_after_last_close": BOOL,
+            }
+        ),
+    }
+)
 FAMILIES = {
     "admission": ADMISSION,
     "decode": DECODE,
@@ -453,6 +505,8 @@ FAMILIES = {
     "info": DOCKER_INFO,
     "image": DOCKER_IMAGE,
     "volume": DOCKER_VOLUME,
+    "preflight_volume": PREFLIGHT_VOLUME,
+    "preflight": PREFLIGHT,
 }
 DECODE_ENVELOPE = frozenset({"event", "schema", "case_binding", "runner", "cleanup"})
 OWNER_ENVELOPE = frozenset({"schema", "case_binding", "init", "owner", "packet_sha256", "cleanup"})
@@ -794,7 +848,9 @@ def decode(data: bytes | bytearray | memoryview, family: str) -> dict[str, objec
         raise ProbeError("helper_report_bound")
     with memoryview(data) as view:
         scan = Scan(
-            view, FAMILIES[family], utf8=family in ("info", "image", "volume", "config", "cleanup")
+            view,
+            FAMILIES[family],
+            utf8=family in ("info", "image", "volume", "preflight_volume", "config", "cleanup"),
         )
         scan.run()
         if not scan.valid:
