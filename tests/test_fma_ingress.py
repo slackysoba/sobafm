@@ -836,8 +836,10 @@ def test_wide_owner_timestamp_keeps_envelope_and_adopts_clock(
             pass
 
     class CaptureJournal(Journal):
-        def __init__(self) -> None:
+        # Records capture errors only; the journal owns the one case clock (#79).
+        def __init__(self, clock: CaseClock) -> None:
             self.data = {}
+            self.clock = clock
 
     packet = load(packet_path, ROOT, now=NOW)
     command = NoLaunch(["synthetic-owner-output"])
@@ -845,8 +847,9 @@ def test_wide_owner_timestamp_keeps_envelope_and_adopts_clock(
     command.worker.join(3)
     command.owner_output = True
     command.ingress.feed(wire)
-    outer = Controller(packet, CaptureJournal())
-    outer.clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 2, lambda: 10.0)
+    clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 2, lambda: 10.0)
+    outer = Controller(packet, CaptureJournal(clock))
+    assert outer.clock is outer.journal.clock is clock
     monkeypatch.setattr(module, "materialize", forbidden_decode)
     outer.capture_owner(command, final=True)
     record = command.ingress.records[0]
