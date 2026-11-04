@@ -363,6 +363,7 @@ VALIDATION = obj(
         "cleanup": CLOCK,
     }
 )
+INTERPRETER = obj({"version": text(16), "abiflags": text(8), "debug": BOOL, "free_threaded": BOOL})
 OWNER = obj(
     {
         "schema": text(64),
@@ -372,6 +373,7 @@ OWNER = obj(
         "failure": CODE,
         "init": PIN,
         "owner": PIN,
+        "interpreter": INTERPRETER,
         "intake": INTAKE,
         "reader": Wire("reader_or_null"),
         "validation": VALIDATION,
