@@ -46,21 +46,21 @@ Send useful start, completion and material-blocker updates without noisy polling
 
 ## Session archival
 
-The maintainer's session list should show only work in progress or awaiting their attention. The coordinator owns this as a standing duty, already authorized by the maintainer, so do not ask before archiving a session that qualifies. Archive each fully complete project session when its work ends, and sweep for any others after every merge and at every checkpoint. Sweep from the roster and the client's full session list, not its default recent view. Workers do not archive themselves. A retiring coordinator's session is archived by its successor or goes on the maintainer's list.
+The maintainer's session list should show only work in progress or awaiting their attention. The coordinator owns this as a standing duty, already authorized by the maintainer, so do not ask before archiving a session that qualifies. Archive each fully complete project session when its work ends, and sweep for any others after every merge and at every checkpoint. Sweep from the roster and the client's full session list, not its default recent view. Workers do not archive themselves. A retiring coordinator's session is archived by its successor or listed for the maintainer as described below.
 
 A session is fully complete when all of these hold:
 
-- Its assigned work is finished: its issue is closed, superseded or handed to another owner, with any PR merged or closed, or its review is posted and its findings are resolved or owned elsewhere.
+- Its assigned work is finished: any issue it worked under is closed, superseded or owned by someone else, any PR is merged or closed, and any review it posted has its findings resolved or owned elsewhere.
 - Its result has reached whoever needs it. For a worker, that is the coordinator. For a session the maintainer started, it is the maintainer, shown by their own later message in that session or by a coordinator report carrying the result.
 - Its handoff is preserved in the issue, PR or coordinator roster.
 - Nothing waits on it: no unfinished work, open PR it owns, running operation, unanswered question or pending decision.
-- Any worktree it owns that archival could remove passes the retirement checks below: nothing dirty or untracked to keep, no unpushed commits, no dependent branch at risk and no active user or process. A session with no such worktree has nothing to check here.
+- Any worktree it owns that archival could remove passes the retirement checks below. A session with no such worktree has nothing to check here.
 
 Idleness or a merged PR alone does not qualify. A condition that cannot be checked counts as failed. For a cloud session, read its state through the browser route below and confirm from its handoff that its work is pushed. If a condition fails, keep the session active and record in the roster what it is waiting for. Leave pinned sessions alone.
 
 Use supported, reversible archival and check the result. Do not delete conversations or claim archival frees disk. The authorization covers the client removing a worktree that passed those checks. It does not cover accepting a discard prompt, manual removal or forced removal.
 
-Through the Claude desktop app's cross-session tools, an agent reaches only sessions the app runs itself (local, SSH and WSL), not cloud, terminal CLI or VS Code sessions. The app may prompt for each archive outside Auto and Bypass modes. Archive cloud sessions from the claude.ai/code sidebar through a signed-in browser tool. When no route is available, give the maintainer one list of the finished sessions with supported links, and keep that list in the private roster until they are archived. A public checkpoint states only how many are waiting. The client's auto-archive setting acts on a merge or close alone, so it does not replace these conditions, and it is the maintainer's to change. Report unavailable lifecycle controls.
+Through the Claude desktop app's cross-session tools, an agent reaches only sessions the app runs itself (local, SSH and WSL), not cloud, terminal CLI or VS Code sessions. Archive cloud sessions from the claude.ai/code sidebar through a signed-in browser tool. When no route is available, give the maintainer one list of the sessions that appear finished, with supported links and any condition that could not be checked, and keep that list in the private roster until they are archived. A public checkpoint states only how many are waiting. The client's auto-archive setting acts on a merge or close alone, so it does not replace these conditions, and it is the maintainer's to change. Report unavailable lifecycle controls.
 
 ## Worktree and storage management
 
