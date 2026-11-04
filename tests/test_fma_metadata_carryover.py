@@ -56,6 +56,8 @@ class Harness:
         self.exit_code = 1
         self.hold = False
         self.held: int | None = None
+        self.wall = [105.0]
+        self.ticks: list[float] | None = None
 
     def program(self) -> str:
         case = self.consumer.case
@@ -97,6 +99,16 @@ class Harness:
             self.held = fcntl.fcntl(original, fcntl.F_DUPFD_CLOEXEC, 256)
             os.close(original)
             helper.fds.add(self.held)
+        if self.ticks is not None:
+            ticks, join = self.ticks, helper.join
+
+            def scheduled_join(timeout: float) -> bool:
+                # One deterministic step per wait iteration until cleanup starts.
+                if consumer.clock.cleanup_start_utc is None:
+                    ticks[0] += 1.0
+                return join(timeout)
+
+            setattr(helper, "join", scheduled_join)  # noqa: B010
         helper.admit()
         return helper
 
@@ -147,23 +159,20 @@ def build(
         utc_now=lambda: datetime.fromtimestamp(105, UTC),
         monotonic=lambda: 10.0,
     )
+    wall = [105.0]
     if monotonic is None:
-        clock = CaseClock(200, 300, lambda: 105.0, lambda: 10.0)
+        clock = CaseClock(200, 300, lambda: wall[0], lambda: 10.0)
     else:
-        # Advance only until just past the original case end, then hold still,
-        # so later observations cannot tighten (or renew) the adopted clock.
-        ticks = [*monotonic, float("inf")]
-
-        def advancing() -> float:
-            if ticks[0] < ticks[1]:
-                ticks[0] += 1.0
-            return ticks[0]
-
-        clock = CaseClock(200, 300, lambda: 105.0, advancing)
-        ticks[1] = clock.end_monotonic + 1
+        # Fake time moves only on the schedule set by Harness.start: one whole
+        # second per metadata wait iteration, never per observation (the
+        # number of observations inside one join depends on real scheduling).
+        ticks = monotonic
+        clock = CaseClock(200, 300, lambda: wall[0], lambda: ticks[0])
     pin = capture(os.getpid(), ObservationWorkspace(clock))
     consumer = ValidationConsumer(owner, pin, pin, clock, case)
     harness = Harness(consumer)
+    harness.wall = wall
+    harness.ticks = monotonic
     monkeypatch.setattr(consumer, "_start", harness.start)
     return harness
 
@@ -262,7 +271,10 @@ def test_held_helper_blocks_decoder_and_keeps_original_clock(
     harness = build(tmp_path, monkeypatch, monotonic=[10.0])
     harness.hold = True
     consumer = harness.consumer
+    clock = consumer.clock
     try:
+        # The held descriptor keeps join() false; only the metadata phase
+        # deadline on the injected clock ends the wait. No real timing decides.
         with pytest.raises(ProbeError, match="metadata_deadline"):
             consumer.inspect(3)
         helper = harness.helper
@@ -270,16 +282,24 @@ def test_held_helper_blocks_decoder_and_keeps_original_clock(
         assert helper.process.wait(timeout=3) == 1
         assert not harness.decoder_snapshots and not consumer.decoder_started
         assert consumer.active is helper and not consumer.history
-        original = consumer.clock.cleanup_start_utc
-        assert original is not None and consumer.clock.case_missed
-        # Still held: no retirement, no renewal of the original obligation.
-        assert not consumer.join(0.01)
+        original = clock.cleanup_start_utc
+        # Adopted exactly at the metadata phase deadline (fixed wall 105), well
+        # before the whole-case end. One integer-valued clock domain throughout.
+        assert original == 105.0
+        assert not clock.case_missed and not clock.timing_unknown and not clock.missed
+        assert consumer.owner.cleanup_started_utc == "1970-01-01T00:01:45Z"
+        # Still held, one whole second later (inside the three-second window):
+        # no retirement, and a later cancel cannot move the original obligation.
+        harness.wall[0] += 1.0
+        assert not consumer.join(0.01) and consumer.active is helper
         consumer.cancel()
-        assert consumer.clock.cleanup_start_utc == original
+        consumer.cancel()
+        assert clock.cleanup_start_utc == original and not clock.missed
     finally:
         release(harness)
-    assert consumer.clock.cleanup_start_utc == original and consumer.clock.case_missed
+    assert clock.cleanup_start_utc == original
     assert len(consumer.history) == 1 and not harness.decoder_snapshots
+    assert consumer.history[0]["role"] == "metadata"
     assert consumer.receipt()["decode_verdict"] == "not_run"
 
 
