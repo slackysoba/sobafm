@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 import sys
@@ -26,6 +27,7 @@ from .limits import (
     encode_report,
     json_size,
 )
+from .metadata import PARSER_SCOPE_REASONS, REJECTION_STDERR
 from .observation import ObservationWorkspace
 from .process import OwnedHelper, ProcessPin, inventory
 from .terminal import DECODE_FIELDS, validate_envelope, validate_terminal
@@ -90,6 +92,31 @@ def validate_metadata(result: dict[str, object], case: CaseBinding = NIGHT_OWL) 
             ):
                 raise ProbeError("metadata_report_frame")
     json_size(result)
+
+
+def metadata_rejection(result: object, case: CaseBinding = NIGHT_OWL) -> str | None:
+    """Return the reason of a closed, bounded rejection record, else None."""
+    if not isinstance(result, dict):
+        return None
+    rejection = cast(dict[str, object], result)
+    reason = rejection.get("reason")
+    if (
+        set(rejection) != {"schema", "reason", "credits_complete"}
+        or rejection["schema"] != case.schema("metadata-rejection")
+        or rejection["credits_complete"] is not False
+        or not isinstance(reason, str)
+        or re.fullmatch("[a-z0-9_]{1,80}", reason) is None
+    ):
+        return None
+    return reason
+
+
+def carried_rejection(result: object, case: CaseBinding = NIGHT_OWL) -> bool:
+    """A parser-scope verdict that still lets the supplied recording decode (#62).
+
+    Synthetic qualification cases never carry a rejection into decoding.
+    """
+    return not case.synthetic and metadata_rejection(result, case) in PARSER_SCOPE_REASONS
 
 
 def validate_decode(result: dict[str, object], case: CaseBinding = NIGHT_OWL) -> None:
@@ -183,6 +210,9 @@ class ValidationConsumer:
         self.operation = False
         self.phase = "inert"
         self.metadata: dict[str, object] | None = None
+        # Separate verdicts: a retained metadata rejection never decides decode.
+        self.metadata_verdict: str | None = None
+        self.decoder_started = False
         self.decode: dict[str, object] | None = None
         self.history: list[dict[str, object]] = []
         self.delivered = 0
@@ -327,16 +357,24 @@ class ValidationConsumer:
                 raise ProbeError("metadata_case_binding")
             if len(rows) == 1 and rows[0].get("schema") == self.case.schema("metadata-rejection"):
                 rejection = rows[0]
-                reason = rejection.get("reason")
-                if (
-                    set(rejection) == {"schema", "reason", "credits_complete"}
-                    and rejection["credits_complete"] is False
-                    and isinstance(reason, str)
-                    and re.fullmatch("[a-z0-9_]{1,80}", reason)
-                ):
+                if metadata_rejection(rejection, self.case) is not None:
                     self.metadata = rejection
-                raise ProbeError("metadata_helper_rejected")
-            if (
+                    self.metadata_verdict = "rejected"
+                if not carried_rejection(self.metadata, self.case):
+                    raise ProbeError("metadata_helper_rejected")
+                # The helper wrote its one bounded record, then its fixed stderr
+                # line and exit 1. Anything else is a helper failure. join()
+                # above already observed actual exit and every descriptor close.
+                if (
+                    helper.failure
+                    or helper.errors.error
+                    or helper.errors.count != len(REJECTION_STDERR)
+                    or helper.errors.digest.digest() != hashlib.sha256(REJECTION_STDERR).digest()
+                    or helper.process is None
+                    or helper.process.returncode != 1
+                ):
+                    raise ProbeError("metadata_helper_failed")
+            elif (
                 helper.failure
                 or helper.errors
                 or helper.process is None
@@ -346,10 +384,13 @@ class ValidationConsumer:
                 or rows[0].get("credits_complete") is not False
             ):
                 raise ProbeError("metadata_helper_failed")
-            self.metadata = rows[0]
-            validate_metadata(self.metadata, self.case)
+            else:
+                self.metadata = rows[0]
+                validate_metadata(self.metadata, self.case)
+                self.metadata_verdict = "inspected"
             self._retire(helper)
             self.phase = "decoder_preparation"
+            self.decoder_started = True
             helper = self._start(
                 "decoder",
                 [
@@ -508,7 +549,14 @@ class ValidationConsumer:
             "finished": self.finished,
             "delivered_bytes": self.delivered,
             "metadata": self.metadata,
+            "metadata_verdict": self.metadata_verdict
+            or ("not_run" if self.phase == "inert" else "incomplete"),
             "decode": self.decode,
+            "decode_verdict": "passed"
+            if self.finished
+            else "incomplete"
+            if self.decoder_started
+            else "not_run",
             "terminal_error": self.terminal_error,
             "first_write_cancelled": self.first_write_cancelled,
             "helpers": self.history,
@@ -533,6 +581,8 @@ def expected_outcome(validation: dict[str, object], case: CaseBinding) -> bool:
                 "credits_complete": False,
             }
             and validation.get("phase") == "metadata"
+            and validation.get("metadata_verdict") == "rejected"
+            and validation.get("decode_verdict") == "not_run"
             and validation.get("decode") is None
             and validation.get("delivered_bytes") == 0
             and validation.get("finished") is False
@@ -548,4 +598,10 @@ def expected_outcome(validation: dict[str, object], case: CaseBinding) -> bool:
             and type(validation.get("delivered_bytes")) is int
             and 0 < cast(int, validation["delivered_bytes"]) <= 65_536
         )
-    return validation.get("finished") is True
+    metadata = validation.get("metadata")
+    return (
+        validation.get("finished") is True
+        and validation.get("decode_verdict") == "passed"
+        and validation.get("metadata_verdict")
+        == ("rejected" if carried_rejection(metadata, case) else "inspected")
+    )

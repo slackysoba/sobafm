@@ -614,6 +614,30 @@ parser exception text is never returned. No URLs are followed and
 contents are unknown; an unsupported case needs a reviewed alternative, never
 truncation or increased capacity.
 
+Technical decode is reported separately from embedded-notice review
+([#62](https://github.com/slackysoba/sobafm/issues/62)). For the `night-owl`
+case only, a parser-scope rejection is retained as the metadata verdict and the
+decoder still runs: `unsupported_id3_version`, `unsupported_id3_text_encoding`,
+`unsupported_nested_id3`, `unsupported_commercial_notice`,
+`unresolved_duplicate_frame_id`, `metadata_decoded_payload_reservation`,
+`metadata_notice_exceeds_supported_bound`, `metadata_tag_limit` and
+`metadata_copy_reservation`. The last two are decided from the ten ID3 header
+bytes, before library entry or any use of the parser copy reservation, so the
+helper settles under its existing limits either way. The owner first observes
+the helper's one bounded rejection record, its fixed stderr line, exit 1 and
+every descriptor close, then retires it through the ordinary path under the
+original clock. A held descriptor keeps the decoder from starting until the
+metadata deadline cancels the case. The rejection stays in `validation.metadata`
+with `credits_complete: false`; it is never upgraded to an inspected report.
+
+Every other code, `metadata_inspection_failed`, read/seek/deadline/timing,
+case-binding and helper failures remain terminal and start no decoder. The
+synthetic `metadata-rejection` case is unchanged. The validation receipt carries
+`metadata_verdict` (`inspected`, `rejected`, `incomplete` or `not_run`) and
+`decode_verdict` (`passed`, `incomplete` or `not_run`); the owner's `passed`
+covers decode and release only. The parser subset, capacity partitions, clocks
+and cleanup ownership are unchanged.
+
 The pinned mpg123 CLI remains noisy enough to reject warnings, resynchronization,
 format changes and malformed completion. `--no-frankenstein` is deliberately
 absent: its advertised-frame-count early stop would undermine complete input.
