@@ -134,6 +134,29 @@ def test_borrowed_region_or_view_retains_the_lease() -> None:
     assert pool.leased == 0
 
 
+def test_region_released_by_the_producer_still_settles() -> None:
+    pool, bank = fresh_bank()
+    region = bank.reserve_write(FRAME_BYTES)
+    assert region is not None
+    with region:
+        region[:] = pattern(FRAME_BYTES)
+    bank.commit_write(FRAME_BYTES)
+    assert bank.facts().written_bytes == FRAME_BYTES
+
+    later = bank.reserve_write(16)
+    assert later is not None
+    with later:
+        later[:] = b"\x02" * 16
+    bank.cancel()
+    with pytest.raises(ValueError):
+        bank.commit_write(17)
+    bank.commit_write(16)  # settles after cancel; nothing is published
+    assert bank.facts().written_bytes == FRAME_BYTES
+
+    assert bank.release() is True
+    assert pool.leased == 0
+
+
 def test_repeated_cancellation_keeps_the_original_clock_and_state() -> None:
     clock = SteppingClock(10.0, 20.0, 30.0)
     _, bank = fresh_bank(clock)

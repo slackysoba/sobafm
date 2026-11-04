@@ -140,6 +140,7 @@ class PcmBank:
         self._refund = refund
         self._clock = clock
         self._region: memoryview | None = None
+        self._region_length = 0
         self._written = 0
         self._read = 0
         self._ended = False
@@ -156,8 +157,10 @@ class PcmBank:
     def reserve_write(self, limit: int | None = None) -> memoryview | None:
         """Borrow the next contiguous free region, or return None when full.
 
-        The producer fills a prefix and must call ``commit_write``. While the
-        region or any view derived from it exists, the bank cannot be released.
+        The producer fills a prefix and must settle the borrow with
+        ``commit_write``, including ``commit_write(0)`` on error. The region may
+        already be released by then. Until the borrow is settled and no view
+        derived from the region exists, the bank cannot be released.
         """
         if limit is not None and limit < 1:
             raise ValueError("limit must be positive")
@@ -173,7 +176,7 @@ class PcmBank:
                 length = min(length, limit)
             with memoryview(backing) as whole:
                 region = whole[start : start + length]
-            self._region = region
+            self._region, self._region_length = region, length
             return region
 
     def commit_write(self, count: int) -> None:
@@ -185,10 +188,12 @@ class PcmBank:
             region = self._region
             if region is None:
                 raise PcmStateError("no write region is reserved")
-            if not 0 <= count <= len(region):
+            # The producer may have released the region (for example with a
+            # ``with`` block), so its length is kept separately.
+            if not 0 <= count <= self._region_length:
                 raise ValueError("count exceeds the reserved region")
-            region.release()
-            self._region = None
+            region.release()  # idempotent on an already released view
+            self._region, self._region_length = None, 0
             if self._cancelled_at is not None:
                 return
             self._written += count
