@@ -455,15 +455,18 @@ FMA environment preflight uses the same `ObservationWorkspace`, one arena and
 one descriptor/lease. Self identity/security/cgroup, mountinfo, effective limits,
 current memory/events/swap and the decoder's core route share one cumulative
 **65,536-byte** transaction, including overflow probes and complete EOF. The
-existing 8,192-byte arena's line region extends to `[4096:5120]`; no extra read
+existing 8,192-byte arena's line region extends to `[4096:6144]`: mountinfo rows
+use `[5120:6144]`, bytes previously described as reserved, while `[6144:8192]`
+stays reserved. No allocation, partition or capacity changes, and no extra read
 thread or nested transaction is introduced. Component maxima cannot all coexist.
 The historical Linux probes are unchanged. Unused version/hash projections are
 omitted, while authenticated packet source hashes, native/runtime identity,
 amd64/topology, single-thread, 4096-byte page and slot/statvfs gates remain.
 
 The preflight requires all self UID/GID values 1000, NNP=1, seccomp=2, CapEff=0 and
-exact `0::/` membership. Mountinfo admits at most 256 complete rows, 1,024 bytes
-per row, 64 spans per row and an exact separator with three trailing fields.
+exact `0::/` membership. Mountinfo admits at most 256 complete rows, 2,048 bytes
+per row (a measured Docker Desktop containerd-snapshotter root overlay row with 12
+`lowerdir` entries is 1,353 bytes), 64 spans per row and an exact separator with three trailing fields.
 Only required gate bits are retained. Destinations must be absolute and
 unescaped/canonical; duplicate required destinations, ambiguous paths and
 conflicting/duplicate `ro`/`rw` option tokens fail. `/sys/fs/cgroup` must be
@@ -879,8 +882,13 @@ release, and nothing here runs in ordinary CI, where Docker is a local fake.
    chosen end time T with `synthetic_preflight_sha256` set to the receipt's
    SHA-256, and immediately round-trips it through `load()` or
    `load_qualification()`. T must fall within 210 seconds of that load and the
-   request expiry, so freeze directly before the controller.
-3. Run the owned cases with the controller invocation below.
+   request expiry, so freeze directly before the controller. Freeze creates the
+   packet owned by whoever ran it, mode 0600, and the controller reads it as
+   UID 1000, so `chown 1000:1000` the frozen packet before the controller runs;
+   with root as the operator, an unchowned packet fails with `PermissionError`.
+3. Run the owned cases with the controller invocation below. Each owned case
+   needs its own preflight and freeze at the frozen commit, because each
+   receipt binds one volume and slot.
 
 This preflight is not native qualification or execution permission. Its PTY
 facts do not establish kernel PTY reclamation, and executing it locally is a
