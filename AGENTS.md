@@ -10,7 +10,7 @@ The repository currently contains specifications and planning. The toolchain iss
 
 ## Engineering requirements
 
-Target Linux/Docker on amd64 and native arm64. Do not introduce Windows runtime compatibility layers.
+Target Linux/Docker on amd64. Native arm64 is on hold until after the first amd64 release (#60); keep its CI job and preflight tooling unchanged. Do not introduce Windows runtime compatibility layers.
 
 Prefer cohesive modules, clear names, explicit ownership and maintained platform libraries. Each abstraction and dependency must address a documented requirement. Assess dependencies for maintenance, licensing, security and operational fit. Avoid speculative provider frameworks, custom SDK distributions and native build systems.
 

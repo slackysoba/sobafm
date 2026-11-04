@@ -1,5 +1,12 @@
 # Read-only native arm64 runner preflight
 
+**On hold.** Native arm64 is on hold until after the first amd64 release by
+[maintainer decision](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6634180574),
+recorded in [ADR 0004](../../docs/decisions/0004-amd64-whole-service-adoption.md)
+and tracked in [#60](https://github.com/slackysoba/sobafm/issues/60). This
+preflight, its setup and its workflow stay unchanged and are not a gate for
+Outcomes 4 or 5.
+
 The [first released run](https://github.com/slackysoba/sobafm/actions/runs/41271130954)
 on `71512ddc69ffa0f0a73810659314cb46ef259a03` returned `unqualified` because
 Python 3.14 was absent from the runner's initial PATH. Its fallback observed

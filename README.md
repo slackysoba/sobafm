@@ -60,7 +60,7 @@ This included ccMixter observation retains a missing requested ID and incomplete
 
 ## Platform
 
-Linux amd64 and native arm64 are the deployment targets. Docker is the supported operator path. Windows runtime support is out of scope.
+Linux amd64 is the first deployment target. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)). Docker is the supported operator path. Windows runtime support is out of scope.
 
 ## License
 

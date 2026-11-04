@@ -97,13 +97,17 @@ prefix cancellation results with `complete_decode=false`; the descendant's
 unobserved decoder wait status remains null. The launcher is the ignored-TERM
 fixture, not a claim that stock mpg123 ignored TERM.
 
-The initial native-amd64 proof is complete within these case scopes. Native arm64
-remains blocked by [observed piped core routing](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553650111)
-on the available target; no host-security change is authorized. The accepted
-experimental ADR remains unchanged. A later architecture-adoption decision,
-the eligible-recording integration and L1-L6 evidence still belong at their real
-boundaries. No real-source audio, provider, Discord, listening or release
-qualification follows, and issues #7 and #1 remain open.
+The initial native-amd64 proof is complete within these case scopes. On this
+evidence, [ADR 0004](decisions/0004-amd64-whole-service-adoption.md) adopts the
+whole-service group for the first amd64 playback slice with every limit unchanged.
+Native arm64 is on hold until after the first amd64 release
+([#60](https://github.com/slackysoba/sobafm/issues/60)); its preflight observed
+[piped core routing](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553650111)
+on the available target, and no host-security change is authorized. The accepted
+experimental ADR remains unchanged. The eligible-recording integration and L1-L6
+evidence still belong at their real boundaries. No real-source audio, provider,
+Discord, listening, application or release qualification follows, and issue #1
+remains open.
 
 ## One candidate deployment
 
@@ -391,8 +395,9 @@ belong at actual integration boundaries when those boundaries exist.
 4. Record exact image digest, source commit, architecture, native host/kernel,
    engine/runtime versions and resource settings for each tested target. The
    available native amd64 target can run Q1-Q4 independently once its other gates
-   pass. Native arm64 hardware and its own results remain a separate
-   cross-platform/release gate; their absence does not block amd64 evidence.
+   pass. Native arm64 hardware and its own results are on hold until after the
+   first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)) and
+   do not gate that release; their absence does not block amd64 evidence.
    Emulation cannot qualify either native target. Before installation or image builds,
    measure storage and allocate an experiment allowance with the coordinator
    within the remaining approved 10 GB project budget and 500 MB artifact limit.
@@ -515,10 +520,11 @@ service. If permissions rather than fit fail, increasing memory is irrelevant:
 stop and obtain a supported native Docker target with existing adequate runtime
 permissions, not a host security or delegation change made by the agent.
 
-Next action: review the bounded amd64 proof for its intended integration scope
-and obtain a native-arm64 target satisfying the unchanged gates. Application
-architecture acceptance and later boundary qualification remain separate.
-Issue #7 remains open; the larger-cap alternative is outside the approval.
+Next action: build the first eligible-recording playback slice under the
+[accepted amd64 adoption](decisions/0004-amd64-whole-service-adoption.md) and
+qualify it at its real boundaries. Native arm64 is on hold until after the first
+amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)). The
+larger-cap alternative remains outside the approval.
 
 The [direct-decoder cancellation preparation](../evaluations/linux_resource/mpg123-cancellation-plan.md)
 implements the first two Q4 cases and deterministic ownership regressions. Both
@@ -559,6 +565,7 @@ retained resource debt. A separate
 then passed once: exact header-derived 23,039,448-byte output, identical stereo
 channels for every frame, nonzero output overall, 0.229574-second readiness and
 both original cleanup deadlines met. The separately recorded FLAC and Q4 cases
-now complete the initial amd64 matrix. Native arm64, listening and application
-qualification remain outstanding; these narrow results do not adopt a playback
-architecture.
+now complete the initial amd64 matrix. Listening and application qualification
+remain outstanding, and native arm64 is on hold ([#60](https://github.com/slackysoba/sobafm/issues/60)).
+These narrow results qualify no application; [ADR 0004](decisions/0004-amd64-whole-service-adoption.md)
+separately adopts the amd64 architecture.
