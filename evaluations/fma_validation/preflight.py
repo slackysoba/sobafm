@@ -269,13 +269,9 @@ class Preflight(Management):
         checkout_path: str,
         source_path: str,
         identity: str,
-        clock: CaseClock | None = None,
         docker: str = "docker",
     ) -> None:
-        if clock is None:
-            end = time.time() + PREFLIGHT_SECONDS
-            clock = CaseClock(end, end)
-        super().__init__(journal, clock, docker)
+        super().__init__(journal, docker)
         self.image, self.python_path, self.volume = image, python_path, volume
         self.checkout_path, self.source_path = checkout_path, source_path
         self.identity = identity
@@ -758,6 +754,7 @@ def main() -> int:
     source = str(args.source.resolve())
     validate_target(args.image, args.python_path, args.volume, str(root), source)
     identity = secrets.token_hex(32)
+    end = time.time() + PREFLIGHT_SECONDS
     journal = Journal(
         args.receipt,
         Preflight.ledger(
@@ -769,6 +766,7 @@ def main() -> int:
             identity=identity,
             root=root,
         ),
+        CaseClock(end, end),
     )
     preflight = Preflight(
         journal,

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.14,<3.15"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = []
+dependencies = ["disnake[voice]==2.12.2"]
 
 [dependency-groups]
 evaluation = ["mutagen==1.48.1"]

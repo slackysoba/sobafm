@@ -208,12 +208,13 @@ def test_journal_is_durable_non_reusable_and_rejects_path_substitution(
 
     packet: Packet = load(packet_path, ROOT, now=NOW)
     path = tmp_path / "ledger.json"
-    journal = Journal(path, packet)
+    clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW, lambda: 10.0)
+    journal = Journal(path, packet, clock)
     try:
         assert json.loads(path.read_bytes())["cleanup_debt"] is True
         assert path.stat().st_mode & 0o777 == 0o600
         with pytest.raises(FileExistsError):
-            Journal(path, packet)
+            Journal(path, packet, clock)
         path.rename(tmp_path / "retained-original-ledger")
         path.write_bytes(b"do not replace")
         with pytest.raises(ProbeError, match="journal_identity_debt"):
@@ -341,9 +342,9 @@ def test_outer_terminal_capture_survives_nonzero_or_late_drain(
     from sobafm.fma_intake import LocalIntake
 
     packet = load(packet_path, ROOT, now=NOW)
-    journal = Journal(tmp_path / "outer-ledger", packet)
+    clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 5, lambda: 15.0)
+    journal = Journal(tmp_path / "outer-ledger", packet, clock)
     controller = Controller(packet, journal)
-    controller.clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 5, lambda: 15.0)
     init = ProcessPin(1, 1, 0, "/init", 1, 1, 1000, "/")
     owner_pin = ProcessPin(2, 1, 1, "/python", 1, 2, 1000, "/")
     owner = LocalIntake(
