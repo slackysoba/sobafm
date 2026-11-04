@@ -8,7 +8,7 @@ A self-hosted Discord music bot for Linux and Docker.
 
 ## Development status
 
-The offline catalog selector compares prepared Jamendo, ccMixter and Free Music Archive metadata, prioritizing strong prompt matches and complete recordings. Application playback, installation packages and release qualification are not yet complete.
+The offline catalog selector compares prepared Jamendo, ccMixter and Free Music Archive metadata, prioritizing strong prompt matches and complete recordings. A first, not yet qualified amd64 playback slice can be run with Docker Compose; release qualification is not yet complete.
 
 The Python development toolchain and Linux CI are available. Current work establishes source admission and a feasible Linux resource configuration. A narrow end-to-end playback implementation follows. Listening comparisons are deferred optional evidence.
 
@@ -23,7 +23,7 @@ uv run pre-commit run --all-files
 uv run pytest
 ```
 
-This installs Python 3.14 and the locked development environment, then runs all-file checks and the offline tests. No credentials or audio are needed. See [Contributing](CONTRIBUTING.md) for tool choices, updates and required checks. There is no runnable bot or operator image yet.
+This installs Python 3.14 and the locked development environment, then runs all-file checks and the offline tests. No credentials or audio are needed. See [Contributing](CONTRIBUTING.md) for tool choices, updates and required checks.
 
 Try the selector with explicitly synthetic metadata:
 
@@ -46,7 +46,21 @@ uv run python -m sobafm.catalog_import ccmixter \
 
 This included ccMixter observation retains a missing requested ID and incomplete upstream notices. The [import guide](docs/catalog-evaluation.md#saved-source-metadata-imports) also covers saved Jamendo JSON and FMA operator manifests, with synthetic fixtures for those two sources. Normalization reports evidence gaps and creates no playback admission or network activity.
 
+## Run
+
+The first amd64 playback slice runs with Docker Compose. It is not yet qualified: the image has not been built or run under its limits, or tested against Discord.
+
+```sh
+cp .env.example .env   # then replace the placeholder token
+mkdir data
+docker compose up --build -d
+```
+
+See [Operations](docs/operations.md) for Discord permissions, the catalog and media files, stopping, updates, troubleshooting and the memory scope.
+
 ## Documentation
+
+- [Operations](docs/operations.md)
 
 - [Product requirements](docs/requirements.md)
 - [Architecture](docs/architecture.md)

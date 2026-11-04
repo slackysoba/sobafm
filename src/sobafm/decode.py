@@ -2,7 +2,8 @@
 
 One ``DecodeProducer`` owns one decode: the verified local input, a fresh
 decoder process in its own process group, its stdin/stdout pipes, a feeder and
-a reader thread, and one ``pcm.py`` bank lease. The decoder starts before this
+a reader thread, and one ``pcm.py`` bank lease, or a bank its caller already
+leased and keeps. The decoder starts before this
 producer allocates PCM or starts threads. ``subprocess.Popen`` returns only
 after the child has exec'd, so whatever parent memory a forked child image held
 is gone before any input; any banks it could have inherited were already leased
@@ -187,8 +188,17 @@ class DecodeProducer:
         open_input: Callable[[Path], RawInput] = _open_input,
         clock: Callable[[], float] = time.monotonic,
         cleanup_seconds: float = CLEANUP_SECONDS,
+        bank: PcmBank | None = None,
     ) -> None:
+        """``bank`` is a lease the caller already holds and keeps.
+
+        Without it the producer leases one from ``pool`` after launch and returns
+        it in ``release``. With it the producer fills that bank at the same point
+        in the launch, never acquires, and leaves the lease to the caller;
+        ``release`` then only reports settlement. The bank must share ``clock``.
+        """
         self._source = source
+        self._leased = bank
         self._command = command if command is not None else DecoderCommand()
         self._pool = pool
         self._open_input = open_input
@@ -270,11 +280,14 @@ class DecodeProducer:
         except OSError:
             self._fail("decoder_limits")
             return
-        try:
-            self._bank = self._pool.acquire()
-        except PcmError, MemoryError:  # refused or failed allocation
-            self._fail("pcm_capacity")
-            return
+        if self._leased is not None:
+            self._bank = self._leased  # charged by its caller before this launch
+        else:
+            try:
+                self._bank = self._pool.acquire()
+            except PcmError, MemoryError:  # refused or failed allocation
+                self._fail("pcm_capacity")
+                return
         if self._stopped_during_start():
             return
         for thread in (
@@ -298,8 +311,16 @@ class DecodeProducer:
         return True
 
     def cancel(self) -> None:
-        """Stop the decode. Only the first call sets the time and the deadline."""
+        """Stop the decode. Only the first call sets the time and the deadline.
+
+        A caller-held bank that its owner already cancelled keeps that earlier
+        time as the original clock.
+        """
         now = self._clock()
+        if self._leased is not None:
+            first = self._leased.facts().cancelled_at
+            if first is not None:
+                now = min(now, first)
         with self._lock:
             if self._cancelled_at is None:
                 self._cancelled_at = now
@@ -348,6 +369,8 @@ class DecodeProducer:
             thread.join(max(0.0, end - self._clock()))
         if not self._settle():
             return False
+        if self._leased is not None:
+            return True  # the caller keeps and releases its own lease
         return self._bank is None or self._bank.release()
 
     def report(self) -> DecodeReport:
@@ -567,7 +590,10 @@ class DecodeProducer:
             )
         if not earned or returncode != 0:
             return
-        bank.end_pcm()
+        try:
+            bank.end_pcm()
+        except PcmStateError:
+            return  # the bank's owner stopped the stream first; nothing is declared
         failure = bank.facts().failure
         if failure is not None:
             self._fail(failure)

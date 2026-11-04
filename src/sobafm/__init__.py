@@ -1,1 +1,1 @@
-"""SobaFM package; playback capabilities are not implemented yet."""
+"""SobaFM: a self-hosted Discord music bot. Run it with ``python -m sobafm``."""
