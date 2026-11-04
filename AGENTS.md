@@ -22,6 +22,8 @@ Update affected documentation and remove superseded implementation in the same c
 
 Use one issue, one branch named <type>/<issue>-<slug>, and one pull request per cohesive change. Inspect repository state and fetch before editing. Track In progress and In review accurately. Explain behavior, rationale, scope, risk and verification; link the closing issue. Agent commits include a model-identifying Co-Authored-By trailer.
 
+Keep the Project hierarchical. When creating an issue, link it as a native sub-issue of its outcome, or of the tracking issue it extends, and set its milestone, status and priority. A `Parent: #N` line in the body does not create the link. Only outcomes and work deliberately outside every outcome, such as #60, stay top-level. Keep process-only issues off the Project.
+
 Within a Ready issue and accepted design, implement, test, document, commit, push and update the Project without redundant routine approval requests. Escalate material product/architecture choices, unapproved scope, irreversible actions, legal/security exceptions, cost/vendor commitments and missing credentials. Record a concrete question, options and recommendation on the issue; use maintainer-approval and Blocked where applicable.
 
 Once the toolchain exists, run uv sync --locked, uv run pre-commit run --all-files and uv run pytest before every push, plus change-specific checks. Agent PRs require passing applicable checks, independent review posted on the PR and resolution of blockers. A maintainer-approval label requires maintainer acceptance. Squash merge only. Do not push directly to main after initial bootstrap or rewrite shared history.
@@ -40,7 +42,23 @@ Name each worker by its concrete task. Maintain a compact private coordinator ro
 
 Give workers bounded outcomes, dependencies, interfaces, acceptance criteria and checks. Require concise handoffs with result, commit/PR, validation, source/artifact links, blockers and decisions. Keep raw logs and intermediate investigation out of the coordinator unless needed to evaluate a finding. Do not repeat completed work without a reason.
 
-Send useful start, completion and material-blocker updates without noisy polling reports. Checkpoint the milestone, owners, pending reviews, blockers and next action in durable project records. Before archiving a completed session, preserve its handoff and verify no unfinished work or running operation depends on it. Use supported, authorized reversible archival; do not delete conversations or claim archival frees disk. Report unavailable lifecycle controls.
+Send useful start, completion and material-blocker updates without noisy polling reports. Checkpoint the milestone, owners, pending reviews, blockers and next action in durable project records.
+
+## Session archival
+
+The maintainer's session list should show only work in progress or awaiting their attention. The coordinator owns this as a standing duty, already authorized by the maintainer, so it needs no per-session approval. Archive each fully complete project session when its task closes, and sweep for any others after every merge and at every checkpoint. Workers do not archive themselves.
+
+A session is fully complete when all of these hold:
+
+- Its task is merged, closed or superseded, or its review is posted and its findings are resolved or owned elsewhere.
+- Its result has reached whoever needs it: the coordinator for a worker, and for a session the maintainer started, the maintainer's reply or the coordinator's report.
+- Its handoff is preserved in the issue, PR or coordinator roster.
+- Nothing waits on it: no open PR it owns, running operation, unanswered question or pending decision.
+- Its worktree passes the retirement checks below, because archival can remove it.
+
+Idleness or a merged PR alone does not qualify. If any condition fails, keep the session active and record in the roster what it is waiting for. Leave pinned sessions alone.
+
+Use supported, reversible archival and check the result. Do not delete conversations or claim archival frees disk. The desktop client's archive control reaches only the sessions it runs itself (local, SSH and WSL). Archive cloud sessions from the claude.ai/code sidebar through a signed-in browser tool. When no route is available, give the maintainer one list of the finished sessions with supported links, and keep that list in the checkpoint until they are archived. Report unavailable lifecycle controls.
 
 ## Worktree and storage management
 
