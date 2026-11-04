@@ -48,7 +48,7 @@ This included ccMixter observation retains a missing requested ID and incomplete
 
 ## Run
 
-The first amd64 playback slice runs with Docker Compose. It is not yet qualified: the image has not been built or run under its limits, or tested against Discord.
+The first amd64 playback slice runs with Docker Compose. It is not yet qualified: the image has been built once locally for a decode fit check, but neither the image nor the release is qualified, and the bot has not been tested against Discord.
 
 ```sh
 cp .env.example .env   # then replace the placeholder token

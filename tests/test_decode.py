@@ -5,12 +5,14 @@ Synchronisation uses pipes, FIFOs and events only; no test sleeps for a race.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import os
 import resource
 import signal
 import sys
 import threading
+import time
 from collections.abc import Buffer, Iterator
 from pathlib import Path
 
@@ -244,6 +246,113 @@ def test_child_ignoring_term_is_killed_within_the_deadline(
     assert producer.release()
 
 
+def test_cancel_unblocks_a_writer_that_defers_term_and_exit_zero_is_not_complete(
+    source: DecodeInput, pool: PcmBankPool, tmp_path: Path
+) -> None:
+    """Like mpg123: TERM is only acted on once the blocked output write fails.
+
+    The child reads its whole input, then writes forever and never checks the
+    TERM flag between writes, so without anyone reading its stdout it stays
+    blocked in a write until killed. Once the pipe closes it exits 0, as mpg123
+    does on TERM; that exit must not count as decoder completion.
+    """
+    fifo = tmp_path / "ready"
+    os.mkfifo(fifo)
+    script = (
+        "import os, signal, sys\n"
+        "terminated = []\n"
+        "signal.signal(signal.SIGTERM, lambda *_: terminated.append(1))\n"
+        "sys.stdin.buffer.read()\n"
+        f"open({str(fifo)!r}, 'wb').write(b'r')\n"
+        f"chunk = b'\\x01' * {64 * FRAME_BYTES}\n"
+        "try:\n"
+        "    while True:\n"
+        "        os.write(1, chunk)\n"
+        "except BrokenPipeError:\n"
+        "    os._exit(0 if terminated else 5)\n"
+    )
+    producer = DecodeProducer(
+        dataclasses.replace(source, pcm_limit=1 << 40),
+        command=child(script),
+        pool=pool,
+    )
+    producer.start()
+    with open(fifo, "rb") as ready:
+        assert ready.read() == b"r"  # TERM is now deferred
+    producer.cancel()
+    report = producer.finish()
+    assert report.cancelled_at is not None and report.cleanup_deadline is not None
+    assert report.returncode == 0  # it exited on its own: no KILL was needed
+    # Well inside the deadline: before the KILL point at two thirds of it.
+    assert report.cleanup_deadline - report.cancelled_at == 3.0
+    assert time.monotonic() < report.cancelled_at + 2.0
+    assert report.transfer_complete and report.failure is None
+    assert not report.decoder_complete
+    assert report.pcm is not None and not report.pcm.decoder_complete
+    assert not report.pcm.pcm_valid
+    assert report.cleanup == "clean" and report.settled
+    assert producer.release()
+
+
+class SignalledInput:
+    """Real file reads that report when the feeder has closed the input."""
+
+    def __init__(self, path: Path) -> None:
+        self.raw: RawInput = open(path, "rb", buffering=0)  # noqa: SIM115
+        self.closed = threading.Event()
+
+    def readinto(self, buffer: Buffer, /) -> int | None:
+        return self.raw.readinto(buffer)
+
+    def close(self) -> None:
+        self.raw.close()
+        self.closed.set()
+
+
+def test_owner_cancelling_the_bank_first_keeps_its_clock_and_is_no_failure(
+    tmp_path: Path, pool: PcmBankPool
+) -> None:
+    """The adapter cancels its leased bank before the producer hears of it.
+
+    The child never reads its input, so the feeder stays blocked writing, and
+    it writes output forever. Once its output fails it exits, which fails the
+    feeder's write; that must count as the owner's cancellation, on its clock.
+    """
+    payload = bytes(1 << 20)  # far beyond a pipe buffer: the feeder blocks
+    path = tmp_path / "input"
+    path.write_bytes(payload)
+    source = DecodeInput(path, len(payload), hashlib.sha256(payload).hexdigest(), 1 << 40)
+    script = (
+        "import os, signal\n"
+        "signal.signal(signal.SIGTERM, lambda *_: None)\n"
+        f"chunk = b'\\x01' * {64 * FRAME_BYTES}\n"
+        "try:\n"
+        "    while True:\n"
+        "        os.write(1, chunk)\n"
+        "except BrokenPipeError:\n"
+        "    os._exit(0)\n"
+    )
+    held = SignalledInput(path)
+    bank = pool.acquire()
+    producer = DecodeProducer(
+        source, command=child(script), pool=pool, open_input=lambda _: held, bank=bank
+    )
+    producer.start()
+    bank.cancel()
+    assert held.closed.wait(30)  # the feeder has ended: its write failed
+    producer.cancel()
+    report = producer.finish()
+    first = bank.facts().cancelled_at
+    assert first is not None
+    assert report.failure is None
+    assert report.cancelled_at == first and report.cleanup_started_at == first
+    assert report.cleanup_deadline == first + 3.0
+    assert not report.decoder_complete and not report.transfer_complete
+    assert report.cleanup == "clean" and report.settled
+    assert producer.release()
+    assert bank.release()
+
+
 class HeldInput:
     """Real file reads whose close blocks until the test allows it."""
 
@@ -324,7 +433,10 @@ def test_full_bank_waits_for_the_consumer(tmp_path: Path, pool: PcmBankPool) -> 
     owner.join(30)
     [report] = reports
     assert report.cleanup == "clean" and report.failure is None
-    assert report.pcm is not None and report.pcm.pcm_valid and report.pcm.audible_drain
+    assert report.pcm is not None and report.pcm.pcm_valid
+    # ``finish`` may snapshot before the consumer reads the last frames, so
+    # drain is observed on the bank once the consumer has seen the end.
+    assert bank.facts().audible_drain
     assert frames == total // FRAME_BYTES
     assert producer.release()
 

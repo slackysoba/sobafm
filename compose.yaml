@@ -13,7 +13,7 @@ services:
     memswap_limit: 90177536
     pids_limit: 64
     cpus: 2
-    restart: unless-stopped
+    restart: on-failure:5
     env_file: .env
     volumes:
       - ./data:/data:ro
