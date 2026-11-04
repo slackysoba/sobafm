@@ -729,7 +729,7 @@ The exclusion does not complete runner/other-owner accounting or qualify native
 execution. Exact parser allocation/copy overlap, userspace settlement and the new
 process topology still require fresh fit evidence. Old native proofs qualify
 only their exact unchanged source/image/target cases, not this topology. The
-separate #7 application-architecture decision remains open.
+separate #7 decision is now [ADR 0004](../../docs/decisions/0004-amd64-whole-service-adoption.md); it does not qualify this topology.
 
 The metadata reservation explicitly includes decoded Unicode backing and keys,
 not just raw bytes. Its conservative source-bound accounting is:

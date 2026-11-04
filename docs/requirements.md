@@ -19,7 +19,7 @@ Implement the specified behaviors without importing unrelated platform code or u
 - Use a short outcome-based roadmap with explicit acceptance evidence.
 - Scheduled agent automation requires explicit maintainer approval.
 
-Linux amd64 and native arm64 remain release targets. Build and qualify both; emulated execution does not establish native performance. Docker is the supported operator path. A Linux source workflow supports contributors and debugging without creating a second product configuration.
+Linux amd64 is the first release target. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60), [ADR 0004](decisions/0004-amd64-whole-service-adoption.md)) and is not a gate for Outcomes 4 or 5. Build and qualify each supported target natively; emulated execution does not establish native performance. Docker is the supported operator path. A Linux source workflow supports contributors and debugging without creating a second product configuration.
 
 ## Music selection and catalog preparation
 
@@ -155,7 +155,7 @@ Derive a feasible configuration and qualify it in the intended container before 
 
 Containment must take effect before untrusted input reaches a worker or decoder. Resource containment is not a claim of complete security isolation. If cgroups are selected, demonstrate actual delegation, namespace reachability and migration permission in non-root, default-seccomp Docker. Do not silently require privileged containers, a Docker socket, host-wide writable cgroup mounts or host security changes.
 
-For the [approved #7 experiment](decisions/0001-linux-resource-proposal.md), the Docker-owned whole-service group is the shared whole-worker accounting unit, charged in full to each playing server alongside parent PCM/copy reservations. Demonstrate runtime authority and placement before input, effective namespace reachability and limits, and inherited containment of descendants; delegation or migration by the non-root application is not required for this interpretation. This approval covers the finite proof, not a qualified application architecture. All capacity, PCM, cleanup, security, source-access and native-target requirements remain unchanged.
+Under the [accepted amd64 adoption](decisions/0004-amd64-whole-service-adoption.md), which follows the [approved #7 experiment](decisions/0001-linux-resource-proposal.md), the Docker-owned whole-service group is the shared whole-worker accounting unit, charged in full to each playing server alongside parent PCM/copy reservations. Demonstrate runtime authority and placement before input, effective namespace reachability and limits, and inherited containment of descendants; delegation or migration by the non-root application is not required for this interpretation. Adoption permits building the first eligible-recording playback slice on amd64; it is not a qualified application architecture. All capacity, PCM, cleanup, security and source-access requirements remain unchanged; native targets are stated above.
 
 ### Cleanup
 
@@ -207,7 +207,7 @@ Prove behavior on the deployment target, not only through fakes.
 | Latency | Median request-to-audible music is at most 15 seconds for generated playback and admitted catalog play requests; measure catalog skip separately against the same target. Report admitted failures/timeouts separately. |
 | Transitions | Replacements, skips, session renewal, listener grace, admin moves and voice loss settle correct state and heard credits. |
 | Capacity and cleanup | Actual Linux containment, useful workloads and release behavior meet the approved metric, including failure/cancellation debt. |
-| Deployment | Native amd64 and arm64 run the intended image non-root; persistent settings, restart and clean shutdown work. |
+| Deployment | Native amd64 runs the intended image non-root; persistent settings, restart and clean shutdown work. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)). |
 | Guide | A clean Linux/Docker walkthrough reaches both existing and generated music, controls, credits and restart using the documented setup. |
 
 Unit and component tests should target invariants and important schedules. Regression tests reproduce failures without sleeping until a race happens. Test at real boundaries where a fake-only test would miss integration behavior.
@@ -249,7 +249,7 @@ Organize the Project by useful outcomes, with Backlog, Ready, In progress, In re
 1. **Source and feasibility established.** Integrate the music-source decision, assess real selection and rights, and validate the chosen Linux resource/deployment route. Exit with one source strategy, one feasible deployment configuration and bounded success criteria.
 2. **Existing music works end to end.** A narrow Linux container slice joins voice, plays an eligible recording, shows correct credits, stops and shuts down. Then add request matching, continuous selection, skip and replacement behavior.
 3. **Generated music and one station.** Add validated interpretation, Lyria continuity, generated duration, fades and safe mode changes while retaining a single clear station model.
-4. **Operator-ready bot.** Persist settings/channel, finish permissions and feedback, handle recovery, package both architectures and complete security/dependency checks.
+4. **Operator-ready bot.** Persist settings/channel, finish permissions and feedback, handle recovery, package Linux amd64 (native arm64 is on hold: [#60](https://github.com/slackysoba/sobafm/issues/60)) and complete security/dependency checks.
 5. **Qualified release.** Run bounded real-source/Discord acceptance, endurance and latency measurements, memory/release qualification and a clean-machine BOTH-mode guide walkthrough. Publish only verified claims.
 
 Use a parent milestone issue for each outcome and a small number of implementation issues with acceptance criteria and dependencies. Detail the current and next slice; do not pre-create a large chain for hypothetical internals. Keep decision blockers separate from active implementation. Close issues only when their acceptance evidence exists.

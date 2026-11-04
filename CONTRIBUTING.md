@@ -6,7 +6,7 @@ Read the [requirements](docs/requirements.md), [architecture](docs/architecture.
 
 Take a Ready issue with satisfied dependencies and observable acceptance criteria. Use one cohesive change per branch and PR. Keep status, scope and evidence current.
 
-Target Linux/Docker on amd64 and native arm64. Use maintained libraries, explicit ownership and narrowly justified dependencies. Avoid speculative abstractions and Windows runtime compatibility layers.
+Target Linux/Docker on amd64. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)). Use maintained libraries, explicit ownership and narrowly justified dependencies. Avoid speculative abstractions and Windows runtime compatibility layers.
 
 ## Linux development setup
 
@@ -29,7 +29,7 @@ uv run pytest
 
 Pre-commit checks Ruff lint/formatting, strict Pyright over `src` and `tests`, Markdown, secrets, YAML/TOML syntax, merge conflicts, whitespace and final newlines. Its local hooks use the uv-locked environment in offline mode, without separate hook environments; the Pyright wrapper's online update notice is disabled. Markdown line length is disabled to preserve the existing prose and tables. The PR template is exempt from the top-level-title rule because GitHub supplies its title. The inline-HTML rule allows only the additional elements `type`, `issue` and `slug` used as branch placeholders in `AGENTS.md`. Other structural rules remain enabled. Secret scanning uses `--no-verify` to prevent network verification and excludes only the hash-heavy `uv.lock`. Review every finding; do not generate a blanket secret baseline.
 
-CI runs the same three commands on native Ubuntu amd64 and arm64 runners. Its check names are `Linux checks (amd64)` and `Linux checks (arm64)`. The checks cover development tooling and the installed-package smoke test; they do not establish player behavior, Linux resource containment, music quality or release readiness. CI installs dependencies with network access, but no hook or test needs provider access. CI uses read-only repository permissions and no persisted checkout credentials.
+CI runs the same three commands on native Ubuntu amd64 and arm64 runners. Its check names are `Linux checks (amd64)` and `Linux checks (arm64)`. The arm64 job stays while native arm64 is on hold ([#60](https://github.com/slackysoba/sobafm/issues/60)). The checks cover development tooling and the installed-package smoke test; they do not establish player behavior, Linux resource containment, music quality or release readiness. CI installs dependencies with network access, but no hook or test needs provider access. CI uses read-only repository permissions and no persisted checkout credentials.
 
 Keep `tests/` entirely offline. Place future live evaluations outside that collection tree and require explicit authorization and invocation. Do not collect a live test and rely only on a marker to prevent its imports or fixtures from contacting a provider. Prefer deterministic owned fixtures and failure-schedule regressions. No provider, Discord, audio acquisition or FFmpeg build is part of these checks.
 

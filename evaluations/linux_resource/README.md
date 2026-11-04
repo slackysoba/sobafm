@@ -34,11 +34,15 @@ dependencies, provider adapter or station framework.
   Each repeated cancellation retained the original three-second deadline and
   released the actual processes, descriptors, I/O and payload ownership without
   debt. Q1/Q2 helper cleanup is not substituted for these decoder observations.
-- Native arm64 remains blocked by the observed piped core routing on the available
-  target; [the assessment](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553650111)
+- Native arm64 is on hold until after the first amd64 release
+  ([#60](https://github.com/slackysoba/sobafm/issues/60)). Its preflight observed
+  piped core routing on the available target;
+  [the assessment](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553650111)
   requires a target satisfying the unchanged gate. No host-security change is authorized.
-  Application integration, real-source audio, Discord, listening and release
-  qualification remain outstanding. The accepted experimental ADR is unchanged.
+  [ADR 0004](../../docs/decisions/0004-amd64-whole-service-adoption.md) adopts the
+  whole-service group for the first amd64 playback slice. Application integration,
+  real-source audio, Discord, listening and release qualification remain
+  outstanding. The accepted experimental ADR is unchanged.
 - Every concrete native case needs independent review. Stop after its first
   failure and preserve the observation before preparing a correction; no case
   authorizes an automatic retry or the larger-cap fallback.

@@ -1,13 +1,19 @@
 # Read-only native arm64 runner preflight
 
+**On hold.** Native arm64 is on hold until after the first amd64 release by
+[maintainer decision](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6634180574),
+recorded in [ADR 0004](../../docs/decisions/0004-amd64-whole-service-adoption.md)
+and tracked in [#60](https://github.com/slackysoba/sobafm/issues/60). This
+preflight, its setup and its workflow stay unchanged and are not a gate for
+Outcomes 4 or 5.
+
 The [first released run](https://github.com/slackysoba/sobafm/actions/runs/41271130954)
 on `71512ddc69ffa0f0a73810659314cb46ef259a03` returned `unqualified` because
 Python 3.14 was absent from the runner's initial PATH. Its fallback observed
 aarch64, kernel `7.0.0-1017-azure` and 4,096-byte pages; Docker inspection did not
 run. The [next Ready scope](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553143879)
-permits preparation of the existing toolchain setup route. This revised workflow
-has **not been dispatched**. The runner remains unqualified for native decoder
-work; ordinary arm64 CI establishes tooling/tests only.
+permits preparation of the existing toolchain setup route. The runner remains
+unqualified for native decoder work; ordinary arm64 CI establishes tooling/tests only.
 
 The merged setup preparation at `d72b22745256226b9b11a68ce93dcd67991e6c26`
 was rejected before any job started in
@@ -28,6 +34,20 @@ and exercise path exports; they are not a complete GitHub workflow validator.
 Review the new head's complete Actions run inventory, including push-triggered
 zero-job failures, as well as ordinary CI before any later dispatch release.
 
+The corrected workflow was dispatched twice.
+[Run 41274387465](https://github.com/slackysoba/sobafm/actions/runs/41274387465)
+used source `0f75ac8e4501a579ff5cbd2106f694854fcc76ae`
+([record](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553570914)) and
+[run 41853331047](https://github.com/slackysoba/sobafm/actions/runs/41853331047)
+used source `c1ee298fee4194c3e0a24ece6ad2bccaef99cd28`
+([record](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6634028903)).
+In both, setup succeeded and the read-only observer ran. Both returned
+`unqualified` with `core_routing` (host value `pipe`) as the only issue. The job
+conclusion is `failure` because the observer exits nonzero on that classification.
+All owned commands met their cleanup deadlines with no debt. No container or
+decoder ran, so containers, limits and the decoder remain untested on arm64. This
+does not establish that arm64 is infeasible.
+
 The separate `Native arm64 runner preflight` workflow runs only through
 `workflow_dispatch`, on the existing `ubuntu-24.04-arm` capability. It uses the
 existing commit-pinned checkout and setup-uv actions, read-only repository
@@ -35,9 +55,9 @@ permissions and no persisted checkout credentials. It checks out `github.sha`; t
 inspection script independently requires that full revision and a clean tracked
 tree. No caller-provided command or source expression is evaluated by a shell.
 
-Before one future dispatch, the coordinator reviews the exact source/workflow
-and releases that setup plus read-only observation. This change releases neither
-setup nor dispatch. There are no automatic PR/push/scheduled triggers or workflow
+Any further dispatch needs a new maintainer decision
+([#60](https://github.com/slackysoba/sobafm/issues/60)) and review of the exact
+source/workflow first. There are no automatic PR/push/scheduled triggers or workflow
 retries. Concurrency does
 not cancel an already running preflight. Keep the existing amd64 Q4 packet
 frozen; this observation does not replace its Q3/interpreter-identity gates.
