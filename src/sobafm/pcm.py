@@ -136,6 +136,8 @@ class PcmBank:
         clock: Callable[[], float],
     ) -> None:
         self._lock = threading.Lock()
+        # Wakes a producer waiting for free space; notified with the lock held.
+        self._changed = threading.Condition(self._lock)
         self._backing: bytearray | None = backing
         self._refund = refund
         self._clock = clock
@@ -199,6 +201,16 @@ class PcmBank:
             self._written += count
             if not self._ready and self._written - self._read >= READY_BYTES:
                 self._ready = True
+
+    def wait_writable(self, timeout: float | None = None) -> bool:
+        """Wait until a write could proceed or fail at once.
+
+        Returns True when there is free space or the stream was cancelled,
+        ended or released, so the next ``reserve_write`` cannot block; False
+        when ``timeout`` passed first. Never called by the voice callback.
+        """
+        with self._changed:
+            return self._changed.wait_for(self._writable_or_stopped, timeout)
 
     def write(self, data: Buffer) -> int:
         """Copy as much of ``data`` as currently fits; return the bytes accepted."""
@@ -271,6 +283,7 @@ class PcmBank:
                 data = bytes(frame)
             self._read += FRAME_BYTES
             self._update_drain()
+            self._changed.notify_all()  # never blocks
             return data
         finally:
             self._lock.release()
@@ -282,6 +295,7 @@ class PcmBank:
         with self._lock:
             if self._cancelled_at is None and self._backing is not None:
                 self._cancelled_at = self._clock()
+            self._changed.notify_all()
 
     def release(self) -> bool:
         """Free the backing and return the lease once nothing borrows it.
@@ -302,6 +316,7 @@ class PcmBank:
             except BufferError:
                 return False
             self._backing = None
+            self._changed.notify_all()
         self._refund()
         return True
 
@@ -335,6 +350,14 @@ class PcmBank:
         if self._region is not None:
             raise PcmStateError("a write region is already reserved")
         return backing
+
+    def _writable_or_stopped(self) -> bool:
+        return (
+            self._backing is None
+            or self._cancelled_at is not None
+            or self._ended
+            or self._written - self._read < BANK_BYTES
+        )
 
     def _update_drain(self) -> None:
         if self._ended and self._ready and self._written - self._read < FRAME_BYTES:
