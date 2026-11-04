@@ -1,9 +1,10 @@
 """Check that the locked Discord voice dependency loads its native voice components.
 
-disnake silently disables PyNaCl transport encryption and DAVE when their native
-modules fail to import. Discord rejects non-E2EE voice calls since 2026-03-01 (see
-docs/decisions/0005-discord-voice-library.md), so a missing wheel on either CI
-architecture must fail here rather than surface later as a voice failure.
+disnake imports without PyNaCl or dave.py and refuses voice only at connect time
+(a logged warning, then RuntimeError from VoiceClient). Discord rejects non-E2EE
+voice calls since 2026-03-01 (see docs/decisions/0005-discord-voice-library.md),
+so a missing wheel on either CI architecture must fail here rather than surface
+later as a voice failure.
 This makes no network, gateway or voice connection.
 """
 
