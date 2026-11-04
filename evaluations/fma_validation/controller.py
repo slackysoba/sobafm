@@ -31,6 +31,7 @@ from .consumer import (
 )
 from .ingress import Ingress, Opaque, decode, discard_exception
 from .limits import CLEANUP_SECONDS, CaseClock, encode_report
+from .owner import INTERPRETER_FACTS
 from .packet import Packet, load, load_qualification, read_bounded, string
 from .process import ProcessPin
 from .terminal import validate_clock, validate_terminal
@@ -420,6 +421,7 @@ OWNER_FIELDS = {
     "failure",
     "init",
     "owner",
+    "interpreter",
     "intake",
     "reader",
     "validation",
@@ -444,6 +446,8 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
         or report["container_exit_observed"] is not False
     ):
         raise ProbeError("owner_result_failed")
+    if report["interpreter"] != INTERPRETER_FACTS:
+        raise ProbeError("owner_interpreter_facts_failed")
     intake = mapping(report["intake"])
     reader = mapping(report["reader"])
     validation = mapping(report["validation"])
@@ -808,6 +812,8 @@ class Controller(Management):
     def __init__(self, packet: Packet, journal: Journal, docker: str = "docker") -> None:
         super().__init__(journal, docker)
         self.packet = packet
+        # Computed once: the fingerprint re-encodes the packet on every access.
+        self.packet_sha256 = packet.fingerprint
         self.container: str | None = None
 
     def capture_owner(self, command: Command, *, final: bool = False) -> None:
@@ -825,7 +831,7 @@ class Controller(Management):
             if report is None:
                 raise ProbeError("owner_terminal_missing_envelope")
             if (
-                report.get("packet_sha256") != self.packet.fingerprint
+                report.get("packet_sha256") != self.packet_sha256
                 or report.get("schema") != self.packet.case.schema("owner")
                 or report.get("case_binding") != self.packet.case.record()
                 or ProcessPin.from_record(report.get("init")).pid != 1
@@ -882,7 +888,7 @@ class Controller(Management):
             or record.get("image") != self.packet.text("image")
             or labels.get("org.sobafm.project") != "sobafm"
             or labels.get("org.sobafm.issue") != "44"
-            or labels.get("org.sobafm.packet") != self.packet.fingerprint
+            or labels.get("org.sobafm.packet") != self.packet_sha256
         ):
             raise ProbeError("container_ownership_changed")
         return record

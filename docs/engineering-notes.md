@@ -119,9 +119,11 @@ Once a success record may have been submitted, including an uncertain first
 write at cursor zero, metadata cannot append a rejection terminal. Retain the
 immutable record through partial/EINTR/held/error writes and journal fsync/close;
 deadline expiry or failed close never renews the clock or releases live debt.
-The bounded construction component does not establish receiver `J(shape, wire)`
-for parsed values, rejected inputs or widening Unicode. Keep that gap explicit
-within the unchanged intake/controller partitions.
+Receiver `J(shape, wire)` is bounded by the whole-record decoded-payload gate
+in `Scan.run`: track width by decoded content, not wire spelling, so escaped
+paths are not penalized and escaped astrals still widen their string. Keep the
+phase ledger's CPython assumptions explicit as retained debt; offline tests do
+not measure the evaluation image.
 
 Receiver tests must exercise predecode rejection, not only validation after
 `json.loads`: wide escaped values and keys, unknown/deep/duplicate structures,

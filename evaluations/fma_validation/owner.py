@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import platform
 import signal
 import stat
+import sys
+import sysconfig
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
@@ -25,6 +28,14 @@ ROOT = Path("/source")
 SLOT = Path("/pending/slot")
 ORIGINAL = Path("/input/original")
 CONFIG = Path("/case/packet.json")
+# The receiver ledger's CPython-dependent assumptions hold only for this
+# interpreter: the pinned image's 3.14.7 release build, default ABI, GIL enabled.
+INTERPRETER_FACTS: dict[str, object] = {
+    "version": "3.14.7",
+    "abiflags": "",
+    "debug": False,
+    "free_threaded": False,
+}
 
 
 def executable_sha256(pid: int) -> str:
@@ -40,7 +51,38 @@ def executable_sha256(pid: int) -> str:
     return digest.hexdigest()
 
 
-def preflight(packet: Packet, workspace: ObservationWorkspace) -> tuple[ProcessPin, ProcessPin]:
+def interpreter_facts() -> dict[str, object]:
+    """The running interpreter's version, ABI flags, debug and free-threaded build."""
+    gil_disabled: object = sysconfig.get_config_var("Py_GIL_DISABLED")
+    return {
+        # A pre-release spells its level, e.g. "3.14.7rc1", so it cannot match.
+        "version": platform.python_version(),
+        "abiflags": sys.abiflags,
+        "debug": hasattr(sys, "gettotalrefcount"),
+        # Fail closed: only an explicit 0 proves a GIL build.
+        "free_threaded": gil_disabled != 0,
+    }
+
+
+def check_interpreter(facts: dict[str, object]) -> None:
+    """Fail closed on each fact separately; any other key set is rejected too."""
+    if set(facts) != set(INTERPRETER_FACTS):
+        raise ProbeError("interpreter_facts")
+    for key, code in (
+        ("version", "interpreter_version"),
+        ("abiflags", "interpreter_abiflags"),
+        ("debug", "interpreter_debug_build"),
+        ("free_threaded", "interpreter_free_threaded"),
+    ):
+        expected, observed = INTERPRETER_FACTS[key], facts[key]
+        if type(observed) is not type(expected) or observed != expected:
+            raise ProbeError(code)
+
+
+def preflight(
+    packet: Packet, workspace: ObservationWorkspace, interpreter: dict[str, object]
+) -> tuple[ProcessPin, ProcessPin]:
+    check_interpreter(interpreter)
     workspace.environment(intake=True)
     if os.getpid() == 1 or os.uname().machine != "x86_64":
         raise ProbeError("separate_native_amd64_owner_required")
@@ -67,7 +109,8 @@ def preflight(packet: Packet, workspace: ObservationWorkspace) -> tuple[ProcessP
 def execute(packet: Packet) -> dict[str, object]:
     clock = CaseClock(packet.whole_end, packet.expires)
     workspace = ObservationWorkspace(clock)
-    init, owner_pin = preflight(packet, workspace)
+    interpreter = interpreter_facts()
+    init, owner_pin = preflight(packet, workspace, interpreter)
     before = workspace.resources()
     owner = LocalIntake(SLOT, ORIGINAL, packet.request)
     consumer = ValidationConsumer(owner, init, owner_pin, clock, packet.case, workspace=workspace)
@@ -149,6 +192,7 @@ def execute(packet: Packet) -> dict[str, object]:
         "failure": failure,
         "init": init.record(),
         "owner": owner_pin.record(),
+        "interpreter": interpreter,
         "intake": report,
         "reader": reader_report,
         "validation": consumer.receipt(),
