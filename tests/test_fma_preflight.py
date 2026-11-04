@@ -179,6 +179,7 @@ def update(state: Path, change: Callable[[dict[str, object]], None]) -> None:
 
 def preflight(tmp_path: Path, docker: str, seconds: float = 60) -> Preflight:
     source = str(tmp_path / "absent-input")
+    end = time.time() + seconds
     journal = Journal(
         tmp_path / "receipt.json",
         Preflight.ledger(
@@ -190,8 +191,8 @@ def preflight(tmp_path: Path, docker: str, seconds: float = 60) -> Preflight:
             identity=IDENTITY,
             root=ROOT,
         ),
+        CaseClock(end, end),
     )
-    end = time.time() + seconds
     return Preflight(
         journal,
         image=IMAGE,
@@ -200,7 +201,6 @@ def preflight(tmp_path: Path, docker: str, seconds: float = 60) -> Preflight:
         checkout_path=str(ROOT),
         source_path=source,
         identity=IDENTITY,
-        clock=CaseClock(end, end),
         docker=docker,
     )
 
