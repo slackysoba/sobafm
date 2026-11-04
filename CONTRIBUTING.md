@@ -1,6 +1,6 @@
 # Contributing
 
-Read the [requirements](docs/requirements.md), [architecture](docs/architecture.md) and [engineering notes](docs/engineering-notes.md) before choosing a change. The development toolchain is available; application playback is not yet implemented.
+Read the [requirements](docs/requirements.md), [architecture](docs/architecture.md) and [engineering notes](docs/engineering-notes.md) before choosing a change. The development toolchain is available. A first amd64 playback slice is implemented but not yet qualified; see [operations](docs/operations.md).
 
 ## Scope and development
 

@@ -1,0 +1,24 @@
+# SobaFM first amd64 slice. The limits are ADR 0004's and the app refuses to
+# start under any others. Copy .env.example to .env and fill in real values.
+services:
+  sobafm:
+    build: .
+    image: sobafm:local
+    platform: linux/amd64
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 90177536
+    memswap_limit: 90177536
+    pids_limit: 64
+    cpus: 2
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "2"

@@ -21,7 +21,6 @@ import contextlib
 import logging
 import os
 import signal
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -582,16 +581,3 @@ async def run(config: Config, producer: Producer) -> int:
         # Only the type: client errors must not carry the token or interaction data out.
         log.error("Discord client stopped: %s", type(error).__name__)
     return 0 if released and error is None else 1
-
-
-def main(producer: Producer) -> int:
-    """Entry point for a deployment that supplies the decoder-backed producer."""
-    logging.basicConfig(
-        level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(name)s %(message)s"
-    )
-    try:
-        config = Config.from_environ()
-    except ConfigError as exc:
-        log.error("configuration error: %s", exc)
-        return 2
-    return asyncio.run(run(config, producer))
