@@ -36,7 +36,9 @@ an independent exact PCM oracle.
 
 The first failure, expiry or normal completion starts one **three-second cleanup
 obligation**, conveyed across helpers as an original UTC timestamp and locally
-bounded by monotonic time. Later phases only tighten it. The successful reader
+bounded by monotonic time. Later phases only tighten it. A decoder phase expiry
+noticed late, including readiness, setup-wait and stopped-native gates, starts
+the obligation at the phase deadline rather than at its observation. The successful reader
 is observed complete before intake cancellation adopts the decoder's earlier
 clock. Unknown timing and missed deadlines remain sticky after eventual physical
 release. A signal without a trusted cross-process timing record is unknown timing.
