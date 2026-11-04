@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import resource
 import signal
 import sys
 import threading
@@ -325,4 +326,53 @@ def test_full_bank_waits_for_the_consumer(tmp_path: Path, pool: PcmBankPool) -> 
     assert report.cleanup == "clean" and report.failure is None
     assert report.pcm is not None and report.pcm.pcm_valid and report.pcm.audible_drain
     assert frames == total // FRAME_BYTES
+    assert producer.release()
+
+
+def test_failed_thread_start_is_owned_and_settled(
+    source: DecodeInput, pool: PcmBankPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_start = threading.Thread.start
+    calls = 0
+
+    def start_once(thread: threading.Thread) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("can't start new thread")
+        real_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", start_once)
+    producer = DecodeProducer(source, command=echo_frames(1), pool=pool)
+    producer.start()  # must not raise
+    monkeypatch.undo()
+    report = producer.finish()
+    assert report.failure == "thread_start"
+    assert report.cleanup == "clean" and report.settled
+    assert report.returncode == -signal.SIGTERM
+    assert producer.release()
+
+
+def test_limits_are_applied_before_input(tmp_path: Path, pool: PcmBankPool) -> None:
+    path = tmp_path / "input"
+    path.write_bytes(b"x")
+    source = DecodeInput(path, 1, hashlib.sha256(b"x").hexdigest(), FRAME_BYTES)
+    # A distinctive value that cannot be inherited; the child reads its input
+    # first, so it reports the limit applied before that input.
+    assert resource.getrlimit(resource.RLIMIT_FSIZE) != (12_345, 12_345)
+    script = (
+        "import resource, sys\n"
+        "sys.stdin.buffer.read()\n"
+        "soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)\n"
+        f"sys.stdout.buffer.write(b'\\x01' * {FRAME_BYTES} if soft == hard == 12_345 else b'')\n"
+    )
+    command = DecoderCommand(
+        argv=(sys.executable, "-I", "-c", script), limits=((resource.RLIMIT_FSIZE, 12_345),), env={}
+    )
+    producer = DecodeProducer(source, command=command, pool=pool)
+    run(producer)
+    report = producer.report()
+    assert report.failure is None
+    assert report.pcm is not None and report.pcm.pcm_valid
+    assert report.pcm.written_bytes == FRAME_BYTES
     assert producer.release()

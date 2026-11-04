@@ -101,6 +101,7 @@ type DecodeFailure = Literal[
     "decoder_exit",
     "decoder_stalled",
     "output_read",
+    "thread_start",
     "output_overrun",
     "pcm_capacity",
     "empty_pcm",
@@ -217,7 +218,11 @@ class DecodeProducer:
 
     @property
     def bank(self) -> PcmBank | None:
-        """The leased bank the voice consumer reads, once allocated."""
+        """The leased bank the voice consumer reads, once allocated.
+
+        Consumers only read frames from it; to stop the decode, call
+        ``DecodeProducer.cancel()``, never ``bank.cancel()`` directly.
+        """
         return self._bank
 
     def start(self) -> None:
@@ -252,10 +257,14 @@ class DecodeProducer:
             return
         with self._lock:
             self._process = process
+        try:
+            self._pidfd = os.pidfd_open(process.pid)
+        except OSError:
+            self._fail("decoder_limits")
+            return
         if self._stopped_during_start():
             return
         try:
-            self._pidfd = os.pidfd_open(process.pid)
             for kind, limit in self._command.limits:
                 resource.prlimit(process.pid, kind, (limit, limit))
         except OSError:
@@ -268,12 +277,16 @@ class DecodeProducer:
             return
         if self._stopped_during_start():
             return
-        self._threads = [
+        for thread in (
             threading.Thread(target=self._feed, name="decode-feed", daemon=True),
             threading.Thread(target=self._read, name="decode-read", daemon=True),
-        ]
-        for thread in self._threads:
-            thread.start()
+        ):
+            try:
+                thread.start()
+            except RuntimeError:  # thread or pids limit: own only what started
+                self._fail("thread_start")
+                return
+            self._threads.append(thread)
 
     def _stopped_during_start(self) -> bool:
         """Apply a cancellation that raced the launch to what now exists."""
