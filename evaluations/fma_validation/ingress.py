@@ -512,7 +512,17 @@ FAMILIES = {
 }
 DECODE_ENVELOPE = frozenset({"event", "schema", "case_binding", "runner", "cleanup"})
 OWNER_ENVELOPE = frozenset({"schema", "case_binding", "init", "owner", "packet_sha256", "cleanup"})
+# Whole-record receiver payload ceiling (#66): the larger of the strict codec
+# conversion peak and decoded text plus decoded non-key string backing. It keeps
+# R + J inside the 524,288-byte controller partition with retained facts; see the
+# README phase ledger for its CPython assumptions.
+DECODED_BYTES = 2 * REPORT_BYTES + 1024
 NUMBER_TOKEN = re.compile(rb"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+
+
+def code_width(top: int) -> int:
+    """PEP 393 bytes per code point for a string whose largest code point is top."""
+    return 1 if top < 256 else 2 if top < 65_536 else 4
 
 
 def discard_exception(error: BaseException) -> None:
@@ -538,6 +548,9 @@ class Scan:
         self.data, self.rule, self.utf8 = data, rule, utf8
         self.pos = self.nodes = 0
         self.valid = True
+        # Largest raw (unescaped) non-ASCII code point, and the summed decoded
+        # backing of non-key strings, for the whole-record payload gate.
+        self.raw_top = self.decoded = 0
         self.spans: dict[str, tuple[int, int]] = {}
         self.envelope_valid = True
         self.envelope_keys = (
@@ -603,6 +616,7 @@ class Scan:
             value = (value << 6) | (byte & 0x3F)
         if value < (128, 2048, 65536)[width - 2] or value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
             raise ProbeError("ingress_encoding")
+        self.raw_top = max(self.raw_top, value)
         return value
 
     def hex4(self) -> int:
@@ -630,10 +644,13 @@ class Scan:
         self.take(34)
         count = 0
         separators = 0
+        top = 0
         chars: list[str] = []
         while self.pos < len(self.data) and self.data[self.pos] != 34:
             cp = self.codepoint()
             count += 1
+            if not key:
+                top = max(top, cp)
             if key:
                 if count > 64 or not 32 <= cp < 127:
                     raise ProbeError("ingress_key_domain")
@@ -667,6 +684,8 @@ class Scan:
         if self.pos >= len(self.data):
             raise ProbeError("ingress_json_string")
         self.pos += 1
+        if not key:
+            self.decoded += code_width(top) * count
         return "".join(chars)
 
     def value(self, rule: Wire | None, depth: int = 0) -> None:
@@ -824,6 +843,11 @@ class Scan:
         self.space()
         if self.pos != len(self.data):
             raise ProbeError("ingress_json_suffix")
+        # Strict UTF-8 conversion sizes by wire bytes and widens old + new; the
+        # resulting text then coexists with the decoded string graph.
+        size, top = len(self.data), self.raw_top
+        conversion = (1 if top < 128 else 2 if top < 256 else 3 if top < 65_536 else 6) * size
+        self.valid &= max(conversion, code_width(top) * size + self.decoded) <= DECODED_BYTES
 
 
 def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
