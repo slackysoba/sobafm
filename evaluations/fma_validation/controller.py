@@ -22,7 +22,13 @@ from typing import cast
 
 from evaluations.linux_resource.probe import ProbeError
 
-from .consumer import expected_outcome, object_pairs, validate_decode, validate_metadata
+from .consumer import (
+    carried_rejection,
+    expected_outcome,
+    object_pairs,
+    validate_decode,
+    validate_metadata,
+)
 from .ingress import Ingress, Opaque, decode, discard_exception
 from .limits import CaseClock, encode_report
 from .packet import Packet, load, load_qualification, read_bounded, string
@@ -486,9 +492,14 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
         or any(type(value) is not int or value < 0 for value in delta.values())
     ):
         raise ProbeError("owner_memory_evidence_failed")
+    # A retained parser-scope rejection is a separate metadata verdict (#62).
+    metadata_rejected = not rejection and carried_rejection(validation.get("metadata"), case)
     if not rejection:
+        if not expected_outcome(validation, case):
+            raise ProbeError("owner_verdict_evidence_failed")
         validate_decode(mapping(validation.get("decode")), case)
-        validate_metadata(mapping(validation.get("metadata")), case)
+        if not metadata_rejected:
+            validate_metadata(mapping(validation.get("metadata")), case)
     helpers = validation.get("helpers")
     roles = ("metadata",) if case.name == "metadata-rejection" else ("metadata", "decoder")
     if not isinstance(helpers, list) or len(cast(list[object], helpers)) != len(roles):
@@ -497,7 +508,12 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
         helper = mapping(value)
         if (
             helper.get("role") != role
-            or helper.get("exit_code") != (1 if rejection and role == roles[-1] else 0)
+            or helper.get("exit_code")
+            != (
+                1
+                if (rejection and role == roles[-1]) or (metadata_rejected and role == "metadata")
+                else 0
+            )
             or helper.get("launching") is not False
             or helper.get("failure") is not None
             or any(
