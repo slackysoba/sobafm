@@ -249,7 +249,7 @@ Organize the Project by useful outcomes, with Backlog, Ready, In progress, In re
 1. **Source and feasibility established.** Integrate the music-source decision, assess real selection and rights, and validate the chosen Linux resource/deployment route. Exit with one source strategy, one feasible deployment configuration and bounded success criteria.
 2. **Existing music works end to end.** A narrow Linux container slice joins voice, plays an eligible recording, shows correct credits, stops and shuts down. Then add request matching, continuous selection, skip and replacement behavior.
 3. **Generated music and one station.** Add validated interpretation, Lyria continuity, generated duration, fades and safe mode changes while retaining a single clear station model.
-4. **Operator-ready bot.** Persist settings/channel, finish permissions and feedback, handle recovery, package both architectures and complete security/dependency checks.
+4. **Operator-ready bot.** Persist settings/channel, finish permissions and feedback, handle recovery, package Linux amd64 (native arm64 is on hold: [#60](https://github.com/slackysoba/sobafm/issues/60)) and complete security/dependency checks.
 5. **Qualified release.** Run bounded real-source/Discord acceptance, endurance and latency measurements, memory/release qualification and a clean-machine BOTH-mode guide walkthrough. Publish only verified claims.
 
 Use a parent milestone issue for each outcome and a small number of implementation issues with acceptance criteria and dependencies. Detail the current and next slice; do not pre-create a large chain for hypothetical internals. Keep decision blockers separate from active implementation. Close issues only when their acceptance evidence exists.

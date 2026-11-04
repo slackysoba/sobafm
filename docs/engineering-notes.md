@@ -14,9 +14,10 @@ process-release results, with distinct case source/image bindings. On that
 evidence, the [accepted amd64 adoption](decisions/0004-amd64-whole-service-adoption.md)
 permits building the first eligible-recording playback slice around this group,
 with every limit and the shared OOM failure domain unchanged. It does not qualify
-the application: the actual image, entrypoint, native dependencies, target kernel
-and page size still need qualification at their real boundaries. Native arm64 is
-on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)).
+the application: the actual image, entrypoint, native dependencies, target kernel,
+page size and core-routing premises still need qualification at their real
+boundaries. Native arm64 is on hold until after the first amd64 release
+([#60](https://github.com/slackysoba/sobafm/issues/60)).
 ADR 0001 remains unchanged.
 
 Keep the initial release path to one repository, one image build, one Compose example, one data volume and one operator guide. Add infrastructure only for demonstrated requirements. Prefer maintained decoder distributions and SDKs over custom supply chains. If a dependency needs a patch, retain a small reproducer, supported version, rationale and exit condition.

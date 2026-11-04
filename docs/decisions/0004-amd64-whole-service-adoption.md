@@ -6,9 +6,11 @@ Proposal: [scoped architecture proposal](https://github.com/slackysoba/sobafm/is
 Acceptance: [maintainer decision](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6634180574).
 Native arm64: on hold, tracked in [#60](https://github.com/slackysoba/sobafm/issues/60).
 
-This record supersedes only the experimental-only scope of
-[ADR 0001](0001-linux-resource-proposal.md). ADR 0001 remains the historical
-experiment decision and is not edited. The narrow decoder PTY exclusion in
+This record supersedes two parts of
+[ADR 0001](0001-linux-resource-proposal.md), both decided by the maintainer: its
+experimental-only scope, and its native-arm64 evidence item, which moves to #60
+(see Consequences). ADR 0001 remains the historical experiment decision and is
+not edited. The narrow decoder PTY exclusion in
 [ADR 0003](0003-decoder-pty-exclusion.md) is unchanged and remains in force.
 
 ## Problem
@@ -94,14 +96,16 @@ infeasible; resuming it needs a new maintainer decision.
   effective limits, owned useful fit, aggregate PCM and cancellation release
   under the same limits. That is enough to start a narrow slice; it is not
   release evidence.
-- Deferral would block all playback implementation on an arm64 target that is
-  not available, with no evidence that arm64 results would change the amd64
-  design.
+- Deferral would hold all playback implementation until an accessible arm64
+  target satisfies the unchanged core-routing gate, and
+  [none is established](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6553650111).
+  Adoption lets independent implementation proceed.
 - Adoption adds no service, framework, capacity or host-security change.
 
 ## Consequences
 
-- Outcome 2 implementation can depend on the whole-service group on amd64.
+- The first eligible-recording playback slice, as scoped above, can depend on the
+  whole-service group on amd64.
 - The first release targets Linux amd64 only. ADR 0001's native-arm64 evidence
   item no longer gates that release; it moves to #60.
 - All stations share one OOM failure domain.
