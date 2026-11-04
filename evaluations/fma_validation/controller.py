@@ -236,7 +236,7 @@ class Command:
 class Journal:
     """A new private inode per attempt. Existing/partial journals block new work."""
 
-    def __init__(self, path: Path, packet: Packet) -> None:
+    def __init__(self, path: Path, record: Packet | dict[str, object]) -> None:
         self.fd = os.open(
             path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
         )
@@ -248,7 +248,19 @@ class Journal:
         self.worker: threading.Thread | None = None
         self.error: Exception | None = None
         self.record: bytes | None = None
-        self.data: dict[str, object] = {
+        self.data: dict[str, object] = (
+            dict(record) if isinstance(record, dict) else self.case_ledger(record)
+        )
+        self.save()
+        parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+
+    @staticmethod
+    def case_ledger(packet: Packet) -> dict[str, object]:
+        return {
             "schema": packet.case.schema("controller-ledger"),
             "case_binding": packet.case.record(),
             "packet_sha256": packet.fingerprint,
@@ -263,12 +275,6 @@ class Journal:
             "slot_reusable": False,
             "passed": False,
         }
-        self.save()
-        parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            os.fsync(parent)
-        finally:
-            os.close(parent)
 
     def save(self) -> None:
         if self.worker is not None and self.worker.is_alive():
@@ -517,14 +523,50 @@ def validate_owner(report: dict[str, object], packet: Packet) -> None:
                 raise ProbeError("owner_decoder_cleanup_failed")
 
 
+# Shared by the owner container and the #63 preflight containers. Identity,
+# user, mounts and entrypoint are chosen by each caller.
+LIMIT_ARGS = (
+    "--pull=never",
+    "--init",
+    "--restart=no",
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges=true",
+    "--network=none",
+    "--read-only",
+    "--cgroupns=private",
+    "--memory=90177536",
+    "--memory-swap=90177536",
+    "--pids-limit=64",
+    "--cpus=2",
+    "--log-driver=none",
+    "--workdir=/source",
+    "--env=PYTHONDONTWRITEBYTECODE=1",
+    "--env=PYTHONPATH=/source/src:/source",
+    "--env=LANG=C",
+    "--env=LC_ALL=C",
+    "--env=TERM=dumb",
+)
+EXPECTED_HOST: dict[str, object] = {
+    "Init": True,
+    "ReadonlyRootfs": True,
+    "Privileged": False,
+    "NetworkMode": "none",
+    "CgroupnsMode": "private",
+    "Memory": 90_177_536,
+    "MemorySwap": 90_177_536,
+    "PidsLimit": 64,
+    "NanoCpus": 2_000_000_000,
+    "CapDrop": ["ALL"],
+    "SecurityOpt": ["no-new-privileges=true"],
+}
+
+
 def creation_args(packet: Packet) -> list[str]:
     return [
         "create",
-        "--pull=never",
+        *LIMIT_ARGS,
         "--name",
         packet.text("case_id"),
-        "--init",
-        "--restart=no",
         "--label",
         "org.sobafm.project=sobafm",
         "--label",
@@ -532,22 +574,6 @@ def creation_args(packet: Packet) -> list[str]:
         "--label",
         f"org.sobafm.packet={packet.fingerprint}",
         "--user=1000:1000",
-        "--cap-drop=ALL",
-        "--security-opt=no-new-privileges=true",
-        "--network=none",
-        "--read-only",
-        "--cgroupns=private",
-        "--memory=90177536",
-        "--memory-swap=90177536",
-        "--pids-limit=64",
-        "--cpus=2",
-        "--log-driver=none",
-        "--workdir=/source",
-        "--env=PYTHONDONTWRITEBYTECODE=1",
-        "--env=PYTHONPATH=/source/src:/source",
-        "--env=LANG=C",
-        "--env=LC_ALL=C",
-        "--env=TERM=dumb",
         "--mount",
         f"type=bind,source={packet.text('checkout_path')},target=/source,readonly",
         "--mount",
@@ -566,62 +592,20 @@ def creation_args(packet: Packet) -> list[str]:
     ]
 
 
-class Controller:
-    def __init__(self, packet: Packet, journal: Journal, docker: str = "docker") -> None:
-        self.packet, self.journal, self.docker = packet, journal, docker
-        self.clock = CaseClock(packet.whole_end, packet.expires)
+class Management:
+    """Finite Docker management dispatch under one original clock and journal.
+
+    At most two live command owners and 20 operations; timeouts retain debt.
+    """
+
+    def __init__(self, journal: Journal, clock: CaseClock, docker: str = "docker") -> None:
+        self.journal, self.clock, self.docker = journal, clock, docker
         self.commands: list[Command] = []
         self.command_receipts: list[dict[str, object]] = []
-        self.container: str | None = None
         self.owner_report: dict[str, object] | None = None
 
     def capture_owner(self, command: Command, *, final: bool = False) -> None:
-        """Adopt failure timing before command acceptance or final retirement."""
-        if not command.owner_output or command.ingress.retired:
-            return
-        command.ingress.scan(final=final)
-        records = command.ingress.records
-        if not records and not final and command.ingress.error is None:
-            return
-        try:
-            if len(records) != 1:
-                raise ProbeError("owner_report_count")
-            report = records[0].envelope
-            if report is None:
-                raise ProbeError("owner_terminal_missing_envelope")
-            if (
-                report.get("packet_sha256") != self.packet.fingerprint
-                or report.get("schema") != self.packet.case.schema("owner")
-                or report.get("case_binding") != self.packet.case.record()
-                or ProcessPin.from_record(report.get("init")).pid != 1
-                or ProcessPin.from_record(report.get("owner")).pid <= 1
-            ):
-                raise ProbeError("owner_terminal_binding")
-            timing = validate_clock(report.get("cleanup"), self.clock)
-            started = timing["cleanup_start_utc"]
-            if started is not None:
-                if (
-                    type(started) not in (int, float)
-                    or not math.isfinite(cast(float, started))
-                    or not 0 <= cast(float, started) <= self.clock.wall()
-                ):
-                    raise ProbeError("owner_terminal_clock")
-                self.clock.adopt_cleanup(cast(float, started))
-            elif timing["cleanup_timing_unknown"] is not True:
-                raise ProbeError("owner_terminal_clock_missing")
-            self.clock.timing_unknown |= timing["cleanup_timing_unknown"] is True
-            self.clock.missed |= timing["cleanup_deadline_met"] is not True
-            self.clock.case_missed |= timing["case_deadline_met"] is not True
-            if records[0].value is not None:
-                if self.owner_report is not None and self.owner_report is not records[0].value:
-                    raise ProbeError("owner_terminal_changed")
-                self.owner_report = records[0].value
-            if command.ingress.error or records[0].value is None:
-                raise ProbeError("owner_terminal_invalid_detail_or_suffix")
-        except (ValueError, KeyError, TypeError, RecursionError, ProbeError) as error:
-            discard_exception(error)
-            self.clock.timing_unknown = self.clock.missed = True
-            self.journal.data["owner_terminal_error"] = "invalid_or_missing_owner_terminal"
+        """Only the case controller attaches to an owner terminal record."""
 
     def persist(self, *, cleanup: bool = False) -> None:
         try:
@@ -710,6 +694,124 @@ class Controller:
                 raise ProbeError("management_command_deadline")
             select.select([], [], [], 0.005)
 
+    def publish_command(self, command: Command) -> None:
+        if not command.receipt_published:
+            self.command_receipts.append(command.receipt())
+            command.receipt_published = True
+
+    def drain(self) -> None:
+        try:
+            for command in self.commands:
+                command.stop()
+            while self.commands:
+                for command in tuple(self.commands):
+                    command.pump()
+                    self.capture_owner(command, final=command.settled())
+                    if command.settled():
+                        self.publish_command(command)
+                        command.ingress.retire()
+                        command.errors.retire()
+                        self.commands.remove(command)
+                self.clock.observe()
+                if self.commands:
+                    select.select([], [], [], 0.01)
+            self.clock.observe()
+        finally:
+            # Pending owners are never erased by an exceptional drain.
+            self.clock.observe()
+
+    def verify_engine(self) -> None:
+        info = mapping(
+            self.run(
+                [
+                    "info",
+                    "--format",
+                    "{{$seccomp := false}}{{range .SecurityOptions}}"
+                    '{{if eq . "name=seccomp,profile=builtin"}}{{$seccomp = true}}{{end}}{{end}}'
+                    '{"architecture":{{json .Architecture}},"os":{{json .OSType}},'
+                    '"seccomp":{{$seccomp}}}',
+                ],
+                family="info",
+            )
+        )
+        if (
+            info.get("architecture") != "x86_64"
+            or info.get("os") != "linux"
+            or info.get("seccomp") is not True
+        ):
+            raise ProbeError("native_default_seccomp_engine_required")
+
+    def verify_image(self, reference: str) -> None:
+        image = mapping(
+            self.run(
+                [
+                    "image",
+                    "inspect",
+                    "--format",
+                    '{"id":{{json .Id}},"architecture":{{json .Architecture}},"os":{{json .Os}}}',
+                    reference,
+                ],
+                family="image",
+            )
+        )
+        if image != {"id": reference, "architecture": "amd64", "os": "linux"}:
+            raise ProbeError("native_image_target_changed")
+
+
+class Controller(Management):
+    def __init__(self, packet: Packet, journal: Journal, docker: str = "docker") -> None:
+        super().__init__(journal, CaseClock(packet.whole_end, packet.expires), docker)
+        self.packet = packet
+        self.container: str | None = None
+
+    def capture_owner(self, command: Command, *, final: bool = False) -> None:
+        """Adopt failure timing before command acceptance or final retirement."""
+        if not command.owner_output or command.ingress.retired:
+            return
+        command.ingress.scan(final=final)
+        records = command.ingress.records
+        if not records and not final and command.ingress.error is None:
+            return
+        try:
+            if len(records) != 1:
+                raise ProbeError("owner_report_count")
+            report = records[0].envelope
+            if report is None:
+                raise ProbeError("owner_terminal_missing_envelope")
+            if (
+                report.get("packet_sha256") != self.packet.fingerprint
+                or report.get("schema") != self.packet.case.schema("owner")
+                or report.get("case_binding") != self.packet.case.record()
+                or ProcessPin.from_record(report.get("init")).pid != 1
+                or ProcessPin.from_record(report.get("owner")).pid <= 1
+            ):
+                raise ProbeError("owner_terminal_binding")
+            timing = validate_clock(report.get("cleanup"), self.clock)
+            started = timing["cleanup_start_utc"]
+            if started is not None:
+                if (
+                    type(started) not in (int, float)
+                    or not math.isfinite(cast(float, started))
+                    or not 0 <= cast(float, started) <= self.clock.wall()
+                ):
+                    raise ProbeError("owner_terminal_clock")
+                self.clock.adopt_cleanup(cast(float, started))
+            elif timing["cleanup_timing_unknown"] is not True:
+                raise ProbeError("owner_terminal_clock_missing")
+            self.clock.timing_unknown |= timing["cleanup_timing_unknown"] is True
+            self.clock.missed |= timing["cleanup_deadline_met"] is not True
+            self.clock.case_missed |= timing["case_deadline_met"] is not True
+            if records[0].value is not None:
+                if self.owner_report is not None and self.owner_report is not records[0].value:
+                    raise ProbeError("owner_terminal_changed")
+                self.owner_report = records[0].value
+            if command.ingress.error or records[0].value is None:
+                raise ProbeError("owner_terminal_invalid_detail_or_suffix")
+        except (ValueError, KeyError, TypeError, RecursionError, ProbeError) as error:
+            discard_exception(error)
+            self.clock.timing_unknown = self.clock.missed = True
+            self.journal.data["owner_terminal_error"] = "invalid_or_missing_owner_terminal"
+
     def inspect(self, *, cleanup: bool = False) -> dict[str, object]:
         if self.container is None:
             raise ProbeError("container_identity_unknown")
@@ -741,20 +843,9 @@ class Controller:
 
     def verify_configuration(self, record: dict[str, object]) -> None:
         host = mapping(record.get("host"))
-        expected: dict[str, object] = {
-            "Init": True,
-            "ReadonlyRootfs": True,
-            "Privileged": False,
-            "NetworkMode": "none",
-            "CgroupnsMode": "private",
-            "Memory": 90_177_536,
-            "MemorySwap": 90_177_536,
-            "PidsLimit": 64,
-            "NanoCpus": 2_000_000_000,
-            "CapDrop": ["ALL"],
-            "SecurityOpt": ["no-new-privileges=true"],
-        }
-        if any(host.get(key) != value for key, value in expected.items()) or host.get("CapAdd"):
+        if any(host.get(key) != value for key, value in EXPECTED_HOST.items()) or host.get(
+            "CapAdd"
+        ):
             raise ProbeError("container_limits_changed")
         if (
             mapping(host.get("RestartPolicy")).get("Name") != "no"
@@ -799,7 +890,7 @@ class Controller:
     def prepare(self) -> None:
         """Setup responses have no lifetime across attach or cleanup."""
         self.verify_engine()
-        self.verify_image()
+        self.verify_image(self.packet.text("image"))
         self.verify_volume()
         self.journal.data["phase"] = "creating_container"
         self.journal.save()
@@ -810,43 +901,6 @@ class Controller:
         self.journal.data["container_id"] = identifier
         self.journal.save()
         self.verify_configuration(self.inspect())
-
-    def verify_engine(self) -> None:
-        info = mapping(
-            self.run(
-                [
-                    "info",
-                    "--format",
-                    "{{$seccomp := false}}{{range .SecurityOptions}}"
-                    '{{if eq . "name=seccomp,profile=builtin"}}{{$seccomp = true}}{{end}}{{end}}'
-                    '{"architecture":{{json .Architecture}},"os":{{json .OSType}},'
-                    '"seccomp":{{$seccomp}}}',
-                ],
-                family="info",
-            )
-        )
-        if (
-            info.get("architecture") != "x86_64"
-            or info.get("os") != "linux"
-            or info.get("seccomp") is not True
-        ):
-            raise ProbeError("native_default_seccomp_engine_required")
-
-    def verify_image(self) -> None:
-        image = mapping(
-            self.run(
-                [
-                    "image",
-                    "inspect",
-                    "--format",
-                    '{"id":{{json .Id}},"architecture":{{json .Architecture}},"os":{{json .Os}}}',
-                    self.packet.text("image"),
-                ],
-                family="image",
-            )
-        )
-        if image != {"id": self.packet.text("image"), "architecture": "amd64", "os": "linux"}:
-            raise ProbeError("native_image_target_changed")
 
     def verify_volume(self) -> None:
         volume = mapping(
@@ -891,32 +945,6 @@ class Controller:
                 stopped = False
                 discard_exception(error)
         return failed, stopped
-
-    def publish_command(self, command: Command) -> None:
-        if not command.receipt_published:
-            self.command_receipts.append(command.receipt())
-            command.receipt_published = True
-
-    def drain(self) -> None:
-        try:
-            for command in self.commands:
-                command.stop()
-            while self.commands:
-                for command in tuple(self.commands):
-                    command.pump()
-                    self.capture_owner(command, final=command.settled())
-                    if command.settled():
-                        self.publish_command(command)
-                        command.ingress.retire()
-                        command.errors.retire()
-                        self.commands.remove(command)
-                self.clock.observe()
-                if self.commands:
-                    select.select([], [], [], 0.01)
-            self.clock.observe()
-        finally:
-            # Pending owners are never erased by an exceptional drain.
-            self.clock.observe()
 
     def execute(self) -> dict[str, object]:
         failed: str | None = None
