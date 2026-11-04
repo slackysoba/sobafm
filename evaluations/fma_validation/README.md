@@ -277,9 +277,9 @@ and Controller (524,288) partitions of `limits.py`.
 | 14 | Settled, pre-report | owner main | none | none | `F_O + M + D` + report <= L | Intake 323,106 |
 | 15 | Final build, emit | owner main | work W + frozen W | none | `F_O + L`, `M + D <= W` | Intake 386,594 |
 | 16 | Docker ASCII documents, create/stop bytes | controller main | R, result <= R | `T <= n`, small `S` | `F_C` | Controller 350,538 |
-| 17 | Volume/config document | controller main | R | gated `T + S <= 132,096`, `Iw` 24,576 | `F_C` | Controller 376,138 (ungated 765,510) |
+| 17 | Volume/config document | controller main | R | gated `T` + non-key string backing `<= 132,096`, `Iw` 24,576; number and key headers charged to the group | `F_C` | Controller 376,138 (ungated 765,510) |
 | 18 | Attach pump | controller main | R + H | none | `F_C` | Controller 223,562 |
-| 19 | Owner terminal parse | main (`run`/`drain`); a second owner is possible | 2R | gated `T + S <= 132,096`, `Iw` 26,419 + 6,000 | `F_C` | Controller 449,517 (ungated 669,798) |
+| 19 | Owner terminal parse | main (`run`/`drain`); a second owner is possible | 2R | gated `T` + non-key string backing `<= 132,096`, `Iw` 26,419 + 6,000; number and key headers charged to the group | `F_C` | Controller 449,517 (ungated 669,798) |
 | 20 | Binding check, cleanup inspect | controller main | 2R | `T_c <= R`, `S <= 512` | `F_C + P_o <= 111,676` | Controller 462,726 (digest cached) |
 | 21 | Non-final journal save | main + journal worker; held record stays | 2W_j about 24K | none | `F_C + P_o` | Controller 420,678 |
 | 22 | Final journal, `print` | controller main | <= 2R | `T <= R` | `F_C + P_o` | Controller 396,678 |
