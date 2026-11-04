@@ -321,6 +321,20 @@ def test_interrupted_cleanup_retains_debt_and_original_clock(
     assert not any(call[0] in ("rm", "kill") or call[:2] == ["volume", "rm"] for call in calls)
 
 
+def test_failed_container_confirmed_exited_after_stop_still_retains_debt(
+    tmp_path: Path, docker: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(module, "CONTAINER_SECONDS", 0.5)
+    update(docker[1], lambda data: data.update(hang="probe"))
+    result = run(preflight(tmp_path, docker[0]))
+    containers = cast(list[dict[str, object]], result["containers"])
+    assert containers[-1]["mode"] == "probe" and containers[-1]["exited"] is True
+    assert result["passed"] is False and result["cleanup_debt"] is True
+    assert result["failure"] == "management_command_deadline"
+    calls = json.loads(docker[1].read_text())["calls"]
+    assert sum(call[0] == "stop" for call in calls) == 1
+
+
 def test_container_report_is_valid_preflight_wire(tmp_path: Path) -> None:
     for mode in ("setup", "probe"):
         report = good_report(mode)
@@ -473,10 +487,14 @@ def test_freeze_qualification_packet(tmp_path: Path, packet_path: Path) -> None:
         ({"checkout_path": "/elsewhere"}, "2026-11-02T00:04:30Z"),
         ({}, "2026-11-02T00:04:31Z"),
         ({"input": {"bytes": 1}}, "2026-11-02T00:04:30Z"),
+        ({"preflight_source_sha256": {"preflight.py": "0" * 64}}, "2026-11-02T00:04:30Z"),
     ],
 )
 def test_freeze_rejects_failed_receipt_or_window(
     tmp_path: Path, packet_path: Path, changes: dict[str, object], end: str
 ) -> None:
+    target = tmp_path / "frozen.json"
     with pytest.raises(ProbeError):
-        frozen(receipt(tmp_path, **changes), packet_path, tmp_path / "frozen.json", end=end)
+        frozen(receipt(tmp_path, **changes), packet_path, target, end=end)
+    # Neither a rejected receipt nor a written-then-rejected packet remains.
+    assert not target.exists()

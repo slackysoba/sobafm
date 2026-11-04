@@ -249,6 +249,15 @@ def validate_target(
             raise ProbeError("preflight_absolute_linux_mount")
 
 
+def preflight_sources(root: Path) -> dict[str, str]:
+    return {
+        name: hashlib.sha256(
+            read_bounded(root / "evaluations/fma_validation" / name, 262_144)
+        ).hexdigest()
+        for name in ("preflight.py", "pty_channel.py", "controller.py")
+    }
+
+
 class Preflight(Management):
     def __init__(
         self,
@@ -292,12 +301,7 @@ class Preflight(Management):
             "volume": volume,
             "checkout_path": checkout_path,
             "source_path": source_path,
-            "preflight_source_sha256": {
-                name: hashlib.sha256(
-                    read_bounded(root / "evaluations/fma_validation" / name, 262_144)
-                ).hexdigest()
-                for name in ("preflight.py", "pty_channel.py", "controller.py")
-            },
+            "preflight_source_sha256": preflight_sources(root),
             "phase": "claimed",
             "containers": [],
             "volume_created": None,
@@ -580,6 +584,10 @@ class Preflight(Management):
                 if state.get("Running") is True:
                     self.run(["stop", "--time=1", self.container], 1.5, cleanup=True)
                 stopped = self.exited(current)
+                if stopped:
+                    containers = cast(list[dict[str, object]], self.journal.data["containers"])
+                    if containers and containers[-1]["id"] == self.container:
+                        containers[-1]["exited"] = True
             except Exception as error:
                 stopped = False
                 discard_exception(error)
@@ -650,6 +658,8 @@ def freeze(
         raise ProbeError("preflight_receipt_not_passed")
     if receipt.get("checkout_path") != str(root):
         raise ProbeError("preflight_checkout_changed")
+    if receipt.get("preflight_source_sha256") != preflight_sources(root):
+        raise ProbeError("preflight_source_changed")
     request: object = json.loads(read_bounded(request_path), object_pairs_hook=object_pairs)
     target = packet_path.parent.resolve() / packet_path.name
     raw: dict[str, object] = {
@@ -682,16 +692,21 @@ def freeze(
     encoded = encode_report(raw)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
-        with memoryview(encoded) as view:
-            offset = 0
-            while offset < len(view):
-                offset += os.write(fd, view[offset:])
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    packet = (load_qualification if qualification else load)(target, root, now=now)
-    if mapping(receipt.get("input")).get("bytes") != packet.case.bytes:
-        raise ProbeError("preflight_input_size_changed")
+        try:
+            with memoryview(encoded) as view:
+                offset = 0
+                while offset < len(view):
+                    offset += os.write(fd, view[offset:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        packet = (load_qualification if qualification else load)(target, root, now=now)
+        if mapping(receipt.get("input")).get("bytes") != packet.case.bytes:
+            raise ProbeError("preflight_input_size_changed")
+    except BaseException:
+        # This call created the inode exclusively; a rejected packet never remains.
+        target.unlink(missing_ok=True)
+        raise
     return packet
 
 
