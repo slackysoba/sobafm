@@ -35,6 +35,7 @@ native behavior or fit.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import os
@@ -262,7 +263,7 @@ class DecodeProducer:
             return
         try:
             self._bank = self._pool.acquire()
-        except (PcmError, MemoryError):  # refused or failed allocation
+        except PcmError, MemoryError:  # refused or failed allocation
             self._fail("pcm_capacity")
             return
         if self._stopped_during_start():
@@ -474,11 +475,9 @@ class DecodeProducer:
             if signum == signal.SIGTERM and self._signalled is not None:
                 return
             self._signalled = signum
-            try:
-                # The unreaped leader keeps the group ID from being reused.
+            # The unreaped leader keeps the group ID from being reused.
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signum)
-            except ProcessLookupError:
-                pass
 
     def _wait_exit(self, until: float) -> bool:
         """Wait until the leader has exited (without reaping it) or ``until``."""
@@ -508,11 +507,8 @@ class DecodeProducer:
             return
         # Kill any descendants left in the group while the zombie leader still
         # pins its ID, then reap the leader.
-        with self._lock:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        with self._lock, contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
         returncode = process.wait()
         with self._lock:
             self._reaped = True

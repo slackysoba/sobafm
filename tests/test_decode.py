@@ -19,8 +19,8 @@ from sobafm.decode import (
     MPG123_ARGV,
     DecodeInput,
     DecodeProducer,
-    DecodeReport,
     DecoderCommand,
+    DecodeReport,
     RawInput,
 )
 from sobafm.pcm import FRAME_BYTES, PcmBankPool
@@ -93,9 +93,7 @@ def test_complete_decode_reports_every_fact(source: DecodeInput, pool: PcmBankPo
     assert pool.leased == 0
 
 
-def test_hash_mismatch_never_gives_the_decoder_eof(
-    source: DecodeInput, pool: PcmBankPool
-) -> None:
+def test_hash_mismatch_never_gives_the_decoder_eof(source: DecodeInput, pool: PcmBankPool) -> None:
     wrong = DecodeInput(source.path, source.size, "0" * 64, source.pcm_limit)
     # The child would emit valid PCM on EOF; it must be terminated instead.
     producer = DecodeProducer(wrong, command=echo_frames(1), pool=pool)
@@ -306,9 +304,7 @@ def test_full_bank_waits_for_the_consumer(tmp_path: Path, pool: PcmBankPool) -> 
     path.write_bytes(b"x")
     total = BANK_BYTES + 2 * FRAME_BYTES
     source = DecodeInput(path, 1, hashlib.sha256(b"x").hexdigest(), total)
-    producer = DecodeProducer(
-        source, command=echo_frames(total // FRAME_BYTES), pool=pool
-    )
+    producer = DecodeProducer(source, command=echo_frames(total // FRAME_BYTES), pool=pool)
     producer.start()
     bank = producer.bank
     assert bank is not None
