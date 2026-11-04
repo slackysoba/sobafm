@@ -51,6 +51,27 @@ class MetadataRejected(ProbeError):
     """Only source-independent codes from this module may be returned to owner."""
 
 
+# Parser-scope limits for an otherwise settled helper (#62). For the supplied
+# recording only, the owner retains one of these as the metadata verdict and
+# still runs the separate decoder. Both tag-size limits are checked from the
+# ten header bytes, before library entry or the parser copy reservation is used.
+# Every other code, including unsupported header flags, remains terminal.
+PARSER_SCOPE_REASONS = frozenset(
+    {
+        *UNSUPPORTED_FRAMES.values(),
+        "unsupported_id3_version",
+        "unsupported_id3_text_encoding",
+        "unresolved_duplicate_frame_id",
+        "metadata_decoded_payload_reservation",
+        "metadata_notice_exceeds_supported_bound",
+        "metadata_tag_limit",
+        "metadata_copy_reservation",
+    }
+)
+# The helper's only stderr after a written rejection record.
+REJECTION_STDERR = b"metadata_inspection_failed\n"
+
+
 REJECTION_REASONS = frozenset(
     {
         *UNSUPPORTED_FRAMES.values(),
@@ -178,9 +199,9 @@ def preflight(stream: BoundedFile) -> dict[str, object]:
         raise ProbeError("unsupported_id3_header_flags")
     end = 10 + synchsafe(header[6:10])
     if end > stream.size or end > TAG_BYTES:
-        raise ProbeError("metadata_tag_limit")
+        raise MetadataRejected("metadata_tag_limit")
     if end > PARSER_TAG_BYTES:
-        raise ProbeError("metadata_copy_reservation")
+        raise MetadataRejected("metadata_copy_reservation")
     version = header[3]
     ids: list[str] = []
     decoded_bytes = 0
@@ -459,7 +480,7 @@ def main() -> int:
             )
         except Exception as error:
             discard_failure(error)
-            os.write(2, b"metadata_inspection_failed\n")
+            os.write(2, REJECTION_STDERR)
             return 1
     assert data is not None
     record = RecordWrite(data, "metadata_report_write")
@@ -471,7 +492,7 @@ def main() -> int:
         discard_failure(error)
         failed = True
     if failed:
-        os.write(2, b"metadata_inspection_failed\n")
+        os.write(2, REJECTION_STDERR)
         return 1
     return 0
 
