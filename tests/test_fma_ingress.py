@@ -752,6 +752,7 @@ def owner_wire(packet_path: Path, tmp_path: Path, created_at: str, padding: int 
     from datetime import UTC, datetime
 
     from evaluations.fma_validation.limits import CaseClock
+    from evaluations.fma_validation.owner import INTERPRETER_FACTS
     from evaluations.fma_validation.packet import load
     from sobafm.fma_intake import LocalIntake
     from tests.test_fma_validation_packet import NOW, ROOT
@@ -782,6 +783,7 @@ def owner_wire(packet_path: Path, tmp_path: Path, created_at: str, padding: int 
         "failure": "validation_owner_failed",
         "init": init.record(),
         "owner": PIN.record(),
+        "interpreter": dict(INTERPRETER_FACTS),
         "intake": report,
         "reader": None,
         "validation": validation.receipt(),
@@ -827,6 +829,10 @@ def test_wide_owner_timestamp_keeps_envelope_and_adopts_clock(
     from evaluations.fma_validation.packet import load
     from tests.test_fma_validation_packet import NOW, ROOT
 
+    # Control: the same builder with a narrow stamp is a fully valid owner record,
+    # so the rejection below is the payload gate alone, not a schema gap.
+    control = owner_wire(packet_path, tmp_path, "2026-11-02T00:00:00Z")
+    assert decode(control[:-1], "owner")["intake"] is not None
     probe = owner_wire(packet_path, tmp_path, wide_stamp(11))
     wire = owner_wire(packet_path, tmp_path, wide_stamp(REPORT_BYTES - len(probe) + 11))
     assert len(wire) == REPORT_BYTES and oracle_peak(wire[:-1]) > module.DECODED_BYTES
