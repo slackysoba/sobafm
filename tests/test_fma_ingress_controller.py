@@ -18,6 +18,7 @@ from evaluations.fma_validation import controller as module
 from evaluations.fma_validation.controller import Command, Controller, Journal
 from evaluations.fma_validation.ingress import decode
 from evaluations.fma_validation.limits import CaseClock
+from evaluations.fma_validation.owner import INTERPRETER_FACTS
 from evaluations.fma_validation.packet import Packet, load, load_qualification
 from evaluations.linux_resource.probe import ProbeError
 from tests.test_fma_validation_packet import NOW, ROOT, qualification_packet
@@ -212,6 +213,7 @@ def test_actual_owner_null_partial_and_settled_producer_states(
         "failure": "validation_owner_failed",
         "init": init.record(),
         "owner": pin.record(),
+        "interpreter": dict(INTERPRETER_FACTS),
         "intake": intake.report(),
         "reader": None,
         "validation": consumer.receipt(),

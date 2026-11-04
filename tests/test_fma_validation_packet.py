@@ -14,6 +14,7 @@ from evaluations.fma_validation.cases import BASE_SHA256, CaseBinding, OwnedQual
 from evaluations.fma_validation.controller import Journal, creation_args
 from evaluations.fma_validation.limits import FILE_BYTES, FILE_SHA256, CaseClock, encode_report
 from evaluations.fma_validation.metadata import PARSER_TAG_BYTES, BoundedFile, preflight
+from evaluations.fma_validation.owner import INTERPRETER_FACTS
 from evaluations.fma_validation.packet import SOURCE_FILES, Packet, load, load_qualification
 from evaluations.linux_resource.probe import ProbeError
 from sobafm.fma_intake import (
@@ -361,6 +362,7 @@ def test_outer_terminal_capture_survives_nonzero_or_late_drain(
         "failure": "validation_owner_failed",
         "init": init.record(),
         "owner": owner_pin.record(),
+        "interpreter": dict(INTERPRETER_FACTS),
         "intake": {} if kind == "bad_body" else owner.report(),
         "reader": None,
         "validation": consumer.receipt(),
