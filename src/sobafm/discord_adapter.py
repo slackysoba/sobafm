@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,8 +52,10 @@ TOKEN_VARIABLE = "SOBAFM_DISCORD_TOKEN"
 CATALOG_VARIABLE = "SOBAFM_CATALOG"
 REVIEWS_VARIABLE = "SOBAFM_REVIEWS"
 MAX_REVIEWS_BYTES = 256_000
-# Bound on joining a superseded producer before a replacement may lease its bank.
+# Bound on how long a command reply waits for retirements before answering.
 SETTLE_SECONDS = 5.0
+# One original cleanup deadline, counted from the bank's first cancellation (ADR 0004).
+CLEANUP_SECONDS = 3.0
 SILENCE = bytes(FRAME_BYTES)
 NO_MENTIONS = disnake.AllowedMentions.none()
 Inter = disnake.ApplicationCommandInteraction[commands.InteractionBot]
@@ -60,6 +63,7 @@ Inter = disnake.ApplicationCommandInteraction[commands.InteractionBot]
 NOT_JOINED = "SobaFM is not in a voice channel. A manager must use `/join` first."
 NOT_LISTENING = "Join SobaFM's voice channel to use this command."
 SERVER_ONLY = "SobaFM commands work in servers, not direct messages."
+SHUTTING_DOWN = "SobaFM is shutting down."
 
 
 class ConfigError(Exception):
@@ -213,6 +217,7 @@ class Adapter:
         self.players: dict[int, GuildPlayer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
         self.debt: list[PcmBank] = []
+        self.cleanup_failures = 0
         self.stopping = asyncio.Event()
 
     # Access.
@@ -240,6 +245,8 @@ class Adapter:
     async def join(self, inter: Inter) -> None:
         if inter.guild is None:
             return await self._refuse(inter, SERVER_ONLY)
+        if self.stopping.is_set():
+            return await self._refuse(inter, SHUTTING_DOWN)
         channel = self._voice_channel(inter)
         if channel is None:
             return await self._refuse(inter, "Join a voice channel first, then use `/join`.")
@@ -252,6 +259,11 @@ class Adapter:
             await player.voice.move_to(channel)
         else:
             voice = await channel.connect()
+            if self.stopping.is_set():  # shutdown began while connecting
+                await voice.disconnect(force=True)
+                return await inter.followup.send(
+                    SHUTTING_DOWN, ephemeral=True, allowed_mentions=NO_MENTIONS
+                )
             report = self._reporter(inter.guild.id)
             self.players[inter.guild.id] = GuildPlayer(voice, StationSource(report))
         await inter.followup.send(
@@ -263,6 +275,8 @@ class Adapter:
             return await self._refuse(inter, SERVER_ONLY)
         if self.catalog is None:
             return await self._refuse(inter, "Catalog playback is not configured.")
+        if self.stopping.is_set():
+            return await self._refuse(inter, SHUTTING_DOWN)
         if (player := self._player(inter)) is None:
             return await self._refuse(inter, NOT_JOINED)
         if not self._listening(inter, player):
@@ -285,13 +299,18 @@ class Adapter:
         if not selection.matches:
             return "No eligible recording matches that request; nothing was substituted."
         async with player.lock:
+            if self.stopping.is_set():
+                return SHUTTING_DOWN
             station = player.station
             program = station.request(request).program
             if station.prepared(program, selection.matches[0].recording) is not Outcome.ACCEPTED:
                 station.preparation_failed(program)
                 return "The matching recording's credits are incomplete; nothing was substituted."
             if not await self._start(player):
-                return "Playback capacity is busy; current audio continues. Try again shortly."
+                return (
+                    "Playback could not start (capacity is busy or voice is unavailable); "
+                    "current audio continues. Try again shortly."
+                )
         return (
             "Request accepted. A matching recording is preparing and becomes audible once "
             "enough audio is buffered. Use `/now` to see what is actually heard."
@@ -300,6 +319,8 @@ class Adapter:
     async def _start(self, player: GuildPlayer) -> bool:
         """Claim ready audio, displacing an unheard pending track, and hand it to the player."""
         station = player.station
+        if self.stopping.is_set():
+            return False  # shutdown leases nothing new
         if station.switching is not None:
             displaced = player.source.take_pending()
             if displaced is not None:
@@ -315,10 +336,18 @@ class Adapter:
             station.switch_failed(audio)
             return False
         task = asyncio.create_task(self._produce(audio.recording, bank))
-        idle = player.source.offer(Track(audio, bank, task))
+        track = Track(audio, bank, task)
+        idle = player.source.offer(track)
         if idle or not player.voice.is_playing():  # also restarts after a player error
-            player.voice.stop()
-            player.voice.play(player.source)
+            try:
+                player.voice.stop()
+                player.voice.play(player.source)
+            except Exception as exc:  # e.g. the voice connection dropped meanwhile
+                log.warning("voice player could not start: %s", type(exc).__name__)
+                if player.source.take_pending() is track:
+                    station.switch_failed(audio)
+                    self._retire(track)
+                return False
         return True
 
     async def _produce(self, recording: Recording, bank: PcmBank) -> None:
@@ -454,25 +483,38 @@ class Adapter:
         return track.retirement
 
     async def _settle_track(self, track: Track) -> None:
-        track.bank.cancel()
+        track.bank.cancel()  # keeps the first cancellation time if already cancelled
+        cancelled_at = track.bank.facts().cancelled_at
+        assert cancelled_at is not None
         track.task.cancel()
-        done, _ = await asyncio.wait({track.task}, timeout=SETTLE_SECONDS)
+        # The pool's default clock is time.monotonic, so the deadline stays the original one.
+        remaining = cancelled_at + CLEANUP_SECONDS - time.monotonic()
+        done, _ = await asyncio.wait({track.task}, timeout=max(0.0, remaining))
         if not done:
-            log.warning("audio producer has not settled; its bank stays leased")
+            self.cleanup_failures += 1  # a failed verdict, whatever happens later
+            log.error("audio producer missed its cleanup deadline; its bank stays leased")
             await asyncio.wait({track.task})
         if not track.bank.release():
             self.debt.append(track.bank)
 
     async def shutdown(self) -> bool:
-        """Stop and disconnect every server, join all owners and report full release."""
-        for guild_id, player in list(self.players.items()):
-            await self._disconnect(guild_id, player)
-        while self.tasks:
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+        """Stop and disconnect every server, join all owners and report full release.
+
+        Success requires no retained bank, no lease still charged to the pool and no
+        failed cleanup verdict.
+        """
+        self.stopping.set()
+        while self.players or self.tasks:
+            for guild_id, player in list(self.players.items()):
+                await self._disconnect(guild_id, player)
+            if self.tasks:
+                await asyncio.gather(*self.tasks, return_exceptions=True)
         self.debt = [bank for bank in self.debt if not bank.release()]
-        if self.debt:
-            log.error("%d PCM bank(s) remain leased at shutdown", len(self.debt))
-        return not self.debt
+        if self.debt or self._pool.leased:
+            log.error("%d PCM bank lease(s) remain at shutdown", self._pool.leased)
+        if self.cleanup_failures:
+            log.error("%d cleanup deadline(s) were missed", self.cleanup_failures)
+        return not self.debt and not self._pool.leased and not self.cleanup_failures
 
 
 def create_bot(adapter: Adapter) -> commands.InteractionBot:

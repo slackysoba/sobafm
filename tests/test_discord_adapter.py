@@ -593,3 +593,104 @@ async def test_sigterm_sets_the_stop_event() -> None:
     finally:
         loop.remove_signal_handler(signal.SIGTERM)
     assert await adapter.shutdown() is True
+
+
+@offline
+async def test_commands_during_shutdown_are_refused_and_lease_nothing() -> None:
+    h = harness()
+    h.producer.hold = True
+    await h.join()
+    await h.play()
+    await settle()
+    shutdown = asyncio.create_task(h.adapter.shutdown())
+    await asyncio.sleep(0.01)
+    assert not shutdown.done() and h.pool.leased == 1
+
+    joined = await run(h.adapter.join, inter(h.room, manager=True))
+    assert joined.texts() == [discord_adapter.SHUTTING_DOWN]
+    assert h.adapter.players == {}
+    played = await run(lambda i: h.adapter.play(i, "piano"), inter(h.room))
+    assert played.texts() in ([NOT_JOINED], [discord_adapter.SHUTTING_DOWN])
+
+    h.producer.release.set()
+    assert await shutdown is True
+    assert h.pool.leased == 0 and h.adapter.players == {}
+
+
+@offline
+async def test_cleanup_deadline_counts_from_the_first_cancellation() -> None:
+    # Backdate the bank clock so the original three-second deadline has nearly passed.
+    pool = PcmBankPool(clock=lambda: time.monotonic() - discord_adapter.CLEANUP_SECONDS + 0.05)
+    producer = Producer()
+    producer.hold = True
+    h = Harness(Adapter(catalog(recording("a")), producer, pool=pool), pool, producer)
+    await h.join()
+    await h.play()
+    await settle()
+    shutdown = asyncio.create_task(h.adapter.shutdown())
+    await asyncio.sleep(0.2)  # past the deadline; the producer still holds its bank
+    assert h.adapter.cleanup_failures == 1
+    assert not shutdown.done() and pool.leased == 1 and producer.settled == []
+
+    producer.release.set()
+    assert await shutdown is False  # released, but the missed deadline stays a failed verdict
+    assert pool.leased == 0 and len(producer.settled) == 1
+
+
+@offline
+async def test_a_newer_request_displaces_the_unheard_pending_track() -> None:
+    h = harness(Producer(frames=1, end=False))
+    source = await h.join()
+    await h.play()
+    await settle()
+    player = h.adapter.players[1]
+    first = player.station.switching
+    assert first is not None and h.pool.leased == 1
+
+    await h.play()
+    await settle()
+    second = player.station.switching
+    assert second is not None and second.program != first.program
+    assert player.station.desired == second.program and player.station.heard is None
+    assert h.pool.leased == 1 and len(h.producer.settled) == 1  # displaced one joined
+    assert source.read() == SILENCE  # the newer track is not ready either
+
+
+@offline
+async def test_refused_bank_lease_replies_busy_and_keeps_heard_audio() -> None:
+    h = harness()
+    source = await h.join()
+    await h.play()
+    await settle()
+    source.read()
+    await settle()
+    player = h.adapter.players[1]
+    heard = player.station.heard
+    assert heard is not None
+    blocker = h.pool.acquire()  # the remaining global lease is taken elsewhere
+
+    (busy,) = await h.play()
+    assert "capacity is busy" in busy and "current audio continues" in busy
+    assert player.station.heard is heard and player.station.desired == heard.program
+    assert player.station.switching is None and h.pool.leased == 2
+    assert blocker.release()
+
+
+@offline
+async def test_a_player_that_cannot_start_retires_the_claimed_track() -> None:
+    h = harness()
+    await h.join()
+    voice = h.room.voice
+    assert voice is not None
+
+    def refuse(source: StationSource) -> None:
+        raise RuntimeError("synthetic: not connected")
+
+    voice.play = refuse
+    (text,) = await h.play()
+    assert "could not start" in text
+    for task in list(h.adapter.tasks):
+        await task
+    station = h.adapter.players[1].station
+    assert station.switching is None and station.desired is None
+    assert h.pool.leased == 0
