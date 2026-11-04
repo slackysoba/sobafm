@@ -340,7 +340,10 @@ def journal(tmp_path: Path) -> Iterator[Journal]:
             whole_end=200,
         ),
     )
-    result = Journal(tmp_path / "synthetic-ledger", packet)
+    # Frozen case time: the initial write is waited for however slow fsync is.
+    result = Journal(
+        tmp_path / "synthetic-ledger", packet, CaseClock(200, 300, lambda: 100.0, lambda: 10.0)
+    )
     try:
         yield result
     finally:
@@ -427,6 +430,121 @@ def test_journal_failure_bars_replacement_and_retains_record(
     assert calls == previous_calls and journal.record is record and journal.error is error
 
 
+def test_journal_waits_for_slow_write_while_original_clock_has_time(
+    journal: Journal,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [100.0]
+    journal.clock = CaseClock(200, 300, lambda: now[0], lambda: now[0])
+    release = threading.Event()
+    actual = os.pwrite
+
+    def pwrite(fd: int, view: memoryview, offset: int) -> int:
+        now[0] += 0.3
+        # Held past the former fixed 250 ms in real time, too.
+        assert release.wait(3)
+        return actual(fd, view, offset)
+
+    timer = threading.Timer(0.3, release.set)
+    journal.data["phase"] = "synthetic-slow-phase"
+    expected = encode_report(journal.data)
+    monkeypatch.setattr(controller.os, "pwrite", pwrite)
+    timer.start()
+    try:
+        journal.save()
+    finally:
+        timer.cancel()
+        release.set()
+    assert journal.path.read_bytes() == expected
+    assert journal.record is None and journal.error is None
+    assert journal.worker is not None and not journal.worker.is_alive()
+    assert journal.clock.cleanup_start_utc is None
+    assert not journal.clock.missed and not journal.clock.case_missed
+
+
+def test_journal_cleanup_save_keeps_short_bound_for_the_stop_budget(
+    journal: Journal,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [100.0]
+    clock = CaseClock(200, 300, lambda: now[0], lambda: now[0])
+    clock.cancel()  # Three original cleanup seconds remain; the save gets 0.25.
+    journal.clock = clock
+    entered, release = threading.Event(), threading.Event()
+    actual = os.pwrite
+
+    def pwrite(fd: int, view: memoryview, offset: int) -> int:
+        entered.set()
+        assert release.wait(3)  # Held until after the bound has expired.
+        return actual(fd, view, offset)
+
+    journal.data["phase"] = "synthetic-cleanup-phase"
+    expected = encode_report(journal.data)
+    monkeypatch.setattr(controller.os, "pwrite", pwrite)
+    try:
+        with pytest.raises(ProbeError, match="journal_operation_retained"):
+            journal.save()
+        assert entered.is_set()
+        assert journal.worker is not None and journal.worker.is_alive()
+        assert journal.record == expected and journal.error is None
+        assert clock.cleanup_monotonic == 103 and not clock.missed
+    finally:
+        release.set()
+        assert journal.worker is not None
+        journal.worker.join(3)
+        assert not journal.worker.is_alive()
+    assert journal.path.read_bytes() == expected
+
+
+@pytest.mark.parametrize("deadline", ["case_end", "cancelled", "cleanup_end"])
+def test_journal_write_outliving_original_deadline_retains_owner(
+    journal: Journal,
+    monkeypatch: pytest.MonkeyPatch,
+    deadline: str,
+) -> None:
+    now = [100.0]
+    clock = CaseClock(200, 300, lambda: now[0], lambda: now[0])
+    journal.clock = clock
+    if deadline == "cleanup_end":
+        clock.cancel()
+    entered, release = threading.Event(), threading.Event()
+    actual = os.pwrite
+    calls: list[int] = []
+
+    def pwrite(fd: int, view: memoryview, offset: int) -> int:
+        calls.append(offset)
+        if deadline == "case_end":
+            now[0] = 200.5
+        elif deadline == "cancelled":
+            clock.cancel()  # A case-phase save must not spend the cleanup window.
+        else:
+            now[0] = 103.5
+        entered.set()
+        assert release.wait(3)
+        return actual(fd, view, offset)
+
+    journal.data["phase"] = "synthetic-held-phase"
+    expected = encode_report(journal.data)
+    monkeypatch.setattr(controller.os, "pwrite", pwrite)
+    try:
+        with pytest.raises(ProbeError, match="journal_operation_retained"):
+            journal.save()
+        worker, record = journal.worker, journal.record
+        assert entered.is_set() and worker is not None and worker.is_alive()
+        assert record == expected and journal.error is None
+        assert clock.cleanup_start_utc == (200 if deadline == "case_end" else 100)
+        journal.data["phase"] = "synthetic-replacement"
+        with pytest.raises(ProbeError, match="journal_operation_retained"):
+            journal.save()  # A live worker still blocks replacement.
+        assert journal.worker is worker and journal.record is record and calls == [0]
+    finally:
+        release.set()
+        assert journal.worker is not None
+        journal.worker.join(3)
+        assert not journal.worker.is_alive()
+    assert journal.path.read_bytes() == expected
+
+
 @pytest.mark.parametrize("stage", ["write", "fsync"])
 @pytest.mark.parametrize("uncertain_close", [False, True])
 def test_journal_held_operation_close_and_original_cleanup_debt(
@@ -440,11 +558,13 @@ def test_journal_held_operation_close_and_original_cleanup_debt(
     clock.cancel()
     owner = object.__new__(controller.Controller)
     owner.journal, owner.clock = journal, clock
+    journal.clock = clock
     entered, release, closing, closed = (threading.Event() for _ in range(4))
     actual_write, actual_sync, actual_close = os.pwrite, os.fsync, os.close
     errors: list[Exception] = []
 
     def hold() -> None:
+        now[0] = 103.5  # The held operation outlives the original cleanup deadline.
         entered.set()
         assert release.wait(3)
 

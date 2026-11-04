@@ -25,9 +25,8 @@ from tests.test_fma_validation_packet import packet_path as packet_path
 
 
 def controller(packet: Packet, path: Path) -> Controller:
-    result = Controller(packet, Journal(path, packet), sys.executable)
-    result.clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 1, time.monotonic)
-    return result
+    clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 1, time.monotonic)
+    return Controller(packet, Journal(path, packet, clock), sys.executable)
 
 
 def config(packet: Packet) -> dict[str, object]:
@@ -243,9 +242,11 @@ def test_actual_owner_null_partial_and_settled_producer_states(
                 # This boundary only records capture errors. Real journal write,
                 # fsync and retained-worker schedules have dedicated tests.
                 self.data = {}
+                self.clock = CaseClock(
+                    packet.whole_end, packet.expires, lambda: NOW + 1, lambda: 10.0
+                )
 
         outer = Controller(packet, CaptureJournal())
-        outer.clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 1, lambda: 10.0)
         outer.capture_owner(command, final=True)
         assert outer.owner_report == record
         assert not outer.clock.timing_unknown and not outer.clock.missed

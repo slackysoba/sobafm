@@ -30,10 +30,15 @@ from .consumer import (
     validate_metadata,
 )
 from .ingress import Ingress, Opaque, decode, discard_exception
-from .limits import CaseClock, encode_report
+from .limits import CLEANUP_SECONDS, CaseClock, encode_report
 from .packet import Packet, load, load_qualification, read_bounded, string
 from .process import ProcessPin
 from .terminal import validate_clock, validate_terminal
+
+# Re-check granularity only. The original clock, not this, bounds journal waits.
+JOURNAL_CLOCK_POLL_SECONDS = 0.05
+# Unchanged pre-#76 cleanup bound; preserves the stop budget.
+CLEANUP_JOURNAL_WAIT_SECONDS = 0.25
 
 
 class Command:
@@ -240,9 +245,14 @@ class Command:
 
 
 class Journal:
-    """A new private inode per attempt. Existing/partial journals block new work."""
+    """A new private inode per attempt. Existing/partial journals block new work.
 
-    def __init__(self, path: Path, record: Packet | dict[str, object]) -> None:
+    A case-phase write is waited for under the case's original clock; a cleanup
+    write gets at most the unchanged short bound inside the cleanup window.
+    """
+
+    def __init__(self, path: Path, record: Packet | dict[str, object], clock: CaseClock) -> None:
+        self.clock = clock
         self.fd = os.open(
             path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
         )
@@ -297,14 +307,34 @@ class Journal:
             except Exception as error:
                 self.error = error
 
+        # A save begun in the case waits while the original case clock allows it.
+        # One begun in cleanup keeps the old short bound so the stop budget stays.
+        cleanup = self._cleanup_started()
         self.worker = threading.Thread(target=write, name="owned-journal-write", daemon=False)
         self.worker.start()
-        self.worker.join(0.25)
-        if self.worker.is_alive():
-            raise ProbeError("journal_operation_retained")
+        if cleanup:
+            self.worker.join(max(0.0, min(CLEANUP_JOURNAL_WAIT_SECONDS, self._cleanup_remaining())))
+        while self.worker.is_alive():
+            remaining = 0 if cleanup else self.clock.remaining()
+            if remaining <= 0:
+                raise ProbeError("journal_operation_retained")
+            # Re-read the clock: cancellation or an adopted start can tighten it.
+            self.worker.join(min(remaining, JOURNAL_CLOCK_POLL_SECONDS))
         if self.error is not None:
             raise self.error
         self.record = None
+
+    def _cleanup_started(self) -> bool:
+        self.clock.remaining()  # Case expiry adopts cleanup; nothing renews it.
+        return self.clock.cleanup_start_utc is not None
+
+    def _cleanup_remaining(self) -> float:
+        clock = self.clock
+        with clock.lock:
+            start, end = clock.cleanup_start_utc, clock.cleanup_monotonic
+            if start is None or end is None:
+                return 0
+            return min(end - clock.monotonic(), start + CLEANUP_SECONDS - clock.wall())
 
     def _write(self, data: bytes) -> None:
         info = self.path.lstat()
@@ -614,8 +644,8 @@ class Management:
     At most two live command owners and 20 operations; timeouts retain debt.
     """
 
-    def __init__(self, journal: Journal, clock: CaseClock, docker: str = "docker") -> None:
-        self.journal, self.clock, self.docker = journal, clock, docker
+    def __init__(self, journal: Journal, docker: str = "docker") -> None:
+        self.journal, self.clock, self.docker = journal, journal.clock, docker
         self.commands: list[Command] = []
         self.command_receipts: list[dict[str, object]] = []
         self.owner_report: dict[str, object] | None = None
@@ -776,7 +806,7 @@ class Management:
 
 class Controller(Management):
     def __init__(self, packet: Packet, journal: Journal, docker: str = "docker") -> None:
-        super().__init__(journal, CaseClock(packet.whole_end, packet.expires), docker)
+        super().__init__(journal, docker)
         self.packet = packet
         # Computed once: the fingerprint re-encodes the packet on every access.
         self.packet_sha256 = packet.fingerprint
@@ -1062,7 +1092,7 @@ def main(*, qualification: bool = False) -> int:
         args.packet.resolve()
     ):
         raise ProbeError("host_packet_mount_binding")
-    journal = Journal(args.journal, packet)
+    journal = Journal(args.journal, packet, CaseClock(packet.whole_end, packet.expires))
     controller = Controller(packet, journal)
 
     def interrupted(_signal: int, _frame: FrameType | None) -> None:
