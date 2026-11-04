@@ -587,7 +587,7 @@ def test_owner_final_observation_precedes_clean_decision(
     intake = Intake()
 
     def preflight(
-        _packet: Packet, _workspace: ObservationWorkspace
+        _packet: Packet, _workspace: ObservationWorkspace, _interpreter: dict[str, object]
     ) -> tuple[ProcessPin, ProcessPin]:
         return pin, pin
 
