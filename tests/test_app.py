@@ -399,7 +399,7 @@ def test_compose_carries_the_adr_limits_and_hardening() -> None:
     assert service["init"] is True and service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
     assert service["security_opt"] == ["no-new-privileges:true"]
-    assert service["restart"] == "unless-stopped"
+    assert service["restart"] == "on-failure:5"
     assert service["platform"] == "linux/amd64"
     assert service["env_file"] == ".env"
     volumes = cast(list[str], service["volumes"])

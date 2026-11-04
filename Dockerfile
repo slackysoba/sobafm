@@ -1,4 +1,5 @@
-# SobaFM first amd64 slice. Not yet built or qualified; see docs/operations.md.
+# SobaFM first amd64 slice. Built once locally for a decode fit; not qualified.
+# See docs/operations.md.
 #
 # Base: the reviewed Python 3.14 trixie-slim uv image recorded in
 # evaluations/linux_resource/decoder-startup.md, pinned by digest.

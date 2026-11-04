@@ -18,9 +18,12 @@ end of input for a bad file. The reader fills the bank through ``reserve_write``
 and ``commit_write`` up to the caller's finite PCM limit.
 
 Transfer completion, decoder completion and valid PCM are recorded separately.
-The verified end of PCM is declared only when the transfer completed, the
-decoder exited with status zero and no failure or overrun occurred. Any failure
-stops the bank's stream.
+Decoder completion is an exit status of zero without cancellation: mpg123 also
+exits zero on SIGTERM. The verified end of PCM is declared only when the
+transfer completed, the decoder completed and no failure or overrun occurred.
+Any failure stops the bank's stream. Once the stream stops, the reader closes
+the decoder's stdout, so a decoder blocked writing to a full pipe gets EPIPE and
+acts on SIGTERM instead of waiting for the SIGKILL fallback.
 
 Cleanup has one owner (``finish``) and one original deadline, three seconds
 after the first of cancellation, a failure or the decoder's end of output.
@@ -475,7 +478,12 @@ class DecodeProducer:
                     break
                 remaining -= count
         except PcmStateError:
-            return  # the stream was stopped
+            # The stream was stopped. Close stdout so a decoder blocked writing
+            # to a full pipe gets EPIPE and can act on TERM; ``_settle`` closing
+            # it again is harmless.
+            with contextlib.suppress(OSError):
+                stdout.close()
+            return
         except OSError:
             self._fail("output_read")
             return
@@ -579,8 +587,10 @@ class DecodeProducer:
             return
         with self._lock:
             returncode = self._returncode
-            self._decoder_complete = returncode == 0
-        if returncode == 0:
+            # mpg123 exits 0 on TERM, so a cancelled decode never completed.
+            complete = returncode == 0 and self._cancelled_at is None
+            self._decoder_complete = complete
+        if complete:
             bank.mark_decoder_complete()
         elif returncode is not None:
             self._fail("decoder_exit")
