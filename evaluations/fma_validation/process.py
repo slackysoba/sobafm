@@ -99,6 +99,7 @@ class OwnedHelper:
                     "LC_ALL": "C",
                     "HOME": "/nonexistent",
                     "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPATH": "/source/src:/source",
                 },
             )
             # Register before any observation which can fail. Popen retains the
