@@ -478,9 +478,16 @@ class DecodeProducer:
                     break
                 remaining -= count
         except PcmStateError:
-            # The stream was stopped. Close stdout so a decoder blocked writing
-            # to a full pipe gets EPIPE and can act on TERM; ``_settle`` closing
-            # it again is harmless.
+            # The stream was stopped. If the bank's owner stopped it before this
+            # producer heard of it, adopt that cancellation first (its original
+            # clock, TERM before EPIPE), so the decoder's exit and the feeder's
+            # failed write count as cancellation, not a failure on a later clock.
+            with self._lock:
+                owner_stopped = self._cleanup_started_at is None
+            if owner_stopped:
+                self.cancel()
+            # Close stdout so a decoder blocked writing to a full pipe gets
+            # EPIPE and can act on TERM; ``_settle`` closing it again is harmless.
             with contextlib.suppress(OSError):
                 stdout.close()
             return

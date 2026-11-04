@@ -294,6 +294,65 @@ def test_cancel_unblocks_a_writer_that_defers_term_and_exit_zero_is_not_complete
     assert producer.release()
 
 
+class SignalledInput:
+    """Real file reads that report when the feeder has closed the input."""
+
+    def __init__(self, path: Path) -> None:
+        self.raw: RawInput = open(path, "rb", buffering=0)  # noqa: SIM115
+        self.closed = threading.Event()
+
+    def readinto(self, buffer: Buffer, /) -> int | None:
+        return self.raw.readinto(buffer)
+
+    def close(self) -> None:
+        self.raw.close()
+        self.closed.set()
+
+
+def test_owner_cancelling_the_bank_first_keeps_its_clock_and_is_no_failure(
+    tmp_path: Path, pool: PcmBankPool
+) -> None:
+    """The adapter cancels its leased bank before the producer hears of it.
+
+    The child never reads its input, so the feeder stays blocked writing, and
+    it writes output forever. Once its output fails it exits, which fails the
+    feeder's write; that must count as the owner's cancellation, on its clock.
+    """
+    payload = bytes(1 << 20)  # far beyond a pipe buffer: the feeder blocks
+    path = tmp_path / "input"
+    path.write_bytes(payload)
+    source = DecodeInput(path, len(payload), hashlib.sha256(payload).hexdigest(), 1 << 40)
+    script = (
+        "import os, signal\n"
+        "signal.signal(signal.SIGTERM, lambda *_: None)\n"
+        f"chunk = b'\\x01' * {64 * FRAME_BYTES}\n"
+        "try:\n"
+        "    while True:\n"
+        "        os.write(1, chunk)\n"
+        "except BrokenPipeError:\n"
+        "    os._exit(0)\n"
+    )
+    held = SignalledInput(path)
+    bank = pool.acquire()
+    producer = DecodeProducer(
+        source, command=child(script), pool=pool, open_input=lambda _: held, bank=bank
+    )
+    producer.start()
+    bank.cancel()
+    assert held.closed.wait(30)  # the feeder has ended: its write failed
+    producer.cancel()
+    report = producer.finish()
+    first = bank.facts().cancelled_at
+    assert first is not None
+    assert report.failure is None
+    assert report.cancelled_at == first and report.cleanup_started_at == first
+    assert report.cleanup_deadline == first + 3.0
+    assert not report.decoder_complete and not report.transfer_complete
+    assert report.cleanup == "clean" and report.settled
+    assert producer.release()
+    assert bank.release()
+
+
 class HeldInput:
     """Real file reads whose close blocks until the test allows it."""
 
