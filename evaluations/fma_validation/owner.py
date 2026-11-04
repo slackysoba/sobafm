@@ -27,6 +27,19 @@ ORIGINAL = Path("/input/original")
 CONFIG = Path("/case/packet.json")
 
 
+def executable_sha256(pid: int) -> str:
+    """Bounded hash of a role executable (init/interpreter), never media."""
+    digest = hashlib.sha256()
+    count = 0
+    with Path(f"/proc/{pid}/exe").open("rb", buffering=0) as executable:
+        while chunk := executable.read(65_536):
+            count += len(chunk)
+            if count > 20_000_000:
+                raise ProbeError("role_executable_bound")
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def preflight(packet: Packet, workspace: ObservationWorkspace) -> tuple[ProcessPin, ProcessPin]:
     workspace.environment(intake=True)
     if os.getpid() == 1 or os.uname().machine != "x86_64":
@@ -35,15 +48,7 @@ def preflight(packet: Packet, workspace: ObservationWorkspace) -> tuple[ProcessP
     if inventory(init, owner, workspace=workspace):
         raise ProbeError("unexpected_initial_members")
     for pin, key in ((init, "init_sha256"), (owner, "python_sha256")):
-        digest = hashlib.sha256()
-        count = 0
-        with Path(f"/proc/{pin.pid}/exe").open("rb", buffering=0) as executable:
-            while chunk := executable.read(65_536):
-                count += len(chunk)
-                if count > 20_000_000:
-                    raise ProbeError("role_executable_bound")
-                digest.update(chunk)
-        if digest.hexdigest() != packet.text(key):
+        if executable_sha256(pin.pid) != packet.text(key):
             raise ProbeError("role_executable_changed")
     info = SLOT.lstat()
     if (
