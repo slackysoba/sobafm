@@ -19,6 +19,7 @@ from evaluations.fma_validation.process import OwnedHelper, ProcessPin
 from evaluations.linux_resource.probe import ProbeError
 from tests.test_fma_failure_receipts import consumer as consumer
 from tests.test_fma_failure_receipts import terminal
+from tests.test_fma_validation_packet import packet_path as packet_path
 
 PIN = ProcessPin(2, 1, 1, "/python", 1, 2, 1000, "/")
 
@@ -509,3 +510,359 @@ def test_actual_terminal_producer_variants_pass_ingress(
     result = run.finish()
     assert result["passed"] is (not failed)
     assert decode(encode_report(result), "decode") == result
+
+
+# #66 receiver payload gate. Oracles below are computed from the decoded value,
+# independently of the scanner's own accounting.
+
+
+def oracle_width(value: str) -> int:
+    top = max(map(ord, value), default=0)
+    return 1 if top < 256 else 2 if top < 65_536 else 4
+
+
+def oracle_strings(value: object) -> int:
+    """Decoded non-key string backing (PEP 393 width x length)."""
+    if isinstance(value, str):
+        return oracle_width(value) * len(value)
+    if isinstance(value, list):
+        return sum(oracle_strings(item) for item in cast(list[object], value))
+    if isinstance(value, dict):
+        return sum(oracle_strings(item) for item in cast(dict[str, object], value).values())
+    return 0
+
+
+def oracle_peak(wire: bytes) -> int:
+    text = wire.decode("utf-8")
+    raw = max((ord(char) for char in text), default=0)
+    conversion = (1 if raw < 128 else 2 if raw < 256 else 3 if raw < 65_536 else 6) * len(wire)
+    return max(conversion, oracle_width(text) * len(text) + oracle_strings(json.loads(text)))
+
+
+def forbid_materialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(module.json, "loads", forbidden_decode)
+    monkeypatch.setattr(module, "str", forbidden_decode, raising=False)
+
+
+def config_record(paths: list[str], sources: list[str] | None = None) -> dict[str, object]:
+    """A complete selected `docker inspect` configuration with chosen path fields."""
+    fields = iter(paths)
+    host: dict[str, object] = {
+        "Init": True,
+        "ReadonlyRootfs": True,
+        "Privileged": False,
+        "NetworkMode": "none",
+        "CgroupnsMode": "private",
+        "Memory": 1,
+        "MemorySwap": 1,
+        "PidsLimit": 64,
+        "NanoCpus": 1,
+        "CapDrop": ["ALL"],
+        "CapAdd": None,
+        "SecurityOpt": ["no-new-privileges=true"],
+        "RestartPolicy": {"Name": "no"},
+        "LogConfig": {"Type": "none"},
+    }
+    mounts: list[dict[str, object]] = []
+    for index in range(4):
+        source = sources[index] if sources is not None and index < len(sources) else None
+        row: dict[str, object] = {
+            "Type": "bind",
+            "Source": source if source is not None else next(fields, "/s"),
+            "Destination": next(fields, "/d"),
+            "RW": False,
+        }
+        mounts.append(row)
+    return {
+        "id": "a" * 64,
+        "name": "/case",
+        "image": "sha256:" + "b" * 64,
+        "labels": {
+            "org.sobafm.project": "sobafm",
+            "org.sobafm.issue": "44",
+            "org.sobafm.packet": "c" * 64,
+        },
+        "state": {
+            "Running": True,
+            "Pid": 2,
+            "Status": "running",
+            "ExitCode": 0,
+            "OOMKilled": False,
+        },
+        "host": host,
+        "user": "1000:1000",
+        "path": next(fields, "/python"),
+        "args": [next(fields, "-B") for _ in range(8)],
+        "workdir": next(fields, "/"),
+        "mounts": mounts,
+    }
+
+
+def volume_wire(created: str, padding: int = 0) -> bytes:
+    record = {
+        "Name": "volume",
+        "CreatedAt": created,
+        "Mountpoint": "/var/lib/docker/volumes/volume/_data",
+        "Labels": {"org.sobafm.issue": "44"},
+    }
+    body = json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
+    return b" " * padding + body
+
+
+def test_gate_is_twice_the_wire_bound_plus_margin() -> None:
+    assert module.DECODED_BYTES == 2 * REPORT_BYTES + 1024 == 132_096
+    assert module.PATH.count == 4096 and module.TIMESTAMP.count == REPORT_BYTES
+
+
+def test_wide_raw_config_rejected_before_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 18 raw-astral paths: strict UTF-8 conversion alone reaches 6n.
+    size = 3000
+    wire = json.dumps(config_record(["/\U00010000" + "x" * size] * 18), ensure_ascii=False).encode()
+    while len(wire) > REPORT_BYTES:
+        size -= 10
+        wire = json.dumps(
+            config_record(["/\U00010000" + "x" * size] * 18), ensure_ascii=False
+        ).encode()
+    assert oracle_peak(wire) > module.DECODED_BYTES
+    forbid_materialization(monkeypatch)
+    with pytest.raises(ProbeError, match="ingress_schema"):
+        decode(wire, "config")
+
+
+def test_whitespace_padded_wide_volume_rejected_before_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = volume_wire("\xe9Ā\U00010000")
+    wire = volume_wire("\xe9Ā\U00010000", REPORT_BYTES - len(body))
+    assert len(wire) == REPORT_BYTES and oracle_peak(wire) == 6 * REPORT_BYTES
+    forbid_materialization(monkeypatch)
+    with pytest.raises(ProbeError, match="ingress_schema"):
+        decode(wire, "volume")
+
+
+def test_escaped_wide_path_rejected_by_decoded_width_not_wire_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The wire is pure ASCII, but each escaped astral widens a whole 4,096-point path.
+    path = "/\U00010000" + "x" * 4094
+    count = 18
+    wire = json.dumps(config_record([path] * count)).encode("ascii")
+    while len(wire) > REPORT_BYTES:
+        count -= 1
+        wire = json.dumps(config_record([path] * count)).encode("ascii")
+    assert oracle_peak(wire) > module.DECODED_BYTES
+    forbid_materialization(monkeypatch)
+    with pytest.raises(ProbeError, match="ingress_schema"):
+        decode(wire, "config")
+
+
+def test_one_escaped_wide_path_is_still_admitted() -> None:
+    record = config_record(["/\U00010000" + "x" * 4094])
+    wire = json.dumps(record).encode("ascii")
+    assert oracle_peak(wire) <= module.DECODED_BYTES
+    assert decode(wire, "config") == record
+
+
+@pytest.mark.parametrize("created", ["2026-11-02T00:00:00Z", "\xff" * 4096])
+def test_ascii_and_latin1_documents_pass_at_full_wire(created: str) -> None:
+    body = volume_wire(created)
+    wire = volume_wire(created, REPORT_BYTES - len(body))
+    assert len(wire) == REPORT_BYTES and oracle_peak(wire) <= module.DECODED_BYTES
+    assert decode(wire, "volume")["CreatedAt"] == created
+    with pytest.raises(ProbeError, match="helper_report_bound"):
+        decode(b" " + wire, "volume")
+
+
+def test_ascii_metadata_notices_pass_at_full_wire() -> None:
+    def wire(count: int, padding: int = 0) -> bytes:
+        frame = {"id": "COMM", "key": "COMM", "fields": {"text": ["x" * 4096] * count}}
+        record = {**metadata(), "id3v2": [frame], "case_binding": NIGHT_OWL.record()}
+        body = json.dumps({**record, "helper_pid": 2}, separators=(",", ":")).encode("ascii")
+        return b"{" + b" " * padding + body[1:] + b"\n"
+
+    count = 1
+    while len(wire(count + 1)) <= REPORT_BYTES:
+        count += 1
+    full = wire(count, REPORT_BYTES - len(wire(count)))
+    assert len(full) == REPORT_BYTES and oracle_peak(full[:-1]) <= module.DECODED_BYTES
+    owner = Ingress("metadata")
+    owner.feed(full)
+    owner.scan(final=True)
+    assert owner.error is None and owner.records[0].value is not None
+
+
+def test_conversion_term_boundary_is_exact() -> None:
+    # One raw U+0100 gives a 3n strict-conversion peak; 3 x 44,032 equals the gate.
+    body = volume_wire("Ā")
+    limit = module.DECODED_BYTES // 3
+    assert 3 * limit == module.DECODED_BYTES
+    accepted = volume_wire("Ā", limit - len(body))
+    rejected = volume_wire("Ā", limit + 1 - len(body))
+    assert oracle_peak(accepted) == module.DECODED_BYTES
+    assert decode(accepted, "volume")["CreatedAt"] == "Ā"
+    with pytest.raises(ProbeError, match="ingress_schema"):
+        decode(rejected, "volume")
+
+
+def test_three_maximal_astral_sources_are_admitted() -> None:
+    source = "/\U00010000" + "x" * (4095 - 5)
+    assert len(source.encode()) == 4095
+    record = config_record([], [source] * 3)
+    wire = json.dumps(record, ensure_ascii=False).encode()
+    assert oracle_peak(wire) <= module.DECODED_BYTES
+    assert decode(wire, "config") == record
+
+
+def family_strings(rule: module.Wire, seen: set[int]) -> list[module.Wire]:
+    """Every string rule reachable by `Scan.value`, including dynamic variants."""
+    if id(rule) in seen:
+        return []
+    seen.add(id(rule))
+    dynamic = {
+        "pin_or_null": [module.PIN],
+        "reader_or_null": [module.READER],
+        "helper_or_null": [module.HELPER],
+        "decode_or_null": [module.DECODE],
+        "metadata_or_null": [module.METADATA_RESULT],
+        "strings_or_null": [module.text(32)],
+        "notice": [module.text(4096, "latin1"), module.Wire("notice_item")],
+        "notice_item": [module.text(4096, "latin1")],
+    }
+    children = [*rule.fields.values(), *([rule.item] if rule.item is not None else [])]
+    children += dynamic.get(rule.kind, [])
+    found = [rule] if rule.kind == "string" else []
+    for child in children:
+        found += family_strings(child, seen)
+    return found
+
+
+@pytest.mark.parametrize("family", ["metadata", "rejection", "admission", "decode"])
+def test_helper_families_have_no_path_or_timestamp_domain(family: str) -> None:
+    strings = family_strings(module.FAMILIES[family], set())
+    assert strings
+    assert all(rule.domain not in ("path", "timestamp") for rule in strings)
+    assert max(rule.count for rule in strings) <= 4096
+
+
+def owner_wire(packet_path: Path, tmp_path: Path, created_at: str, padding: int = 0) -> bytes:
+    """A settled, rejected night-owl owner terminal with a chosen intake timestamp."""
+    import threading
+    from datetime import UTC, datetime
+
+    from evaluations.fma_validation.limits import CaseClock
+    from evaluations.fma_validation.owner import INTERPRETER_FACTS
+    from evaluations.fma_validation.packet import load
+    from sobafm.fma_intake import LocalIntake
+    from tests.test_fma_validation_packet import NOW, ROOT
+
+    packet = load(packet_path, ROOT, now=NOW)
+    clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 1, lambda: 10.0)
+    init = ProcessPin(1, 1, 0, "/init", 1, 1, 1000, "/")
+    intake = LocalIntake(
+        tmp_path,
+        None,
+        packet.request,
+        utc_now=lambda: datetime.fromtimestamp(NOW, UTC),
+        monotonic=lambda: 10.0,
+    )
+    intake.phase = "rejected"
+    intake.thread = threading.Thread()
+    intake.thread.start()
+    intake.thread.join(3)
+    clock.cancel()
+    validation = ValidationConsumer(intake, init, PIN, clock, packet.case)
+    report = intake.report()
+    report["created_at"] = created_at
+    record: dict[str, object] = {
+        "schema": packet.case.schema("owner"),
+        "case_binding": packet.case.record(),
+        "packet_sha256": packet.fingerprint,
+        "passed": False,
+        "failure": "validation_owner_failed",
+        "init": init.record(),
+        "owner": PIN.record(),
+        "interpreter": dict(INTERPRETER_FACTS),
+        "intake": report,
+        "reader": None,
+        "validation": validation.receipt(),
+        "memory_event_delta": {},
+        "cleanup": clock.receipt(),
+        "catalog_admitted": False,
+        "container_exit_observed": False,
+    }
+    wire = json.dumps(record, separators=(",", ":")).encode("ascii")
+    return b"{" + b" " * padding + wire[1:] + b"\n"
+
+
+def wide_stamp(size: int) -> str:
+    # One escaped non-ordinary separator at position 11 widens the whole timestamp.
+    return "2026-11-02Ā" + "0" * (size - 11)
+
+
+def test_decoded_term_boundary_is_exact_for_wide_owner_timestamp(
+    packet_path: Path, tmp_path: Path
+) -> None:
+    probe = owner_wire(packet_path, tmp_path, wide_stamp(40_000))
+    stamp = wide_stamp(40_000 + (module.DECODED_BYTES - oracle_peak(probe[:-1])) // 3)
+    base = owner_wire(packet_path, tmp_path, stamp)
+    padding = module.DECODED_BYTES - oracle_peak(base[:-1])
+    assert 0 <= padding < 3
+    results: list[bool] = []
+    for extra in (0, 1):
+        wire = owner_wire(packet_path, tmp_path, stamp, padding + extra)
+        assert oracle_peak(wire[:-1]) == module.DECODED_BYTES + extra
+        assert len(wire) <= REPORT_BYTES
+        owner = Ingress("owner")
+        owner.feed(wire)
+        owner.scan(final=True)
+        results.append(owner.records[0].value is not None)
+    assert results == [True, False]
+
+
+def test_wide_owner_timestamp_keeps_envelope_and_adopts_clock(
+    packet_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from evaluations.fma_validation.controller import Command, Controller, Journal
+    from evaluations.fma_validation.limits import CaseClock
+    from evaluations.fma_validation.packet import load
+    from tests.test_fma_validation_packet import NOW, ROOT
+
+    # Control: the same builder with a narrow stamp is a fully valid owner record,
+    # so the rejection below is the payload gate alone, not a schema gap.
+    control = owner_wire(packet_path, tmp_path, "2026-11-02T00:00:00Z")
+    assert decode(control[:-1], "owner")["intake"] is not None
+    probe = owner_wire(packet_path, tmp_path, wide_stamp(11))
+    wire = owner_wire(packet_path, tmp_path, wide_stamp(REPORT_BYTES - len(probe) + 11))
+    assert len(wire) == REPORT_BYTES and oracle_peak(wire[:-1]) > module.DECODED_BYTES
+
+    class NoLaunch(Command):
+        def _launch(self) -> None:
+            pass
+
+    class CaptureJournal(Journal):
+        # Records capture errors only; the journal owns the one case clock (#79).
+        def __init__(self, clock: CaseClock) -> None:
+            self.data = {}
+            self.clock = clock
+
+    packet = load(packet_path, ROOT, now=NOW)
+    command = NoLaunch(["synthetic-owner-output"])
+    command.launch()
+    command.worker.join(3)
+    command.owner_output = True
+    command.ingress.feed(wire)
+    clock = CaseClock(packet.whole_end, packet.expires, lambda: NOW + 2, lambda: 10.0)
+    outer = Controller(packet, CaptureJournal(clock))
+    assert outer.clock is outer.journal.clock is clock
+    monkeypatch.setattr(module, "materialize", forbidden_decode)
+    outer.capture_owner(command, final=True)
+    record = command.ingress.records[0]
+    assert record.value is None and record.envelope is not None
+    assert set(record.envelope) == module.OWNER_ENVELOPE
+    assert command.ingress.error == "ingress_schema"
+    assert outer.owner_report is None
+    assert outer.clock.cleanup_start_utc == NOW + 1
+    assert outer.clock.timing_unknown and outer.clock.missed
+    assert outer.journal.data["owner_terminal_error"] == "invalid_or_missing_owner_terminal"

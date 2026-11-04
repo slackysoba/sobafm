@@ -102,9 +102,12 @@ Journal workers retain their record through actual write/fsync/error settlement;
 The construction ceiling of work + result + one prior failed record is 196,608
 bytes inside existing report reservations. Metadata explicitly assigns its old
 serialization allowance and fixed margin to that ceiling; no partition grows.
-Receiver JSON parsing and Unicode/shape-dependent peaks remain unproved within
-the intake/controller partitions. Sender construction does not pay for receiver
-copies, close full payload accounting, or establish native fit.
+Receiver JSON parsing is bounded by one whole-record decoded-payload gate
+(`DECODED_BYTES = 2R + 1,024`) before materialization, and the evaluation README
+records the phase ledger: intake peaks at 509,474 of 786,432 and the controller
+at 462,726 of 524,288. Those bounds are conditional on stated CPython 3.14
+assumptions not yet measured in the evaluation image, which is retained debt.
+Sender construction does not pay for receiver copies or establish native fit.
 
 The finite FMA ingress owner now retains each original bounded stream, admits
 closed producer shapes/domains before maintained JSON decoding, and caches each
@@ -115,9 +118,10 @@ Selected Docker projections separate cleanup identity/exit facts from initial
 configuration; obsolete setup and completed exception payloads end before
 cleanup. Helper retirement publishes history once, while active process/FD and
 journal operation debt remain owned. Unicode paths, Latin-1 notices and broader
-qualification timestamps retain distinct supported domains. Receiver conversion
-peaks and retained packet/report/receipt overlap still require an actual ledger;
-there is no `J <= 2R`, fixed `F` or full native-fit claim. Public intake and
+qualification timestamps retain distinct supported domains under the decoded-payload
+gate. The receiver phase ledger charges conversion peaks with retained
+packet/report/receipt facts, conditional on its CPython assumptions; there is no
+full native-fit claim. Public intake and
 operator packet/recovery loaders remain outside this receiver change.
 
 Receive stdout now has exact fixed R backing with an independent used extent;
@@ -128,7 +132,8 @@ bounded before materialization; real Unicode paths remain supported. Inert
 commands register before launch/allocation, original deadlines gate subsequent
 work, and exported views prevent backing retirement. Receipt publication is
 idempotent while partial owners stay registered. The evaluation's visible phase
-ledger replaces the old receive subtotal; complete J/F closure is still open.
+ledger replaces the old receive subtotal; J/F closure is conditional on the
+CPython assumptions recorded there.
 
 The [accepted decoder-PTY amendment](decisions/0003-decoder-pty-exclusion.md)
 excludes only kernel PTY backing alongside kernel pipe/socket storage. It keeps
