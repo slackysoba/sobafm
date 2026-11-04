@@ -203,7 +203,7 @@ is already retained packet/report/receipt payload. Views alias fixed backing.
 | Active helper or one management command, including empty output | Exactly R stdout; no retained opaque stderr body. One executing pump retains at most one 4,096-byte `os.read` result; explicit `del` ends it before the next read. |
 | Two retained management owners | 2R stdout, including a settled command whose borrowed view prevents retirement. The one controller thread pumps sequentially; a retained owner does not retain an earlier successful read result. |
 | Whole FMA or selected ASCII cleanup document | Its R raw owner plus `T <= n`; cleanup may coexist with another R attach owner. Parsing adds `P + I`, with earlier records/envelopes in F. |
-| Valid initial configuration/volume Unicode document | One R command owner plus `T <= 4n` conservatively. These setup responses precede attach. Parsed path/CreatedAt/Mountpoint values and codec scratch remain separate charges. |
+| Valid initial configuration/volume Unicode document | One R command owner plus the conversion and decoded text/string terms admitted by the payload gate below. These setup responses precede attach. |
 | Lexical numeric conversion | One token of at most R bytes plus maintained numeric-conversion scratch, alongside all retained raw owners/F. This scope ends before whole-document text/JSON decoding. |
 | Rejected detail with authenticated envelope | Original raw owner(s), earlier cached graphs and accumulated envelope values coexist with one current borrowed-span text and decoder scratch. No joined envelope wire or explicit span bytes copy. |
 | Non-JSON create/stop response | R raw plus an immutable used-prefix result of at most R until raw retirement; subsequent caller text conversion still needs its own phase charge. |
@@ -221,16 +221,96 @@ stderr/copy extents to call `6R - 12` a surviving family maximum would be wrong.
 Valid Unicode setup families are tested separately and still widen text backing;
 the table is a conservative phase ledger, not a family-maximum proof.
 
-These component changes **do not prove `J(shape, wire) <= 2R`**, fixed retained
-facts `F <= 3R`/`2R`, or full intake/controller fit. Prior records, selected facts,
-parsed graphs, conversion scratch and rejected exceptions remain in the ledger.
-Supported Unicode paths/timestamps can widen decoded backing. Normal packet raw
-notice/evidence strings and the separately parsed request do not all alias;
-qualification has broader timestamp/integer admission boundaries. Compact
-`LocalIntake` construction has the separate phase bounds below; selected fact
-subtotals do not pay for its source graphs or concurrent operations.
-Pinned decoder-source binding/accounting and final controller serialization
-remain separate open work.
+### Receiver payload gate and phase ledger
+
+Every receiver record passes one whole-record payload gate in `Scan.run`
+(#66), after lexical/shape admission and before any `str` conversion or
+`json.loads`. With `DECODED_BYTES = 2R + 1,024 = 132,096`, a record of wire size
+`n` is admitted only when
+
+`max(conversion, width(raw_top) x n + decoded) <= DECODED_BYTES`
+
+where `raw_top` is the largest raw (unescaped) non-ASCII code point,
+`conversion` is `n x {1, 2, 3, 6}` for `raw_top < 128, < 256, < 65,536` and
+otherwise, `width` is the PEP 393 code-point width `{1, 2, 4}`, and `decoded`
+sums `width(top) x count` over every non-key string from its own decoded code
+points. Width therefore follows decoded content, so an escaped astral widens its
+whole string even on an ASCII wire, while a legitimate escaped path is not
+penalized for its wire spelling. Rejection reuses `ingress_schema`. An owner or
+decode record that fails only this gate keeps its authenticated envelope through
+the existing span path, so `capture_owner` still adopts the original clock and
+marks the record invalid. PATH and TIMESTAMP keep their per-field domains; no
+partition changes. ASCII and Latin-1 documents still pass at the full R wire,
+three 4,095-byte astral sources are admitted, and the helper families
+(`metadata`, `rejection`, `admission`, `decode`) contain no path or timestamp
+domain and no string count above 4,096. The case controller computes the packet
+digest once at construction instead of re-encoding the packet on every owner and
+inspect poll.
+
+The ledger below charges each receive phase. `R = 65,536`, `L = 16,384`,
+`H = 4,096`; `n <= R` is record wire size; `T` is decoded text, `S` the decoded
+string backing (width x characters, plus 32 per number and unique keys) and `Iw`
+writer scratch above `S`; `J = T + S + Iw`. `M` and `D` are retained metadata
+and terminal graphs, and `P_o` the retained owner graph. Retained facts:
+`F_P <= 144,930` (six 4,096-code-point packet strings at 4 bytes each, the
+request graph, hashes and the separately parsed request; about 41K for an ASCII
+packet), `F_O = F_P + 8,192 pins + 16,384 resources + 4,096 = 173,602`, and
+`F_C = F_P + 22 receipts (7,744) + 1,256 = 153,930`. Headers and containers are
+charged to the group. Peaks are worst-case payload within the Intake (786,432)
+and Controller (524,288) partitions of `limits.py`.
+
+| # | Phase | Owner | Backing | J | F | Peak |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Packet load, request reparse | main, either process | file `n_p` | `U <= 6n_p` or `T + S <= 8n_p`; 3,626 catalog transient | grows to `F_P` | Intake/Controller; requires reviewed `n_p <= 57,344` |
+| 2 | Source hash, preflight, baseline | owner main | read <= 262,145; arena 8,192 | none | `F_P` + prepaid | group (control); prepaid Intake |
+| 3 | Source validate, copy | `fma-local-intake` | 2R | none | `F_O` | Intake 304,674 |
+| 4 | State gate, fill, freeze, persist | worker; FD and temp debt stays | 3L to L, H per hash | none | `F_O`, `+M+D` at release | Intake 364,066 |
+| 5 | Inert, then launching helper | reader; reservation held while pending | 0 to R | none | `F_O` (+M) | Intake, within row 6 |
+| 6 | Helper pump | reader; a held read keeps its owner | R + H | none | `F_O` (+M) | Intake, within row 10 |
+| 7 | Lexical scan | reader or cancel thread | R | keys + float token <= n | `F_O` (+M) | Intake 370,210 |
+| 8 | Metadata materialize | reader | R | `T <= n`, `S <= n`, `Iw <= 6,144` | `F_O` | Intake 376,354 |
+| 9 | Decoder admission | reader | R | same + 2,048 | `F_O + M` | Intake 443,938 |
+| 10 | Streaming | reader | chunk R + raw R + H | none | `F_O + M` | Intake 374,306 |
+| 11 | Terminal, success | reader in `finish` | R | `T`, `S`, `Iw` | `F_O + M` | Intake 443,938 |
+| 12 | Terminal after write failure or cancel | reader `_settle`, `fma-consumer-cancel` | chunk R + raw R; both threads share `n <= R` | `T`, `S`, `Iw` | `F_O + M` | Intake 509,474 (maximum) |
+| 13 | Rejected-detail envelope | same | chunk R + raw R | `T_span <= n`, envelope <= 512 | `F_O + M` | Intake 436,258 |
+| 14 | Settled, pre-report | owner main | none | none | `F_O + M + D` + report <= L | Intake 323,106 |
+| 15 | Final build, emit | owner main | work W + frozen W | none | `F_O + L`, `M + D <= W` | Intake 386,594 |
+| 16 | Docker ASCII documents, create/stop bytes | controller main | R, result <= R | `T <= n`, small `S` | `F_C` | Controller 350,538 |
+| 17 | Volume/config document | controller main | R | gated `T + S <= 132,096`, `Iw` 24,576 | `F_C` | Controller 376,138 (ungated 765,510) |
+| 18 | Attach pump | controller main | R + H | none | `F_C` | Controller 223,562 |
+| 19 | Owner terminal parse | main (`run`/`drain`); a second owner is possible | 2R | gated `T + S <= 132,096`, `Iw` 26,419 + 6,000 | `F_C` | Controller 449,517 (ungated 669,798) |
+| 20 | Binding check, cleanup inspect | controller main | 2R | `T_c <= R`, `S <= 512` | `F_C + P_o <= 111,676` | Controller 462,726 (digest cached) |
+| 21 | Non-final journal save | main + journal worker; held record stays | 2W_j about 24K | none | `F_C + P_o` | Controller 420,678 |
+| 22 | Final journal, `print` | controller main | <= 2R | `T <= R` | `F_C + P_o` | Controller 396,678 |
+
+The intake owner closes without a code change at a conservative 509,474 of
+786,432 (slack 276,958). With the gate, the controller's worst row is 462,726
+of 524,288 (slack 61,562). These peaks assume the conservative wide `F_P`.
+The #63 preflight families pass through the same `decode` gate.
+
+**These bounds are conditional, not measured in the evaluation image.** They
+rely on stock CPython 3.14 behavior:
+
+- A1: PEP 393 string widths.
+- A2: `_PyUnicodeWriter` overallocates by 1/4 and holds old + new during one
+  widen, so `Iw <= 1.5 w m`.
+- A3: the builtin number temporary equals token length and is disjoint from
+  `S` on the wire.
+- A4: strict UTF-8 decoding sizes by `n` bytes with old + new on each widen, so
+  `U <= 6n`.
+- A5: the decoder memo deduplicates keys; if it does not, keys stay within the
+  wire and `S <= n` still holds.
+
+An offline check on CPython 3.14.4 with the builtin `_json`, which is not the
+image, observed 5,695 and 10,582 bytes for 4,096-character strings, 60,251 for a
+60,002-byte number token and a 6.00n conversion. Confirming A1-A5 in the image is
+retained debt, not a gate on the first real-file evaluation. Native group fit
+remains a separate gate, and packet review separately checks `n_p <= 57,344`.
+Qualification keeps its broader timestamp/integer admission boundaries within
+the same gate. Compact `LocalIntake` construction has the separate phase bounds
+below; selected fact subtotals do not pay for its source graphs or concurrent
+operations. Pinned decoder-source binding/accounting remains separate open work.
 No partition, dependency, residual pool or runtime qualification is added.
 
 ### Compact intake records and hashes
@@ -407,9 +487,8 @@ subtotal, seven R extents plus 32,768 selected native bytes and 16,384 selected
 resources = 507,904, is a **preliminary ledger, not a proved receiver peak**.
 In particular, assigning JSON decoding and newly parsed values one R extent
 each does not establish their actual shape-dependent peak `J(shape, wire)`.
-Rejected input and widening Unicode backing must be covered too. Intake's
-786,432-byte and the controller's 524,288-byte partitions remain unclosed;
-The fixed receive/parse-once phases above supersede that preliminary assignment.
+Rejected input and widening Unicode backing must be covered too. The receiver
+payload gate and phase ledger above supersede that preliminary assignment.
 Other intake-owner source/fact payload remains separately charged.
 No receiver copy is hidden in the sender's alias accounting. Tests preserve every
 selected record through serialization/receive and exercise old/staged evidence,
