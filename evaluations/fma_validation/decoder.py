@@ -133,6 +133,14 @@ class StreamRun(CancelRun):
         if self.cancel.started is None:
             self.request("failure")
 
+    def preparation_remaining(self) -> float:
+        """Adopt an expired phase boundary, not the later observation, before raising."""
+        try:
+            return super().preparation_remaining()
+        except ProbeError:
+            self.clock.remaining(self.phase_deadline)
+            raise
+
     def prepare(self) -> None:
         self.observation.single_thread(os.getpid())
         self.observation.environment(intake=False, phase_end=self.phase_deadline)
@@ -183,14 +191,18 @@ class StreamRun(CancelRun):
         self.exec_released = True
         self.close(pipes.gate_write)
         self.receive_diagnostic_banner()
-        self.native_gate = stopped_native_gate(
-            self.child,
-            self.start_ticks,
-            self.phase_deadline,
-            frozenset({self.owner_pin.pid, pid}),
-            DECODER,
-            observation_gate=self.stopped_observation,
-        )
+        try:
+            self.native_gate = stopped_native_gate(
+                self.child,
+                self.start_ticks,
+                self.phase_deadline,
+                frozenset({self.owner_pin.pid, pid}),
+                DECODER,
+                observation_gate=self.stopped_observation,
+            )
+        except BaseException:
+            self.clock.remaining(self.phase_deadline)
+            raise
         self.wait_ready(pipes.ready_read)
         if os.read(pipes.ready_read, 1) != b"":
             raise ProbeError("native_exec_acknowledgement")
@@ -275,6 +287,7 @@ class StreamRun(CancelRun):
                     if self.bank_filled // 4 * 4 >= READY_BYTES:
                         self.ready_seconds = time.monotonic() - self.started
                         if time.monotonic() > self.phase_deadline:
+                            self.clock.remaining(self.phase_deadline)
                             raise ProbeError("readiness_late")
                 elif self.cancel.started is None:
                     self.bank[:count] = chunk
@@ -457,6 +470,7 @@ class StreamRun(CancelRun):
         if self.clock.remaining(self.decode_end) <= 0:
             raise ProbeError("whole_or_decode_deadline")
         if self.ready_seconds is None and time.monotonic() > self.phase_deadline:
+            self.clock.remaining(self.phase_deadline)
             raise ProbeError("readiness_deadline")
         if self.members() - {self.child.pid}:
             raise ProbeError("unexpected_descendant")
