@@ -410,7 +410,7 @@ def test_cancel_unblocks_a_writer_that_defers_term_and_exit_zero_is_not_complete
     assert report.cancelled_at is not None and report.cleanup_deadline is not None
     assert report.returncode == 0  # it exited on its own: no KILL was needed
     # Well inside the deadline: before the KILL point at two thirds of it.
-    assert report.cleanup_deadline - report.cancelled_at == 3.0
+    assert report.cleanup_deadline == report.cancelled_at + 3.0
     assert time.monotonic() < report.cancelled_at + 2.0
     assert report.transfer_complete and report.failure is None
     assert not report.decoder_complete

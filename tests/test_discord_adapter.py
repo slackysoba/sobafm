@@ -1411,21 +1411,245 @@ async def test_the_next_track_waits_for_capacity_held_by_a_retiring_track() -> N
     assert await h.adapter.shutdown() is True
 
 
-@offline
-async def test_busy_capacity_bounds_next_track_attempts_and_ends_the_program() -> None:
-    h, tagged = program_harness("a", "b", producer=Tagged(frames=1))
-    blocker = h.pool.acquire()  # another server holds the second bank
+# Continuation bounds (#108): stuck retirements, /skip retries and busy capacity.
+
+
+def flaky_voice(h: Harness, failures: int | None) -> FakeVoice:
+    """Make the voice player report it stopped and refuse ``failures`` restarts (all if None)."""
+    voice = h.room.voice
+    assert voice is not None
+    play = voice.play
+    refused = [0]
+
+    def refusing(source: StationSource) -> None:
+        if failures is None or refused[0] < failures:
+            refused[0] += 1
+            raise RuntimeError("synthetic: voice player could not start")
+        play(source)
+
+    voice.play = refusing
+    voice.is_playing = lambda: False
+    return voice
+
+
+def current(h: Harness, guild: int = 1) -> Track:
+    track = h.adapter.players[guild].source._current  # pyright: ignore[reportPrivateUsage]
+    assert track is not None
+    return track
+
+
+def test_a_stuck_retirement_does_not_stall_continuation_while_a_bank_is_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(discord_adapter, "CLEANUP_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        tagged = Tagged(frames=1)
+        tagged.holding["a"] = asyncio.Event()  # a's producer does not settle until allowed
+        h, _ = program_harness("a", "b", "c", producer=tagged)
+        source = await start_program(h)
+        a = current(h)
+        await prepared_next(h, "b")
+        assert source.read() == tag("b")  # a drains and retires; its producer stays stuck
+        await until(lambda: heard_id(h) == "b")
+        await asyncio.sleep(0.1)  # past a's original cleanup deadline
+        retirement = a.retirement
+        assert retirement is not None and not retirement.done()
+        first_cancel = a.bank.facts().cancelled_at
+        assert h.adapter.cleanup_failures == 1 and h.pool.leased == 2 and next_id(h) is None
+
+        assert source.read() == b""  # b drains; its retirement frees a bank
+        await prepared_next(h, "c")  # proceeds although a's retirement never settled
+        assert source.read() == tag("c")
+        await until(lambda: heard_id(h) == "c")
+        # a's retirement keeps its owner, original clock, failed verdict and bank.
+        assert retirement in h.adapter.retirements and not retirement.done()
+        assert a.bank.facts().cancelled_at == first_cancel and h.adapter.debt == []
+        assert h.adapter.cleanup_failures == 1 and h.pool.leased == 2
+
+        tagged.holding["a"].set()
+        assert await h.adapter.shutdown() is False  # the missed deadline stays failed
+        assert h.pool.leased == 0
+
+    asyncio.run(scenario())
+
+
+async def both_banks_stuck(tagged: Tagged) -> tuple[Harness, StationSource]:
+    """a and b drained, and both retirements hold their banks: nothing is free."""
+    tagged.holding["a"] = asyncio.Event()
+    tagged.holding["b"] = asyncio.Event()
+    h, _ = program_harness("a", "b", "c", producer=tagged)
     source = await start_program(h)
-    await join_retirements(h)
+    await prepared_next(h, "b")
+    assert source.read() == tag("b")
+    await until(lambda: heard_id(h) == "b")
+    assert source.read() == b""
+    await until(lambda: heard_id(h) is None)
+    return h, source
+
+
+def test_a_stuck_retirement_without_a_free_bank_ends_the_program_at_the_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(discord_adapter, "CLEANUP_SECONDS", 0.05)
+    monkeypatch.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 0.2)
+
+    async def scenario() -> None:
+        tagged = Tagged(frames=1)
+        h, _ = await both_banks_stuck(tagged)
+        station = h.adapter.players[1].station
+        assert await now_texts(h) == [
+            "Nothing is audible. The program's next recording is preparing and is not audible yet."
+        ]
+        await asyncio.sleep(0.3)  # past the capacity bound
+        await until(lambda: station.desired is None)
+        assert station.ended is discord_adapter.EndReason.UNAVAILABLE
+        assert await now_texts(h) == [
+            "Nothing is audible. The last program ended: the next recording could not be "
+            "prepared. Use `/play` to start a new one."
+        ]
+        assert tagged.started == ["a", "b"] and h.adapter.players[1].attempts == 0
+        assert h.pool.leased == 2 and h.adapter.cleanup_failures == 2
+
+        tagged.holding["a"].set()
+        tagged.holding["b"].set()
+        assert await h.adapter.shutdown() is False
+        assert h.pool.leased == 0
+
+    asyncio.run(scenario())
+
+
+def test_shutdown_finishes_while_a_continuation_waits_on_a_stuck_retirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(discord_adapter, "CLEANUP_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        tagged = Tagged(frames=1)
+        h, _ = await both_banks_stuck(tagged)
+        continuation = h.adapter.players[1].continuation
+        assert continuation is not None and not continuation.done()  # within its 10 s bound
+
+        started = time.monotonic()
+        shutdown = asyncio.create_task(h.adapter.shutdown())
+        await until(continuation.done)  # it does not hold shutdown up
+        await asyncio.sleep(0.1)
+        assert not shutdown.done() and h.pool.leased == 2  # the retirements still own banks
+
+        tagged.holding["a"].set()
+        tagged.holding["b"].set()
+        assert await asyncio.wait_for(shutdown, timeout=2) is False  # missed deadlines
+        assert time.monotonic() - started < discord_adapter.CAPACITY_WAIT_SECONDS
+        assert h.pool.leased == 0 and h.adapter.tasks == set()
+
+    asyncio.run(scenario())
+
+
+@offline
+async def test_skip_survives_a_failed_start_of_its_next_track() -> None:
+    h, tagged = program_harness("a", "b", "c", producer=Tagged(frames=50))
+    blocker = h.pool.acquire()  # the next track waits for a bank
+    source = await start_program(h)
+    player = h.adapter.players[1]
+    flaky_voice(h, failures=1)  # the first start of the next track fails
+
+    skipping = asyncio.create_task(skip(h))
+    await until(lambda: player.skip_requested)
+    assert blocker.release()
+    h.adapter._capacity_changed()  # pyright: ignore[reportPrivateUsage]
+    assert await skipping == discord_adapter.SKIPPING
+    assert tagged.started == ["a", "b", "c"] and player.attempts == 2
+    assert source.read() == tag("c")  # still a cut: it does not wait for a's 50 frames
+    await until(lambda: heard_id(h) == "c")
+    assert not player.skip_requested
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_failed_next_track_attempts_are_bounded_and_end_the_program() -> None:
+    h, tagged = program_harness("a", "b", "c", "d", "e", producer=Tagged(frames=50))
+    source = await start_program(h)
+    flaky_voice(h, failures=None)  # every next track fails to start
     station = h.adapter.players[1].station
+    await until(lambda: station.ending is not None)
     assert station.ending is discord_adapter.EndReason.UNAVAILABLE
     assert h.adapter.players[1].attempts == discord_adapter.MAX_CONTINUATION_ATTEMPTS + 1
-    assert tagged.started == ["a"] and h.adapter.tasks == set()
-    assert source.read() == b""
-    await settle()
-    await join_retirements(h)
-    assert station.desired is None and station.ended is discord_adapter.EndReason.UNAVAILABLE
-    (status,) = await now_texts(h)
-    assert "the next recording could not be prepared" in status
-    assert blocker.release()
+    assert tagged.started == ["a", "b", "c", "d"]  # no repeat
+    assert source.read() == tag("a")  # the heard track continues to its end
     assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_program_continues_after_its_own_track_when_two_servers_hold_both_banks() -> None:
+    h, tagged = program_harness("a", "b", producer=Tagged(frames=1))
+    room2 = FakeChannel("room2")
+
+    def second(manager: bool = False) -> FakeInteraction:
+        fake = inter(room2, manager=manager)
+        fake.guild = FakeGuild(2)
+        return fake
+
+    source1 = await h.join()
+    await h.play()
+    await run(h.adapter.join, second(manager=True))
+    await run(lambda i: h.adapter.play(i, "piano"), second())
+    source2 = h.adapter.players[2].source
+    await settle()
+    assert source1.read() == tag("a") and source2.read() == tag("a")
+    one, two = h.adapter.players[1], h.adapter.players[2]
+    await until(lambda: one.station.heard is not None and two.station.heard is not None)
+    for _ in range(50):
+        await asyncio.sleep(0)
+    # Both servers play their current tracks; neither next track can lease.
+    assert h.pool.leased == 2 and tagged.started == ["a", "a"]
+    assert one.attempts == two.attempts == 0 and one.station.needs_next
+
+    assert source1.read() == b""  # server 1's track ends and frees its bank
+    await prepared_next(h, "b")  # server 1 gets it, although server 2 also waits
+    assert two.station.switching is None and h.pool.leased == 2
+    assert source1.read() == tag("b")  # after a gap
+    await until(lambda: heard_id(h) == "b")
+    assert two.station.heard is not None and two.station.needs_next
+    assert await h.adapter.shutdown() is True
+
+
+def test_capacity_that_never_frees_ends_the_program_without_a_hot_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(discord_adapter, "CLEANUP_SECONDS", 0.05)
+    monkeypatch.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 0.2)
+    checks = [0]
+
+    class Counting(PcmBankPool):
+        @property
+        def leased(self) -> int:
+            checks[0] += 1
+            return super().leased
+
+    async def scenario() -> None:
+        tagged = Tagged(frames=1)
+        tagged.holding["a"] = asyncio.Event()  # a's retirement keeps its bank
+        pool = Counting()
+        adapter = Adapter(catalog(recording("a"), recording("b")), tagged, pool=pool)
+        h = Harness(adapter, pool, tagged)
+        blocker = pool.acquire()  # held elsewhere throughout
+        source = await start_program(h)
+        station = h.adapter.players[1].station
+        assert source.read() == b""  # a drains; no bank frees
+        checks[0] = 0
+        started = time.monotonic()
+        while station.desired is not None and time.monotonic() - started < 2:
+            await asyncio.sleep(0.01)  # the test's own clock, not the adapter's
+        waited = time.monotonic() - started
+        assert 0.2 <= waited < 2 and checks[0] < 20  # woken by events and the bound only
+        assert station.ended is discord_adapter.EndReason.UNAVAILABLE
+        assert tagged.started == ["a"] and h.adapter.players[1].attempts == 0
+        (status,) = await now_texts(h)
+        assert "the next recording could not be prepared" in status
+
+        assert blocker.release()
+        tagged.holding["a"].set()
+        assert await h.adapter.shutdown() is False  # a missed its cleanup deadline
+        assert pool.leased == 0
+
+    asyncio.run(scenario())
