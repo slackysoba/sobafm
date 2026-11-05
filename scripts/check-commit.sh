@@ -33,7 +33,7 @@ if [ ! -d "$clone/.git" ]; then
 fi
 cd "$clone"
 git fetch -q origin "$ref"
-git checkout -q --detach FETCH_HEAD
+git checkout -q --force --detach FETCH_HEAD
 git clean -fdxq -e .venv
 
 uv sync --locked
