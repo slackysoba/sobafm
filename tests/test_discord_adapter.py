@@ -649,7 +649,7 @@ async def test_now_privately_shows_complete_credits_to_ordinary_listeners() -> N
     listener = await run(h.adapter.now, inter(None))  # not in voice, not a manager
     assert listener.texts()[0] == (
         "Now heard (full credits follow). This is the program's last recording: every "
-        "eligible recording matching its request has been played. Use `/play` to start "
+        "recording chosen for its request has been played. Use `/play` to start "
         "a new program."
     )  # the one-recording catalog has nothing to continue with
     pages = listener.sent[1:]

@@ -82,7 +82,12 @@ SYNTHETIC: tuple[tuple[str, str, int, tuple[str, ...]], ...] = (
         "Paper Lanterns",
         "Yuki Aoyama",
         260,
-        ("genre: solo piano", "tag: gentle", "tag: nostalgic", "vocal or instrumental: instrumental"),
+        (
+            "genre: solo piano",
+            "tag: gentle",
+            "tag: nostalgic",
+            "vocal or instrumental: instrumental",
+        ),
     ),
     (
         "Sunday Pancakes",
@@ -159,7 +164,9 @@ def synthetic_recordings() -> tuple[Recording, ...]:
             composition=None,
             composer=None,
             facts=(),
-            credits=CreditSnapshot(f"synthetic-{number}", ("Synthetic; no audio exists.",), None, None),
+            credits=CreditSnapshot(
+                f"synthetic-{number}", ("Synthetic; no audio exists.",), None, None
+            ),
             details=details,
         )
         for number, (title, artist, seconds, details) in enumerate(SYNTHETIC)

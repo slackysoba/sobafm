@@ -1,5 +1,7 @@
 """Deterministic schedules for desired, prepared and heard station facts."""
 
+from dataclasses import replace
+
 import pytest
 
 from sobafm.catalog import (

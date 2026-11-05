@@ -220,7 +220,10 @@ def test_invalid_model_output_is_rejected_whole(text: str, kind: str) -> None:
         (interaction("{}", "incomplete"), "interaction_not_completed"),
         (b'{"status":"completed"}', "response_shape"),
         (b'{"status":"completed","steps":[{"type":"thought"}]}', "response_shape"),
-        (b'{"status":"completed","steps":[{"type":"model_output","content":[]}]}', "response_shape"),
+        (
+            b'{"status":"completed","steps":[{"type":"model_output","content":[]}]}',
+            "response_shape",
+        ),
         (
             b'{"status":"completed","steps":[{"type":"model_output",'
             b'"content":[{"type":"text","text":5}]}]}',

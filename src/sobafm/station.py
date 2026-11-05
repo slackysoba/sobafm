@@ -77,9 +77,7 @@ class _Progress:
     ending: EndReason | None = None  # no track follows the one heard
 
 
-def select_next(
-    plan: tuple[Recording, ...], history: frozenset[RecordingKey]
-) -> Recording | None:
+def select_next(plan: tuple[Recording, ...], history: frozenset[RecordingKey]) -> Recording | None:
     """The best-ranked recording in ``plan`` that ``history`` does not hold."""
     return next((r for r in plan if r.key not in history), None)
 
