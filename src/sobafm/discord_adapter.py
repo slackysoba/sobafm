@@ -136,7 +136,8 @@ class Track:
     task: asyncio.Task[None]
     retirement: asyncio.Task[None] | None = None
     # Counted by the voice callback under its own non-blocking lock. ``frames`` are
-    # frames handed to the voice player, not packets confirmed delivered.
+    # frames handed to the voice player, not packets confirmed delivered; ``underruns``
+    # include silence returned while the bank's lock was momentarily held.
     frames: int = 0
     underruns: int = 0
 

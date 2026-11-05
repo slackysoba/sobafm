@@ -166,7 +166,7 @@ class FakeInteraction:
     created_at: datetime.datetime = field(default_factory=lambda: disnake.utils.utcnow())
     token: str = "synthetic-interaction-token"
     rejected: bool = False  # Discord answers the acknowledgement with 10062
-    transport_failure: Exception | None = None  # the acknowledgement request fails
+    transport_failure: BaseException | None = None  # the acknowledgement request fails
 
     @property
     def guild_id(self) -> int | None:
@@ -791,6 +791,25 @@ def test_leave_silences_and_disconnects_when_its_acknowledgement_request_times_o
     assert line.startswith("interaction acknowledgement failed: command=leave age_seconds=")
     assert line.endswith(" error=TimeoutError")
     assert fake.token not in caplog.text
+
+
+def test_a_cancelled_acknowledgement_propagates_from_stop(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="sobafm")
+    fake = inter(FakeChannel("unused"), manager=True)
+    fake.transport_failure = asyncio.CancelledError()
+
+    async def scenario() -> None:
+        h = harness()
+        await heard_track(h)
+        with pytest.raises(asyncio.CancelledError):
+            await h.adapter.stop(cast(Inter, fake))
+        assert fake.sent == []
+        assert await h.adapter.shutdown() is True  # the track stays owned until shutdown
+
+    asyncio.run(scenario())
+    assert not [m for m in adapter_log(caplog) if m.startswith("interaction acknowledgement")]
 
 
 def test_a_rejected_acknowledgement_logs_command_and_age_without_token(

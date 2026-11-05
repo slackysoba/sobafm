@@ -257,6 +257,76 @@ def test_repeated_cancellation_keeps_the_first_clock(
     assert producer.release()
 
 
+def test_a_caller_held_bank_keeps_its_first_cancellation_as_the_clock(
+    source: DecodeInput,
+) -> None:
+    now = [0.0]
+    pool = PcmBankPool(clock=lambda: now[0])
+    bank = pool.acquire()
+    bank.cancel()  # the owner cancels the bank first, at t=0
+    now[0] = 1.0
+    producer = DecodeProducer(
+        source, command=child(STALL), pool=pool, clock=lambda: now[0], bank=bank
+    )
+    producer.start()
+    producer.cancel()  # reaches the decode at t=1
+    report = producer.finish()
+    assert report.cancelled_at == 0.0
+    assert report.cleanup_started_at == 0.0 and report.cleanup_deadline == 3.0
+    assert report.cleanup == "clean" and report.settled
+    assert producer.release() and pool.leased == 1  # the lease stays the caller's
+    assert bank.release() and pool.leased == 0
+
+
+def test_a_failure_after_the_owners_cancellation_keeps_the_original_clock(
+    source: DecodeInput, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The owner cancels at t=0; the launched decode fails at t=1 before its cancel.
+
+    The first thread start is refused, so no reader can adopt the owner's
+    cancellation first and the failure is the decode's own, on the original clock.
+    """
+    now = [0.0]
+    pool = PcmBankPool(clock=lambda: now[0])
+    bank = pool.acquire()
+    bank.cancel()
+    now[0] = 1.0
+
+    def refuse(_: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse)
+    producer = DecodeProducer(
+        source, command=child(STALL), pool=pool, clock=lambda: now[0], bank=bank
+    )
+    producer.start()
+    monkeypatch.undo()
+    report = producer.finish()
+    assert report.failure == "thread_start"
+    assert report.cleanup_started_at == 0.0 and report.cleanup_deadline == 3.0
+    assert report.returncode == -signal.SIGTERM
+    assert report.cleanup == "clean" and report.settled
+    assert producer.release() and bank.release() and pool.leased == 0
+
+
+def test_an_owner_cancellation_before_judgement_declares_no_end(
+    source: DecodeInput, pool: PcmBankPool
+) -> None:
+    bank = pool.acquire()
+    producer = DecodeProducer(source, command=echo_frames(1), pool=pool, bank=bank)
+    producer.start()
+    deadline = time.monotonic() + 10
+    while producer.report().cleanup_started_at is None:  # the reader reached EOF
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+    bank.cancel()  # the owner stops the stream before finish judges it
+    report = producer.finish()  # must not raise on the stopped stream
+    assert report.failure is None and report.transfer_complete
+    assert not bank.facts().pcm_valid
+    assert producer.release() and pool.leased == 1
+    assert bank.release()
+
+
 def test_child_ignoring_term_is_killed_within_the_deadline(
     source: DecodeInput, pool: PcmBankPool, tmp_path: Path
 ) -> None:
