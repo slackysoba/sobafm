@@ -15,8 +15,10 @@ network, a process, a database or cleanup, and hands every report back to the lo
 The heard source changes only when the callback emits the first frame of new audio.
 A catalog program continues: once a track is heard, the next one is taken from the
 program's ranked plan and history and prepared in the second bank, and the
-callback plays it successively after the heard track's last frame. `/skip` and a
-replacement instead switch as soon as the new audio is ready.
+callback plays it successively after the heard track's last frame. Without a free
+bank the next track waits, bounded and woken by capacity changes, through its heard
+track and briefly after it. `/skip` and a replacement instead switch as soon as the
+new audio is ready.
 Superseded audio is cancelled, its producer joined and its bank released on the loop;
 a bank that cannot yet be released stays leased as retained debt.
 
@@ -100,10 +102,14 @@ MAX_REVIEWS_BYTES = 256_000
 SETTLE_SECONDS = 5.0
 # One original cleanup deadline, counted from the bank's first cancellation (ADR 0004).
 CLEANUP_SECONDS = 3.0
-# Bounds on continuing a program: next-track preparations per heard track (capacity
-# or decoder failures), and credit-rejected candidates per preparation.
+# Bounds on continuing a program: next-track preparations per heard track (a failed
+# lease, voice error or decoder failure), and credit-rejected candidates per preparation.
 MAX_CONTINUATION_ATTEMPTS = 3
 MAX_SELECTION_ATTEMPTS = 3
+# How long a next track waits for a free bank once its program has nothing audible,
+# past the three-second cleanup deadline of the program's own drained track. While the
+# program's track is still audible, it waits for that track's end, which frees a bank.
+CAPACITY_WAIT_SECONDS = 10.0
 SILENCE = bytes(FRAME_BYTES)
 NO_MENTIONS = disnake.AllowedMentions.none()
 Inter = disnake.ApplicationCommandInteraction[commands.InteractionBot]
@@ -363,6 +369,9 @@ class Adapter:
         self.debt: list[PcmBank] = []
         self.cleanup_failures = 0
         self.stopping = asyncio.Event()
+        # Continuations waiting for a bank; woken when a retirement or report may have
+        # changed capacity, or at shutdown.
+        self._capacity_waiters: set[asyncio.Future[None]] = set()
 
     # Access.
 
@@ -562,42 +571,106 @@ class Adapter:
         return task
 
     async def _continue(self, player: GuildPlayer, program: Program) -> None:
-        """Prepare ``program``'s next track in the second bank, within bounded attempts.
+        """Prepare ``program``'s next track in a free bank, within bounded attempts.
 
-        A retiring track still holds its bank, so each attempt first joins the
-        retirements under way, without cancelling them, before leasing. Exhaustion
-        ends the program after the heard track instead of repeating a recording.
+        A retiring track still holds its bank, and the pool counts it, so a next
+        track leases only while a bank is free; it never waits on retirements as
+        such. Without a free bank it waits, woken by capacity changes rather than
+        polling: through its program's audible track, whose end frees that bank,
+        then at most ``CAPACITY_WAIT_SECONDS``. Exhaustion of either bound ends the
+        program after the heard track instead of repeating a recording.
         """
-        while not self.stopping.is_set():
-            if self.retirements:
-                await asyncio.wait(set(self.retirements))
-            async with player.lock:
-                station = player.station
-                if self.stopping.is_set() or station.desired != program or not station.needs_next:
-                    return  # replaced, stopped or already continued: this work is stale
-                player.attempts += 1
-                if player.attempts > MAX_CONTINUATION_ATTEMPTS:
-                    station.exhausted(program, EndReason.UNAVAILABLE)
-                    log.warning("next track could not be prepared; the program ends")
-                    return
-                if self._pool.leased >= BANK_COUNT:
-                    continue  # busy elsewhere: keep candidates for a later attempt
-                station.continue_program(program)
-                for _ in range(MAX_SELECTION_ATTEMPTS):
-                    recording = select_next(program.plan, station.history(program))
-                    if recording is None:
-                        station.exhausted(program, EndReason.EXHAUSTED)
-                        log.info("program has no further recording in its plan")
-                        return
-                    if station.prepared(program, recording) is Outcome.ACCEPTED:
-                        break
-                else:
-                    station.preparation_failed(program)
-                    continue
-                cut, player.skip_requested = player.skip_requested, False
-                if await self._start(player, cut=cut):
-                    return
-            # Capacity was busy or voice unavailable; the next attempt is bounded above.
+        deadline: float | None = None  # set once the program has nothing audible
+        try:
+            while not self.stopping.is_set():
+                waiter: asyncio.Future[None] | None = None
+                timeout = CAPACITY_WAIT_SECONDS
+                async with player.lock:
+                    station = player.station
+                    if (
+                        self.stopping.is_set()
+                        or station.desired != program
+                        or not station.needs_next
+                    ):
+                        return  # replaced, stopped or already continued: this work is stale
+                    if not self._bank_free(player):
+                        if not self._audible(player):
+                            now = time.monotonic()
+                            deadline = now + timeout if deadline is None else deadline
+                            if now >= deadline:
+                                station.exhausted(program, EndReason.UNAVAILABLE)
+                                log.warning("next track could not be prepared; the program ends")
+                                return
+                            timeout = deadline - now
+                        waiter = self._capacity_waiter()
+                    else:
+                        player.attempts += 1
+                        if player.attempts > MAX_CONTINUATION_ATTEMPTS:
+                            station.exhausted(program, EndReason.UNAVAILABLE)
+                            log.warning("next track could not be prepared; the program ends")
+                            return
+                        station.continue_program(program)
+                        for _ in range(MAX_SELECTION_ATTEMPTS):
+                            recording = select_next(program.plan, station.history(program))
+                            if recording is None:
+                                station.exhausted(program, EndReason.EXHAUSTED)
+                                log.info("program has no further recording in its plan")
+                                return
+                            if station.prepared(program, recording) is Outcome.ACCEPTED:
+                                break
+                        else:
+                            station.preparation_failed(program)
+                            continue
+                        # A `/skip` stays requested until its track is handed to the player.
+                        if await self._start(player, cut=player.skip_requested):
+                            player.skip_requested = False
+                            return
+                    # Otherwise the lease or voice failed; the next attempt is bounded above.
+                if waiter is not None:
+                    await self._await_capacity(waiter, timeout)
+        finally:
+            self._capacity_changed()  # a bank this program yielded may now go elsewhere
+
+    @staticmethod
+    def _audible(player: GuildPlayer) -> bool:
+        """Whether the desired program's own track is still heard on ``player``."""
+        heard = player.station.heard
+        return heard is not None and heard.program == player.station.desired
+
+    def _bank_free(self, player: GuildPlayer) -> bool:
+        """Whether ``player``'s next track may lease a bank now.
+
+        A program that is still audible leaves a free bank to another server's
+        program whose drained track left it silent, so a server whose track ended
+        is not starved by one still playing.
+        """
+        if self._pool.leased >= BANK_COUNT:
+            return False
+        return not self._audible(player) or not any(
+            other is not player and other.station.needs_next and not self._audible(other)
+            for other in self.players.values()
+        )
+
+    def _capacity_waiter(self) -> asyncio.Future[None]:
+        """Register for the next capacity change; created under the player lock, so
+        a change between the check and the wait is not missed."""
+        waiter = asyncio.get_running_loop().create_future()
+        self._capacity_waiters.add(waiter)
+        return waiter
+
+    async def _await_capacity(self, waiter: asyncio.Future[None], timeout: float) -> None:
+        try:
+            await asyncio.wait({waiter}, timeout=timeout)
+        finally:
+            self._capacity_waiters.discard(waiter)
+            waiter.cancel()  # no effect once it is done
+
+    def _capacity_changed(self) -> None:
+        """Wake every waiting continuation to check capacity and its program again."""
+        waiters, self._capacity_waiters = self._capacity_waiters, set()
+        for waiter in waiters:
+            if not waiter.done():
+                waiter.set_result(None)
 
     async def skip(self, inter: Inter) -> None:
         if inter.guild is None:
@@ -783,6 +856,7 @@ class Adapter:
                 log.info("program ended: reason=%s", station.ended.value)
         if kind != "switched":
             self._retire(track)
+        self._capacity_changed()  # e.g. a drained track starts its program's capacity bound
         if player is None or self.stopping.is_set():
             return
         if kind in ("switched", "failed") and player.station.ready:
@@ -811,6 +885,7 @@ class Adapter:
             track.retirement = self._own(asyncio.create_task(self._settle_track(track)))
             self.retirements.add(track.retirement)
             track.retirement.add_done_callback(self.retirements.discard)
+            track.retirement.add_done_callback(lambda _: self._capacity_changed())
         return track.retirement
 
     async def _settle_track(self, track: Track) -> None:
@@ -852,6 +927,7 @@ class Adapter:
         failed cleanup verdict.
         """
         self.stopping.set()
+        self._capacity_changed()  # continuations waiting for a bank return at once
         while self.players or self.tasks:
             for guild_id, player in list(self.players.items()):
                 await self._disconnect(guild_id, player)
