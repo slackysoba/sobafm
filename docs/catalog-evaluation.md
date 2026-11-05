@@ -37,10 +37,18 @@ source-access policy, or enable a production source. Concise song status and
 complete ordinary-listener private `/now` credits remain the product contract.
 No Discord presence or permission changes are part of this preparation.
 
+**ccMixter is not an enabled audio source.** Its media route refuses non-browser
+clients, and on 2026-11-05 the maintainer
+[decided to skip it](https://github.com/slackysoba/sobafm/issues/111#issuecomment-6654419977)
+([diagnosis](https://github.com/slackysoba/sobafm/issues/111#issuecomment-6654375637)).
+The permission above is unchanged. The ccMixter candidate records, import support and
+comparison arm below remain as historical records and offline fixtures. They don't
+make its audio available.
+
 ## Current selection contract
 
 [Decision 0002](decisions/0002-prompt-catalog-selection.md) pools complete
-recordings from all three prepared sources, and [decision
+recordings from every prepared source partition, and [decision
 0006](decisions/0006-gemini-play-matching.md) ranks them with one Gemini call.
 Listening is optional deferred evidence, not a prerequisite for this implementation.
 
@@ -233,7 +241,7 @@ Only if a later listening comparison is requested, its execution requires:
    rights before listening, without reopening the confirmed source grants.
 3. Actual observations and human ratings, with missing cases retained.
 4. A reviewed account of results and any proposed source/storage change. The
-   accepted selector already compares all three sources; a comparison does not
+   accepted selector already compares every supplied source; a comparison does not
    automatically enable playback or expand storage permission.
 
 The selector's acceptance is deterministic checks and independent review, with
@@ -468,7 +476,7 @@ at source integration. Public-document research date: **2026-10-27**.
 | Source | Current authoritative evidence | Gate before acquisition or implementation |
 | --- | --- | --- |
 | Jamendo | [API terms](https://devportal.jamendo.com/api_terms_of_use), clauses 2, 3.1, 3.3 and 4.1: application registration, non-commercial API use, recording licenses, operational caching and creator/provider/backlink credits | Use the confirmed grant and retain complete notices. Resolve actual application access/Client ID separately. Use transient streaming buffers; no offline library. Bound necessary caching and refresh metadata as required. |
-| ccMixter | [Query API statement](https://ccmixter.org/about) permits third-party application access. [Terms](https://ccmixter.org/terms), sections 4 and 8, describe attribution and recording conditions | Use the confirmed grant; select the complete mix and retain its incorporated-work credits. The pilot proposes bounded temporary copies, without assuming unlimited host bandwidth. |
+| ccMixter (not enabled; see [above](#confirmed-three-source-permission)) | [Query API statement](https://ccmixter.org/about) permits third-party application access, but its media route refuses non-browser clients. [Terms](https://ccmixter.org/terms), sections 4 and 8, describe attribution and recording conditions | Use the confirmed grant; select the complete mix and retain its incorporated-work credits. The pilot proposes bounded temporary copies, without assuming unlimited host bandwidth. |
 | FMA | [App-developer policy](https://freemusicarchive.org/app-developers): API closed, no hotlinking, apps host permitted copies; forwarding user searches and scraping results needs explicit FMA approval | Use the confirmed grant through manually curated operator imports with complete notices and a hosting/storage decision. No runtime scraping or direct FMA playback. Repeated fetch/play/delete does not satisfy the hosting requirement. |
 
 Jamendo's [download-method documentation](https://developer.jamendo.com/v3.0/tracks/file)
@@ -477,7 +485,7 @@ separates download permission from stream retrieval and documents rejection when
 Use the approved stream path for the planned streaming treatment; do not use a
 download endpoint as a cache or availability workaround.
 
-For ccMixter/FMA persistence, a later decision must name the operator-owned
+For FMA persistence, a later decision must name the operator-owned
 volume, maximum bytes/tracks, accepted file types, validation before admission,
 removal/eviction rule, recheck cadence and backup policy. Keep canonical metadata
 and credit snapshots separate from disposable audio. Do not persist expiring or
