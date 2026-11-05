@@ -39,6 +39,7 @@ class EndReason(StrEnum):
 
     EXHAUSTED = "exhausted"  # every recording in its plan was played or tried
     UNAVAILABLE = "unavailable"  # the next track could not be prepared within its bounds
+    NO_LISTENERS = "no_listeners"  # the listener grace period expired
 
 
 @dataclass(frozen=True)
@@ -127,7 +128,7 @@ class Station:
 
     @property
     def ended(self) -> EndReason | None:
-        """Why the last program ended by itself, until a new request or stop."""
+        """Why the last program ended without a command, until a new request or stop."""
         return self._ended
 
     @property
@@ -287,16 +288,18 @@ class Station:
         self._prune()
         return Outcome.ACCEPTED
 
-    def stop(self) -> Program | None:
+    def stop(self, ended: EndReason | None = None) -> Program | None:
         """End the desired program and return an unheard one to cancel.
 
-        The heard source changes only when the player reports `silenced`.
+        ``ended`` records why, when the program ended without a command (its listener
+        grace period expired). The heard source changes only when the player reports
+        `silenced`.
         """
         superseded = self._pending()
         self._desired = None
         self._preparing = False
         self._ready = None
-        self._ended = None
+        self._ended = ended
         self._prune()
         return superseded
 

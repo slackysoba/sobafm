@@ -27,6 +27,13 @@ credit snapshot ID, each track's settled retirement (frames handed to the voice
 player, underruns and the bank's facts), voice connection changes and the shutdown
 outcome. They never contain request text, tokens or interaction data.
 
+A program ends `LISTENER_GRACE_SECONDS` after the last listener leaves the bot's voice
+channel, through the same path as `/stop`; a listener who returns or undeafens first
+cancels the grace period. Listeners are counted from the channel's voice states, which
+the Voice States intent keeps complete, not from the member cache, which lacks members
+already in voice when the bot connected; such a member counts as a listener unless
+deafened, so an unknown member never cuts off a real listener.
+
 `/stop` and `/leave` take effect even when their acknowledgement fails, whether Discord
 rejects it (for example `10062 Unknown interaction`) or the request does not complete;
 they then send no follow-up and log one WARNING line with the command name and the
@@ -43,10 +50,10 @@ import signal
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 import disnake
 from disnake.ext import commands
@@ -110,6 +117,8 @@ MAX_SELECTION_ATTEMPTS = 3
 # past the three-second cleanup deadline of the program's own drained track. While the
 # program's track is still audible, it waits for that track's end, which frees a bank.
 CAPACITY_WAIT_SECONDS = 10.0
+# How long a program continues after the last listener leaves (docs/requirements.md).
+LISTENER_GRACE_SECONDS = 60.0
 SILENCE = bytes(FRAME_BYTES)
 NO_MENTIONS = disnake.AllowedMentions.none()
 Inter = disnake.ApplicationCommandInteraction[commands.InteractionBot]
@@ -137,6 +146,7 @@ SKIPPING = (
 ENDED = {
     EndReason.EXHAUSTED: "every recording chosen for its request has been played",
     EndReason.UNAVAILABLE: "the next recording could not be prepared",
+    EndReason.NO_LISTENERS: "no listeners remained",
 }
 
 
@@ -334,6 +344,14 @@ class StationSource(disnake.AudioSource):
 
 
 @dataclass(eq=False)
+class Grace:
+    """A listener grace period armed for ``program``; its timer task is adapter-owned."""
+
+    program: Program
+    task: asyncio.Task[None]
+
+
+@dataclass(eq=False)
 class GuildPlayer:
     voice: disnake.VoiceClient
     source: StationSource
@@ -348,6 +366,8 @@ class GuildPlayer:
     attempts: int = 0
     # A `/skip` waiting for its next track, which then switches as soon as it is ready.
     skip_requested: bool = False
+    # At most one listener grace period per server.
+    grace: Grace | None = None
 
 
 class Adapter:
@@ -359,10 +379,12 @@ class Adapter:
         producer: Producer,
         *,
         pool: PcmBankPool = GLOBAL_PCM_BANKS,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.matcher = matcher
         self._producer = producer
         self._pool = pool
+        self._sleep = sleep  # the grace timer's clock; tests inject a controlled one
         self.players: dict[int, GuildPlayer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
         self.retirements: set[asyncio.Task[None]] = set()
@@ -437,6 +459,7 @@ class Adapter:
             player = None
         if player is not None:
             await player.voice.move_to(channel)
+            self._review_listeners(player)  # the new channel may have no listener
         else:
             voice = await channel.connect()
             if self.stopping.is_set():  # shutdown began while connecting
@@ -463,9 +486,9 @@ class Adapter:
         if not self._listening(inter, player):
             return await self._refuse(inter, NOT_LISTENING)
         await inter.response.defer(ephemeral=True)
-        await inter.followup.send(
-            await self._prepare(player, request), ephemeral=True, allowed_mentions=NO_MENTIONS
-        )
+        reply = await self._prepare(player, request)
+        self._review_listeners(player)  # e.g. a deafened caller started a program
+        await inter.followup.send(reply, ephemeral=True, allowed_mentions=NO_MENTIONS)
 
     async def _prepare(self, player: GuildPlayer, request: str) -> str:
         assert self.matcher is not None
@@ -630,6 +653,7 @@ class Adapter:
                     await self._await_capacity(waiter, timeout)
         finally:
             self._capacity_changed()  # a bank this program yielded may now go elsewhere
+            self._review_listeners(player)  # exhaustion can end the program
 
     @staticmethod
     def _audible(player: GuildPlayer) -> bool:
@@ -741,10 +765,13 @@ class Adapter:
             allowed_mentions=NO_MENTIONS,
         )
 
-    def _silence(self, player: GuildPlayer) -> set[asyncio.Task[None]]:
+    def _silence(
+        self, player: GuildPlayer, ended: EndReason | None = None
+    ) -> set[asyncio.Task[None]]:
         """End the program, remove all audio from the callback and start retirements."""
+        self._cancel_grace(player)
         player.silenced += 1
-        player.station.stop()
+        player.station.stop(ended)
         player.skip_requested = False
         tracks = player.source.take_all()
         if player.station.switching is not None:
@@ -780,6 +807,89 @@ class Adapter:
                 log.info("voice disconnected")
             self.players.pop(guild_id, None)
         return tracks
+
+    # Listener grace.
+
+    def voice_state_changed(
+        self, guild_id: int, user_id: int, channel: disnake.abc.Snowflake | None
+    ) -> None:
+        """Re-evaluate listeners after any voice state change in the server."""
+        player = self.players.get(guild_id)
+        if player is None:
+            return
+        if user_id == player.voice.user.id and channel is None:
+            self._cancel_grace(player)  # voice was lost; settled at the next `/join` or `/leave`
+            return
+        self._review_listeners(player)
+
+    @staticmethod
+    def _has_listener(player: GuildPlayer) -> bool:
+        """Whether a member in the bot's channel is neither a bot nor deafened.
+
+        Voice states, including their deafened flags, are complete under the Voice
+        States intent. The member cache is not: a member already in voice when the
+        bot connected and unchanged since is uncached, so its bot flag is unknown and
+        it counts as a listener rather than risk cutting off a real one.
+        """
+        # A voice client's channel is a vocal channel, or None once its voice is lost.
+        channel = cast(disnake.VoiceChannel | disnake.StageChannel | None, player.voice.channel)
+        if channel is None:
+            return False
+        own_id = player.voice.user.id
+        for user_id, state in channel.voice_states.items():
+            if user_id == own_id or state.deaf or state.self_deaf:
+                continue
+            member = channel.guild.get_member(user_id)
+            if member is None or not member.bot:
+                return True
+        return False
+
+    def _review_listeners(self, player: GuildPlayer) -> None:
+        """Arm the grace period for the desired program when no listener remains, or
+        cancel it when a listener is present, the program ended or voice is gone."""
+        program = player.station.desired
+        if (
+            program is None
+            or self.stopping.is_set()
+            or not player.voice.is_connected()
+            or self._has_listener(player)
+        ):
+            self._cancel_grace(player)
+            return
+        if player.grace is not None and player.grace.program == program:
+            return  # already counting down for this program; a change does not restart it
+        self._cancel_grace(player)
+        task = self._own(asyncio.create_task(self._expire_grace(player, program)))
+        player.grace = Grace(program, task)
+        log.info("listener grace started: seconds=%d", LISTENER_GRACE_SECONDS)
+
+    def _cancel_grace(self, player: GuildPlayer) -> None:
+        grace, player.grace = player.grace, None
+        if grace is not None:
+            grace.task.cancel()
+            log.info("listener grace cancelled")
+
+    async def _expire_grace(self, player: GuildPlayer, program: Program) -> None:
+        """End ``program`` through the `/stop` path once the grace period passes."""
+        await self._sleep(LISTENER_GRACE_SECONDS)
+        async with player.lock:
+            grace = player.grace
+            if grace is None or grace.task is not asyncio.current_task():
+                return  # cancelled or superseded while waiting for the lock
+            player.grace = None
+            if (
+                self.stopping.is_set()
+                or player not in self.players.values()
+                or not player.voice.is_connected()
+            ):
+                return
+            if player.station.desired != program or self._has_listener(player):
+                # A stale timer never ends a newer program, but the desired program
+                # may have changed with no review, e.g. a failed replacement reverted.
+                self._review_listeners(player)
+                return
+            self._silence(player, EndReason.NO_LISTENERS)  # retirements stay owned
+            log.info("program ended: reason=%s", EndReason.NO_LISTENERS.value)
 
     async def now(self, inter: Inter) -> None:
         if inter.guild is None:
@@ -859,6 +969,8 @@ class Adapter:
         self._capacity_changed()  # e.g. a drained track starts its program's capacity bound
         if player is None or self.stopping.is_set():
             return
+        # A failed switch can revert the desired program and a drain can end it.
+        self._review_listeners(player)
         if kind in ("switched", "failed") and player.station.ready:
             self._own(asyncio.create_task(self._start_locked(player)))
         elif self.matcher is not None and player.station.needs_next:
@@ -867,6 +979,7 @@ class Adapter:
     async def _start_locked(self, player: GuildPlayer) -> None:
         async with player.lock:
             await self._start(player)
+            self._review_listeners(player)  # a failed start can revert the desired program
 
     # Ownership.
 
@@ -992,6 +1105,12 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
     async def now(inter: Inter) -> None:
         """Privately show what is actually heard, with full credits."""
         await adapter.now(inter)
+
+    @bot.listen("on_voice_state_update")
+    async def voice_state_update(
+        member: disnake.Member, before: disnake.VoiceState, after: disnake.VoiceState
+    ) -> None:
+        adapter.voice_state_changed(member.guild.id, member.id, after.channel)
 
     if adapter.matcher is not None:
 
