@@ -12,6 +12,11 @@ network, a process, a database or cleanup, and hands every report back to the lo
 The heard source changes only when the callback emits the first frame of new audio.
 Superseded audio is cancelled, its producer joined and its bank released on the loop;
 a bank that cannot yet be released stays leased as retained debt.
+
+Safe INFO lines record what was played: heard-source changes by recording key and
+credit snapshot ID, each track's settled retirement (frames handed to the voice
+player, underruns and the bank's facts), voice connection changes and the shutdown
+outcome. They never contain request text, tokens or interaction data.
 """
 
 from __future__ import annotations
@@ -125,6 +130,10 @@ class Track:
     bank: PcmBank
     task: asyncio.Task[None]
     retirement: asyncio.Task[None] | None = None
+    # Counted by the voice callback under its own non-blocking lock. ``frames`` are
+    # frames handed to the voice player, not packets confirmed delivered.
+    frames: int = 0
+    underruns: int = 0
 
 
 class StationSource(disnake.AudioSource):
@@ -144,6 +153,7 @@ class StationSource(disnake.AudioSource):
             if (pending := self._pending) is not None:
                 frame = pending.bank.read_frame()
                 if frame:
+                    pending.frames += 1
                     retired, self._current, self._pending = self._current, pending, None
                     self._report("switched", pending)
                     if retired is not None:
@@ -155,12 +165,16 @@ class StationSource(disnake.AudioSource):
             if (current := self._current) is not None:
                 frame = current.bank.read_frame()
                 if frame is None:
+                    current.underruns += 1
                     return SILENCE
                 if frame:
+                    current.frames += 1
                     return frame
                 self._current = None
                 self._report("drained", current)
-            if self._pending is not None:
+            if (pending := self._pending) is not None:
+                if pending.bank.ready_now():
+                    pending.underruns += 1
                 return SILENCE
             self._idle = True
             return b""
@@ -263,6 +277,7 @@ class Adapter:
                 return await inter.followup.send(
                     SHUTTING_DOWN, ephemeral=True, allowed_mentions=NO_MENTIONS
                 )
+            log.info("voice connected")
             report = self._reporter(inter.guild.id)
             self.players[inter.guild.id] = GuildPlayer(voice, StationSource(report))
         await inter.followup.send(
@@ -382,6 +397,8 @@ class Adapter:
         tracks = player.source.take_all()
         if player.station.switching is not None:
             player.station.switch_failed(player.station.switching)
+        if player.station.heard is not None:
+            log.info("heard source cleared")
         player.station.silenced()  # the callback can no longer emit any removed frame
         return {self._retire(t) for t in tracks}
 
@@ -404,6 +421,8 @@ class Adapter:
                 await player.voice.disconnect(force=True)
             except Exception as exc:
                 log.warning("voice disconnect failed: %s", type(exc).__name__)
+            else:
+                log.info("voice disconnected")
             self.players.pop(guild_id, None)
         return tracks
 
@@ -448,13 +467,20 @@ class Adapter:
         player = self.players.get(guild_id)
         station = None if player is None else player.station
         if station is not None and kind == "switched":
-            station.switched(track.audio)
+            if station.switched(track.audio) is Outcome.ACCEPTED:
+                credits = track.audio.recording.credits  # present: its credits rendered
+                log.info(
+                    "heard source changed: recording=%s credit_snapshot=%s",
+                    _recording_label(track.audio.recording),
+                    "none" if credits is None else credits.snapshot_id,
+                )
         elif station is not None and kind == "failed":
             station.switch_failed(track.audio)
         elif station is not None and kind == "drained" and station.heard == track.audio:
             if station.desired == track.audio.program:
                 station.stop()  # no continuous selection in this slice: the program ends
             station.silenced()
+            log.info("heard source cleared")
         if kind != "switched":
             self._retire(track)
         if player is not None and kind in ("switched", "failed") and player.station.ready:
@@ -493,8 +519,25 @@ class Adapter:
             self.cleanup_failures += 1  # a failed verdict, whatever happens later
             log.error("audio producer missed its cleanup deadline; its bank stays leased")
             await asyncio.wait({track.task})
-        if not track.bank.release():
+        facts = track.bank.facts()  # the retirement's settled facts, taken before release
+        released = track.bank.release()
+        if not released:
             self.debt.append(track.bank)
+        log.info(
+            "track retired: recording=%s frames_handed_to_voice=%d underruns=%d "
+            "transfer_complete=%s decoder_complete=%s pcm_valid=%s audible_drain=%s "
+            "failure=%s bank_released=%s cancel_to_release_seconds=%s",
+            _recording_label(track.audio.recording),
+            track.frames,
+            track.underruns,
+            facts.transfer_complete,
+            facts.decoder_complete,
+            facts.pcm_valid,
+            facts.audible_drain,
+            facts.failure or "none",
+            released,
+            f"{time.monotonic() - cancelled_at:.3f}" if released else "none",
+        )
 
     async def shutdown(self) -> bool:
         """Stop and disconnect every server, join all owners and report full release.
@@ -508,12 +551,27 @@ class Adapter:
                 await self._disconnect(guild_id, player)
             if self.tasks:
                 await asyncio.gather(*self.tasks, return_exceptions=True)
+            # Gathering tasks that are all done does not yield, so a finished task
+            # whose ``tasks.discard`` callback is still queued would spin this loop.
+            await asyncio.sleep(0)
         self.debt = [bank for bank in self.debt if not bank.release()]
         if self.debt or self._pool.leased:
             log.error("%d PCM bank lease(s) remain at shutdown", self._pool.leased)
         if self.cleanup_failures:
             log.error("%d cleanup deadline(s) were missed", self.cleanup_failures)
-        return not self.debt and not self._pool.leased and not self.cleanup_failures
+        released = not self.debt and not self._pool.leased and not self.cleanup_failures
+        log.info(
+            "shutdown: released=%s leases_held=%d cleanup_failures=%d",
+            released,
+            self._pool.leased,
+            self.cleanup_failures,
+        )
+        return released
+
+
+def _recording_label(recording: Recording) -> str:
+    """The catalog recording key; never request text."""
+    return f"{recording.key.source.value}:{recording.key.recording_id}"
 
 
 def create_bot(adapter: Adapter) -> commands.InteractionBot:
