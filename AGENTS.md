@@ -6,7 +6,7 @@ Read this file, CONTRIBUTING.md, docs/requirements.md, docs/architecture.md, doc
 
 Requirements and accepted decisions take precedence over implementation. Record consequential decisions in the repository or linked issue. Keep current execution state in the existing Project/issues rather than relying on conversation history.
 
-The repository currently contains specifications and planning. The toolchain issue establishes executable checks before application work. Do not report absent checks as passing.
+Do not report absent checks as passing.
 
 ## Engineering requirements
 
@@ -36,7 +36,7 @@ Use one coordinator and integration owner per milestone. Delegate substantial in
 
 Preflight the client's actual session creation, reading, messaging and archival capabilities and execution environments. If a required capability is unavailable, report the limitation and request a supported alternative. Instructions do not configure tools, hooks or isolation.
 
-Use a newly proposed operational default of at most three concurrent implementation workers, state the limit in the startup plan and follow maintainer adjustments. Do not expand it silently or add redundant approval gates for already-authorized work. Launch only independent Ready tasks; avoid recursive fan-out and duplicate clones. Concurrent writers require separate worktrees and exclusive scope ownership. For delegated work, use gpt-6-astra with maximum reasoning unless the maintainer changes that assignment.
+Use a newly proposed operational default of at most three concurrent implementation workers, state the limit in the startup plan and follow maintainer adjustments. Do not expand it silently or add redundant approval gates for already-authorized work. Launch only independent Ready tasks; avoid recursive fan-out and duplicate clones. Concurrent writers require separate worktrees and exclusive scope ownership. For delegated work, use Claude Opus 5.5 at extra-high effort unless the maintainer changes that assignment.
 
 Name each worker by its concrete task. Maintain a compact private coordinator roster: task, owner, actual session ID and supported link, branch/worktree, status, blocker and latest verified result. Keep public issue status and PR evidence current, but keep private session identifiers, personal filesystem paths and private operational notes out of public issue bodies. Never invent identifiers, locations or standalone-session UI.
 

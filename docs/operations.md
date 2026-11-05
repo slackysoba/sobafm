@@ -103,7 +103,7 @@ Read the release notes and `docs/requirements.md` first. Updating the files in `
 | 1 | `... lease(s) remain at shutdown`, `cleanup deadline(s) were missed` or `Discord client stopped: <type>` | Shutdown could not confirm release, or the Discord client failed (for example an invalid token). |
 | 0 | | Clean shutdown. |
 
-INFO lines record what was played, without request text or tokens: `voice connected` and `voice disconnected`; `heard source changed: recording=<source:id> credit_snapshot=<id>` and `heard source cleared`; one `track retired: ...` line per track with `frames_handed_to_voice` (frames given to the voice player, not packets confirmed delivered), `underruns`, the completion facts, `failure`, `bank_released` and `cancel_to_release_seconds`; and `shutdown: released=... leases_held=... cleanup_failures=...`.
+INFO lines record what was played, without request text or tokens: `voice connected` and `voice disconnected`; `heard source changed: recording=<source:id> credit_snapshot=<id>` and `heard source cleared`; one `track retired: ...` line per track with `frames_handed_to_voice` (frames given to the voice player, not packets confirmed delivered), `underruns` (silence frames returned while the track was playing or ready, including a momentarily busy bank), the completion facts, `failure`, `bank_released` and `cancel_to_release_seconds`; and `shutdown: released=... leases_held=... cleanup_failures=...`.
 
 During playback:
 

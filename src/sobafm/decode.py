@@ -324,11 +324,7 @@ class DecodeProducer:
         A caller-held bank that its owner already cancelled keeps that earlier
         time as the original clock.
         """
-        now = self._clock()
-        if self._leased is not None:
-            first = self._leased.facts().cancelled_at
-            if first is not None:
-                now = min(now, first)
+        now = self._original(self._clock())
         with self._lock:
             if self._cancelled_at is None:
                 self._cancelled_at = now
@@ -511,7 +507,15 @@ class DecodeProducer:
                 self._failure = failure
         self._begin_cleanup(now, terminate=True)
 
+    def _original(self, now: float) -> float:
+        """Anchor to a caller-held bank's earlier first cancellation, if any."""
+        if self._leased is None:
+            return now
+        first = self._leased.facts().cancelled_at
+        return now if first is None else min(now, first)
+
     def _begin_cleanup(self, now: float, *, terminate: bool) -> None:
+        now = self._original(now)
         with self._lock:
             if self._cleanup_started_at is None:
                 self._cleanup_started_at = now
