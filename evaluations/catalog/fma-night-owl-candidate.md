@@ -100,7 +100,7 @@ access-ready claim or availability promotion. The dated catalog digest is unchan
 ## Reproduce the unadmitted snapshot
 
 Issue [#44](https://github.com/slackysoba/sobafm/issues/44) now supplies the
-[concrete validation source and packet contract](../fma_validation/README.md).
+[concrete validation source and packet contract](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/fma_validation/README.md).
 Its synthetic tests do not inspect this recording. Fresh topology/native-filter
 qualification, exact source/image/target/window review and storage allocation
 remain required before actual intake. The supplied file's tag size is unknown;

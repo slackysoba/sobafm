@@ -22,7 +22,7 @@ on the group.
 
 The experiment is complete for its recorded native-amd64 cases, integrated in
 [PR #39](https://github.com/slackysoba/sobafm/pull/39):
-[Q1/Q2 runtime authority](../../evaluations/linux_resource/README.md#recorded-amd64-result),
+[Q1/Q2 runtime authority](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/README.md#recorded-amd64-result),
 the [Q3 CBR/VBR/FLAC/overlap acceptance](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6555741812)
 and the [four-case Q4 cancellation acceptance](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6556104431),
 each under separately recorded source/image identities. See
