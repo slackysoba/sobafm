@@ -1,13 +1,14 @@
 """One written, deterministic rule that prepares FMA dataset listings for the catalog.
 
-This applies the batch rule the maintainer accepts on issue 122: which listed tracks are
+This applies the batch rule recorded in ADR 0007: which listed tracks are
 candidates and in what order, how a listing becomes importer input, and what the catalog,
 media manifest and admission reviews hold once a file has passed validation. It makes no
 network request, runs no decoder and uses no model. A track that fails a check is dropped
 with its reason. Nothing is fixed by hand.
 
-The admission review the output carries is the maintainer's acceptance of this rule and
-the resulting list. This module only binds that acceptance to each recording's digest.
+The admission review the output carries is the maintainer's acceptance of the resulting
+list. This module only binds that acceptance to each recording's digest. ADR 0007 says
+which rule version selected the current list.
 """
 
 from __future__ import annotations
