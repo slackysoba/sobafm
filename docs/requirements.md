@@ -15,7 +15,7 @@ Implement the specified behaviors without importing unrelated platform code or u
 ## Scope
 
 - Linux/Docker is the only deployment target. Windows may host an editor; there is no Windows runtime, native package, compatibility layer, CI target or installation guide.
-- `/play` prioritizes complete recordings with more strongly supported prompt matches, comparing all three prepared source partitions before choosing. Length is a secondary preference. Listening comparisons are optional deferred evidence, not an implementation prerequisite.
+- `/play` prioritizes complete recordings with more strongly supported prompt matches, comparing every prepared source partition before choosing. Length is a secondary preference. Listening comparisons are optional deferred evidence, not an implementation prerequisite.
 - Use a short outcome-based roadmap with explicit acceptance evidence.
 - Scheduled agent automation requires explicit maintainer approval.
 
@@ -23,22 +23,24 @@ Linux amd64 is the first release target. Native arm64 is on hold until after the
 
 ## Music selection and catalog preparation
 
-Provide a curated, richly described selection across Jamendo, ccMixter and Free Music Archive. The maintainer confirmed direct permission for these three sources with attribution, no commercialization or monetization, and donations permitted. Recording identity, complete credits, service access and permitted storage still require evidence. No entire catalog is assumed to provide superior quality.
+Provide a curated, richly described selection from the enabled sources. The maintainer confirmed direct permission for Jamendo, ccMixter and Free Music Archive with attribution, no commercialization or monetization, and donations permitted. [ccMixter is not an enabled audio source](#first-source-evaluation). Recording identity, complete credits, service access and permitted storage still require evidence. No entire catalog is assumed to provide superior quality.
 
 Build around a catalog prepared ahead of playback: admit eligible recordings with provenance and credits, curate their quality, retain useful descriptors, search locally, rank for request fit and variety, then retrieve audio under each source's permitted policy. Expensive analysis belongs in ingestion, not between a slash command and first audio. Keep this a small application capability, not a general data platform.
 
 ### First source evaluation
 
-The [accepted selection decision](decisions/0002-prompt-catalog-selection.md) follows the maintainer's direction to progress without listening tests. Compare all supplied Jamendo, ccMixter and FMA metadata in one pool; never stop after a match from the first source. Report missing, partial, unavailable and empty partitions explicitly. A complete prepared snapshot is a bounded subset, not a claim to have searched a provider's entire catalog.
+The [accepted selection decision](decisions/0002-prompt-catalog-selection.md) follows the maintainer's direction to progress without listening tests. Compare all supplied source metadata in one pool; never stop after a match from the first source. Report missing, partial, unavailable and empty partitions explicitly. A complete prepared snapshot is a bounded subset, not a claim to have searched a provider's entire catalog.
 
 Use deterministic regressions to establish validation and failure behavior; [matching quality](decisions/0006-gemini-play-matching.md) needs opt-in evaluation against the real provider. The [earlier comparison protocol](catalog-evaluation.md) remains available for optional future human enjoyment, fit and fidelity evidence. It is deferred, supplies no invented ratings, and is not a gate for this slice. Audio acquisition, source integration and deployment retain their separate authorization and qualification requirements.
 
 | Candidate | Intended contribution | Retrieval and qualification boundary |
 | --- | --- | --- |
 | Editorial Jamendo | Improved coverage using featured selections, relevance-preserving popularity boosts and artist diversity | The official tracks API supports `featured`, `boost`, `groupby=artist_id` and richer metadata. Its default `mp31` is 96 kbps; evaluate `mp32` VBR for fidelity and reliability rather than assuming the lowest-bitrate default is appropriate. [API documentation](https://developer.jamendo.com/v3.0/tracks) |
-| ccMixter | A complementary curated pool with editorial picks, vocals and instrumentals | Its public query API explicitly supports third-party applications. Select complete recordings, not stems or sample packs, and check each recording's license and attribution chain. [Application/API statement](https://ccmixter.org/about) |
+| ccMixter | **Not enabled; see below.** A complementary curated pool with editorial picks, vocals and instrumentals | Its public query API explicitly supports third-party applications, but its media route refuses non-browser clients. [Application/API statement](https://ccmixter.org/about) |
 | Free Music Archive | Hand-picked albums, artists and genres in an operator-hosted library | FMA's API is closed; hotlinking is disallowed. Apps must host permitted copies themselves. Forwarding user searches to scrape FMA needs explicit approval. Use controlled ingestion, not live scraping from `/play`. [App-developer policy](https://freemusicarchive.org/app-developers) |
 | Incompetech, Musopen and directly opted-in artists/labels | Specialist instrumental/classical coverage or deliberately chosen music | These candidates require source-specific qualification. Verify recording-specific rights, source access and operational fit before adoption. Composition age alone does not establish recording rights. |
+
+**ccMixter is not an enabled audio source.** Its media route returns HTTP 403 to non-browser clients, while a logged-out browser gets the same file ([diagnosis](https://github.com/slackysoba/sobafm/issues/111#issuecomment-6654375637)). There is no scripted route without disguising the client or asking the owners for an exception, and automating a browser for a batch would be the same workaround. So on 2026-11-05 the maintainer [decided to skip it](https://github.com/slackysoba/sobafm/issues/111#issuecomment-6654419977), including a smaller hand-downloaded set. This is an access decision, not a change to the confirmed permission. The catalog schema and importer still accept ccMixter metadata, and a snapshot without it reports that partition as missing.
 
 Do not assume Pixabay's standalone-use restrictions or video-focused NCS/other creator policies cover music-only Discord playback. Resolve any conflicting Scott Buckley usage terms before adoption. These sources remain excluded from the initial candidate set unless the concrete use is clarified.
 
@@ -201,7 +203,7 @@ Prove behavior on the deployment target, not only through fakes.
 
 | Area | Release evidence |
 | --- | --- |
-| Catalog selection | Deterministic evidence establishes output validation, complete-recording admission, disclosed fit and honest three-source coverage. Opt-in provider evaluation establishes that real requests rank sensibly. Actual availability and file integrity require source integration evidence. Subjective enjoyment and fidelity remain unmeasured until an optional authorized listening evaluation; preserve poor matches and unavailable cases. |
+| Catalog selection | Deterministic evidence establishes output validation, complete-recording admission, disclosed fit and honest coverage of each source. Opt-in provider evaluation establishes that real requests rank sensibly. Actual availability and file integrity require source integration evidence. Subjective enjoyment and fidelity remain unmeasured until an optional authorized listening evaluation; preserve poor matches and unavailable cases. |
 | Command/access behavior | Both modes, all controls, cooldown ownership, manager overrides and regular-listener now-playing access work as specified. |
 | Continuity | A 60-minute program has at most two seconds of total underrun under normal service conditions. Measure both applicable modes. |
 | Latency | Median request-to-audible music is at most 15 seconds for generated playback and admitted catalog play requests; measure catalog skip separately against the same target. Report admitted failures/timeouts separately. |
@@ -262,4 +264,4 @@ Catalog selection quality and variety are explicitly in scope.
 
 ## Evidence status
 
-This specification is a product contract, not release evidence. The three-source metadata-selection strategy is accepted; recording admission, source integrations and Linux deployment feasibility still need their applicable evidence. Verify provider terms and material API behavior against current authoritative sources when implementing each integration.
+This specification is a product contract, not release evidence. The metadata-selection strategy is accepted, with ccMixter not enabled as an audio source; recording admission, source integrations and Linux deployment feasibility still need their applicable evidence. Verify provider terms and material API behavior against current authoritative sources when implementing each integration.

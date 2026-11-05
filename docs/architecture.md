@@ -91,7 +91,7 @@ physical/kernel backlog bound. Original cancellation clocks and userspace debt
 remain. This contract amendment does not qualify runtime fit or adopt the
 proposed application architecture.
 
-- Source-specific acquisition/storage implementations for the accepted three-source pool, with complete recording credits and access evidence.
+- Source-specific acquisition/storage implementations for Jamendo and Free Music Archive, with complete recording credits and access evidence. [ccMixter is not an enabled audio source](requirements.md#first-source-evaluation).
 - The simplest viable non-root Docker resource model under the approved capacity definition: accepted for amd64 in [ADR 0004](decisions/0004-amd64-whole-service-adoption.md); application qualification remains open and native arm64 is on hold ([#60](https://github.com/slackysoba/sobafm/issues/60)).
 - Supported dependencies and decoder distribution without a bespoke supply system by default. The Discord voice library is selected and locked: disnake with DAVE through dave.py ([ADR 0005](decisions/0005-discord-voice-library.md)). `discord_adapter.py` uses it. The decoder distribution remains open.
 
