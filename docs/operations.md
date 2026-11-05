@@ -2,13 +2,13 @@
 
 **Status: amd64 first slice, not yet qualified.** This guide describes the first playback slice for Linux amd64 with Docker Compose. The image at commit `d6923c8` ran in one private Discord session on Docker Desktop under WSL2 ([#97](https://github.com/slackysoba/sobafm/issues/97)); that is not qualification of the image, its limits or the release. Treat it as a preview of the operator path, not a release. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)).
 
-The slice joins a voice channel, plays one admitted local recording per `/play` request, shows its full credits through `/now`, stops and shuts down cleanly. It has no settings, persistence, `/skip`, `/freestyle` or continuous selection.
+The slice joins a voice channel and plays a catalog program per `/play` request: admitted local recordings matching the request, one after another, until it is stopped, replaced or runs out of recordings. `/skip` moves on to the next one, `/now` shows the heard recording's full credits, and it stops and shuts down cleanly. It has no settings, persistence, listener grace period, `/freestyle` or request matching beyond the fixed phrase vocabulary.
 
 ## Requirements
 
 - Linux amd64 with Docker Engine and the Compose plugin, using cgroup v2 (the default on current distributions). No compiler is needed.
 - A Discord application with a bot user and its token.
-- Optionally, a prepared catalog snapshot, its admission reviews, a media manifest and the admitted MP3 files. Without them the bot runs with `/join`, `/now`, `/stop` and `/leave` only.
+- Optionally, a prepared catalog snapshot, its admission reviews, a media manifest and the admitted MP3 files. Without them the bot runs with `/join`, `/now`, `/stop` and `/leave` only; `/play` and `/skip` are not registered.
 
 ## Discord setup
 
@@ -21,7 +21,7 @@ Command access:
 | Command | Who can use it |
 | --- | --- |
 | `/join`, `/leave` | Members with Manage Server by default. Server admins can change this under Server Settings, Integrations. |
-| `/play request:<text>` | Members in the bot's voice channel. |
+| `/play request:<text>`, `/skip` | Members in the bot's voice channel. |
 | `/stop` | Members in the bot's voice channel, or anyone with Manage Server. |
 | `/now` | Anyone in the server. It privately shows what is actually heard, with full credits. |
 
@@ -43,7 +43,7 @@ Edit `.env` and replace the placeholder token. Never commit `.env`. The variable
 | `SOBAFM_REVIEWS` | With the catalog | Trusted admission reviews (`sobafm-admission-1`). |
 | `SOBAFM_MEDIA` | With the catalog | Media manifest locating each admitted recording's file. |
 
-The catalog, reviews and media manifest must be set together, or none of them. Without them `/play` is not registered. The files live in `./data`, which Compose mounts read-only at `/data`. The container runs as UID 1000, so that user must be able to read the files.
+The catalog, reviews and media manifest must be set together, or none of them. Without them `/play` and `/skip` are not registered. The files live in `./data`, which Compose mounts read-only at `/data`. The container runs as UID 1000, so that user must be able to read the files.
 
 The media manifest binds each playable recording to one local file:
 
@@ -77,6 +77,8 @@ Before reading any configuration or connecting to Discord, SobaFM reads its own 
 
 Then, in Discord: a manager uses `/join` from a voice channel, a listener uses `/play` with a request such as `quiet solo piano`, and `/now` shows the heard recording and its credits. Audio becomes audible after six seconds of buffered PCM, or at the verified end of a shorter recording.
 
+The request is interpreted once. While a recording plays, the next matching recording the program has not yet played is prepared in the second audio bank and follows the last frame directly, with no fade or overlap. A program never repeats a recording: when none is left, it ends after the current one and `/now` says so; `/play` starts a new program. With a one-recording catalog that is the normal result once the recording ends. `/skip` switches to the next recording as soon as it is buffered; the current recording keeps playing until then, and keeps playing if the next one cannot be prepared. `/play`, `/stop`, `/leave` and shutdown discard a prepared next recording.
+
 ## Stop
 
 ```sh
@@ -103,13 +105,14 @@ Read the release notes and `docs/requirements.md` first. Updating the files in `
 | 1 | `... lease(s) remain at shutdown`, `cleanup deadline(s) were missed` or `Discord client stopped: <type>` | Shutdown could not confirm release, or the Discord client failed (for example an invalid token). |
 | 0 | | Clean shutdown. |
 
-INFO lines record what was played, without request text or tokens: `voice connected` and `voice disconnected`; `heard source changed: recording=<source:id> credit_snapshot=<id>` and `heard source cleared`; one `track retired: ...` line per track with `frames_handed_to_voice` (frames given to the voice player, not packets confirmed delivered), `underruns` (silence frames returned while the track was playing or ready, including a momentarily busy bank), the completion facts, `failure`, `bank_released` and `cancel_to_release_seconds`; and `shutdown: released=... leases_held=... cleanup_failures=...`.
+INFO lines record what was played, without request text or tokens: `voice connected` and `voice disconnected`; `heard source changed: recording=<source:id> credit_snapshot=<id>` and `heard source cleared`; `program has no further eligible recording` and `program ended: reason=<exhausted|unavailable>`; one `track retired: ...` line per track with `frames_handed_to_voice` (frames given to the voice player, not packets confirmed delivered), `underruns` (silence frames returned while the track was playing or ready, including a momentarily busy bank), the completion facts, `failure`, `bank_released` and `cancel_to_release_seconds`; and `shutdown: released=... leases_held=... cleanup_failures=...`.
 
 During playback:
 
 - `decode failed: <kind>` names the decode failure, for example `input_hash` (the file differs from the manifest), `input_open`, `output_overrun` or `decoder_exit`. The previous audio, if any, keeps playing.
 - `audio producer failed: MediaMissingError`: the selected recording has no media manifest entry.
 - `Playback could not start (capacity is busy ...)`: both audio banks are still held, possibly by cleanup that has not finished. Retry shortly.
+- `next track could not be prepared; the program ends` (WARNING): three attempts to prepare the next recording failed, usually because both audio banks are held (the two banks are shared by every server) or decodes failed. The current recording finishes and the program ends; `/now` explains it and `/play` starts a new one. A next track waits for any track still being cleaned up before it leases a bank.
 - `audio producer missed its cleanup deadline`: a decoder took longer than three seconds to settle. Its bank stays held until it actually settles, and shutdown then exits 1.
 - If the bot loses its voice connection, playback commands report that it has not joined; use `/join` again.
 - Discord shows "The application did not respond": Discord rejected the bot's acknowledgement, usually because it arrived after the three-second window. `/stop` and `/leave` still take effect (check with `/now`) and log `interaction acknowledgement failed: command=<name> age_seconds=<seconds> status=<http> code=<discord>`, where `code=10062` is Unknown interaction. If the acknowledgement request itself fails, for example on a network error or timeout, the line ends with `error=<exception type>` instead of the status and code, and the commands still take effect. The age counts from the interaction's creation, so it includes network and Discord delay as well as any delay in the bot. A rejected `/join` or `/play` starts nothing; repeat it.

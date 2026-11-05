@@ -5,15 +5,21 @@ from dataclasses import replace
 import pytest
 
 from sobafm.catalog import (
+    AdmissionReview,
     Availability,
+    Catalog,
     CreditSnapshot,
+    Partition,
+    Query,
     Recording,
     RecordingKey,
     RecordingKind,
+    SnapshotState,
     Source,
+    metadata_digest,
 )
 from sobafm.credits import render_credits
-from sobafm.station import Outcome, Station
+from sobafm.station import HISTORY_LIMIT, EndReason, Outcome, Station, select_next
 
 LINK = "https://example.invalid/synthetic/track"
 
@@ -160,3 +166,97 @@ def test_request_text_is_bounded() -> None:
     with pytest.raises(ValueError):
         station.request("x" * 201)
     assert station.request("x" * 200).program.generation == 1
+
+
+def advance(station: Station, identifier: str) -> None:
+    """Continue the desired program with ``identifier`` and hear it."""
+    program = station.desired
+    assert program is not None and station.needs_next
+    assert station.continue_program(program) is Outcome.ACCEPTED
+    assert station.prepared(program, recording(identifier)) is Outcome.ACCEPTED
+    audio = station.claim_ready()
+    assert audio is not None
+    assert station.switched(audio) is Outcome.ACCEPTED
+
+
+def test_a_program_continues_and_keeps_its_history() -> None:
+    station = playing("a")
+    program = station.desired
+    assert program is not None and station.continuing and station.needs_next
+    advance(station, "b")
+    heard = station.heard
+    assert heard is not None and heard.program == program and heard.recording == recording("b")
+    assert station.history(program) == {recording(i).key for i in "ab"}
+    assert station.continue_program(program) is Outcome.ACCEPTED
+    assert station.continue_program(program) is Outcome.STALE  # one prepared next track
+    assert HISTORY_LIMIT >= 3 * 256  # covers every recording a snapshot may hold
+
+
+def test_a_failed_next_track_keeps_the_program() -> None:
+    station = playing("a")
+    program = station.desired
+    assert program is not None
+    assert station.continue_program(program) is Outcome.ACCEPTED
+    assert station.prepared(program, recording("b")) is Outcome.ACCEPTED
+    audio = station.claim_ready()
+    assert audio is not None
+    assert station.switch_failed(audio) is Outcome.ACCEPTED
+    assert station.desired == program and station.needs_next  # it may try again
+    assert recording("b").key in station.history(program)  # not retried
+
+
+def test_exhaustion_ends_the_program_after_its_heard_track() -> None:
+    station = playing("a")
+    program = station.desired
+    heard = station.heard
+    assert program is not None and heard is not None
+    assert station.continue_program(program) is Outcome.ACCEPTED
+    assert station.exhausted(program, EndReason.EXHAUSTED) is Outcome.ACCEPTED
+    assert station.ending is EndReason.EXHAUSTED and not station.needs_next
+    assert station.desired == program and station.ended is None  # still playing
+    assert station.drained(heard) is Outcome.ACCEPTED
+    assert station.desired is None and station.heard is None
+    assert station.ended is EndReason.EXHAUSTED
+    assert station.drained(heard) is Outcome.STALE
+    station.request("again")
+    assert station.ended is None
+
+
+def test_a_drained_track_with_its_successor_claimed_continues() -> None:
+    station = playing("a")
+    program = station.desired
+    heard = station.heard
+    assert program is not None and heard is not None
+    station.continue_program(program)
+    station.prepared(program, recording("b"))
+    audio = station.claim_ready()
+    assert audio is not None
+    assert station.drained(heard) is Outcome.ACCEPTED
+    assert station.desired == program and station.heard is None and station.continuing
+    assert station.switched(audio) is Outcome.ACCEPTED and station.heard == audio
+
+
+def test_a_failed_replacement_restores_the_heard_programs_progress() -> None:
+    station = playing("a")
+    old = station.desired
+    assert old is not None
+    station.continue_program(old)
+    station.exhausted(old, EndReason.EXHAUSTED)
+    replacement = station.request("other").program
+    assert station.ending is None and not station.continuing
+    assert station.preparation_failed(replacement) is Outcome.ACCEPTED
+    assert station.desired == old and station.ending is EndReason.EXHAUSTED
+
+
+def test_select_next_skips_history_and_reports_exhaustion() -> None:
+    lengths = (("a", 300), ("b", 200))
+    recordings = tuple(replace(recording(i), duration_seconds=d) for i, d in lengths)
+    catalog = Catalog(True, (Partition(Source.JAMENDO, SnapshotState.COMPLETE, "", recordings),))
+    reviews = tuple(
+        AdmissionReview(r.key, metadata_digest(r), True, True, True, LINK) for r in recordings
+    )
+    first = select_next(catalog, reviews, Query(), frozenset())
+    assert first is not None and first.key.recording_id == "a"  # longer first on a tie
+    second = select_next(catalog, reviews, Query(), frozenset({first.key}))
+    assert second is not None and second.key.recording_id == "b"
+    assert select_next(catalog, reviews, Query(), frozenset({first.key, second.key})) is None
