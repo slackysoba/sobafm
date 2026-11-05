@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-05
 - Scope: [issue #122](https://github.com/slackysoba/sobafm/issues/122)
-- Authority: the maintainer's answers "FMA dataset" on [#119](https://github.com/slackysoba/sobafm/issues/119#issuecomment-6656728152) and "Accept all" on [#122](https://github.com/slackysoba/sobafm/issues/122#issuecomment-6657845523), each after the points below were stated
+- Authority: the maintainer's answers "FMA dataset" on [#119](https://github.com/slackysoba/sobafm/issues/119#issuecomment-6656728152) and "Accept all" on [#122](https://github.com/slackysoba/sobafm/issues/122#issuecomment-6657845523), each after the points below were stated. They accepted the final list after reading its [corrected decisions](https://github.com/slackysoba/sobafm/issues/122#issuecomment-6659826899), answering "[Accept all](https://github.com/slackysoba/sobafm/issues/122#issuecomment-6659939589)" to the coordinator and "[Yes, accept](https://github.com/slackysoba/sobafm/issues/122#issuecomment-6659945011)" to the worker
 - Changes how `credits_complete` and `access_ready` are established for this catalog. The requirement in [decision 0002](0002-prompt-catalog-selection.md) that a separate trusted review bind them to each recording's exact digest stands.
 
 ## Problem
@@ -38,7 +38,7 @@ Use the dataset, and admit by rule.
 
 **Validation.** Before admission, offline, in a container at the [ADR 0004](0004-amd64-whole-service-adoption.md) limits: the archive's CRC-32 and size, the real decode path exiting zero, a decoded length within 2 seconds of the listing, no silence over 30 seconds or sustained full-scale clipping, and embedded tags that don't contradict the listed license or page. Anything that fails is dropped with its reason, and nothing is fixed by hand.
 
-**What the review is.** The maintainer reads the rule, sees the final list with every rejection and its reason, and spot-checks ten recordings chosen from a hash of the exact catalog. Only after that does the tool write `reviews.json`. Each review links to the issue and names the rule version. No agent approves anything.
+**What the review is.** The maintainer reads the rule, sees the final list with every rejection and its reason, and is given ten recordings to spot-check, chosen from a hash of the exact catalog. Only after they accept does the tool write `reviews.json`. Each review links to the issue and names the rule version. No agent approves anything. The acceptance doesn't say whether the ten were played.
 
 **Storage and requests.**
 
@@ -62,7 +62,7 @@ The acceptance is a decision to go ahead despite these, not evidence about them.
 - **Sample use isn't recorded per track.** An artist's notes sometimes mention samples, but nothing lists what a given track samples.
 - **Compositions.** A performer's license covers their recording, not a composition they don't control. The rule doesn't look for this. A keyword search of the listing text found what the listings say outright, and unlabeled covers stay invisible.
 - **Explicit content isn't reliably flagged.** The flag is blank for about 97% of tracks, so lyrics nobody has read may be explicit.
-- **How it sounds.** Nobody listened. Selection read tags and listen counts only.
+- **How it sounds.** Selection read tags and listen counts only, and validation checks decoding, length, silence and clipping. Nothing on record shows that anyone listened.
 
 ## Alternatives and consequences
 
