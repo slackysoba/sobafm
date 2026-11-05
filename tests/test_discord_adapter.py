@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import aiohttp
 import disnake
 import pytest
 
@@ -165,6 +166,7 @@ class FakeInteraction:
     created_at: datetime.datetime = field(default_factory=lambda: disnake.utils.utcnow())
     token: str = "synthetic-interaction-token"
     rejected: bool = False  # Discord answers the acknowledgement with 10062
+    transport_failure: Exception | None = None  # the acknowledgement request fails
 
     @property
     def guild_id(self) -> int | None:
@@ -185,6 +187,8 @@ class FakeInteraction:
     async def defer(self, **options: object) -> None:
         assert self.deferred is None
         self.deferred = time.monotonic()
+        if self.transport_failure is not None:
+            raise self.transport_failure
         if self.rejected:
             raise disnake.NotFound(
                 cast(Any, RejectedResponse()), {"code": 10062, "message": "Unknown interaction"}
@@ -738,6 +742,57 @@ async def test_leave_silences_and_disconnects_when_its_acknowledgement_is_reject
     assert h.pool.leased == 0 and len(h.producer.settled) == 1
 
 
+def test_stop_silences_and_retires_when_its_acknowledgement_request_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="sobafm")
+    fake = inter(FakeChannel("unused"), manager=True)
+    fake.transport_failure = aiohttp.ClientConnectionError("synthetic transport failure")
+
+    async def scenario() -> None:
+        h = harness()
+        source = await heard_track(h)
+        await run(h.adapter.stop, fake)  # does not raise
+        assert fake.sent == []
+        station = h.adapter.players[1].station
+        assert station.heard is None and station.desired is None
+        assert source.read() == b""
+        await join_retirements(h)
+        assert h.pool.leased == 0 and len(h.producer.settled) == 1
+        assert h.room.voice is not None and h.room.voice.connected
+
+    asyncio.run(scenario())
+    (line,) = [m for m in adapter_log(caplog) if m.startswith("interaction acknowledgement")]
+    assert line.startswith("interaction acknowledgement failed: command=stop age_seconds=")
+    assert line.endswith(" error=ClientConnectionError")
+    assert fake.token not in caplog.text
+
+
+def test_leave_silences_and_disconnects_when_its_acknowledgement_request_times_out(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="sobafm")
+    fake = inter(FakeChannel("unused"), manager=True)
+    fake.transport_failure = TimeoutError()
+
+    async def scenario() -> None:
+        h = harness()
+        source = await heard_track(h)
+        await run(h.adapter.leave, fake)  # does not raise
+        assert fake.sent == []
+        assert h.adapter.players == {}
+        assert h.room.voice is not None and h.room.voice.disconnects == 1
+        assert source.read() == b""
+        await join_retirements(h)
+        assert h.pool.leased == 0 and len(h.producer.settled) == 1
+
+    asyncio.run(scenario())
+    (line,) = [m for m in adapter_log(caplog) if m.startswith("interaction acknowledgement")]
+    assert line.startswith("interaction acknowledgement failed: command=leave age_seconds=")
+    assert line.endswith(" error=TimeoutError")
+    assert fake.token not in caplog.text
+
+
 def test_a_rejected_acknowledgement_logs_command_and_age_without_token(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -755,11 +810,11 @@ def test_a_rejected_acknowledgement_logs_command_and_age_without_token(
     lines = [
         line
         for line in adapter_log(caplog)
-        if line.startswith("interaction acknowledgement rejected")
+        if line.startswith("interaction acknowledgement failed")
     ]
     assert len(lines) == 2
     for line, command, age in zip(lines, ("stop", "leave"), (7.5, 2.25), strict=True):
-        prefix = f"interaction acknowledgement rejected: command={command} age_seconds="
+        prefix = f"interaction acknowledgement failed: command={command} age_seconds="
         assert line.startswith(prefix)
         seconds, rest = line.removeprefix(prefix).split(" ", 1)
         assert age <= float(seconds) < age + 1

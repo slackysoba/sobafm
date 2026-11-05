@@ -18,9 +18,10 @@ credit snapshot ID, each track's settled retirement (frames handed to the voice
 player, underruns and the bank's facts), voice connection changes and the shutdown
 outcome. They never contain request text, tokens or interaction data.
 
-`/stop` and `/leave` take effect even when Discord rejects their late acknowledgement
-(for example `10062 Unknown interaction`); they then send no follow-up and log one
-WARNING line with the command name and the interaction's age, never its token.
+`/stop` and `/leave` take effect even when their acknowledgement fails, whether Discord
+rejects it (for example `10062 Unknown interaction`) or the request does not complete;
+they then send no follow-up and log one WARNING line with the command name and the
+interaction's age, never its token.
 """
 
 from __future__ import annotations
@@ -244,23 +245,27 @@ class Adapter:
 
     @staticmethod
     async def _defer(inter: Inter, command: str) -> bool:
-        """Defer privately; report whether Discord accepted it.
+        """Defer privately; report whether the acknowledgement succeeded.
 
-        Used where the command must take effect even if Discord rejects a late
-        acknowledgement. A rejected interaction gets no follow-up. The log line names
-        the command and the interaction's age from its creation time, never its token.
+        Used where the command must take effect even if the acknowledgement fails,
+        whether Discord rejects it or the request does not complete. Cancellation still
+        propagates. A failed interaction gets no follow-up. The log line names the
+        command, the interaction's age from its creation time and Discord's status and
+        code when present, otherwise the exception type; never the token.
         """
         try:
             await inter.response.defer(ephemeral=True)
-        except disnake.HTTPException as exc:
+        except Exception as exc:
             age = (disnake.utils.utcnow() - inter.created_at).total_seconds()
+            if isinstance(exc, disnake.HTTPException):
+                detail = f"status={exc.status} code={exc.code}"
+            else:
+                detail = f"error={type(exc).__name__}"
             log.warning(
-                "interaction acknowledgement rejected: command=%s age_seconds=%.3f "
-                "status=%d code=%d",
+                "interaction acknowledgement failed: command=%s age_seconds=%.3f %s",
                 command,
                 age,
-                exc.status,
-                exc.code,
+                detail,
             )
             return False
         return True
