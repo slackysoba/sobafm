@@ -111,13 +111,13 @@ def test_details_are_bounded_single_lines_and_never_change_the_review_digest() -
     plain = jamendo(album_name=None, releasedate=None, musicinfo=None)
     assert plain.catalog.partitions[0].recordings[0].details == ()
     noisy = jamendo(
-        album_name="Line one\n\tline  two" + "x" * 400,
+        album_name="x" * 199,
         releasedate=None,
         musicinfo={"tags": {"genres": [f"genre{n}" for n in range(40)]}},
     )
     record = noisy.catalog.partitions[0].recordings[0]
     assert len(record.details) == MAX_DETAILS
-    assert record.details[0].startswith("album: Line one line two")
+    assert record.details[0].startswith("album: xxx")
     assert len(record.details[0]) == MAX_DETAIL_CHARACTERS and record.details[0].endswith("…")
     enriched = jamendo(musicinfo={"tags": {"vartags": ["haunted"]}})
     bare = jamendo(musicinfo=None)

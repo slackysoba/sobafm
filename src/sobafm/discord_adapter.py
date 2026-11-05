@@ -1,8 +1,8 @@
 """Discord adapter for the first playback slice: slash commands, voice and shutdown.
 
 Commands work only in servers. `/join` and `/leave` require Manage Server by default
-through Discord command permissions; `/play` and `/stop` require the caller to share
-the bot's voice channel, except that a manager may stop from elsewhere. `/now` is
+through Discord command permissions; `/play`, `/skip` and `/stop` require the caller to
+share the bot's voice channel, except that a manager may stop from elsewhere. `/now` is
 private and open to ordinary listeners.
 
 `/play` asks an injected `Matcher` for a validated plan. A refusal or failure changes
@@ -13,6 +13,10 @@ Audio comes from an injected `Producer` that fills a leased `pcm.py` bank. The v
 callback (`StationSource.read`) only copies prepared frames: it never waits on the
 network, a process, a database or cleanup, and hands every report back to the loop.
 The heard source changes only when the callback emits the first frame of new audio.
+A catalog program continues: once a track is heard, the next one is taken from the
+program's ranked plan and history and prepared in the second bank, and the
+callback plays it successively after the heard track's last frame. `/skip` and a
+replacement instead switch as soon as the new audio is ready.
 Superseded audio is cancelled, its producer joined and its bank released on the loop;
 a bank that cannot yet be released stays leased as retained debt.
 
@@ -66,8 +70,23 @@ from sobafm.gemini_match import (
     Refused,
     checked_request,
 )
-from sobafm.pcm import FRAME_BYTES, GLOBAL_PCM_BANKS, PcmBank, PcmBankPool, PcmCapacityError
-from sobafm.station import MAX_REQUEST_CHARACTERS, Audio, Outcome, Station
+from sobafm.pcm import (
+    BANK_COUNT,
+    FRAME_BYTES,
+    GLOBAL_PCM_BANKS,
+    PcmBank,
+    PcmBankPool,
+    PcmCapacityError,
+)
+from sobafm.station import (
+    MAX_REQUEST_CHARACTERS,
+    Audio,
+    EndReason,
+    Outcome,
+    Program,
+    Station,
+    select_next,
+)
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +99,10 @@ MAX_REVIEWS_BYTES = 256_000
 SETTLE_SECONDS = 5.0
 # One original cleanup deadline, counted from the bank's first cancellation (ADR 0004).
 CLEANUP_SECONDS = 3.0
+# Bounds on continuing a program: next-track preparations per heard track (capacity
+# or decoder failures), and credit-rejected candidates per preparation.
+MAX_CONTINUATION_ATTEMPTS = 3
+MAX_SELECTION_ATTEMPTS = 3
 SILENCE = bytes(FRAME_BYTES)
 NO_MENTIONS = disnake.AllowedMentions.none()
 Inter = disnake.ApplicationCommandInteraction[commands.InteractionBot]
@@ -99,6 +122,14 @@ FIT_WORDING = {
     Fit.EXACT: "This is the recording you asked for",
     Fit.CLOSE: "Closest match in the catalog",
     Fit.LOOSE: "Nothing in the catalog really fits, so this is the nearest thing",
+}
+SKIPPING = (
+    "Skipping. The next recording becomes audible once enough of it is buffered; "
+    "the current one continues until then."
+)
+ENDED = {
+    EndReason.EXHAUSTED: "every recording chosen for its request has been played",
+    EndReason.UNAVAILABLE: "the next recording could not be prepared",
 }
 
 
@@ -191,6 +222,10 @@ class Track:
     bank: PcmBank
     task: asyncio.Task[None]
     retirement: asyncio.Task[None] | None = None
+    # Whether the callback switches to this track as soon as it is ready (a new program
+    # or `/skip`) rather than after the current track's last frame (continuation).
+    # Read and written under the callback's lock.
+    cut: bool = True
     # Counted by the voice callback under its own non-blocking lock. ``frames`` are
     # frames handed to the voice player, not packets confirmed delivered; ``underruns``
     # include silence returned while the bank's lock was momentarily held.
@@ -212,18 +247,13 @@ class StationSource(disnake.AudioSource):
         if not self._lock.acquire(blocking=False):
             return SILENCE
         try:
-            if (pending := self._pending) is not None:
-                frame = pending.bank.read_frame()
-                if frame:
-                    pending.frames += 1
-                    retired, self._current, self._pending = self._current, pending, None
-                    self._report("switched", pending)
-                    if retired is not None:
-                        self._report("retired", retired)
-                    return frame
-                if frame == b"":
-                    self._pending = None
-                    self._report("failed", pending)
+            pending = self._pending
+            if (
+                pending is not None
+                and (pending.cut or self._current is None)
+                and (frame := self._switch(pending))
+            ):
+                return frame
             if (current := self._current) is not None:
                 frame = current.bank.read_frame()
                 if frame is None:
@@ -234,6 +264,9 @@ class StationSource(disnake.AudioSource):
                     return frame
                 self._current = None
                 self._report("drained", current)
+                # Successive playback: a prepared next track follows the last frame.
+                if (pending := self._pending) is not None and (frame := self._switch(pending)):
+                    return frame
             if (pending := self._pending) is not None:
                 if pending.bank.ready_now():
                     pending.underruns += 1
@@ -243,6 +276,21 @@ class StationSource(disnake.AudioSource):
         finally:
             self._lock.release()
 
+    def _switch(self, pending: Track) -> bytes | None:
+        """Emit the pending track's first frame, making it current; call under the lock."""
+        frame = pending.bank.read_frame()
+        if frame:
+            pending.frames += 1
+            retired, self._current, self._pending = self._current, pending, None
+            self._report("switched", pending)
+            if retired is not None:
+                self._report("retired", retired)
+            return frame
+        if frame == b"":
+            self._pending = None
+            self._report("failed", pending)
+        return None
+
     def offer(self, track: Track) -> bool:
         """Make ``track`` pending; return whether the callback had gone idle."""
         with self._lock:
@@ -250,6 +298,14 @@ class StationSource(disnake.AudioSource):
             self._pending = track
             idle, self._idle = self._idle, False
             return idle
+
+    def cut_pending(self) -> bool:
+        """Make a pending track switch as soon as it is ready; report whether one exists."""
+        with self._lock:
+            if self._pending is None:
+                return False
+            self._pending.cut = True
+            return True
 
     def take_pending(self) -> Track | None:
         """Remove the unheard pending track, if the callback has not yet switched to it."""
@@ -278,6 +334,11 @@ class GuildPlayer:
     # the wait compares this count before starting anything.
     matching: bool = False
     silenced: int = 0
+    continuation: asyncio.Task[None] | None = None
+    # Next-track preparations since the last heard switch, bounded per heard track.
+    attempts: int = 0
+    # A `/skip` waiting for its next track, which then switches as soon as it is ready.
+    skip_requested: bool = False
 
 
 class Adapter:
@@ -295,6 +356,7 @@ class Adapter:
         self._pool = pool
         self.players: dict[int, GuildPlayer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
+        self.retirements: set[asyncio.Task[None]] = set()
         self.debt: list[PcmBank] = []
         self.cleanup_failures = 0
         self.stopping = asyncio.Event()
@@ -417,7 +479,10 @@ class Adapter:
             if player.silenced != silenced:
                 return STOPPED_WHILE_MATCHING
             station = player.station
-            program = station.request(request).program
+            # The request is interpreted once: later tracks come from this ranked plan.
+            program = station.request(request, tuple(c.recording for c in plan.ranked)).program
+            player.attempts = 0
+            player.skip_requested = False
             chosen = next(
                 (
                     choice
@@ -436,8 +501,12 @@ class Adapter:
                 )
         return _accepted(chosen)
 
-    async def _start(self, player: GuildPlayer) -> bool:
-        """Claim ready audio, displacing an unheard pending track, and hand it to the player."""
+    async def _start(self, player: GuildPlayer, *, cut: bool = True) -> bool:
+        """Claim ready audio, displacing an unheard pending track, and hand it to the player.
+
+        ``cut`` audio switches as soon as it is ready; otherwise it follows the
+        current track's last frame.
+        """
         station = player.station
         if self.stopping.is_set():
             return False  # shutdown leases nothing new
@@ -456,7 +525,7 @@ class Adapter:
             station.switch_failed(audio)
             return False
         task = asyncio.create_task(self._produce(audio.recording, bank))
-        track = Track(audio, bank, task)
+        track = Track(audio, bank, task, cut=cut)
         idle = player.source.offer(track)
         if idle or not player.voice.is_playing():  # also restarts after a player error
             try:
@@ -478,6 +547,103 @@ class Adapter:
         except Exception as exc:
             log.warning("audio producer failed: %s", type(exc).__name__)
             bank.cancel()  # the voice callback then reports the failure
+
+    def _schedule_continue(self, player: GuildPlayer) -> asyncio.Task[None]:
+        """Start (once at a time) preparing the desired program's next track."""
+        task = player.continuation
+        if task is None or task.done():
+            program = player.station.desired
+            assert program is not None
+            task = self._own(asyncio.create_task(self._continue(player, program)))
+            player.continuation = task
+        return task
+
+    async def _continue(self, player: GuildPlayer, program: Program) -> None:
+        """Prepare ``program``'s next track in the second bank, within bounded attempts.
+
+        A retiring track still holds its bank, so each attempt first joins the
+        retirements under way, without cancelling them, before leasing. Exhaustion
+        ends the program after the heard track instead of repeating a recording.
+        """
+        while not self.stopping.is_set():
+            if self.retirements:
+                await asyncio.wait(set(self.retirements))
+            async with player.lock:
+                station = player.station
+                if self.stopping.is_set() or station.desired != program or not station.needs_next:
+                    return  # replaced, stopped or already continued: this work is stale
+                player.attempts += 1
+                if player.attempts > MAX_CONTINUATION_ATTEMPTS:
+                    station.exhausted(program, EndReason.UNAVAILABLE)
+                    log.warning("next track could not be prepared; the program ends")
+                    return
+                if self._pool.leased >= BANK_COUNT:
+                    continue  # busy elsewhere: keep candidates for a later attempt
+                station.continue_program(program)
+                for _ in range(MAX_SELECTION_ATTEMPTS):
+                    recording = select_next(program.plan, station.history(program))
+                    if recording is None:
+                        station.exhausted(program, EndReason.EXHAUSTED)
+                        log.info("program has no further recording in its plan")
+                        return
+                    if station.prepared(program, recording) is Outcome.ACCEPTED:
+                        break
+                else:
+                    station.preparation_failed(program)
+                    continue
+                cut, player.skip_requested = player.skip_requested, False
+                if await self._start(player, cut=cut):
+                    return
+            # Capacity was busy or voice unavailable; the next attempt is bounded above.
+
+    async def skip(self, inter: Inter) -> None:
+        if inter.guild is None:
+            return await self._refuse(inter, SERVER_ONLY)
+        if self.matcher is None:
+            return await self._refuse(inter, "Catalog playback is not configured.")
+        if self.stopping.is_set():
+            return await self._refuse(inter, SHUTTING_DOWN)
+        if (player := self._player(inter)) is None:
+            return await self._refuse(inter, NOT_JOINED)
+        if not self._listening(inter, player):
+            return await self._refuse(inter, NOT_LISTENING)
+        await inter.response.defer(ephemeral=True)
+        await inter.followup.send(
+            await self._skip(player), ephemeral=True, allowed_mentions=NO_MENTIONS
+        )
+
+    async def _skip(self, player: GuildPlayer) -> str:
+        """Switch to the program's next track once it is ready; current audio continues."""
+        async with player.lock:
+            station = player.station
+            if self.stopping.is_set():
+                return SHUTTING_DOWN
+            heard = station.heard
+            if heard is None or station.desired != heard.program:
+                return "Nothing from the current program is audible to skip."
+            if player.source.cut_pending():
+                return SKIPPING  # the prepared or still-preparing next track
+            if (reason := station.ending) is not None:
+                return f"Nothing follows: {ENDED[reason]}. The current recording continues."
+            if not station.needs_next:  # the next track's switch report is in flight
+                return "The next recording is already starting."
+            player.skip_requested = True
+            task = self._schedule_continue(player)
+        # Bounded wait for the preparation; it stays owned by the adapter afterwards.
+        await asyncio.wait({task}, timeout=SETTLE_SECONDS)
+        async with player.lock:
+            if self.stopping.is_set():
+                return SHUTTING_DOWN
+            if station.desired != heard.program:
+                return "The program changed meanwhile; nothing was skipped."
+            if not task.done():
+                return SKIPPING  # still preparing; it switches as soon as it is ready
+            if not player.skip_requested:
+                return SKIPPING  # offered to switch as soon as it is ready
+            player.skip_requested = False
+            if (reason := station.ending) is not None:
+                return f"Nothing follows: {ENDED[reason]}. The current recording continues."
+        return "The next recording could not be prepared; the current recording continues."
 
     async def stop(self, inter: Inter) -> None:
         if inter.guild is None:
@@ -503,6 +669,7 @@ class Adapter:
         """End the program, remove all audio from the callback and start retirements."""
         player.silenced += 1
         player.station.stop()
+        player.skip_requested = False
         tracks = player.source.take_all()
         if player.station.switching is not None:
             player.station.switch_failed(player.station.switching)
@@ -548,11 +715,23 @@ class Adapter:
             status = "SobaFM is not in a voice channel."
         elif heard is None:
             status = "Nothing is audible."
+            if station.desired is None and (ended := station.ended) is not None:
+                status += (
+                    f" The last program ended: {ENDED[ended]}. Use `/play` to start a new one."
+                )
+            elif station.continuing:
+                status += " The program's next recording is preparing and is not audible yet."
         else:
             status = "Now heard (full credits follow)."
+            if station.desired == heard.program and (ending := station.ending) is not None:
+                status += (
+                    f" This is the program's last recording: {ENDED[ending]}. "
+                    "Use `/play` to start a new program."
+                )
         if (
             station is not None
             and station.desired is not None
+            and not station.continuing
             and (heard is None or station.desired != heard.program)
         ):
             status += " A new request is starting and is not audible yet."
@@ -586,17 +765,27 @@ class Adapter:
                     _recording_label(track.audio.recording),
                     "none" if credits is None else credits.snapshot_id,
                 )
+                if station.desired == track.audio.program:
+                    assert player is not None
+                    player.attempts = 0
         elif station is not None and kind == "failed":
             station.switch_failed(track.audio)
-        elif station is not None and kind == "drained" and station.heard == track.audio:
-            if station.desired == track.audio.program:
-                station.stop()  # no continuous selection in this slice: the program ends
-            station.silenced()
+        elif (
+            station is not None
+            and kind == "drained"
+            and station.drained(track.audio) is Outcome.ACCEPTED
+        ):
             log.info("heard source cleared")
+            if station.ended is not None and station.desired is None:
+                log.info("program ended: reason=%s", station.ended.value)
         if kind != "switched":
             self._retire(track)
-        if player is not None and kind in ("switched", "failed") and player.station.ready:
+        if player is None or self.stopping.is_set():
+            return
+        if kind in ("switched", "failed") and player.station.ready:
             self._own(asyncio.create_task(self._start_locked(player)))
+        elif self.matcher is not None and player.station.needs_next:
+            self._schedule_continue(player)
 
     async def _start_locked(self, player: GuildPlayer) -> None:
         async with player.lock:
@@ -617,6 +806,8 @@ class Adapter:
         """
         if track.retirement is None:
             track.retirement = self._own(asyncio.create_task(self._settle_track(track)))
+            self.retirements.add(track.retirement)
+            track.retirement.add_done_callback(self.retirements.discard)
         return track.retirement
 
     async def _settle_track(self, track: Track) -> None:
@@ -698,7 +889,7 @@ def _accepted(choice: Ranked) -> str:
 
 
 def create_bot(adapter: Adapter) -> commands.InteractionBot:
-    """Register the slash commands; `/play` is omitted when no catalog is configured."""
+    """Register the slash commands; `/play` and `/skip` are omitted without a catalog."""
     bot = commands.InteractionBot(intents=intents())
     servers = disnake.InteractionContextTypes(guild=True)
     manager = disnake.Permissions(manage_guild=True)
@@ -725,6 +916,11 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
 
     if adapter.matcher is not None:
 
+        @bot.slash_command(name="skip", contexts=servers)
+        async def skip(inter: Inter) -> None:
+            """Move on to the next recording chosen for your request."""
+            await adapter.skip(inter)
+
         @bot.slash_command(name="play", contexts=servers)
         async def play(
             inter: Inter,
@@ -739,7 +935,7 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
             await adapter.play(inter, request)
 
     else:
-        log.warning("catalog is not configured; /play is not registered")
+        log.warning("catalog is not configured; /play and /skip are not registered")
     return bot
 
 

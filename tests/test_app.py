@@ -441,7 +441,13 @@ def test_dockerfile_runs_non_root_with_the_reviewed_decoder_and_no_ffmpeg() -> N
 def test_env_example_holds_placeholders_only() -> None:
     lines = (ROOT / ".env.example").read_text().splitlines()
     values = dict(line.split("=", 1) for line in lines if line and not line.startswith("#"))
-    assert set(values) == {TOKEN_VARIABLE, CATALOG_VARIABLE, REVIEWS_VARIABLE, app.MEDIA_VARIABLE}
+    assert set(values) == {
+        TOKEN_VARIABLE,
+        GEMINI_KEY_VARIABLE,
+        CATALOG_VARIABLE,
+        REVIEWS_VARIABLE,
+        app.MEDIA_VARIABLE,
+    }
     assert values[TOKEN_VARIABLE].startswith("replace-with-")
     for value in values.values():
         # Discord tokens are three base64url segments; nothing here resembles one.

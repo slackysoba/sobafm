@@ -321,7 +321,7 @@ async def test_command_access_rules_and_server_only_registration() -> (
 ):  # the bot binds the running loop
     bot = create_bot(Adapter(FakeMatcher(recording("a")), Producer(), pool=PcmBankPool()))
     bodies = {c.name: c.body for c in bot.slash_commands}
-    assert set(bodies) == {"join", "leave", "play", "stop", "now"}
+    assert set(bodies) == {"join", "leave", "play", "skip", "stop", "now"}
     for name, body in bodies.items():
         assert body.contexts is not None
         assert (
@@ -647,7 +647,11 @@ async def test_now_privately_shows_complete_credits_to_ordinary_listeners() -> N
     assert heard is not None and len(heard.credits.pages) > 1
 
     listener = await run(h.adapter.now, inter(None))  # not in voice, not a manager
-    assert listener.texts()[0] == "Now heard (full credits follow)."
+    assert listener.texts()[0] == (
+        "Now heard (full credits follow). This is the program's last recording: every "
+        "eligible recording matching its request has been played. Use `/play` to start "
+        "a new program."
+    )  # the one-recording catalog has nothing to continue with
     pages = listener.sent[1:]
     assert [p.text for p in pages] == [heard.credits.page(n).text for n in range(1, len(pages) + 1)]
     assert len(pages) == len(heard.credits.pages)
@@ -804,11 +808,13 @@ def test_played_tracks_are_logged_without_request_text(caplog: pytest.LogCapture
 
     asyncio.run(scenario())
     lines = adapter_log(caplog)
-    retired, seconds_text = lines[3].rsplit(" cancel_to_release_seconds=", 1)
-    assert [*lines[:3], retired, *lines[4:]] == [
+    retired, seconds_text = lines[5].rsplit(" cancel_to_release_seconds=", 1)
+    assert [*lines[:5], retired, *lines[6:]] == [
         "voice connected",
         "heard source changed: recording=jamendo:a credit_snapshot=credit-a",
+        "program has no further recording in its plan",
         "heard source cleared",
+        "program ended: reason=exhausted",
         "track retired: recording=jamendo:a frames_handed_to_voice=2 underruns=0 "
         "transfer_complete=False decoder_complete=False pcm_valid=True audible_drain=True "
         "failure=none bank_released=True",
@@ -1183,3 +1189,418 @@ async def test_a_player_that_cannot_start_retires_the_claimed_track() -> None:
     station = h.adapter.players[1].station
     assert station.switching is None and station.desired is None
     assert h.pool.leased == 0
+
+
+# Continuous catalog programs and /skip (#103), with a synthetic multi-recording catalog.
+
+
+def tag(identifier: str) -> bytes:
+    """One frame filled with the recording identifier's byte, to tell tracks apart."""
+    return bytes([ord(identifier[0])]) * FRAME_BYTES
+
+
+class Tagged(Producer):
+    """Writes each recording's frames tagged with its identifier, under per-recording plans."""
+
+    def __init__(self, frames: int = 2, *, end: bool = True) -> None:
+        super().__init__(frames, end=end)
+        self.plans: dict[str, tuple[int, bool]] = {}
+        self.failing: set[str] = set()
+        self.holding: dict[str, asyncio.Event] = {}
+        self.started: list[str] = []
+        self.banks: dict[str, PcmBank] = {}
+        self.finished: list[str] = []
+
+    async def produce(self, recording: Recording, bank: PcmBank) -> None:
+        identifier = recording.key.recording_id
+        self.started.append(identifier)
+        self.banks[identifier] = bank
+        if identifier in self.failing:
+            raise OSError("synthetic decoder failure")
+        frames, end = self.plans.get(identifier, (self.frames, self.end))
+        try:
+            bank.write(tag(identifier) * frames)
+            if end:
+                bank.end_pcm()
+            await asyncio.Event().wait()  # producers stay alive until cancelled
+        finally:
+            if (gate := self.holding.get(identifier)) is not None:
+                # Bounded, so a failed assertion cannot hang the loop's final cleanup.
+                await asyncio.wait_for(gate.wait(), timeout=5)
+            self.finished.append(identifier)
+
+
+def program_harness(*identifiers: str, producer: Tagged | None = None) -> tuple[Harness, Tagged]:
+    tagged = producer or Tagged()
+    pool = PcmBankPool()
+    records = tuple(recording(i) for i in identifiers)
+    return Harness(Adapter(FakeMatcher(*records), tagged, pool=pool), pool, tagged), tagged
+
+
+async def until(condition: Callable[[], bool]) -> None:
+    """Run the loop until ``condition`` holds, without sleeping for a race."""
+    for _ in range(500):
+        if condition():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("condition was not reached")
+
+
+def heard_id(h: Harness) -> str | None:
+    heard = h.adapter.players[1].station.heard
+    return None if heard is None else heard.recording.key.recording_id
+
+
+def next_id(h: Harness) -> str | None:
+    switching = h.adapter.players[1].station.switching
+    return None if switching is None else switching.recording.key.recording_id
+
+
+async def prepared_next(h: Harness, identifier: str) -> None:
+    """Wait until ``identifier`` is the claimed next track and its producer has written."""
+    producer = cast(Tagged, h.producer)
+    await until(lambda: next_id(h) == identifier and identifier in producer.banks)
+
+
+async def now_texts(h: Harness) -> list[str]:
+    return [t or "" for t in (await run(h.adapter.now, inter(None))).texts()]
+
+
+async def skip(h: Harness, channel: FakeChannel | None = None) -> str:
+    (text,) = (await run(h.adapter.skip, inter(channel or h.room))).texts()
+    return text or ""
+
+
+async def start_program(h: Harness) -> StationSource:
+    """Join, play and hear the first recording; its successor is then prepared."""
+    source = await h.join()
+    await h.play()
+    await settle()
+    assert source.read() == tag("a")
+    await until(lambda: heard_id(h) == "a")
+    return source
+
+
+@offline
+async def test_a_program_continues_successively_with_heard_credits_at_each_boundary() -> None:
+    h, tagged = program_harness("a", "b", "c")
+    source = await start_program(h)
+    await prepared_next(h, "b")  # one prepared next track, in the second bank
+    assert h.pool.leased == 2 and tagged.started == ["a", "b"]
+
+    assert source.read() == tag("a")  # the heard track plays on; no overlap or cut
+    await settle()
+    pages = await now_texts(h)
+    assert pages[0] == "Now heard (full credits follow)."
+    assert "Song a" in pages[1] and all("Song b" not in p for p in pages)
+
+    # The last whole frame of a drains; b's first frame follows in the same callback.
+    assert source.read() == tag("b")
+    await until(lambda: heard_id(h) == "b")
+    pages = await now_texts(h)
+    assert "Song b" in pages[1] and all("Song a" not in p for p in pages)
+    await prepared_next(h, "c")  # after a's retirement released its bank
+    assert h.pool.leased == 2 and tagged.finished == ["a"]
+
+    assert [source.read(), source.read(), source.read()] == [tag("b"), tag("c"), tag("c")]
+    await until(lambda: heard_id(h) == "c")
+    assert matcher_of(h).requests == ["piano"]  # the request was interpreted exactly once
+    station = h.adapter.players[1].station
+    assert station.desired is not None and station.desired.request == "piano"
+    assert station.history(station.desired) == {RecordingKey(Source.JAMENDO, i) for i in "abc"}
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_program_follows_the_ranked_order_and_skip_makes_no_new_call() -> None:
+    first, second, third = recording("c"), recording("a"), recording("b")
+    tagged = Tagged(frames=50)
+    pool = PcmBankPool()
+    h = Harness(Adapter(FakeMatcher(first, second, third), tagged, pool=pool), pool, tagged)
+    source = await h.join()
+    await h.play()
+    await settle()
+    assert source.read() == tag("c")
+    await until(lambda: heard_id(h) == "c")
+    await prepared_next(h, "a")
+    assert await skip(h) == discord_adapter.SKIPPING
+    assert source.read() == tag("a")
+    await until(lambda: heard_id(h) == "a")
+    await prepared_next(h, "b")
+    assert tagged.started == ["c", "a", "b"] and matcher_of(h).requests == ["piano"]
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_exhaustion_ends_the_program_without_repeating_or_looping() -> None:
+    h, tagged = program_harness("a", "b", producer=Tagged(frames=1))
+    source = await start_program(h)
+    await prepared_next(h, "b")
+    assert source.read() == tag("b")
+    await until(lambda: heard_id(h) == "b")
+    await join_retirements(h)
+    station = h.adapter.players[1].station
+    assert station.ending is discord_adapter.EndReason.EXHAUSTED and station.switching is None
+    assert h.pool.leased == 1  # nothing further was leased
+    (status, *_) = await now_texts(h)
+    assert "This is the program's last recording" in status and "`/play`" in status
+
+    assert source.read() == b""  # b drained; nothing follows and the player goes idle
+    await settle()
+    await join_retirements(h)
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert tagged.started == ["a", "b"] and h.adapter.tasks == set()  # no repeat, no loop
+    assert station.desired is None and station.heard is None and h.pool.leased == 0
+    assert station.ended is discord_adapter.EndReason.EXHAUSTED
+    assert await now_texts(h) == [
+        "Nothing is audible. The last program ended: every recording chosen for its "
+        "request has been played. Use `/play` to start a new one."
+    ]
+    assert source.read() == b""
+
+    # A new /play starts a new program with fresh history.
+    await h.play()
+    await settle()
+    assert source.read() == tag("a")
+    await until(lambda: heard_id(h) == "a")
+    assert station.ended is None
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_one_recording_catalog_ends_after_that_recording() -> None:
+    h, tagged = program_harness("a", producer=Tagged(frames=1))
+    source = await start_program(h)
+    await join_retirements(h)
+    assert source.read() == b""
+    await settle()
+    await join_retirements(h)
+    station = h.adapter.players[1].station
+    assert station.desired is None and station.ended is discord_adapter.EndReason.EXHAUSTED
+    assert tagged.started == ["a"] and h.pool.leased == 0
+    assert await skip(h) == "Nothing from the current program is audible to skip."
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_skip_switches_to_the_prepared_next_track() -> None:
+    h, tagged = program_harness("a", "b", "c", producer=Tagged(frames=50))
+    source = await start_program(h)
+    await prepared_next(h, "b")
+    assert source.read() == tag("a")  # continuation alone would wait for a's end
+
+    assert await skip(h) == discord_adapter.SKIPPING
+    assert source.read() == tag("b")  # b was ready: the skip cuts at once
+    await until(lambda: heard_id(h) == "b")
+    await prepared_next(h, "c")
+    assert tagged.finished == ["a"] and h.pool.leased == 2
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_skip_while_the_next_track_is_still_preparing() -> None:
+    tagged = Tagged(frames=50)
+    tagged.plans["b"] = (1, False)  # one frame and no verified end: not ready yet
+    h, _ = program_harness("a", "b", producer=tagged)
+    source = await start_program(h)
+    await prepared_next(h, "b")
+
+    assert await skip(h) == discord_adapter.SKIPPING
+    for _ in range(3):
+        assert source.read() == tag("a")  # the current audio continues meanwhile
+    await settle()
+    assert heard_id(h) == "a"
+
+    tagged.banks["b"].end_pcm()  # b's preparation completes
+    assert source.read() == tag("b")
+    await until(lambda: heard_id(h) == "b")
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_skip_failure_keeps_the_current_audio() -> None:
+    tagged = Tagged(frames=50)
+    tagged.failing.add("b")
+    h, _ = program_harness("a", "b", "c", producer=tagged)
+    source = await start_program(h)
+    await prepared_next(h, "b")
+    await settle()  # b's producer failed and stopped its bank
+
+    assert await skip(h) == discord_adapter.SKIPPING
+    assert source.read() == tag("a")  # b failed; a keeps playing
+    await settle()
+    assert heard_id(h) == "a"
+    pages = await now_texts(h)
+    assert "Song a" in pages[1]
+    await prepared_next(h, "c")  # the program continues after a, not cutting it
+    assert source.read() == tag("a")
+    assert tagged.started == ["a", "b", "c"]
+
+    # With nothing left to follow, /skip says so and the current audio continues.
+    h2, _ = program_harness("a", producer=Tagged(frames=50))
+    source2 = await start_program(h2)
+    await join_retirements(h2)
+    text = await skip(h2)
+    assert text.startswith("Nothing follows: every recording chosen") and "continues" in text
+    assert source2.read() == tag("a")
+    assert await h.adapter.shutdown() is True and await h2.adapter.shutdown() is True
+
+
+@offline
+async def test_skip_requires_the_bots_voice_channel() -> None:
+    h, _ = program_harness("a", "b")
+    assert await skip(h) == NOT_JOINED
+    await start_program(h)
+    assert await skip(h, FakeChannel("elsewhere")) == NOT_LISTENING
+    (text,) = (await run(h.adapter.skip, inter(None))).texts()
+    assert text == NOT_LISTENING
+    assert await h.adapter.shutdown() is True
+
+
+@pytest.mark.parametrize("ending", ["replacement", "stop", "leave", "disconnect", "shutdown"])
+def test_ending_or_replacing_discards_the_prepared_next_track(ending: str) -> None:
+    async def scenario() -> None:
+        tagged = Tagged(frames=50)
+        tagged.holding["b"] = asyncio.Event()  # b's producer settles only when allowed
+        h, _ = program_harness("a", "b", producer=tagged)
+        source = await start_program(h)
+        await prepared_next(h, "b")
+        player = h.adapter.players[1]
+        pending = player.source._pending  # pyright: ignore[reportPrivateUsage]
+        assert pending is not None and pending.audio.recording.key.recording_id == "b"
+        bank = pending.bank
+
+        match ending:
+            case "replacement":
+                h.adapter.matcher = FakeMatcher(recording("d"))
+                replaced = asyncio.create_task(h.play())
+            case "stop":
+                replaced = asyncio.create_task(run(h.adapter.stop, inter(h.room)))
+            case "leave" | "disconnect":
+                if ending == "disconnect":
+                    cast(FakeVoice, player.voice).connected = False  # lost; settled at /leave
+                replaced = asyncio.create_task(run(h.adapter.leave, inter(h.room, manager=True)))
+            case _:
+                replaced = asyncio.create_task(h.adapter.shutdown())
+        await until(lambda: bank.facts().cancelled_at is not None)
+        first_cancel = bank.facts().cancelled_at
+        assert pending.retirement is not None and h.pool.leased == 2  # still owned
+        assert h.adapter._retire(pending) is pending.retirement  # pyright: ignore[reportPrivateUsage]
+        bank.cancel()  # a repeated cancellation keeps the original cleanup clock
+        assert bank.facts().cancelled_at == first_cancel
+
+        tagged.holding["b"].set()
+        await replaced
+        await join_retirements(h)
+        assert "b" in tagged.finished and bank.facts().cancelled_at == first_cancel
+        assert h.adapter.cleanup_failures == 0 and h.adapter.debt == []
+        if ending == "replacement":
+            assert source.read() == tag("d")  # the new program's first track cuts in
+            await until(lambda: heard_id(h) == "d")
+            await join_retirements(h)
+            assert h.pool.leased == 1
+        else:
+            assert source.read() == b"" and h.pool.leased == 0
+        assert await h.adapter.shutdown() is True and h.pool.leased == 0
+
+    asyncio.run(scenario())
+
+
+@offline
+async def test_a_prepared_next_track_retained_past_its_deadline_stays_charged() -> None:
+    # Backdate the bank clock so the original three-second deadline has nearly passed.
+    pool = PcmBankPool(clock=lambda: time.monotonic() - discord_adapter.CLEANUP_SECONDS + 0.05)
+    tagged = Tagged(frames=50)
+    tagged.holding["b"] = asyncio.Event()
+    matcher = FakeMatcher(recording("a"), recording("b"))
+    h = Harness(Adapter(matcher, tagged, pool=pool), pool, tagged)
+    await start_program(h)
+    await prepared_next(h, "b")
+    tagged.holding["a"] = asyncio.Event()
+    tagged.holding["a"].set()
+    shutdown = asyncio.create_task(h.adapter.shutdown())
+    await asyncio.sleep(0.2)  # past the original deadline; b's producer still holds its bank
+    assert h.adapter.cleanup_failures == 1 and not shutdown.done() and pool.leased == 1
+    tagged.holding["b"].set()
+    assert await shutdown is False  # released, but the missed deadline stays a failed verdict
+    assert pool.leased == 0
+
+
+@offline
+async def test_stale_completions_after_a_replacement_change_nothing() -> None:
+    h, tagged = program_harness("a", "b", producer=Tagged(frames=50))
+    source = await start_program(h)
+    await prepared_next(h, "b")
+    player = h.adapter.players[1]
+    old = player.station.desired
+    stale = player.source._pending  # pyright: ignore[reportPrivateUsage]
+    assert old is not None and stale is not None
+
+    h.adapter.matcher = FakeMatcher(recording("d"))
+    await h.play()
+    await prepared_next(h, "d")
+    await join_retirements(h)
+    station = player.station
+    new = station.desired
+    assert new is not None and new != old
+    heard = station.heard
+    assert heard is not None and heard.recording.key.recording_id == "a"
+
+    # Late reports for the displaced track, and the old program's continuation, are stale.
+    for kind in ("switched", "failed", "drained"):
+        h.adapter._settle(1, kind, stale)  # pyright: ignore[reportPrivateUsage]
+    await h.adapter._continue(player, old)  # pyright: ignore[reportPrivateUsage]
+    await join_retirements(h)
+    assert station.desired == new and station.heard is heard and next_id(h) == "d"
+    assert tagged.started == ["a", "b", "d"] and h.pool.leased == 2
+    pages = await now_texts(h)
+    assert "Song a" in pages[1] and all("Song b" not in p and "Song d" not in p for p in pages)
+
+    assert source.read() == tag("d")
+    await until(lambda: heard_id(h) == "d")
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_the_next_track_waits_for_capacity_held_by_a_retiring_track() -> None:
+    tagged = Tagged(frames=1)
+    tagged.holding["a"] = asyncio.Event()  # a's retirement keeps its bank until allowed
+    h, _ = program_harness("a", "b", "c", producer=tagged)
+    source = await start_program(h)
+    await prepared_next(h, "b")
+
+    assert source.read() == tag("b")  # a drains, b follows; a now retires
+    await until(lambda: heard_id(h) == "b")
+    for _ in range(50):
+        await asyncio.sleep(0)
+    # Both banks are charged: b audible and a retiring. c is neither leased nor attempted.
+    assert h.pool.leased == 2 and tagged.started == ["a", "b"] and next_id(h) is None
+    assert h.adapter.players[1].attempts == 0
+
+    tagged.holding["a"].set()
+    await prepared_next(h, "c")
+    assert tagged.finished == ["a"] and h.pool.leased == 2
+    assert source.read() == tag("c")
+    await until(lambda: heard_id(h) == "c")
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_busy_capacity_bounds_next_track_attempts_and_ends_the_program() -> None:
+    h, tagged = program_harness("a", "b", producer=Tagged(frames=1))
+    blocker = h.pool.acquire()  # another server holds the second bank
+    source = await start_program(h)
+    await join_retirements(h)
+    station = h.adapter.players[1].station
+    assert station.ending is discord_adapter.EndReason.UNAVAILABLE
+    assert h.adapter.players[1].attempts == discord_adapter.MAX_CONTINUATION_ATTEMPTS + 1
+    assert tagged.started == ["a"] and h.adapter.tasks == set()
+    assert source.read() == b""
+    await settle()
+    await join_retirements(h)
+    assert station.desired is None and station.ended is discord_adapter.EndReason.UNAVAILABLE
+    (status,) = await now_texts(h)
+    assert "the next recording could not be prepared" in status
+    assert blocker.release()
+    assert await h.adapter.shutdown() is True

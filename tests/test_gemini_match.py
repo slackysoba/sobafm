@@ -8,7 +8,7 @@ import logging
 import os
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -265,12 +265,12 @@ def test_the_last_model_output_supplies_the_text() -> None:
 def test_failures_make_one_call_and_log_only_a_safe_kind(
     transport: FakeTransport, kind: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    secret_request = "my private request text"
+    request = "my private request text"
     with caplog.at_level(logging.INFO), pytest.raises(MatchFailed) as error:
-        asyncio.run(matcher(transport).match(secret_request))
+        asyncio.run(matcher(transport).match(request))
     assert error.value.kind == kind and len(transport.calls) == 1
     assert f"kind={kind}" in caplog.text
-    for private in (secret_request, KEY, "provider text"):
+    for private in (request, KEY, "provider text"):
         assert private not in caplog.text
 
 
@@ -318,7 +318,9 @@ def test_the_evaluation_makes_no_call_unless_told_to_and_given_a_key() -> None:
     assert "REQUEST" not in keyless.stdout
 
 
-async def _served(handler: web.RequestHandler) -> tuple[web.AppRunner, str]:
+async def _served(
+    handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> tuple[web.AppRunner, str]:
     app = web.Application()
     app.router.add_post("/", handler)
     runner = web.AppRunner(app)
