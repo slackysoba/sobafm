@@ -5,6 +5,9 @@ through Discord command permissions; `/play` and `/stop` require the caller to s
 the bot's voice channel, except that a manager may stop from elsewhere. `/now` is
 private and open to ordinary listeners.
 
+`/play` asks an injected `Matcher` for a validated plan. A refusal or failure changes
+nothing, one request is matched at a time per server, and a stop during that wait wins.
+
 Each server's `Station` settles desired, prepared and heard facts on the event loop.
 Audio comes from an injected `Producer` that fills a leased `pcm.py` bank. The voice
 callback (`StationSource.read`) only copies prepared frames: it never waits on the

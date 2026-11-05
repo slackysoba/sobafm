@@ -110,7 +110,7 @@ class Transport(Protocol):
 
 
 class AiohttpTransport:
-    """One bounded POST at a time per call; no redirects, retries or environment proxies."""
+    """Bounded POSTs with no redirects, retries or environment proxies."""
 
     def __init__(self, *, timeout: float = TIMEOUT_SECONDS) -> None:
         self._timeout = aiohttp.ClientTimeout(total=timeout)
