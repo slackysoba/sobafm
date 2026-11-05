@@ -8,7 +8,7 @@ A self-hosted Discord music bot for Linux and Docker.
 
 ## Development status
 
-`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. Jamendo and Free Music Archive are the remaining sources; [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). The real catalog is still very small, and matching hasn't yet been evaluated against the live API. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings and `/skip` moves on ([operations](docs/operations.md)). Release qualification is not yet complete.
+`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. The real catalog holds 178 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching hasn't yet been evaluated against the live API. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings and `/skip` moves on ([operations](docs/operations.md)). Release qualification is not yet complete.
 
 The Python development toolchain and Linux CI are available. Current work establishes source admission and a feasible Linux resource configuration. A narrow end-to-end playback implementation follows. Listening comparisons are deferred optional evidence.
 

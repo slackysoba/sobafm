@@ -16,6 +16,7 @@ import time
 from array import array
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from sobafm.decode import DecodeInput, DecodeProducer, DecoderCommand
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES
@@ -225,6 +226,9 @@ def read_tag_values(path: Path) -> list[tuple[str, str]]:
 
 
 _ALL_RIGHTS = re.compile(r"all\s+rights\s+reserved", re.IGNORECASE)
+# FMA's own license for tracks that weren't Creative Commons, written as
+# "FMA-Limited: http://freemusicarchive.org/FMA_License" in the tags it added.
+_FMA_LIMITED = re.compile(r"FMA[-_ ]?(?:Limited|License)", re.IGNORECASE)
 _CC_LICENSE = re.compile(
     r"creativecommons\.org/(?:licenses/([a-z+-]+)/([0-9.]+)|publicdomain/[a-z]+/[0-9.]+)",
     re.IGNORECASE,
@@ -237,9 +241,24 @@ def tag_conflict(values: list[tuple[str, str]], license_url: str) -> str | None:
     for _kind, text in values:
         if _ALL_RIGHTS.search(text):
             return "embedded tag says all rights reserved"
+        if _FMA_LIMITED.search(text):
+            return "embedded tag names FMA's limited license"
         for found in _CC_LICENSE.finditer(text):
             if expected is None or found.group(0).casefold() != expected.group(0).casefold():
                 return "embedded tag names a different license"
+    return None
+
+
+_FMA_PAGE = re.compile(r"freemusicarchive\.org(/music/\S+)", re.IGNORECASE)
+
+
+def tag_page_conflict(values: list[tuple[str, str]], page: str) -> str | None:
+    """Why the tags name a different FMA page from the listing, or None if they don't."""
+    expected = unquote(urlsplit(page).path).rstrip("/").casefold()
+    for _kind, text in values:
+        for found in _FMA_PAGE.findall(text):
+            if unquote(found).rstrip("/.,;:)").casefold() != expected:
+                return "embedded tag names a different track page"
     return None
 
 

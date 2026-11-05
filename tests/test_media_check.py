@@ -209,6 +209,8 @@ def test_unrelated_frames_may_be_large_or_compressed(tmp_path: Path) -> None:
         "Licensed under http://creativecommons.org/licenses/by-nc-nd/3.0/",
         "See http://creativecommons.org/licenses/by-nc/2.5/ for terms",
         "http://creativecommons.org/publicdomain/zero/1.0/",
+        "FMA-Limited: http://freemusicarchive.org/FMA_License",
+        "URL: http://freemusicarchive.org/a Copyright: FMA-Limited: http://example.org/",
     ],
 )
 def test_conflicting_tags_are_named(text: str) -> None:

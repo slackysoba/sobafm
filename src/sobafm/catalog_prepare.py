@@ -23,9 +23,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
-from urllib.parse import urlsplit
 
-from sobafm.catalog import Catalog, Source, metadata_digest, parse_catalog
+from sobafm.catalog import Catalog, Source, credential_free_url, metadata_digest, parse_catalog
 from sobafm.catalog_import import catalog_document
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES
 
@@ -105,6 +104,8 @@ _RAW_COLUMNS = (
 )
 # The importer keeps less than this per detail; a long artist biography stops here.
 _MAX_HINT_CHARACTERS = 200
+# What some listings hold in a field nobody filled in. It isn't a name or a holder.
+_MISSING = "null"
 DATASET_NOTICE = (
     "Listing and file from the FMA research dataset (Defferrard et al., 2017); "
     "its metadata is under CC BY 4.0."
@@ -157,6 +158,12 @@ def _importable(value: str, *, maximum: int = 200) -> bool:
         and ">" not in text
         and not any(unicodedata.category(c).startswith("C") for c in text)
     )
+
+
+def _listed(row: Listing, key: str) -> str:
+    """An optional credit field to reproduce, or "" if it's blank, a marker or unsafe."""
+    text = _single_line(row.get(key, ""))
+    return text if text.casefold() != _MISSING and _importable(text) else ""
 
 
 def license_class(row: Listing) -> str | None:
@@ -293,8 +300,8 @@ def manifest_row(row: Listing, embedded: Sequence[str] = ()) -> Row:
         {"name": _single_line(row["artist.name"]), "role": "Artist", "evidence": page}
     ]
     for key, role in (("track.composer", "Composer"), ("track.lyricist", "Lyricist")):
-        if _importable(row[key]):
-            creators.append({"name": _single_line(row[key]), "role": role, "evidence": page})
+        if name := _listed(row, key):
+            creators.append({"name": name, "role": role, "evidence": page})
     notices: list[str] = []
     for key, label in (
         ("album.title", "Album"),
@@ -302,8 +309,8 @@ def manifest_row(row: Listing, embedded: Sequence[str] = ()) -> Row:
         ("track_copyright_p", "Sound recording copyright (as listed)"),
         ("track.publisher", "Publisher (as listed)"),
     ):
-        if _importable(row.get(key, "")):
-            notices.append(f"{label}: {_single_line(row[key])}")
+        if text := _listed(row, key):
+            notices.append(f"{label}: {text}")
     notices += [DATASET_NOTICE, PLAYBACK_NOTICE]
     tags = dict.fromkeys(
         tag.strip()
@@ -328,7 +335,7 @@ def manifest_row(row: Listing, embedded: Sequence[str] = ()) -> Row:
         ("track.language_code", "language"),
     ):
         text = _plain_text(row[key])
-        if text:
+        if text and text.casefold() != _MISSING:
             details.append([label, text])
     if row["track.date_created"][:4].isdigit():
         details.append(["listed", row["track.date_created"][:4]])
@@ -352,8 +359,8 @@ def manifest_row(row: Listing, embedded: Sequence[str] = ()) -> Row:
         "details": details,
         "embedded_notices": list(embedded),
     }
-    if _importable(row["track.composer"]):
-        result["composer"] = _single_line(row["track.composer"])
+    if composer := _listed(row, "track.composer"):
+        result["composer"] = composer
     return result
 
 
@@ -409,8 +416,7 @@ def media_manifest(verified: Iterable[VerifiedFile]) -> Row:
 
 def admission_reviews(catalog: Catalog, evidence: str, note: str) -> Row:
     """Bind the maintainer's acceptance to each recording's digest."""
-    if urlsplit(evidence).scheme != "https":
-        raise ValueError("evidence must be the HTTPS link to the acceptance")
+    credential_free_url(evidence)  # the application refuses anything else at startup
     return {
         "schema": "sobafm-admission-1",
         "reviews": [

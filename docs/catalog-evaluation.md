@@ -100,6 +100,10 @@ incomplete inventory into eligible songs. The fixed 16 requests in
 `evaluations/catalog/requests.json` remain available for it and do not create
 listening scores.
 
+## Rule-based FMA catalog
+
+[Decision 0007](decisions/0007-fma-dataset-batch-catalog.md) records the written rule behind the 178 reviewed recordings in [`fma-2026-11`](../evaluations/catalog/fma-2026-11/), prepared from the [FMA research dataset](https://github.com/mdeff/fma) (Defferrard, Benzi, Vandergheynst and Bresson, "FMA: A Dataset for Music Analysis", ISMIR 2017; its metadata is CC BY 4.0). [Issue #122](https://github.com/slackysoba/sobafm/issues/122) records the maintainer's acceptance, the lists, the request counts and the results, and [the build steps](operations.md#build-the-fma-catalog) show how to run it. A review of this catalog can't establish what the dataset's research purpose allows, whether the permission reaches a third-party copy, or anything after its 2017 snapshot. The decision record says so. The sections below describe the importer it feeds and the earlier single-recording candidates, which it doesn't change.
+
 ## Saved source metadata imports
 
 The [observed Night Owl FMA candidate](../evaluations/catalog/fma-night-owl-candidate.md)
@@ -485,7 +489,8 @@ separates download permission from stream retrieval and documents rejection when
 Use the approved stream path for the planned streaming treatment; do not use a
 download endpoint as a cache or availability workaround.
 
-For FMA persistence, a later decision must name the operator-owned
+For FMA persistence, [decision 0007](decisions/0007-fma-dataset-batch-catalog.md)
+is that decision for the current catalog. Any other import needs one that names the operator-owned
 volume, maximum bytes/tracks, accepted file types, validation before admission,
 removal/eviction rule, recheck cadence and backup policy. Keep canonical metadata
 and credit snapshots separate from disposable audio. Do not persist expiring or

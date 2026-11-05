@@ -319,6 +319,25 @@ def test_unsafe_optional_credit_text_is_left_out_not_fatal() -> None:
     assert recording.composer is None
 
 
+def test_the_listings_null_marker_is_not_a_credit() -> None:
+    row = listing(
+        **{
+            "track.composer": "null",
+            "track.lyricist": "NULL",
+            "track.publisher": "null",
+            "track_copyright_c": "null",
+            "track_copyright_p": "null",
+            "track.information": "null",
+        }
+    )
+    built = manifest_row(row)
+    assert "composer" not in built
+    assert cast(list[Row], built["creators"])[1:] == []
+    assert not any("null" in str(notice).casefold() for notice in cast(list[str], built["notices"]))
+    assert not any(value == "null" for _label, value in cast(list[list[str]], built["details"]))
+    assert imported([built]).report.normalized == 1
+
+
 def test_the_importer_refuses_a_malformed_detail() -> None:
     row = manifest_row(listing())
     row["details"] = [["only a label"]]
@@ -385,6 +404,8 @@ def test_reviews_need_an_https_acceptance_link() -> None:
     catalog = finalized_catalog(draft(100).catalog, verified("100"))
     with pytest.raises(ValueError, match="HTTPS"):
         admission_reviews(catalog, "http://example.org/", "rule")
+    with pytest.raises(ValueError, match="fragment"):
+        admission_reviews(catalog, "https://example.org/issues/1#issuecomment-2", "rule")
 
 
 def test_manifest_parses_with_the_applications_own_reader(tmp_path: Path) -> None:
