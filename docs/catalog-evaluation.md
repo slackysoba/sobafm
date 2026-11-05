@@ -48,7 +48,7 @@ make its audio available.
 ## Current selection contract
 
 [Decision 0002](decisions/0002-prompt-catalog-selection.md) pools complete
-recordings from all three prepared sources, and [decision
+recordings from every prepared source partition, and [decision
 0006](decisions/0006-gemini-play-matching.md) ranks them with one Gemini call.
 Listening is optional deferred evidence, not a prerequisite for this implementation.
 
@@ -241,7 +241,7 @@ Only if a later listening comparison is requested, its execution requires:
    rights before listening, without reopening the confirmed source grants.
 3. Actual observations and human ratings, with missing cases retained.
 4. A reviewed account of results and any proposed source/storage change. The
-   accepted selector already compares all three sources; a comparison does not
+   accepted selector already compares every supplied source; a comparison does not
    automatically enable playback or expand storage permission.
 
 The selector's acceptance is deterministic checks and independent review, with
