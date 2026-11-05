@@ -247,7 +247,7 @@ def test_partial_final_frame_is_a_failure_not_silence() -> None:
 
 def test_partial_final_frame_after_readiness_emits_only_whole_frames() -> None:
     _, bank = fresh_bank()
-    data = pattern(READY_BYTES + 100)
+    data = pattern(READY_BYTES + 101)  # not a whole number of stereo samples
     bank.write(data)
     bank.end_pcm()
     assert bank.facts().failure == "partial_final_frame"
@@ -258,6 +258,55 @@ def test_partial_final_frame_after_readiness_emits_only_whole_frames() -> None:
     assert bytes(received) == data[:READY_BYTES]
     assert bank.read_frame() == b""
     assert bank.facts().audible_drain
+
+
+# Night Owl decoded to 37,260,508 bytes: 988 bytes past a whole frame.
+REAL_REMAINDER = 37_260_508 % FRAME_BYTES
+
+
+def test_sample_aligned_remainder_is_valid_and_never_emitted() -> None:
+    assert REAL_REMAINDER == 988
+    _, bank = fresh_bank()
+    data = pattern(2 * FRAME_BYTES + REAL_REMAINDER)
+    bank.write(data)
+    assert not bank.ready_now()
+    bank.end_pcm()
+    facts = bank.facts()
+    assert facts.failure is None and facts.pcm_valid and facts.ready
+    assert bank.ready_now() and facts.cancelled_at is None
+    assert bank.read_frame() == data[:FRAME_BYTES]
+    assert not bank.facts().audible_drain
+    assert bank.read_frame() == data[FRAME_BYTES : 2 * FRAME_BYTES]
+    assert bank.facts().audible_drain  # the remainder is not a frame to drain
+    assert bank.read_frame() == b""
+    assert bank.facts().buffered_bytes == REAL_REMAINDER
+
+
+def test_sample_aligned_remainder_after_readiness_drains_every_whole_frame() -> None:
+    _, bank = fresh_bank()
+    data = pattern(READY_BYTES + REAL_REMAINDER)
+    bank.write(data)
+    assert bank.ready_now()
+    bank.end_pcm()
+    assert bank.facts().failure is None and bank.facts().pcm_valid
+    received = bytearray()
+    while (frame := bank.read_frame()) not in (None, b""):
+        received += frame
+    assert bytes(received) == data[:READY_BYTES]
+    assert bank.read_frame() == b"" and bank.facts().audible_drain
+
+
+@pytest.mark.parametrize(
+    ("length", "failure"),
+    [(1, "partial_final_frame"), (3, "partial_final_frame"), (4, "empty_pcm"), (988, "empty_pcm")],
+)
+def test_stream_shorter_than_one_frame_fails(length: int, failure: str) -> None:
+    _, bank = fresh_bank()
+    bank.write(pattern(length))
+    bank.end_pcm()
+    facts = bank.facts()
+    assert facts.failure == failure and not facts.pcm_valid and not facts.ready
+    assert bank.read_frame() == b""
 
 
 def test_empty_pcm_is_a_failure() -> None:

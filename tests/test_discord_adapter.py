@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import time
@@ -213,18 +214,22 @@ def offline(test: Callable[[], Coroutine[Any, Any, None]]) -> Callable[[], None]
 
 
 class Producer:
-    """Writes ``frames`` frames (or the readiness amount) and optionally ends the stream."""
+    """Writes ``frames`` frames (or the readiness amount) plus ``extra`` bytes and
+    optionally ends the stream."""
 
-    def __init__(self, frames: int = READY_BYTES // FRAME_BYTES, *, end: bool = True) -> None:
+    def __init__(
+        self, frames: int = READY_BYTES // FRAME_BYTES, *, end: bool = True, extra: int = 0
+    ) -> None:
         self.frames = frames
         self.end = end
+        self.extra = extra
         self.release = asyncio.Event()
         self.hold = False
         self.settled: list[PcmBank] = []
 
     async def produce(self, recording: Recording, bank: PcmBank) -> None:
         try:
-            bank.write(b"\x01" * (FRAME_BYTES * self.frames))
+            bank.write(b"\x01" * (FRAME_BYTES * self.frames + self.extra))
             if self.end:
                 bank.end_pcm()
             await asyncio.Event().wait()  # producers stay alive until cancelled
@@ -495,6 +500,29 @@ async def test_audio_source_returns_promptly_when_empty() -> None:
 
 
 @offline
+async def test_audio_source_counts_handed_frames_and_underruns_without_waiting() -> None:
+    source = StationSource(lambda kind, track: None)
+    pool = PcmBankPool()
+    bank = pool.acquire()
+    task = asyncio.create_task(asyncio.sleep(0))
+    track = Track(cast(Any, None), bank, task)
+    source.offer(track)
+    assert source.read() == SILENCE and track.underruns == 0  # pending, not ready
+    bank.write(b"\x01" * READY_BYTES)
+    with bank._lock:  # pyright: ignore[reportPrivateUsage]
+        assert source.read() == SILENCE  # pending and ready, but the bank is busy
+    assert track.underruns == 1 and track.frames == 0
+    for _ in range(READY_BYTES // FRAME_BYTES):
+        assert source.read() != SILENCE
+    assert source.read() == SILENCE  # current and ready, but nothing buffered
+    assert track.frames == READY_BYTES // FRAME_BYTES and track.underruns == 2
+    assert source.take_all() == [track]
+    bank.cancel()
+    await task
+    assert bank.release() and pool.leased == 0
+
+
+@offline
 async def test_producer_failure_before_switch_keeps_heard_audio() -> None:
     h = harness()
     source = await h.join()
@@ -537,6 +565,112 @@ async def test_natural_drain_ends_the_program_and_releases_the_bank() -> None:
     station = h.adapter.players[1].station
     assert station.heard is None and station.desired is None
     assert h.pool.leased == 0
+
+
+@offline
+async def test_a_track_ending_past_a_whole_frame_plays_every_whole_frame_before_drain() -> None:
+    # Night Owl's real output ended 988 bytes (whole samples) past a whole frame.
+    h = harness(Producer(frames=3, extra=988))
+    reports: list[str] = []
+    source = await h.join()
+    report = source._report  # pyright: ignore[reportPrivateUsage]
+
+    def spy(kind: str, track: Track) -> None:
+        reports.append(kind)
+        report(kind, track)
+
+    source._report = spy  # pyright: ignore[reportPrivateUsage]
+    await h.play()
+    await settle()
+    frames = [source.read() for _ in range(3)]
+    assert frames == [b"\x01" * FRAME_BYTES] * 3
+    assert reports == ["switched"]  # every whole frame played, no drain yet
+    assert source.read() == b""
+    assert reports == ["switched", "drained"]
+    await settle()
+    for task in list(h.adapter.tasks):
+        await task
+    station = h.adapter.players[1].station
+    assert station.heard is None and station.desired is None
+    assert h.pool.leased == 0
+
+
+def adapter_log(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == "sobafm.discord_adapter"]
+
+
+def test_played_tracks_are_logged_without_request_text(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="sobafm")
+    request = "piano"
+
+    async def scenario() -> None:
+        h = harness(Producer(frames=2, extra=988))
+        source = await h.join()
+        await h.play(request)
+        await settle()
+        assert source.read() != SILENCE
+        await settle()
+        assert source.read() != SILENCE
+        assert source.read() == b""
+        await settle()
+        for task in list(h.adapter.tasks):
+            await task
+        await settle()  # let finished retirements leave the adapter's task set
+        assert await h.adapter.shutdown() is True
+
+    asyncio.run(scenario())
+    lines = adapter_log(caplog)
+    retired, seconds_text = lines[3].rsplit(" cancel_to_release_seconds=", 1)
+    assert [*lines[:3], retired, *lines[4:]] == [
+        "voice connected",
+        "heard source changed: recording=jamendo:a credit_snapshot=credit-a",
+        "heard source cleared",
+        "track retired: recording=jamendo:a frames_handed_to_voice=2 underruns=0 "
+        "transfer_complete=False decoder_complete=False pcm_valid=True audible_drain=True "
+        "failure=none bank_released=True",
+        "voice disconnected",
+        "shutdown: released=True leases_held=0 cleanup_failures=0",
+    ]
+    seconds = float(seconds_text)
+    assert 0 <= seconds < discord_adapter.CLEANUP_SECONDS
+    assert all(request not in line for line in lines)
+    assert request not in caplog.text
+
+
+def test_underruns_and_retained_banks_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="sobafm")
+    ready = READY_BYTES // FRAME_BYTES
+
+    async def scenario() -> None:
+        h = harness(Producer(frames=ready, end=False))  # ready, but never ends
+        source = await h.join()
+        await h.play()
+        await settle()
+        for _ in range(ready):
+            assert source.read() != SILENCE
+        assert source.read() == SILENCE and source.read() == SILENCE  # two underruns
+        await settle()
+        player = h.adapter.players[1]
+        current = player.source._current  # pyright: ignore[reportPrivateUsage]
+        assert current is not None
+        pending = current.bank.reserve_write(1)  # a borrowed region blocks release
+        assert pending is not None
+        assert await h.adapter.shutdown() is False
+        current.bank.commit_write(0)
+        await settle()
+        assert await h.adapter.shutdown() is True
+
+    asyncio.run(scenario())
+    lines = adapter_log(caplog)
+    (retired,) = [line for line in lines if line.startswith("track retired")]
+    assert f"frames_handed_to_voice={ready} underruns=2 " in retired
+    assert "pcm_valid=False audible_drain=False failure=none" in retired
+    assert retired.endswith("bank_released=False cancel_to_release_seconds=none")
+    shutdowns = [line for line in lines if line.startswith("shutdown")]
+    assert shutdowns == [
+        "shutdown: released=False leases_held=1 cleanup_failures=0",
+        "shutdown: released=True leases_held=0 cleanup_failures=0",
+    ]
 
 
 # Ownership and shutdown.

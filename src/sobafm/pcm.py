@@ -13,8 +13,12 @@ blocking and copies at most one frame. Producer copies run outside that lock.
 
 Transfer completion, decoder completion, valid PCM and audible drain are
 independent facts. Only the producer's verified end of PCM can make a recording
-shorter than the readiness target ready, and a partial final frame fails the
-stream instead of becoming silence.
+shorter than the readiness target ready. A decoder's output length need not be
+a multiple of the 20 ms frame: a stream of whole stereo samples holding at least
+one whole frame is valid, its remainder shorter than one frame is never emitted
+or padded with silence, and audible drain follows the last whole frame. A length
+that is not a whole number of samples is truncated output and fails the stream
+as a partial final frame; a stream with no whole frame is empty.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from typing import Literal
 SAMPLE_RATE = 48_000
 CHANNELS = 2
 SAMPLE_BYTES = 2  # signed 16-bit little-endian, interleaved
+STEREO_SAMPLE_BYTES = CHANNELS * SAMPLE_BYTES
 FRAME_MILLISECONDS = 20
 BYTES_PER_SECOND = SAMPLE_RATE * CHANNELS * SAMPLE_BYTES
 FRAME_BYTES = BYTES_PER_SECOND * FRAME_MILLISECONDS // 1000
@@ -230,19 +235,33 @@ class PcmBank:
         """Declare the producer's verified end of PCM; no more bytes follow.
 
         Call this only after the source's completion policy is satisfied. The
-        bank then requires a non-empty whole number of frames.
+        stream must be a whole number of stereo samples, or it fails as
+        ``partial_final_frame`` (truncated output), and must hold at least one
+        whole frame, or it fails as ``empty_pcm``. A valid stream's remainder
+        shorter than one frame is never emitted; drain follows the last whole
+        frame.
         """
         with self._lock:
             self._accepting_backing()
             self._ended = True
             if self._written == 0:
                 self._failure = "empty_pcm"
-            elif self._written % FRAME_BYTES:
+            elif self._written % STEREO_SAMPLE_BYTES:
                 self._failure = "partial_final_frame"
+            elif self._written < FRAME_BYTES:
+                self._failure = "empty_pcm"
             else:
                 self._pcm_valid = True
                 self._ready = True
             self._update_drain()
+
+    def ready_now(self) -> bool:
+        """Whether frames have become readable, without taking the bank lock.
+
+        Readiness only ever changes from False to True, so the voice callback
+        may read it without waiting; it says nothing about buffered frames.
+        """
+        return self._ready
 
     def mark_transfer_complete(self) -> None:
         """Record that the source transfer reached its clean end."""
@@ -276,8 +295,8 @@ class PcmBank:
             if self._written - self._read < FRAME_BYTES:
                 self._update_drain()
                 return b"" if self._drained else None
-            # Reads stay frame-aligned and the bank holds whole frames, so a
-            # frame never straddles the ring boundary.
+            # Reads stay frame-aligned and the bank size is a whole number of
+            # frames, so a frame never straddles the ring boundary.
             start = self._read % BANK_BYTES
             with memoryview(backing) as whole, whole[start : start + FRAME_BYTES] as frame:
                 data = bytes(frame)

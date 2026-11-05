@@ -21,9 +21,14 @@ Transfer completion, decoder completion and valid PCM are recorded separately.
 Decoder completion is an exit status of zero without cancellation: mpg123 also
 exits zero on SIGTERM. The verified end of PCM is declared only when the
 transfer completed, the decoder completed and no failure or overrun occurred.
-Any failure stops the bank's stream. Once the stream stops, the reader closes
-the decoder's stdout, so a decoder blocked writing to a full pipe gets EPIPE and
-acts on SIGTERM instead of waiting for the SIGKILL fallback.
+The bank then judges the length: whole stereo samples with at least one whole
+frame are valid PCM even when the length is not a multiple of the frame, and the
+remainder shorter than one frame is simply not emitted; a length that is not a
+whole number of samples fails as ``partial_final_frame`` and a stream without a
+whole frame as ``empty_pcm``. Any failure stops the bank's stream. Once the
+stream stops, the reader closes the decoder's stdout, so a decoder blocked
+writing to a full pipe gets EPIPE and acts on SIGTERM instead of waiting for the
+SIGKILL fallback.
 
 Cleanup has one owner (``finish``) and one original deadline, three seconds
 after the first of cancellation, a failure or the decoder's end of output.
@@ -588,7 +593,12 @@ class DecodeProducer:
         return True
 
     def _judge(self) -> None:
-        """Record decoder completion and the verified end of PCM, if earned."""
+        """Record decoder completion and the verified end of PCM, if earned.
+
+        Only the bank's own length failures (not whole samples, or no whole
+        frame) stop a completed stream here; a sample-aligned remainder shorter
+        than one frame is valid and leaves every whole frame readable.
+        """
         bank = self._bank
         if bank is None or bank.facts().released:
             return

@@ -139,8 +139,9 @@ def test_nonzero_exit_after_full_output_fails(source: DecodeInput, pool: PcmBank
     assert producer.release()
 
 
-@pytest.mark.parametrize("extra", [1, FRAME_BYTES // 2])
+@pytest.mark.parametrize("extra", [1, 3, FRAME_BYTES // 2 + 1])
 def test_partial_final_frame_fails(source: DecodeInput, pool: PcmBankPool, extra: int) -> None:
+    """Output that is not a whole number of stereo samples is truncated."""
     producer = DecodeProducer(source, command=echo_frames(1, extra=extra), pool=pool)
     run(producer)
     report = producer.report()
@@ -148,6 +149,39 @@ def test_partial_final_frame_fails(source: DecodeInput, pool: PcmBankPool, extra
     assert report.transfer_complete and report.decoder_complete
     assert report.pcm is not None and not report.pcm.pcm_valid
     assert report.pcm.failure == "partial_final_frame"
+    assert producer.release()
+
+
+def test_sample_aligned_output_that_is_not_frame_aligned_plays_to_its_end(
+    source: DecodeInput, pool: PcmBankPool
+) -> None:
+    # Night Owl's real output ended 988 bytes past a whole frame.
+    producer = DecodeProducer(source, command=echo_frames(3, extra=988), pool=pool)
+    run(producer)
+    report = producer.report()
+    assert report.failure is None
+    assert report.transfer_complete and report.decoder_complete
+    assert report.pcm is not None and report.pcm.pcm_valid and report.pcm.failure is None
+    assert report.pcm.cancelled_at is None and report.pcm.written_bytes == 3 * FRAME_BYTES + 988
+    bank = producer.bank
+    assert bank is not None
+    frames = [bank.read_frame() for _ in range(3)]  # after finish returned
+    assert frames == [b"\x01" * FRAME_BYTES] * 3
+    assert bank.read_frame() == b""
+    assert bank.facts().audible_drain and bank.facts().cancelled_at is None
+    assert producer.release()
+
+
+@pytest.mark.parametrize(("extra", "failure"), [(988, "empty_pcm"), (987, "partial_final_frame")])
+def test_output_under_one_frame_fails(
+    source: DecodeInput, pool: PcmBankPool, extra: int, failure: str
+) -> None:
+    producer = DecodeProducer(source, command=echo_frames(0, extra=extra), pool=pool)
+    run(producer)
+    report = producer.report()
+    assert report.failure == failure
+    assert report.pcm is not None and not report.pcm.pcm_valid
+    assert report.pcm.cancelled_at is not None
     assert producer.release()
 
 
