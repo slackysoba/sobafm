@@ -35,7 +35,13 @@ line-length = 100
 select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
 
 [tool.pyright]
-include = ["src", "tests", "evaluations/gemini_matching", "evaluations/linux_resource"]
+include = [
+    "src",
+    "tests",
+    "evaluations/catalog",
+    "evaluations/gemini_matching",
+    "evaluations/linux_resource",
+]
 pythonVersion = "3.14"
 pythonPlatform = "Linux"
 typeCheckingMode = "strict"

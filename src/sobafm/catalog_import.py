@@ -318,6 +318,38 @@ def _keep_details(record: dict[str, object], claims: list[tuple[str, object]]) -
         record["details"] = list(lines.values())
 
 
+def _distinct(names: list[str]) -> list[str]:
+    """Keep the first spelling of each name; the catalog treats case variants as one."""
+    kept: dict[str, str] = {}
+    for name in names:
+        kept.setdefault(" ".join(unicodedata.normalize("NFKC", name).casefold().split()), name)
+    return list(kept.values())
+
+
+_EMBEDDED_NOTICE = "Embedded in the file (as supplied): "
+_URL = re.compile(r"\S+://\S+")
+
+
+def _embedded_notice(value: object) -> str:
+    """One notice from the file's own tags. Its links stay, so each must be credential-free."""
+    if not isinstance(value, str):
+        raise CatalogInputError("expected bounded text")
+    for link in cast(list[str], _URL.findall(value)):
+        try:
+            url = urlsplit(link)
+            safe = url.scheme in ("http", "https") and url.username is None and url.password is None
+        except ValueError as exc:
+            raise CatalogInputError("unsafe link in embedded notice") from exc
+        if not safe:
+            raise CatalogInputError("unsafe link in embedded notice")
+    # Everything around the links gets the same checks as any other supplied text.
+    _text(_URL.sub("link", value), 1024 - len(_EMBEDDED_NOTICE))
+    notice = _EMBEDDED_NOTICE + value
+    if len(notice) > 1024:
+        raise CatalogInputError("embedded notice exceeds the notice limit")
+    return notice
+
+
 def _base(identity: str, title: object, artist: object, link: str) -> dict[str, object]:
     name = _text(artist)
     return {
@@ -669,7 +701,8 @@ def _fma(row: dict[str, object], context: ImportContext) -> tuple[dict[str, obje
         "tags",
         "import_status",
     }
-    if not required <= row.keys() or not row.keys() <= required | {"id", "composition", "composer"}:
+    optional = {"id", "composition", "composer", "details", "embedded_notices"}
+    if not required <= row.keys() or not row.keys() <= required | optional:
         raise CatalogInputError("invalid FMA manifest fields")
     link = _link(row["source_url"], source=Source.FMA)
     identity = _id(row["id"]) if "id" in row else urlsplit(link).path.rstrip("/")
@@ -705,11 +738,12 @@ def _fma(row: dict[str, object], context: ImportContext) -> tuple[dict[str, obje
             + "; "
             + _link(creator["evidence"], source=Source.FMA)
         )
-    record["creators"] = list(dict.fromkeys(creators))
+    record["creators"] = _distinct(creators)
     license_data = _object(row["license"])
     if set(license_data) != {"label", "url"}:
         raise CatalogInputError("invalid license fields")
     notices.extend(_text(v, 1024) for v in _list(row["notices"], 12))
+    notices.extend(_embedded_notice(v) for v in _list(row.get("embedded_notices", []), 3))
     record["credits"] = _credits(
         Source.FMA,
         record,
@@ -719,7 +753,13 @@ def _fma(row: dict[str, object], context: ImportContext) -> tuple[dict[str, obje
     )
     tags = _tags(row["tags"])
     record["facts"] = _facts(tags, link, issues)
-    _keep_details(record, [("tag", tag) for tag in tags])
+    claims: list[tuple[str, object]] = []
+    for item in _list(row.get("details", []), MAX_DETAILS):
+        pair = _list(item, 2)
+        if len(pair) != 2:
+            raise CatalogInputError("a detail is one label and one value")
+        claims.append((_text(pair[0], 32), pair[1]))
+    _keep_details(record, [*claims, *(("tag", tag) for tag in tags)])
     for field in ("composition", "composer"):
         if row.get(field) is not None:
             record[field] = _text(row[field])
