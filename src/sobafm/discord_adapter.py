@@ -144,7 +144,7 @@ SKIPPING = (
     "the current one continues until then."
 )
 ENDED = {
-    EndReason.EXHAUSTED: "every recording chosen for its request has played or could not start",
+    EndReason.EXHAUSTED: "no recording chosen for its request is left to try",
     EndReason.UNAVAILABLE: "the next recording could not be prepared",
     EndReason.NO_LISTENERS: "no listeners remained",
 }

@@ -727,9 +727,8 @@ async def test_now_privately_shows_complete_credits_to_ordinary_listeners() -> N
 
     listener = await run(h.adapter.now, inter(None))  # not in voice, not a manager
     assert listener.texts()[0] == (
-        "Now heard (full credits follow). This is the program's last recording: every "
-        "recording chosen for its request has played or could not start. Use `/play` to start "
-        "a new program."
+        "Now heard (full credits follow). This is the program's last recording: no "
+        "recording chosen for its request is left to try. Use `/play` to start a new program."
     )  # the one-recording catalog has nothing to continue with
     pages = listener.sent[1:]
     assert [p.text for p in pages] == [heard.credits.page(n).text for n in range(1, len(pages) + 1)]
@@ -1437,8 +1436,8 @@ async def test_exhaustion_ends_the_program_without_repeating_or_looping() -> Non
     assert station.desired is None and station.heard is None and h.pool.leased == 0
     assert station.ended is discord_adapter.EndReason.EXHAUSTED
     assert await now_texts(h) == [
-        "Nothing is audible. The last program ended: every recording chosen for its "
-        "request has played or could not start. Use `/play` to start a new one."
+        "Nothing is audible. The last program ended: no recording chosen for its "
+        "request is left to try. Use `/play` to start a new one."
     ]
     assert source.read() == b""
 
@@ -1525,7 +1524,7 @@ async def test_skip_failure_keeps_the_current_audio() -> None:
     source2 = await start_program(h2)
     await join_retirements(h2)
     text = await skip(h2)
-    assert text.startswith("Nothing follows: every recording chosen") and "continues" in text
+    assert text.startswith("Nothing follows: no recording chosen") and "continues" in text
     assert source2.read() == tag("a")
     assert await h.adapter.shutdown() is True and await h2.adapter.shutdown() is True
 
