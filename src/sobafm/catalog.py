@@ -1,4 +1,4 @@
-"""Bounded, offline selection over reviewed source metadata; no provider or audio I/O."""
+"""Bounded, offline catalog metadata and admission rules; no provider or audio I/O."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from urllib.parse import urlsplit
 MAX_CATALOG_BYTES = 2_000_000
 MAX_RECORDS_PER_SOURCE = 256
 MAX_FEATURES = 32
-MAX_QUERY_FEATURES = 16
 MAX_DURATION_SECONDS = 86_400
-MAX_RESULTS = 20
+MAX_DETAILS = 24
+MAX_DETAIL_CHARACTERS = 160
 
 
 class CatalogInputError(ValueError):
@@ -54,14 +54,6 @@ class SnapshotState(StrEnum):
     COMPLETE = "complete"
     PARTIAL = "partial"
     UNAVAILABLE = "unavailable"
-
-
-class CoverageState(StrEnum):
-    COMPLETE = "complete"
-    PARTIAL = "partial"
-    UNAVAILABLE = "unavailable"
-    MISSING = "missing"
-    EMPTY = "empty"
 
 
 class Feature(StrEnum):
@@ -136,6 +128,8 @@ class Recording:
     composer: str | None
     facts: tuple[Fact, ...]
     credits: CreditSnapshot | None
+    # Source-supplied text used only as a matching hint: tags, tempo, album and similar.
+    details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -167,61 +161,6 @@ class AdmissionReview:
     synthetic: bool
     evidence: str
     note: str | None = None
-
-
-@dataclass(frozen=True)
-class Criterion:
-    feature: Feature
-    value: bool
-
-
-@dataclass(frozen=True)
-class Query:
-    preferences: tuple[Criterion, ...] = ()
-    required: tuple[Criterion, ...] = ()
-    min_seconds: int | None = None
-    max_seconds: int | None = None
-    recording: RecordingKey | None = None
-    title: str | None = None
-    artist: str | None = None
-    composition: str | None = None
-    composer: str | None = None
-    excluded_recordings: tuple[RecordingKey, ...] = ()
-    excluded_creators: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class Match:
-    recording: Recording
-    strong: tuple[str, ...]
-    weak: tuple[str, ...]
-    contradicted: tuple[str, ...]
-    unknown: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class Rejection:
-    key: RecordingKey
-    reasons: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class Coverage:
-    source: Source
-    state: CoverageState
-    note: str
-    provided: int
-    admitted: int
-    matched: int
-
-
-@dataclass(frozen=True)
-class Selection:
-    matches: tuple[Match, ...]
-    rejected: tuple[Rejection, ...]
-    coverage: tuple[Coverage, ...]
-    synthetic: bool
-    total_matches: int
 
 
 def _object(value: object, fields: set[str], required: set[str]) -> dict[str, object]:
@@ -355,7 +294,7 @@ def _recording(value: object, source: Source) -> Recording:
         "facts",
         "credits",
     }
-    data = _object(value, fields, fields)
+    data = _object(value, fields | {"details"}, fields)
     artist = _text(data["primary_artist"])
     creators = _unique_strings(data["creators"], 16)
     if _canonical(artist) not in {_canonical(c) for c in creators}:
@@ -391,6 +330,7 @@ def _recording(value: object, source: Source) -> Recording:
         _optional_text(data["composer"]),
         tuple(sorted(facts, key=lambda f: f.feature)),
         _credit(data["credits"]),
+        _unique_strings(data.get("details", []), MAX_DETAILS, MAX_DETAIL_CHARACTERS),
     )
 
 
@@ -476,89 +416,44 @@ def parse_reviews(payload: str) -> tuple[AdmissionReview, ...]:
     return tuple(result)
 
 
-def _criteria(value: object) -> tuple[Criterion, ...]:
-    result: list[Criterion] = []
-    for item in _list(value, MAX_QUERY_FEATURES):
-        criterion = _object(item, {"feature", "value"}, {"feature", "value"})
-        result.append(
-            Criterion(
-                Feature(_choice(criterion["feature"], tuple(Feature))),
-                _boolean(criterion["value"]),
-            )
-        )
-    if len({c.feature for c in result}) != len(result):
-        raise CatalogInputError("duplicate or contradictory query criteria")
-    return tuple(sorted(result, key=lambda c: c.feature))
-
-
-def parse_query(value: object) -> Query:
-    """Boundary for explicit interpreter/model output; reject unknown fields."""
-    fields = {
-        "preferences",
-        "required",
-        "min_seconds",
-        "max_seconds",
-        "recording",
-        "title",
-        "artist",
-        "composition",
-        "composer",
-        "excluded_recordings",
-        "excluded_creators",
-    }
-    data = _object(value, fields, set())
-    preferences = _criteria(data.get("preferences", []))
-    required = _criteria(data.get("required", []))
-    all_criteria = {c.feature: c.value for c in required}
-    if any(c.feature in all_criteria and all_criteria[c.feature] != c.value for c in preferences):
-        raise CatalogInputError("preference contradicts a hard constraint")
-    minimum, maximum = _seconds(data.get("min_seconds")), _seconds(data.get("max_seconds"))
-    if minimum is not None and maximum is not None and minimum > maximum:
-        raise CatalogInputError("inverted duration range")
-    recording = None if data.get("recording") is None else _key(data["recording"])
-    excluded = tuple(_key(v) for v in _list(data.get("excluded_recordings", []), 32))
-    if len(set(excluded)) != len(excluded) or recording in excluded:
-        raise CatalogInputError("duplicate or conflicting excluded recording")
-    query = Query(
-        preferences,
-        required,
-        minimum,
-        maximum,
-        recording,
-        _optional_text(data.get("title")),
-        _optional_text(data.get("artist")),
-        _optional_text(data.get("composition")),
-        _optional_text(data.get("composer")),
-        excluded,
-        _unique_strings(data.get("excluded_creators", []), 32),
-    )
-    if query.artist and _canonical(query.artist) in {
-        _canonical(c) for c in query.excluded_creators
-    }:
-        raise CatalogInputError("requested artist is excluded")
-    if not any(
-        (
-            preferences,
-            required,
-            minimum,
-            maximum,
-            recording,
-            query.title,
-            query.artist,
-            query.composition,
-            query.composer,
-        )
-    ):
-        raise CatalogInputError("query has no supported selection criteria")
-    return query
-
-
 def metadata_digest(recording: Recording) -> str:
-    """Bind review to all source identity, credit, access and descriptor metadata."""
-    encoded = json.dumps(
-        asdict(recording), ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    """Bind review to all source identity, credit, access and descriptor metadata.
+
+    ``details`` stay outside the binding. They are matching hints that cannot grant
+    admission or change credits, so enriching them keeps existing reviews valid.
+    """
+    data = asdict(recording)
+    del data["details"]
+    encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _reviews_by_key(reviews: tuple[AdmissionReview, ...]) -> dict[RecordingKey, AdmissionReview]:
+    if len(reviews) > 3 * MAX_RECORDS_PER_SOURCE or len({r.key for r in reviews}) != len(reviews):
+        raise CatalogInputError("too many or duplicate admission reviews")
+    for review in reviews:
+        credential_free_url(review.evidence)
+        if re.fullmatch(r"[a-f0-9]{64}", review.metadata_digest) is None:
+            raise CatalogInputError("invalid review digest")
+        for flag in (review.credits_complete, review.access_ready, review.synthetic):
+            _boolean(flag)
+    return {r.key: r for r in reviews}
+
+
+def eligible(catalog: Catalog, reviews: tuple[AdmissionReview, ...]) -> tuple[Recording, ...]:
+    """Every admitted recording across all partitions, in stable identity order.
+
+    Reviews are trusted local decisions, never taken from a provider response or
+    model output. Nothing outside this set can reach the player.
+    """
+    by_key = _reviews_by_key(reviews)
+    admitted = [
+        recording
+        for partition in catalog.partitions
+        for recording in partition.recordings
+        if not _admission_reasons(recording, by_key.get(recording.key), catalog.synthetic)
+    ]
+    return tuple(sorted(admitted, key=lambda r: r.key))
 
 
 def _admission_reasons(
@@ -583,135 +478,3 @@ def _admission_reasons(
         if not review.access_ready:
             reasons.append("source acquisition/storage route not ready")
     return reasons
-
-
-def _constraint_reasons(recording: Recording, query: Query) -> list[str]:
-    reasons: list[str] = []
-    facts = {f.feature: f for f in recording.facts}
-    for criterion in query.required:
-        fact = facts.get(criterion.feature)
-        if fact is None or fact.strength != "strong" or fact.value != criterion.value:
-            reasons.append("hard feature not established: " + _criterion_label(criterion))
-    if query.recording is not None and recording.key != query.recording:
-        reasons.append("exact recording differs")
-    for label, requested, actual in (
-        ("title", query.title, recording.title),
-        ("artist", query.artist, recording.primary_artist),
-        ("composition", query.composition, recording.composition),
-        ("composer", query.composer, recording.composer),
-    ):
-        if requested is not None and (
-            actual is None or _canonical(actual) != _canonical(requested)
-        ):
-            reasons.append("exact " + label + " not established")
-    if recording.key in query.excluded_recordings:
-        reasons.append("recording excluded")
-    if {_canonical(c) for c in recording.creators} & {
-        _canonical(c) for c in query.excluded_creators
-    }:
-        reasons.append("creator excluded")
-    duration = recording.duration_seconds
-    if query.min_seconds is not None or query.max_seconds is not None:
-        if duration is None:
-            reasons.append("requested duration unknown")
-        elif (query.min_seconds is not None and duration < query.min_seconds) or (
-            query.max_seconds is not None and duration > query.max_seconds
-        ):
-            reasons.append("outside requested duration")
-    return reasons
-
-
-def _criterion_label(criterion: Criterion) -> str:
-    return criterion.feature if criterion.value else "no " + criterion.feature
-
-
-def _match(recording: Recording, query: Query) -> Match:
-    facts = {f.feature: f for f in recording.facts}
-    strong: list[str] = []
-    weak: list[str] = []
-    contradicted: list[str] = []
-    unknown: list[str] = []
-    for criterion in query.preferences:
-        label = _criterion_label(criterion)
-        fact = facts.get(criterion.feature)
-        if fact is None:
-            unknown.append(label)
-        elif fact.value != criterion.value:
-            contradicted.append(label)
-        elif fact.strength == "strong":
-            strong.append(label)
-        else:
-            weak.append(label)
-    return Match(recording, tuple(strong), tuple(weak), tuple(contradicted), tuple(unknown))
-
-
-def select(
-    catalog: Catalog, query: Query, reviews: tuple[AdmissionReview, ...], *, limit: int = 5
-) -> Selection:
-    """Compare every supplied partition, then rank fit before length and stable identity.
-
-    Catalog and Query come from the validated parsers. Reviews are trusted local
-    decisions, never taken from a provider response or model-generated query.
-    """
-    if type(limit) is not int or not 1 <= limit <= MAX_RESULTS:
-        raise CatalogInputError("result limit must be from 1 to 20")
-    if len(reviews) > 3 * MAX_RECORDS_PER_SOURCE or len({r.key for r in reviews}) != len(reviews):
-        raise CatalogInputError("too many or duplicate admission reviews")
-    for review in reviews:
-        credential_free_url(review.evidence)
-        if re.fullmatch(r"[a-f0-9]{64}", review.metadata_digest) is None:
-            raise CatalogInputError("invalid review digest")
-        for flag in (review.credits_complete, review.access_ready, review.synthetic):
-            _boolean(flag)
-    by_key = {r.key: r for r in reviews}
-    by_source = {p.source: p for p in catalog.partitions}
-    matches: list[Match] = []
-    rejected: list[Rejection] = []
-    coverage: list[Coverage] = []
-    for source in Source:
-        partition = by_source.get(source)
-        if partition is None:
-            coverage.append(
-                Coverage(source, CoverageState.MISSING, "no prepared snapshot supplied", 0, 0, 0)
-            )
-            continue
-        admitted = matched = 0
-        for recording in partition.recordings:
-            reasons = _admission_reasons(recording, by_key.get(recording.key), catalog.synthetic)
-            if not reasons:
-                admitted += 1
-                reasons = _constraint_reasons(recording, query)
-            if not reasons:
-                match = _match(recording, query)
-                if query.preferences and not (match.strong or match.weak):
-                    reasons.append("no supported prompt preference")
-                else:
-                    matches.append(match)
-                    matched += 1
-            if reasons:
-                rejected.append(Rejection(recording.key, tuple(reasons)))
-        state = (
-            CoverageState.EMPTY
-            if partition.state == "complete" and not partition.recordings
-            else CoverageState(partition.state)
-        )
-        coverage.append(
-            Coverage(source, state, partition.note, len(partition.recordings), admitted, matched)
-        )
-    matches.sort(
-        key=lambda m: (
-            -len(m.strong),
-            len(m.contradicted),
-            -len(m.weak),
-            len(m.unknown),
-            -(m.recording.duration_seconds or 0),
-            m.recording.key,
-        )
-    )
-    return Selection(
-        tuple(matches[:limit]),
-        tuple(sorted(rejected, key=lambda r: r.key)),
-        tuple(coverage),
-        catalog.synthetic,
-        len(matches),
-    )

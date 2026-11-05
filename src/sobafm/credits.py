@@ -97,6 +97,11 @@ def _escaped(text: str) -> list[str]:
     return units
 
 
+def escaped_text(text: str) -> str:
+    """Provider text made safe to show in a Discord message."""
+    return "".join(_escaped(text))
+
+
 def _link(value: str) -> str:
     try:
         url = credential_free_url(value)
