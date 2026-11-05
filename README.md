@@ -2,13 +2,13 @@
 
 A self-hosted Discord music bot for Linux and Docker.
 
-- **/play** selects existing recordings from a curated catalog.
+- **/play** takes any request, however unusual, and uses Gemini to find the best fit in a curated catalog of existing recordings.
 - **/freestyle** produces continuous generated music with Lyria RealTime.
 - Both modes share one station per server, access controls and accurate now-playing information.
 
 ## Development status
 
-The offline catalog selector compares prepared Jamendo, ccMixter and Free Music Archive metadata, prioritizing strong prompt matches and complete recordings. A first, not yet qualified amd64 playback slice can be run with Docker Compose; release qualification is not yet complete.
+`/play` ranks complete recordings from prepared Jamendo, ccMixter and Free Music Archive metadata with one validated Gemini call per request. The real catalog is still very small, and matching hasn't yet been evaluated against the live API. A first, not yet qualified amd64 playback slice can be run with Docker Compose; release qualification is not yet complete.
 
 The Python development toolchain and Linux CI are available. Current work establishes source admission and a feasible Linux resource configuration. A narrow end-to-end playback implementation follows. Listening comparisons are deferred optional evidence.
 
@@ -25,15 +25,13 @@ uv run pytest
 
 This installs Python 3.14 and the locked development environment, then runs all-file checks and the offline tests. No credentials or audio are needed. See [Contributing](CONTRIBUTING.md) for tool choices, updates and required checks.
 
-Try the selector with explicitly synthetic metadata:
+See what Gemini ranks for real requests, using your own API key and 20 invented songs. These are billable calls, and it [isn't part of the checks](evaluations/gemini_matching/README.md):
 
 ```sh
-uv run python -m sobafm.catalog_demo "Quiet solo piano, no singing" \
-  --catalog evaluations/catalog/selector-demo.json \
-  --reviews evaluations/catalog/selector-demo-reviews.json --limit 3
+uv run python evaluations/gemini_matching/try_requests.py --send-to-gemini "a haunted carnival on the moon"
 ```
 
-The output includes ranked matches, complete supplied credits, rejections and coverage gaps for all three sources. It performs no network or audio activity. The [selection contract](docs/catalog-evaluation.md#current-selection-contract) explains the input bounds, limited prompt grammar and separate review required for real metadata.
+The [catalog contract](docs/catalog-evaluation.md#current-selection-contract) explains the input bounds and the separate review required for real metadata.
 
 Normalize a saved source response into that catalog format:
 
@@ -51,7 +49,7 @@ This included ccMixter observation retains a missing requested ID and incomplete
 The first amd64 playback slice runs with Docker Compose. It is not yet qualified: the image ran in one private Discord session on Docker Desktop under WSL2 ([#97](https://github.com/slackysoba/sobafm/issues/97)), but neither the image, its limits nor the release is qualified.
 
 ```sh
-cp .env.example .env   # then replace the placeholder token
+cp .env.example .env   # then replace the placeholder token and Gemini key
 mkdir data
 docker compose up --build -d
 ```

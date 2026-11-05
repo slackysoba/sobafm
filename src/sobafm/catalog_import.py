@@ -15,6 +15,8 @@ from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
 from sobafm.catalog import (
+    MAX_DETAIL_CHARACTERS,
+    MAX_DETAILS,
     MAX_DURATION_SECONDS,
     MAX_RECORDS_PER_SOURCE,
     Catalog,
@@ -290,6 +292,32 @@ def _tags(value: object) -> list[str]:
     return [_text(v, 64) for v in _list(value, 64)]
 
 
+def _detail(label: str, value: object) -> str | None:
+    """One source claim as a single bounded line for matching; never an admitted fact."""
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
+        return None
+    printable = "".join(" " if unicodedata.category(c).startswith("C") else c for c in str(value))
+    text = " ".join(printable.split())
+    if not text:
+        return None
+    line = f"{label}: {text}"
+    if len(line) > MAX_DETAIL_CHARACTERS:
+        line = line[: MAX_DETAIL_CHARACTERS - 1].rstrip() + "…"
+    return line
+
+
+def _keep_details(record: dict[str, object], claims: list[tuple[str, object]]) -> None:
+    """Retain deduplicated hints within the catalog's limits; extras are dropped, never fatal."""
+    lines: dict[str, str] = {}
+    for label, value in claims:
+        line = _detail(label, value)
+        if line is not None and len(lines) < MAX_DETAILS:
+            canonical = " ".join(unicodedata.normalize("NFKC", line).casefold().split())
+            lines.setdefault(canonical, line)
+    if lines:
+        record["details"] = list(lines.values())
+
+
 def _base(identity: str, title: object, artist: object, link: str) -> dict[str, object]:
     name = _text(artist)
     return {
@@ -382,8 +410,24 @@ def _jamendo(
     music = _object({} if row.get("musicinfo") is None else row["musicinfo"])
     tag_groups = _object({} if music.get("tags") is None else music["tags"])
     tags: list[str] = []
-    for field in ("genres", "instruments", "vartags"):
-        tags.extend(_tags(tag_groups.get(field)))
+    claims: list[tuple[str, object]] = [
+        ("album", row.get("album_name")),
+        ("released", row.get("releasedate")),
+    ]
+    for field, label in (("genres", "genre"), ("instruments", "instrument"), ("vartags", "tag")):
+        values = _tags(tag_groups.get(field))
+        tags.extend(values)
+        claims.extend((label, value) for value in values)
+    claims.extend(
+        (
+            ("vocal or instrumental", music.get("vocalinstrumental")),
+            ("vocal gender", music.get("gender")),
+            ("acoustic or electric", music.get("acousticelectric")),
+            ("speed", music.get("speed")),
+            ("language", music.get("lang")),
+        )
+    )
+    _keep_details(record, claims)
     vocal = music.get("vocalinstrumental")
     if vocal in ("vocal", "instrumental"):
         tags.append(cast(str, vocal))
@@ -545,6 +589,15 @@ def _ccmixter(
     reported_bpm = bpm if type(bpm) is int and 1 <= bpm <= 400 else None
     if bpm not in (None, "") and reported_bpm is None:
         issues.append("bpm_unknown_or_malformed")
+    _keep_details(
+        record,
+        [
+            *(("tag", tag) for tag in tags),
+            ("bpm", reported_bpm),
+            ("featuring", extra.get("featuring")),
+            ("description", row.get("upload_description_plain")),
+        ],
+    )
     notices.extend(_text(v, 1024) for v in _list(row.get("notices", []), 12))
     record["credits"] = _credits(
         Source.CCMIXTER,
@@ -566,6 +619,7 @@ def _ccmixter(
         "files",
         "remix_parents",
         "notices",
+        "upload_description_plain",
     }
     discarded = {
         "user_id",
@@ -663,7 +717,9 @@ def _fma(row: dict[str, object], context: ImportContext) -> tuple[dict[str, obje
         notices,
         _license(license_data["label"], license_data["url"], issues),
     )
-    record["facts"] = _facts(_tags(row["tags"]), link, issues)
+    tags = _tags(row["tags"])
+    record["facts"] = _facts(tags, link, issues)
+    _keep_details(record, [("tag", tag) for tag in tags])
     for field in ("composition", "composer"):
         if row.get(field) is not None:
             record[field] = _text(row[field])
@@ -684,6 +740,8 @@ def catalog_document(catalog: Catalog) -> dict[str, object]:
             row = asdict(recording)
             del row["key"]
             row["recording_id"] = recording.key.recording_id
+            if not recording.details:
+                del row["details"]
             rows.append(row)
         partitions.append(
             {

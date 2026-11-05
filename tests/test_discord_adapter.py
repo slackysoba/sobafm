@@ -10,7 +10,7 @@ import signal
 import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import aiohttp
@@ -19,26 +19,26 @@ import pytest
 
 from sobafm import discord_adapter
 from sobafm.catalog import (
-    AdmissionReview,
     Availability,
-    Catalog,
     CreditSnapshot,
     Fact,
     Feature,
-    Partition,
     Recording,
     RecordingKey,
     RecordingKind,
-    SnapshotState,
     Source,
     Strength,
-    metadata_digest,
 )
 from sobafm.discord_adapter import (
+    MATCH_BUSY,
+    MATCH_UNAVAILABLE,
+    NOT_A_MUSIC_REQUEST,
     NOT_JOINED,
     NOT_LISTENING,
+    NOTHING_ADMITTED,
     SERVER_ONLY,
     SILENCE,
+    STOPPED_WHILE_MATCHING,
     Adapter,
     Config,
     ConfigError,
@@ -48,6 +48,7 @@ from sobafm.discord_adapter import (
     create_bot,
     intents,
 )
+from sobafm.gemini_match import NO_RECORDINGS, Fit, Matched, MatchFailed, Ranked, Refused
 from sobafm.pcm import FRAME_BYTES, READY_BYTES, PcmBank, PcmBankPool
 
 LINK = "https://example.invalid/synthetic/track"
@@ -72,12 +73,28 @@ def recording(identifier: str, notices: tuple[str, ...] = ("Synthetic notice.",)
     )
 
 
-def catalog(*recordings: Recording) -> tuple[Catalog, tuple[AdmissionReview, ...]]:
-    value = Catalog(True, (Partition(Source.JAMENDO, SnapshotState.COMPLETE, "", recordings),))
-    reviews = tuple(
-        AdmissionReview(r.key, metadata_digest(r), True, True, True, LINK) for r in recordings
-    )
-    return value, reviews
+class FakeMatcher:
+    """Ranks its recordings in order unless a test sets another outcome; no provider."""
+
+    def __init__(self, *recordings: Recording, fit: Fit = Fit.CLOSE) -> None:
+        self.recordings = recordings
+        self.fit = fit
+        self.outcome: Refused | MatchFailed | None = None
+        self.gate: asyncio.Event | None = None
+        self.requests: list[str] = []
+
+    async def match(self, request: str) -> Matched | Refused:
+        self.requests.append(request)
+        if self.gate is not None:
+            await self.gate.wait()
+        if isinstance(self.outcome, MatchFailed):
+            raise self.outcome
+        if self.outcome is not None:
+            return self.outcome
+        return Matched(tuple(Ranked(r, self.fit) for r in self.recordings))
+
+    async def close(self) -> None:
+        pass
 
 
 # Fakes for the disnake objects the adapter touches.
@@ -280,7 +297,7 @@ def harness(
     pool = PcmBankPool()
     producer = producer or Producer()
     records = recordings if recordings is not None else (recording("a"),)
-    return Harness(Adapter(catalog(*records), producer, pool=pool), pool, producer)
+    return Harness(Adapter(FakeMatcher(*records), producer, pool=pool), pool, producer)
 
 
 async def settle() -> None:
@@ -302,7 +319,7 @@ def test_intents_are_exactly_guilds_and_voice_states() -> None:
 async def test_command_access_rules_and_server_only_registration() -> (
     None
 ):  # the bot binds the running loop
-    bot = create_bot(Adapter(catalog(recording("a")), Producer(), pool=PcmBankPool()))
+    bot = create_bot(Adapter(FakeMatcher(recording("a")), Producer(), pool=PcmBankPool()))
     bodies = {c.name: c.body for c in bot.slash_commands}
     assert set(bodies) == {"join", "leave", "play", "stop", "now"}
     for name, body in bodies.items():
@@ -334,23 +351,37 @@ def test_token_is_removed_from_environment_and_never_rendered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     placeholder = "placeholder-not-a-token"
+    key = "placeholder-not-a-key"  # pragma: allowlist secret - test placeholder
     monkeypatch.setenv(discord_adapter.TOKEN_VARIABLE, placeholder)
+    monkeypatch.setenv(discord_adapter.GEMINI_KEY_VARIABLE, key)
     monkeypatch.delenv(discord_adapter.CATALOG_VARIABLE, raising=False)
     monkeypatch.delenv(discord_adapter.REVIEWS_VARIABLE, raising=False)
     config = Config.from_environ()
-    assert config.token == placeholder and config.catalog is None
+    assert config.token == placeholder and config.matcher is None
     assert discord_adapter.TOKEN_VARIABLE not in os.environ
+    assert discord_adapter.GEMINI_KEY_VARIABLE not in os.environ
     assert placeholder not in repr(config)
 
     monkeypatch.setenv(discord_adapter.TOKEN_VARIABLE, placeholder)
+    monkeypatch.setenv(discord_adapter.GEMINI_KEY_VARIABLE, key)
     monkeypatch.setenv(discord_adapter.CATALOG_VARIABLE, "/nonexistent/catalog.json")
     monkeypatch.setenv(discord_adapter.REVIEWS_VARIABLE, "/nonexistent/reviews.json")
     with pytest.raises(ConfigError) as error:
         Config.from_environ()
     assert placeholder not in str(error.value) and "nonexistent" not in str(error.value)
+    assert key not in str(error.value)
 
     with pytest.raises(ConfigError):
         Config.from_environ()  # the token was consumed by the previous attempt
+
+
+def test_a_catalog_requires_the_gemini_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(discord_adapter.TOKEN_VARIABLE, "placeholder-not-a-token")
+    monkeypatch.delenv(discord_adapter.GEMINI_KEY_VARIABLE, raising=False)
+    monkeypatch.setenv(discord_adapter.CATALOG_VARIABLE, "/nonexistent/catalog.json")
+    monkeypatch.setenv(discord_adapter.REVIEWS_VARIABLE, "/nonexistent/reviews.json")
+    with pytest.raises(ConfigError, match=discord_adapter.GEMINI_KEY_VARIABLE):
+        Config.from_environ()
 
 
 # Commands.
@@ -416,17 +447,152 @@ async def test_play_and_stop_require_the_bots_voice_channel_but_managers_may_sto
     assert "Stopped" in (listener.texts()[0] or "")
 
 
+def matcher_of(h: Harness) -> FakeMatcher:
+    return cast(FakeMatcher, h.adapter.matcher)
+
+
 @offline
-async def test_play_without_a_match_substitutes_nothing() -> None:
+async def test_requests_that_produce_no_plan_change_nothing() -> None:
     h = harness()
     source = await h.join()
-    (text,) = await h.play("heavy metal")
-    assert "No eligible recording" in text and "nothing was substituted" in text
-    (problem,) = await h.play("anything but jazz")
-    assert "cannot be matched" in problem
+    fake = matcher_of(h)
+    for outcome, reply in (
+        (Refused(), NOT_A_MUSIC_REQUEST),
+        (MatchFailed("timeout"), MATCH_UNAVAILABLE),
+        (MatchFailed(NO_RECORDINGS), NOTHING_ADMITTED),
+    ):
+        fake.outcome = outcome
+        assert await h.play("a haunted carnival on the moon") == [reply]
     station = h.adapter.players[1].station
     assert station.desired is None and station.heard is None
     assert h.pool.leased == 0 and source.read() == b""
+
+
+@offline
+async def test_a_failed_request_keeps_the_audio_being_heard() -> None:
+    h = harness()
+    source = await h.join()
+    await h.play()
+    await settle()
+    source.read()
+    await settle()
+    player = h.adapter.players[1]
+    heard = player.station.heard
+    assert heard is not None
+    matcher_of(h).outcome = MatchFailed("http_503")
+    assert await h.play("anything") == [MATCH_UNAVAILABLE]
+    await settle()
+    assert player.station.heard is heard and player.station.desired == heard.program
+
+
+@offline
+async def test_the_reply_says_how_close_the_match_is() -> None:
+    for fit, wording in (
+        (Fit.EXACT, "This is the recording you asked for: Song a by Synthetic Artist."),
+        (Fit.CLOSE, "Closest match in the catalog: Song a by Synthetic Artist."),
+        (Fit.LOOSE, "the nearest thing: Song a by Synthetic Artist."),
+    ):
+        h = harness()
+        matcher_of(h).fit = fit
+        await h.join()
+        (text,) = await h.play("  something absurd  ")
+        assert wording in text and "Request accepted" in text
+        assert matcher_of(h).requests == ["something absurd"]
+        assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_catalog_text_in_the_reply_is_escaped() -> None:
+    hostile = replace(recording("a"), title="@everyone *look* <https://example.invalid>")
+    h = harness(recordings=(hostile,))
+    await h.join()
+    (text,) = await h.play()
+    assert "\\@everyone \\*look\\* \\<https\\://example.invalid\\>" in text
+
+
+@offline
+async def test_a_recording_with_unrenderable_credits_gives_way_to_the_next_ranked() -> None:
+    too_long = recording("a", tuple(f"{n}: " + "x" * 1000 for n in range(40)))
+    h = harness(recordings=(too_long, recording("b")))
+    await h.join()
+    (text,) = await h.play()
+    assert "Song b" in text
+    assert h.adapter.players[1].station.switching is not None
+
+    h = harness(recordings=(too_long,))
+    await h.join()
+    (text,) = await h.play()
+    assert "credits are incomplete" in text
+    assert h.adapter.players[1].station.desired is None and h.pool.leased == 0
+
+
+@offline
+async def test_invalid_request_text_never_reaches_the_matcher() -> None:
+    h = harness()
+    await h.join()
+    for text in ("   ", "line\nbreak", "x" * 201):
+        (reply,) = await h.play(text)
+        assert "printable characters" in reply
+    assert matcher_of(h).requests == []
+
+
+@offline
+async def test_a_second_request_during_matching_is_refused_without_another_call() -> None:
+    h = harness()
+    await h.join()
+    fake = matcher_of(h)
+    fake.gate = asyncio.Event()
+    first = asyncio.create_task(h.play("first"))
+    await settle()
+    assert await h.play("second") == [MATCH_BUSY]
+    assert fake.requests == ["first"]
+    fake.gate.set()
+    (text,) = await first
+    assert "Request accepted" in text
+    assert h.adapter.players[1].matching is False
+
+
+@offline
+async def test_a_stop_during_matching_wins() -> None:
+    h = harness()
+    source = await h.join()
+    fake = matcher_of(h)
+    fake.gate = asyncio.Event()
+    played = asyncio.create_task(h.play())
+    await settle()
+    await run(h.adapter.stop, inter(h.room))
+    fake.gate.set()
+    assert await played == [STOPPED_WHILE_MATCHING]
+    station = h.adapter.players[1].station
+    assert station.desired is None and h.pool.leased == 0 and source.read() == b""
+
+
+@offline
+async def test_a_leave_during_matching_starts_nothing() -> None:
+    h = harness()
+    await h.join()
+    fake = matcher_of(h)
+    fake.gate = asyncio.Event()
+    played = asyncio.create_task(h.play())
+    await settle()
+    await run(h.adapter.leave, inter(h.room, manager=True))
+    fake.gate.set()
+    assert await played == [STOPPED_WHILE_MATCHING]
+    assert h.pool.leased == 0 and h.adapter.players == {}
+
+
+@offline
+async def test_shutdown_during_matching_starts_nothing() -> None:
+    h = harness()
+    await h.join()
+    fake = matcher_of(h)
+    fake.gate = asyncio.Event()
+    played = asyncio.create_task(h.play())
+    await settle()
+    assert await h.adapter.shutdown() is True
+    fake.gate.set()
+    assert await played == [discord_adapter.SHUTTING_DOWN]
+    assert h.pool.leased == 0
 
 
 @offline
@@ -452,7 +618,7 @@ async def test_heard_source_and_credits_change_only_at_the_actual_switch() -> No
     assert heard is not None and heard.recording == first
 
     # A replacement prepares while the heard source and its credits stay unchanged.
-    h.adapter.catalog = catalog(second)
+    h.adapter.matcher = FakeMatcher(second)
     h.producer.frames = 3
     h.producer.end = False  # not ready: fewer than six seconds and no verified end
     await h.play()
@@ -946,7 +1112,7 @@ async def test_cleanup_deadline_counts_from_the_first_cancellation() -> None:
     pool = PcmBankPool(clock=lambda: time.monotonic() - discord_adapter.CLEANUP_SECONDS + 0.05)
     producer = Producer()
     producer.hold = True
-    h = Harness(Adapter(catalog(recording("a")), producer, pool=pool), pool, producer)
+    h = Harness(Adapter(FakeMatcher(recording("a")), producer, pool=pool), pool, producer)
     await h.join()
     await h.play()
     await settle()

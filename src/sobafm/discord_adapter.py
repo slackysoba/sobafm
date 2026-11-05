@@ -33,6 +33,7 @@ import os
 import signal
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,21 +44,32 @@ from disnake.ext import commands
 
 from sobafm.catalog import (
     MAX_CATALOG_BYTES,
-    AdmissionReview,
     Catalog,
     CatalogInputError,
     Recording,
+    Source,
+    eligible,
     parse_catalog,
     parse_reviews,
-    select,
 )
-from sobafm.catalog_prompt import normalize_prompt
+from sobafm.credits import escaped_text
+from sobafm.gemini_match import (
+    NO_RECORDINGS,
+    Fit,
+    GeminiMatcher,
+    Matched,
+    MatchFailed,
+    Ranked,
+    Refused,
+    checked_request,
+)
 from sobafm.pcm import FRAME_BYTES, GLOBAL_PCM_BANKS, PcmBank, PcmBankPool, PcmCapacityError
 from sobafm.station import MAX_REQUEST_CHARACTERS, Audio, Outcome, Station
 
 log = logging.getLogger(__name__)
 
 TOKEN_VARIABLE = "SOBAFM_DISCORD_TOKEN"
+GEMINI_KEY_VARIABLE = "SOBAFM_GEMINI_API_KEY"
 CATALOG_VARIABLE = "SOBAFM_CATALOG"
 REVIEWS_VARIABLE = "SOBAFM_REVIEWS"
 MAX_REVIEWS_BYTES = 256_000
@@ -73,6 +85,18 @@ NOT_JOINED = "SobaFM is not in a voice channel. A manager must use `/join` first
 NOT_LISTENING = "Join SobaFM's voice channel to use this command."
 SERVER_ONLY = "SobaFM commands work in servers, not direct messages."
 SHUTTING_DOWN = "SobaFM is shutting down."
+MATCH_BUSY = "SobaFM is still matching an earlier request. Try again in a moment."
+MATCH_UNAVAILABLE = (
+    "SobaFM couldn't interpret that request just now; current audio continues. Try again shortly."
+)
+NOT_A_MUSIC_REQUEST = "That doesn't look like a music request, so current audio continues."
+NOTHING_ADMITTED = "The catalog has no recordings ready to play."
+STOPPED_WHILE_MATCHING = "Playback stopped while your request was being matched; nothing started."
+FIT_WORDING = {
+    Fit.EXACT: "This is the recording you asked for",
+    Fit.CLOSE: "Closest match in the catalog",
+    Fit.LOOSE: "Nothing in the catalog really fits, so this is the nearest thing",
+}
 
 
 class ConfigError(Exception):
@@ -90,15 +114,24 @@ class Producer(Protocol):
     async def produce(self, recording: Recording, bank: PcmBank) -> None: ...
 
 
+class Matcher(Protocol):
+    """Turns one request into a validated plan, or raises `MatchFailed`."""
+
+    async def match(self, request: str) -> Matched | Refused: ...
+
+    async def close(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class Config:
     token: str = field(repr=False)
-    catalog: tuple[Catalog, tuple[AdmissionReview, ...]] | None
+    matcher: GeminiMatcher | None
 
     @classmethod
     def from_environ(cls) -> Config:
-        """Read configuration, removing the token so child processes cannot inherit it."""
+        """Read configuration, removing credentials so child processes cannot inherit them."""
         token = os.environ.pop(TOKEN_VARIABLE, "").strip()
+        api_key = os.environ.pop(GEMINI_KEY_VARIABLE, "").strip()
         if not token:
             raise ConfigError(f"{TOKEN_VARIABLE} is required")
         paths = [os.environ.get(name, "") for name in (CATALOG_VARIABLE, REVIEWS_VARIABLE)]
@@ -106,12 +139,32 @@ class Config:
             return cls(token, None)
         if not all(paths):
             raise ConfigError(f"{CATALOG_VARIABLE} and {REVIEWS_VARIABLE} must be set together")
+        if not api_key:
+            raise ConfigError(f"{GEMINI_KEY_VARIABLE} is required with {CATALOG_VARIABLE}")
         try:
             catalog = parse_catalog(_read(Path(paths[0]), MAX_CATALOG_BYTES))
             reviews = parse_reviews(_read(Path(paths[1]), MAX_REVIEWS_BYTES))
+            admitted = eligible(catalog, reviews)
+            matcher = GeminiMatcher(admitted, api_key)
         except (CatalogInputError, OSError, UnicodeError) as exc:
             raise ConfigError("catalog snapshot or reviews could not be loaded") from exc
-        return cls(token, (catalog, reviews))
+        _log_coverage(catalog, admitted)
+        return cls(token, matcher)
+
+
+def _log_coverage(catalog: Catalog, admitted: tuple[Recording, ...]) -> None:
+    """Report every source, so a missing or empty one is visible to the operator."""
+    partitions = {p.source: p for p in catalog.partitions}
+    counts = Counter(r.key.source for r in admitted)
+    for source in Source:
+        partition = partitions.get(source)
+        log.info(
+            "catalog source: source=%s state=%s provided=%d admitted=%d",
+            source.value,
+            "missing" if partition is None else partition.state.value,
+            0 if partition is None else len(partition.recordings),
+            counts[source],
+        )
 
 
 def _read(path: Path, maximum: int) -> str:
@@ -218,6 +271,10 @@ class GuildPlayer:
     source: StationSource
     station: Station = field(default_factory=Station)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # One request is matched at a time per server. A stop during the wait must win, so
+    # the wait compares this count before starting anything.
+    matching: bool = False
+    silenced: int = 0
 
 
 class Adapter:
@@ -225,12 +282,12 @@ class Adapter:
 
     def __init__(
         self,
-        catalog: tuple[Catalog, tuple[AdmissionReview, ...]] | None,
+        matcher: Matcher | None,
         producer: Producer,
         *,
         pool: PcmBankPool = GLOBAL_PCM_BANKS,
     ) -> None:
-        self.catalog = catalog
+        self.matcher = matcher
         self._producer = producer
         self._pool = pool
         self.players: dict[int, GuildPlayer] = {}
@@ -320,7 +377,7 @@ class Adapter:
     async def play(self, inter: Inter, request: str) -> None:
         if inter.guild is None:
             return await self._refuse(inter, SERVER_ONLY)
-        if self.catalog is None:
+        if self.matcher is None:
             return await self._refuse(inter, "Catalog playback is not configured.")
         if self.stopping.is_set():
             return await self._refuse(inter, SHUTTING_DOWN)
@@ -334,34 +391,47 @@ class Adapter:
         )
 
     async def _prepare(self, player: GuildPlayer, request: str) -> str:
-        assert self.catalog is not None
+        assert self.matcher is not None
         try:
-            interpretation = normalize_prompt(request)
+            text = checked_request(request)
         except CatalogInputError:
             return f"Requests must be 1 to {MAX_REQUEST_CHARACTERS} printable characters."
-        if interpretation.query is None:
-            return f"That request cannot be matched: {interpretation.problem}."
-        catalog, reviews = self.catalog
-        selection = select(catalog, interpretation.query, reviews, limit=1)
-        if not selection.matches:
-            return "No eligible recording matches that request; nothing was substituted."
+        if player.matching:
+            return MATCH_BUSY
+        player.matching = True
+        silenced = player.silenced
+        try:
+            plan = await self.matcher.match(text)
+        except MatchFailed as exc:
+            return NOTHING_ADMITTED if exc.kind == NO_RECORDINGS else MATCH_UNAVAILABLE
+        finally:
+            player.matching = False
+        if isinstance(plan, Refused):
+            return NOT_A_MUSIC_REQUEST
         async with player.lock:
             if self.stopping.is_set():
                 return SHUTTING_DOWN
+            if player.silenced != silenced:
+                return STOPPED_WHILE_MATCHING
             station = player.station
             program = station.request(request).program
-            if station.prepared(program, selection.matches[0].recording) is not Outcome.ACCEPTED:
+            chosen = next(
+                (
+                    choice
+                    for choice in plan.ranked
+                    if station.prepared(program, choice.recording) is Outcome.ACCEPTED
+                ),
+                None,
+            )
+            if chosen is None:
                 station.preparation_failed(program)
-                return "The matching recording's credits are incomplete; nothing was substituted."
+                return "The matching recordings' credits are incomplete; nothing was substituted."
             if not await self._start(player):
                 return (
                     "Playback could not start (capacity is busy or voice is unavailable); "
                     "current audio continues. Try again shortly."
                 )
-        return (
-            "Request accepted. A matching recording is preparing and becomes audible once "
-            "enough audio is buffered. Use `/now` to see what is actually heard."
-        )
+        return _accepted(chosen)
 
     async def _start(self, player: GuildPlayer) -> bool:
         """Claim ready audio, displacing an unheard pending track, and hand it to the player."""
@@ -428,6 +498,7 @@ class Adapter:
 
     def _silence(self, player: GuildPlayer) -> set[asyncio.Task[None]]:
         """End the program, remove all audio from the callback and start retirements."""
+        player.silenced += 1
         player.station.stop()
         tracks = player.source.take_all()
         if player.station.switching is not None:
@@ -612,6 +683,17 @@ def _recording_label(recording: Recording) -> str:
     return f"{recording.key.source.value}:{recording.key.recording_id}"
 
 
+def _accepted(choice: Ranked) -> str:
+    """Say how close the chosen recording is, using only catalog text."""
+    title = escaped_text(choice.recording.title)
+    artist = escaped_text(choice.recording.primary_artist)
+    return (
+        f"Request accepted. {FIT_WORDING[choice.fit]}: {title} by {artist}. It is preparing "
+        "and becomes audible once enough audio is buffered. Use `/now` to see what is "
+        "actually heard."
+    )
+
+
 def create_bot(adapter: Adapter) -> commands.InteractionBot:
     """Register the slash commands; `/play` is omitted when no catalog is configured."""
     bot = commands.InteractionBot(intents=intents())
@@ -638,18 +720,18 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
         """Privately show what is actually heard, with full credits."""
         await adapter.now(inter)
 
-    if adapter.catalog is not None:
+    if adapter.matcher is not None:
 
         @bot.slash_command(name="play", contexts=servers)
         async def play(
             inter: Inter,
             request: commands.String[str, 1, MAX_REQUEST_CHARACTERS],
         ) -> None:
-            """Play existing music matching your request.
+            """Play the existing music that best fits your request.
 
             Parameters
             ----------
-            request: Describe the music you want.
+            request: Describe the music you want, any way you like.
             """
             await adapter.play(inter, request)
 
@@ -660,7 +742,7 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
 
 async def run(config: Config, producer: Producer) -> int:
     """Run until SIGTERM or SIGINT, then disconnect and exit once owners are released."""
-    adapter = Adapter(config.catalog, producer)
+    adapter = Adapter(config.matcher, producer)
     bot = create_bot(adapter)
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT):
@@ -669,6 +751,8 @@ async def run(config: Config, producer: Producer) -> int:
     stopping = asyncio.create_task(adapter.stopping.wait())
     await asyncio.wait({client, stopping}, return_when=asyncio.FIRST_COMPLETED)
     released = await adapter.shutdown()
+    if config.matcher is not None:
+        await config.matcher.close()  # also ends any request still being matched
     await bot.close()
     stopping.cancel()
     await asyncio.wait({client})

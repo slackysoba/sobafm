@@ -887,6 +887,7 @@ version = "0.0.0"
 source = { editable = "." }
 default-groups = ["dev", "evaluation"]
 dependencies = [
+    { name = "aiohttp" },
     { name = "disnake", extra = ["voice"] },
 ]
 
@@ -905,7 +906,10 @@ evaluation = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "disnake", extras = ["voice"], specifier = "==2.12.2" }]
+requires-dist = [
+    { name = "aiohttp", specifier = "==3.14.5" },
+    { name = "disnake", extras = ["voice"], specifier = "==2.12.2" },
+]
 
 [package.metadata.requires-dev]
 dev = [
