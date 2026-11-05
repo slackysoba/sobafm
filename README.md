@@ -2,13 +2,13 @@
 
 A self-hosted Discord music bot for Linux and Docker.
 
-- **/play** selects existing recordings from a curated catalog.
+- **/play** starts a program of existing recordings from a curated catalog that continues, one recording after another without repeats, until stopped or replaced; **/skip** moves on.
 - **/freestyle** produces continuous generated music with Lyria RealTime.
 - Both modes share one station per server, access controls and accurate now-playing information.
 
 ## Development status
 
-The offline catalog selector compares prepared Jamendo, ccMixter and Free Music Archive metadata, prioritizing strong prompt matches and complete recordings. A first, not yet qualified amd64 playback slice can be run with Docker Compose; release qualification is not yet complete.
+The offline catalog selector compares prepared Jamendo, ccMixter and Free Music Archive metadata, prioritizing strong prompt matches and complete recordings. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through matching catalog recordings and `/skip` moves on ([operations](docs/operations.md)). Release qualification is not yet complete.
 
 The Python development toolchain and Linux CI are available. Current work establishes source admission and a feasible Linux resource configuration. A narrow end-to-end playback implementation follows. Listening comparisons are deferred optional evidence.
 
