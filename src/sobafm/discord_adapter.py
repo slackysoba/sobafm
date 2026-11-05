@@ -653,6 +653,7 @@ class Adapter:
                     await self._await_capacity(waiter, timeout)
         finally:
             self._capacity_changed()  # a bank this program yielded may now go elsewhere
+            self._review_listeners(player)  # exhaustion can end the program
 
     @staticmethod
     def _audible(player: GuildPlayer) -> bool:
@@ -878,12 +879,15 @@ class Adapter:
             player.grace = None
             if (
                 self.stopping.is_set()
-                or player.station.desired != program
                 or player not in self.players.values()
                 or not player.voice.is_connected()
-                or self._has_listener(player)
             ):
-                return  # a stale timer never ends a newer program
+                return
+            if player.station.desired != program or self._has_listener(player):
+                # A stale timer never ends a newer program, but the desired program
+                # may have changed with no review, e.g. a failed replacement reverted.
+                self._review_listeners(player)
+                return
             self._silence(player, EndReason.NO_LISTENERS)  # retirements stay owned
             log.info("program ended: reason=%s", EndReason.NO_LISTENERS.value)
 
@@ -965,6 +969,8 @@ class Adapter:
         self._capacity_changed()  # e.g. a drained track starts its program's capacity bound
         if player is None or self.stopping.is_set():
             return
+        # A failed switch can revert the desired program and a drain can end it.
+        self._review_listeners(player)
         if kind in ("switched", "failed") and player.station.ready:
             self._own(asyncio.create_task(self._start_locked(player)))
         elif self.matcher is not None and player.station.needs_next:
@@ -973,6 +979,7 @@ class Adapter:
     async def _start_locked(self, player: GuildPlayer) -> None:
         async with player.lock:
             await self._start(player)
+            self._review_listeners(player)  # a failed start can revert the desired program
 
     # Ownership.
 

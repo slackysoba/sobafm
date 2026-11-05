@@ -2145,5 +2145,50 @@ async def test_a_stale_timer_never_ends_a_newer_program() -> None:
         newer = player.station.request("quiet piano").program
     await settle()
     assert player.station.desired is newer and player.station.ended is None
-    assert player.grace is None  # the stale timer cleared only its own registration
+    # The stale timer ends nothing, but nobody listens to the newer program either.
+    assert grace_program(h) == "quiet piano"
+    await grace_started(h)
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_reverted_replacement_gets_its_own_grace_period() -> None:
+    h, tagged = program_harness("a", "b", "c", producer=Tagged(frames=50))
+    source = await start_program(h)
+    player = h.adapter.players[1]
+    heard = player.station.desired
+    assert heard is not None
+    tagged.failing.add("a")  # the replacement's first track fails to decode
+    await h.play("quiet piano")
+    h.voice_update(LISTENER_ID, None)  # the last listener leaves while it is switching
+    await grace_started(h)
+    assert grace_program(h) == "quiet piano"
+    for _ in range(10):
+        source.read()
+        await settle()
+        if player.station.desired is heard:
+            break
+    assert player.station.desired is heard  # the failed replacement reverted
+    # The failure report re-reviews listeners: the replacement's timer is cancelled and
+    # the heard program gets its own.
+    assert grace_program(h) == "piano"
+    await grace_started(h)
+    h.clock.expire()
+    await until(lambda: player.station.desired is None)
+    assert player.station.ended is discord_adapter.EndReason.NO_LISTENERS
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_program_that_ends_by_itself_cancels_its_grace_period() -> None:
+    h, _ = program_harness("a")  # nothing follows the one recording
+    source = await start_program(h)
+    player = h.adapter.players[1]
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    while source.read() != b"":
+        await settle()
+    await until(lambda: player.station.desired is None)
+    assert player.station.ended is discord_adapter.EndReason.EXHAUSTED
+    await grace_cancelled(h)  # the drain report re-reviews; no timer outlives it
     assert await h.adapter.shutdown() is True
