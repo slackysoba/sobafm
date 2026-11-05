@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 from sobafm.catalog import (
-    MAX_CATALOG_BYTES,
     Availability,
     CatalogInputError,
     CreditSnapshot,
@@ -37,7 +36,6 @@ from sobafm.gemini_match import (
 )
 
 MAX_REQUESTS = 20
-MAX_REVIEW_BYTES = 256_000
 SHOWN = 5
 LINK = "https://example.invalid/synthetic/gemini-matching"
 
@@ -174,8 +172,8 @@ def load_recordings(catalog: Path | None, reviews: Path | None) -> tuple[Recordi
     if catalog is None or reviews is None:
         raise CatalogInputError("--catalog and --reviews must be given together")
     return eligible(
-        parse_catalog(catalog.read_text(encoding="utf-8")[: MAX_CATALOG_BYTES + 1]),
-        parse_reviews(reviews.read_text(encoding="utf-8")[: MAX_REVIEW_BYTES + 1]),
+        parse_catalog(catalog.read_text(encoding="utf-8")),
+        parse_reviews(reviews.read_text(encoding="utf-8")),
     )
 
 

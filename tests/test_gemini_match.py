@@ -5,8 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import sys
 from collections.abc import Mapping
 from dataclasses import replace
+from pathlib import Path
 from typing import cast
 
 import aiohttp
@@ -14,6 +18,7 @@ import pytest
 from aiohttp import web
 
 from sobafm.catalog import MAX_DETAILS, CatalogInputError, Fact, Feature, Recording, Strength
+from sobafm.discord_adapter import GEMINI_KEY_VARIABLE
 from sobafm.gemini_match import (
     API_REVISION,
     ENDPOINT,
@@ -287,6 +292,30 @@ def test_request_text_is_checked_before_any_call() -> None:
     for bad in ("", "   ", "x" * 201, "line\nbreak", "bell\x07", "‮flip"):
         with pytest.raises(CatalogInputError):
             checked_request(bad)
+
+
+def try_requests(*arguments: str) -> subprocess.CompletedProcess[str]:
+    script = Path(__file__).resolve().parents[1] / "evaluations/gemini_matching/try_requests.py"
+    environment = {k: v for k, v in os.environ.items() if k != GEMINI_KEY_VARIABLE}
+    return subprocess.run(
+        [sys.executable, str(script), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=environment,
+    )
+
+
+def test_the_evaluation_makes_no_call_unless_told_to_and_given_a_key() -> None:
+    dry = try_requests("--dry-run", "a haunted carnival on the moon")
+    assert dry.returncode == 0, dry.stderr
+    assert f"model={MODEL} songs=20 " in dry.stdout and "REQUEST" not in dry.stdout
+    unchosen = try_requests("a haunted carnival on the moon")
+    assert unchosen.returncode == 2 and "REQUEST" not in unchosen.stdout
+    keyless = try_requests("--send-to-gemini", "a haunted carnival on the moon")
+    assert keyless.returncode == 2 and GEMINI_KEY_VARIABLE in keyless.stderr
+    assert "REQUEST" not in keyless.stdout
 
 
 async def _served(handler: web.RequestHandler) -> tuple[web.AppRunner, str]:

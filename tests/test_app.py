@@ -121,7 +121,7 @@ DEMO_KEY = RecordingKey(Source.JAMENDO, "demo-j-fit")
 
 
 def write_snapshot(directory: Path) -> tuple[Path, Path, Path]:
-    """Copy the synthetic selector demo snapshot and reviews beside a media manifest."""
+    """Copy the synthetic demo snapshot and reviews beside a media manifest."""
     paths = (directory / "catalog.json", directory / "reviews.json", directory / "media.json")
     paths[0].write_bytes((DEMO / "selector-demo.json").read_bytes())
     paths[1].write_bytes((DEMO / "selector-demo-reviews.json").read_bytes())

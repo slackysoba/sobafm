@@ -11,13 +11,14 @@ from typing import cast
 import pytest
 
 from sobafm.catalog import (
+    MAX_DETAIL_CHARACTERS,
+    MAX_DETAILS,
     CatalogInputError,
     Feature,
     Source,
+    eligible,
     metadata_digest,
     parse_catalog,
-    parse_query,
-    select,
 )
 from sobafm.catalog_import import (
     MAX_IMPORT_BYTES,
@@ -72,7 +73,72 @@ def test_jamendo_maps_concrete_fields_without_inventing_strong_or_available_evid
     assert "artist_id: 800001" in record.credits.notices
     assert "Album: Synthetic Album" in record.credits.notices
     assert "speed_not_energy" in result.report.records[0].issues
-    assert not select(result.catalog, parse_query({"title": record.title}), ()).matches
+    assert not eligible(result.catalog, ())
+
+
+def test_jamendo_keeps_source_information_as_labeled_details() -> None:
+    result = jamendo(
+        album_name="Synthetic Album",
+        releasedate="2020-02-03",
+        musicinfo={
+            "tags": {
+                "genres": ["darkwave"],
+                "instruments": ["theremin"],
+                "vartags": ["haunted", "piano"],
+            },
+            "vocalinstrumental": "instrumental",
+            "gender": "",
+            "acousticelectric": "electric",
+            "speed": "high",
+            "lang": "fr",
+        },
+    )
+    assert result.catalog.partitions[0].recordings[0].details == (
+        "album: Synthetic Album",
+        "released: 2020-02-03",
+        "genre: darkwave",
+        "instrument: theremin",
+        "tag: haunted",
+        "tag: piano",
+        "vocal or instrumental: instrumental",
+        "acoustic or electric: electric",
+        "speed: high",
+        "language: fr",
+    )
+
+
+def test_details_are_bounded_single_lines_and_never_change_the_review_digest() -> None:
+    plain = jamendo(album_name=None, releasedate=None, musicinfo=None)
+    assert plain.catalog.partitions[0].recordings[0].details == ()
+    noisy = jamendo(
+        album_name="Line one\n\tline  two" + "x" * 400,
+        releasedate=None,
+        musicinfo={"tags": {"genres": [f"genre{n}" for n in range(40)]}},
+    )
+    record = noisy.catalog.partitions[0].recordings[0]
+    assert len(record.details) == MAX_DETAILS
+    assert record.details[0].startswith("album: Line one line two")
+    assert len(record.details[0]) == MAX_DETAIL_CHARACTERS and record.details[0].endswith("…")
+    enriched = jamendo(musicinfo={"tags": {"vartags": ["haunted"]}})
+    bare = jamendo(musicinfo=None)
+    kept = enriched.catalog.partitions[0].recordings[0]
+    assert "tag: haunted" in kept.details
+    assert metadata_digest(kept) == metadata_digest(bare.catalog.partitions[0].recordings[0])
+
+
+def test_ccmixter_keeps_tags_tempo_and_description_as_details() -> None:
+    result = ccmixter(upload_description_plain="A long  walk\nthrough fog.")
+    details = result.catalog.partitions[0].recordings[0].details
+    assert "bpm: 81" in details and "description: A long walk through fog." in details
+    assert any(line.startswith("tag: ") for line in details)
+    assert "unknown_fields_not_copied" not in result.report.records[0].issues
+
+
+def test_fma_keeps_its_tags_as_details_even_when_unmapped() -> None:
+    payload = cast(dict[str, object], json.loads(fixture("fma-synthetic")))
+    cast(list[dict[str, object]], payload["recordings"])[0]["tags"] = ["piano", "witch house"]
+    result = normalize(Source.FMA, json.dumps(payload), context("fma"))
+    assert result.catalog.partitions[0].recordings[0].details == ("tag: piano", "tag: witch house")
 
 
 @pytest.mark.parametrize("value", [None, "", 0, 1, False, "unknown", "both"])
@@ -178,7 +244,7 @@ def test_observed_ccmixter_preserves_partial_batch_and_incomplete_credits() -> N
     assert "Source file identity: 18462" in notices and "Sample statement (as supplied)" in notices
     assert "upstream_notices_and_chain_unverified" in result.report.records[0].issues
     assert record.kind == "unknown" and record.availability == "unknown"
-    assert not select(result.catalog, parse_query({"title": "Sunrise (unplugged)"}), ()).matches
+    assert not eligible(result.catalog, ())
     assert result.report.admission_reviews_created == 0
 
 
@@ -225,8 +291,7 @@ def test_prepared_ccmixter_chain_preserves_imported_facts_without_self_admission
     notices = " ".join(candidate.credits.notices)
     for required in ("129564", "70072", "25112", "4693829", "a cappella", "instrumental"):
         assert required in notices
-    selection = select(prepared, parse_query({"title": "WILD WINDSTEPS"}), ())
-    assert not selection.matches
+    assert not eligible(prepared, ())
 
 
 def test_multiple_files_require_explicit_selection_and_do_not_infer_duration() -> None:
@@ -359,7 +424,7 @@ def test_fma_operator_manifest_preserves_credits_evidence_and_remains_unadmitted
     assert record.availability == "unknown" and record.credits is not None
     assert any("Performer and composer" in notice for notice in record.credits.notices)
     assert any("Duration reported:" in notice for notice in record.credits.notices)
-    assert not select(result.catalog, parse_query({"title": record.title}), ()).matches
+    assert not eligible(result.catalog, ())
     serialized = json.dumps(catalog_document(result.catalog))
     assert parse_catalog(serialized) == result.catalog
 
@@ -422,17 +487,7 @@ def test_observed_fma_night_owl_reproduces_credits_without_inventing_access_or_v
             hashlib.sha256((FIXTURES / artifact["file"]).read_bytes()).hexdigest()
             == artifact["sha256"]
         )
-    selection = select(catalog, parse_query({"title": "Night Owl"}), ())
-    assert not selection.matches
-    assert selection.rejected[0].reasons == (
-        "availability metadata is unknown",
-        "no trusted admission review",
-    )
-    assert [(c.source, c.state, c.provided, c.admitted) for c in selection.coverage] == [
-        (Source.JAMENDO, "missing", 0, 0),
-        (Source.CCMIXTER, "missing", 0, 0),
-        (Source.FMA, "complete", 1, 0),
-    ]
+    assert not eligible(catalog, ())
 
 
 def test_snapshot_identity_binds_full_source_identity_and_changed_credits() -> None:
