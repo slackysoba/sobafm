@@ -34,7 +34,7 @@ Retarget dependent PRs before merging their base and retain branches needed by d
 
 Use one coordinator and integration owner per milestone. Delegate substantial independent implementation to separate, individually inspectable project sessions with their own conversation contexts. Nested/internal subagents may have separate contexts, but do not substitute them for independently manageable sessions when that lifecycle is required. Do not simulate workers with headings or silently perform delegated implementation in the coordinator.
 
-Run workers as local sessions in their own worktrees, with their work committed and pushed to their branch. Use a cloud session only when it's actually helpful. Standing worker and reviewer instructions are in `docs/agent-briefs.md`.
+Run workers as local sessions in their own worktrees, with their work committed and pushed to their branch. Don't start cloud sessions; if a local session truly can't do a job, ask the maintainer first. Standing worker and reviewer instructions are in `docs/agent-briefs.md`.
 
 Preflight the client's actual session creation, reading, messaging and archival capabilities and execution environments. If a required capability is unavailable, report the limitation and request a supported alternative. Instructions do not configure tools, hooks or isolation.
 
@@ -58,11 +58,11 @@ A session is fully complete when all of these hold:
 - Nothing waits on it: no unfinished work, open PR it owns, running operation, unanswered question or pending decision.
 - Any worktree it owns that archival could remove passes the retirement checks below. A session with no such worktree has nothing to check here.
 
-Idleness or a merged PR alone does not qualify. A condition that cannot be checked counts as failed. For a cloud session, read its state through the browser route below and confirm from its handoff that its work is pushed. If a condition fails, keep the session active and record in the roster what it is waiting for. Leave pinned sessions alone.
+Idleness or a merged PR alone does not qualify. A condition that cannot be checked counts as failed. If a condition fails, keep the session active and record in the roster what it is waiting for. Leave pinned sessions alone.
 
 Use supported, reversible archival and check the result. Do not delete conversations or claim archival frees disk. The authorization covers the client removing a worktree that passed those checks. It does not cover accepting a discard prompt, manual removal or forced removal.
 
-Through the Claude desktop app's cross-session tools, an agent reaches only sessions the app runs itself (local, SSH and WSL), not cloud, terminal CLI or VS Code sessions. Archive cloud sessions from the claude.ai/code sidebar through a signed-in browser tool. When no route is available, give the maintainer one list of the sessions that appear finished, with supported links and any condition that could not be checked, and keep that list in the private roster until they are archived. A public checkpoint states only how many are waiting. The client's auto-archive setting acts on a merge or close alone, so it does not replace these conditions, and it is the maintainer's to change. Report unavailable lifecycle controls.
+Through the Claude desktop app's cross-session tools, an agent reaches only sessions the app runs itself (local, SSH and WSL), not terminal CLI or VS Code sessions. When no route is available, tell the maintainer in chat, with one list of the sessions that appear finished, supported links and any condition that could not be checked, and keep that list in the private roster until they are archived. A public checkpoint states only how many are waiting. The client's auto-archive setting acts on a merge or close alone, so it does not replace these conditions, and it is the maintainer's to change. Report unavailable lifecycle controls.
 
 ## Worktree and storage management
 

@@ -1,6 +1,6 @@
 # Agent briefs
 
-Standing instructions for agent sessions. A coordinator starts a session with one line, such as "Implement issue #N. Follow the Worker section of `docs/agent-briefs.md`." Sessions run locally by default, each in its own worktree, and work reaches other sessions through commits pushed to GitHub. Use a cloud session only when it's actually helpful.
+Standing instructions for agent sessions. A coordinator starts a session with one line, such as "Implement issue #N. Follow the Worker section of `docs/agent-briefs.md`." Sessions run locally, each in its own worktree, and work reaches other sessions through commits pushed to GitHub. Don't start cloud sessions.
 
 ## Shared limits
 
