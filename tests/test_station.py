@@ -159,6 +159,17 @@ def test_stop_cancels_unheard_work_until_player_is_silent() -> None:
     assert station.heard is None
 
 
+def test_a_stop_without_a_command_records_why_the_program_ended() -> None:
+    station = playing("a")
+    assert station.stop(EndReason.NO_LISTENERS) is None
+    station.silenced()
+    assert station.desired is None and station.ended is EndReason.NO_LISTENERS
+    station.request("next")
+    assert station.ended is None
+    station.stop()
+    assert station.ended is None  # a command stop records no reason
+
+
 def test_request_text_is_bounded() -> None:
     station = Station()
     with pytest.raises(ValueError):

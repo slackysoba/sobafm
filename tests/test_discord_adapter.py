@@ -84,9 +84,19 @@ def catalog(*recordings: Recording) -> tuple[Catalog, tuple[AdmissionReview, ...
 # Fakes for the disnake objects the adapter touches.
 
 
+BOT_ID = 1
+LISTENER_ID = 100
+
+
+@dataclass(frozen=True)
+class FakeUser:
+    id: int = BOT_ID
+
+
 @dataclass(eq=False)
 class FakeVoice:
     channel: FakeChannel
+    user: FakeUser = field(default_factory=FakeUser)
     connected: bool = True
     plays: list[StationSource] = field(default_factory=lambda: [])
     disconnects: int = 0
@@ -116,6 +126,11 @@ class FakeVoice:
 class FakeChannel:
     name: str
     voice: FakeVoice | None = None
+    guild: FakeGuild = field(default_factory=lambda: FakeGuild())
+    # Voice states in this channel by user ID; one uncached human listener by default.
+    voice_states: dict[int, FakeVoiceState] = field(
+        default_factory=lambda: {LISTENER_ID: FakeVoiceState(None)}
+    )
 
     @property
     def mention(self) -> str:
@@ -129,6 +144,8 @@ class FakeChannel:
 @dataclass
 class FakeVoiceState:
     channel: FakeChannel | None
+    deaf: bool = False
+    self_deaf: bool = False
 
 
 @dataclass
@@ -141,9 +158,19 @@ class FakePermissions:
     manage_guild: bool = False
 
 
+@dataclass(frozen=True)
+class FakeMember:
+    id: int
+    bot: bool
+
+
 @dataclass
 class FakeGuild:
     id: int = 1
+    members: dict[int, FakeMember] = field(default_factory=lambda: {})
+
+    def get_member(self, user_id: int) -> FakeMember | None:
+        return self.members.get(user_id)
 
 
 @dataclass
@@ -259,12 +286,48 @@ class Producer:
             self.settled.append(bank)
 
 
+class FakeClock:
+    """The grace timer's sleep: it returns only when the test calls ``expire``."""
+
+    def __init__(self) -> None:
+        self.sleeps: list[tuple[float, asyncio.Future[None]]] = []
+
+    async def sleep(self, seconds: float) -> None:
+        future = asyncio.get_running_loop().create_future()
+        self.sleeps.append((seconds, future))
+        await future
+
+    @property
+    def pending(self) -> list[float]:
+        return [seconds for seconds, future in self.sleeps if not future.done()]
+
+    def expire(self) -> None:
+        for _, future in self.sleeps:
+            if not future.done():
+                future.set_result(None)
+
+
 @dataclass(eq=False)
 class Harness:
     adapter: Adapter
     pool: PcmBankPool
     producer: Producer
+    # Wired to the adapter by `harness()`; other constructions keep a listener present.
+    clock: FakeClock = field(default_factory=FakeClock)
     room: FakeChannel = field(default_factory=lambda: FakeChannel("room"))
+
+    def voice_update(
+        self, user_id: int, state: FakeVoiceState | None, channel: FakeChannel | None = None
+    ) -> None:
+        """Apply a member's voice state in ``channel`` (the room by default) and dispatch it."""
+        channel = channel or self.room
+        if state is None:
+            channel.voice_states.pop(user_id, None)
+        else:
+            state.channel = channel
+            channel.voice_states[user_id] = state
+        target = None if state is None else channel
+        self.adapter.voice_state_changed(1, user_id, cast(Any, target))
 
     async def join(self) -> StationSource:
         await run(self.adapter.join, inter(self.room, manager=True))
@@ -281,7 +344,9 @@ def harness(
     pool = PcmBankPool()
     producer = producer or Producer()
     records = recordings if recordings is not None else (recording("a"),)
-    return Harness(Adapter(catalog(*records), producer, pool=pool), pool, producer)
+    clock = FakeClock()
+    adapter = Adapter(catalog(*records), producer, pool=pool, sleep=clock.sleep)
+    return Harness(adapter, pool, producer, clock)
 
 
 async def settle() -> None:
@@ -306,6 +371,7 @@ async def test_command_access_rules_and_server_only_registration() -> (
     bot = create_bot(Adapter(catalog(recording("a")), Producer(), pool=PcmBankPool()))
     bodies = {c.name: c.body for c in bot.slash_commands}
     assert set(bodies) == {"join", "leave", "play", "skip", "stop", "now"}
+    assert len(bot.extra_events["on_voice_state_update"]) == 1  # listener grace
     for name, body in bodies.items():
         assert body.contexts is not None
         assert (
@@ -1065,11 +1131,15 @@ class Tagged(Producer):
             self.finished.append(identifier)
 
 
-def program_harness(*identifiers: str, producer: Tagged | None = None) -> tuple[Harness, Tagged]:
+def program_harness(
+    *identifiers: str, producer: Tagged | None = None, pool: PcmBankPool | None = None
+) -> tuple[Harness, Tagged]:
     tagged = producer or Tagged()
-    pool = PcmBankPool()
+    pool = pool or PcmBankPool()
     records = tuple(recording(i) for i in identifiers)
-    return Harness(Adapter(catalog(*records), tagged, pool=pool), pool, tagged), tagged
+    clock = FakeClock()
+    adapter = Adapter(catalog(*records), tagged, pool=pool, sleep=clock.sleep)
+    return Harness(adapter, pool, tagged, clock), tagged
 
 
 async def until(condition: Callable[[], bool]) -> None:
@@ -1653,3 +1723,239 @@ def test_capacity_that_never_frees_ends_the_program_without_a_hot_loop(
         assert pool.leased == 0
 
     asyncio.run(scenario())
+
+
+# Listener grace.
+
+GRACE_ENDED = (
+    "Nothing is audible. The last program ended: no listeners remained. "
+    "Use `/play` to start a new one."
+)
+
+
+def grace_program(h: Harness) -> str | None:
+    grace = h.adapter.players[1].grace
+    return None if grace is None else grace.program.request
+
+
+async def grace_started(h: Harness) -> None:
+    assert h.adapter.players[1].grace is not None
+    await settle()
+    assert h.clock.pending == [discord_adapter.LISTENER_GRACE_SECONDS]
+
+
+async def grace_cancelled(h: Harness) -> None:
+    assert h.adapter.players[1].grace is None
+    await settle()
+    assert h.clock.pending == []  # the timer task was cancelled, not left waiting
+
+
+@offline
+async def test_the_program_ends_when_the_grace_period_after_the_last_listener_expires() -> None:
+    h, tagged = program_harness("a", "b", "c")
+    source = await start_program(h)
+    await prepared_next(h, "b")
+    player = h.adapter.players[1]
+    tracks = [t for t in (player.source._current, player.source._pending) if t]  # pyright: ignore[reportPrivateUsage]
+    assert len(tracks) == 2 and h.pool.leased == 2
+
+    h.voice_update(LISTENER_ID, None)  # the last listener leaves
+    await grace_started(h)
+    assert source.read() == tag("a")  # the program continues during the grace period
+    h.clock.expire()
+    await until(lambda: player.station.desired is None)
+
+    station = player.station
+    assert station.heard is None and station.ended is discord_adapter.EndReason.NO_LISTENERS
+    assert source.read() == b""  # silent, through the same path as /stop
+    assert player.voice.is_connected() and h.room.voice is not None
+    assert h.room.voice.disconnects == 0 and h.adapter.players[1] is player
+    # Both tracks retire through the owned path and release their banks.
+    assert all(t.retirement is not None for t in tracks)
+    await asyncio.gather(*(t.retirement for t in tracks if t.retirement))
+    assert h.pool.leased == 0 and h.adapter.debt == [] and h.adapter.cleanup_failures == 0
+    assert sorted(tagged.finished) == ["a", "b"]
+    assert await now_texts(h) == [GRACE_ENDED]
+
+    # A new program starts normally afterwards and clears the reason.
+    h.voice_update(LISTENER_ID, FakeVoiceState(None))
+    await h.play()
+    assert station.ended is None and station.desired is not None
+    assert player.grace is None
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_expiry_keeps_the_original_cleanup_clock_failed_verdicts_and_debt() -> None:
+    # Backdate the bank clock so the original three-second deadline has nearly passed.
+    pool = PcmBankPool(clock=lambda: time.monotonic() - discord_adapter.CLEANUP_SECONDS + 0.05)
+    h, tagged = program_harness("a", pool=pool)
+    tagged.holding["a"] = asyncio.Event()
+    await start_program(h)
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    h.clock.expire()
+    await until(lambda: h.adapter.players[1].station.desired is None)
+    await asyncio.sleep(0.2)  # past the original deadline; the producer still holds its bank
+    assert h.adapter.cleanup_failures == 1 and pool.leased == 1 and tagged.finished == []
+    tagged.holding["a"].set()
+    assert await h.adapter.shutdown() is False  # released, but the failed verdict stays
+    assert pool.leased == 0 and tagged.finished == ["a"]
+
+
+@offline
+async def test_a_listener_returning_before_expiry_cancels_the_grace_period() -> None:
+    h, _ = program_harness("a", "b", "c")
+    source = await start_program(h)
+    player = h.adapter.players[1]
+    program = player.station.desired
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    h.voice_update(LISTENER_ID, FakeVoiceState(None))
+    await grace_cancelled(h)
+    h.clock.expire()  # nothing is waiting any more
+    await settle()
+    assert player.station.desired is program and source.read() == tag("a")
+    assert player.station.ended is None
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_deafened_members_are_not_listeners() -> None:
+    h, _ = program_harness("a", "b", "c")
+    await start_program(h)
+    player = h.adapter.players[1]
+    h.voice_update(LISTENER_ID, FakeVoiceState(None, self_deaf=True))
+    await grace_started(h)
+    h.voice_update(LISTENER_ID, FakeVoiceState(None))  # undeafens
+    await grace_cancelled(h)
+    h.voice_update(LISTENER_ID, FakeVoiceState(None, deaf=True))  # deafened by the server
+    await grace_started(h)
+    h.voice_update(LISTENER_ID, FakeVoiceState(None, deaf=True, self_deaf=False))
+    assert len(h.clock.sleeps) == 2  # an unrelated change does not restart the period
+    h.clock.expire()
+    await until(lambda: player.station.desired is None)
+    assert player.station.ended is discord_adapter.EndReason.NO_LISTENERS
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_bots_do_not_count_but_uncached_members_do() -> None:
+    h, _ = program_harness("a", "b", "c")
+    await start_program(h)
+    h.room.guild.members[200] = FakeMember(200, bot=True)
+    h.room.guild.members[BOT_ID] = FakeMember(BOT_ID, bot=True)
+    h.voice_update(200, FakeVoiceState(None))
+    h.voice_update(BOT_ID, FakeVoiceState(None))
+    await grace_cancelled(h)  # the uncached human is still there
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)  # only bots, including SobaFM itself, remain
+    # A member whose bot flag is unknown is not cut off.
+    h.voice_update(300, FakeVoiceState(None))
+    await grace_cancelled(h)
+    # A cached human counts too.
+    h.room.guild.members[301] = FakeMember(301, bot=False)
+    h.voice_update(300, None)
+    await grace_started(h)
+    h.voice_update(301, FakeVoiceState(None))
+    await grace_cancelled(h)
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_moves_to_another_channel_start_the_grace_period() -> None:
+    h, _ = program_harness("a", "b", "c")
+    await start_program(h)
+    other = FakeChannel("other", voice_states={})
+    h.room.voice_states.pop(LISTENER_ID)
+    h.voice_update(LISTENER_ID, FakeVoiceState(None), channel=other)  # the listener moves away
+    await grace_started(h)
+    other.voice_states.pop(LISTENER_ID)
+    h.voice_update(LISTENER_ID, FakeVoiceState(None))  # and back
+    await grace_cancelled(h)
+
+    # A manager moves the bot to a channel whose only member is deafened.
+    other.voice_states[LISTENER_ID + 1] = FakeVoiceState(other, self_deaf=True)
+    await run(h.adapter.join, inter(other, manager=True))
+    assert h.adapter.players[1].voice.channel is cast(Any, other)
+    await grace_started(h)
+    await run(h.adapter.join, inter(h.room, manager=True))  # back to the listener
+    await grace_cancelled(h)
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_stop_leave_voice_loss_and_shutdown_cancel_the_grace_period() -> None:
+    h, _ = program_harness("a", "b", "c")
+    await start_program(h)
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    await run(h.adapter.stop, inter(None, manager=True))
+    await grace_cancelled(h)
+    assert h.adapter.players[1].station.ended is None  # stopped, not a grace expiry
+
+    h.voice_update(LISTENER_ID, FakeVoiceState(None))
+    await h.play()
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    h.voice_update(BOT_ID, None)  # SobaFM's own voice connection is lost
+    await grace_cancelled(h)
+
+    h.voice_update(LISTENER_ID, FakeVoiceState(None))
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    player = h.adapter.players[1]
+    await run(h.adapter.leave, inter(None, manager=True))
+    assert player.grace is None and 1 not in h.adapter.players
+    await settle()
+    assert h.clock.pending == []
+
+    await h.join()
+    await h.play()
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    grace = h.adapter.players[1].grace
+    assert grace is not None and grace.task in h.adapter.tasks  # owned by the adapter
+    assert await h.adapter.shutdown() is True  # returns without waiting for the timer
+    assert grace.task.cancelled() and h.adapter.tasks == set()
+
+
+@offline
+async def test_a_replacement_ends_the_old_grace_period() -> None:
+    h, _ = program_harness("a", "b", "c")
+    await start_program(h)
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    assert grace_program(h) == "piano"
+    first = h.adapter.players[1].grace
+    assert first is not None
+
+    # A deafened caller replaces the program: its own grace period starts afresh.
+    await h.play("quiet piano")
+    assert first.task.cancelled() or first.task.cancelling()
+    assert grace_program(h) == "quiet piano"
+    await grace_started(h)
+
+    # A listener's replacement leaves no grace period.
+    h.voice_update(LISTENER_ID, FakeVoiceState(None))
+    await h.play("solo piano")
+    await grace_cancelled(h)
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_stale_timer_never_ends_a_newer_program() -> None:
+    h, _ = program_harness("a", "b", "c")
+    await start_program(h)
+    player = h.adapter.players[1]
+    h.voice_update(LISTENER_ID, None)
+    await grace_started(h)
+    async with player.lock:
+        h.clock.expire()  # the timer fires and waits for the lock
+        await settle()
+        # A newer program is accepted after the timer was armed, before it runs.
+        newer = player.station.request("quiet piano").program
+    await settle()
+    assert player.station.desired is newer and player.station.ended is None
+    assert player.grace is None  # the stale timer cleared only its own registration
+    assert await h.adapter.shutdown() is True
