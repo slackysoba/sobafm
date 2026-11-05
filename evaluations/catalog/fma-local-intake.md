@@ -1,5 +1,7 @@
 # Bounded local FMA intake preparation
 
+Historical record. The [`sobafm.fma_intake`](https://github.com/slackysoba/sobafm/blob/81a7519/src/sobafm/fma_intake.py) intake and its [`json_records`](https://github.com/slackysoba/sobafm/blob/81a7519/src/sobafm/json_records.py) encoder was removed from `main` in [#104](https://github.com/slackysoba/sobafm/issues/104); commit `81a7519` keeps it, and the commands below run only from that commit.
+
 Issues [#40](https://github.com/slackysoba/sobafm/issues/40) and
 [#42](https://github.com/slackysoba/sobafm/issues/42) implement an explicitly invoked
 Linux intake and one owned validation reader for **Night Owl by Broke For Free**.
@@ -142,7 +144,7 @@ analysis, provider adapter, SDK, service or new dependency.
 
 ## Pending lifetime, cancellation and recovery
 
-Compact record checks and persistence use the production `json_records` encoder.
+Compact record checks and persistence used the shared `json_records` encoder.
 Acquisition evidence/notices retain their 4,096-byte gates, and reports/state
 retain 16,384 bytes. Canonical hashes use fixed 4,096-byte document backing with
 no new fingerprint-output cap or evaluation-only scalar restrictions. Historical
@@ -155,7 +157,7 @@ For state limit L, size/fill can retain a scalar spelling of up to 2L in additio
 to work L; immutable freeze separately owns work L plus result L. Source facts,
 maintained conversion scratch and concurrent report/hash operations are separate
 charges. Fixed hash backing does not bound every huge directly constructed scalar
-or establish full resource fit. The [evaluation ledger](../fma_validation/README.md#compact-intake-records-and-hashes)
+or establish full resource fit. The [evaluation ledger](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/fma_validation/README.md#compact-intake-records-and-hashes)
 records the remaining accounting obligations.
 
 Ordinary CLI output is unchanged: insertion-order/spaced JSON and print/flush
@@ -306,7 +308,7 @@ wall-clock rollback, failed close/deletion, failed state sync, restart binding a
 original preservation. They establish local ownership behavior only, not music
 quality, recording validity, Linux containment or release readiness.
 
-The concrete [#44 validation consumer](../fma_validation/README.md) uses this
+The concrete [#44 validation consumer](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/fma_validation/README.md) uses this
 contract with a separately contained metadata helper, then a fresh streaming
 decoder runner. A trusted enclosing evaluation may convey an earlier UTC cleanup
 start to `LocalIntake.cancel(started_at=...)`; it can only tighten the original

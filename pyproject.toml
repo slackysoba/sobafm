@@ -13,7 +13,6 @@ license-files = ["LICENSE"]
 dependencies = ["disnake[voice]==2.12.2"]
 
 [dependency-groups]
-evaluation = ["mutagen==1.48.1"]
 dev = [
     "detect-secrets==1.5.0",
     "pre-commit==4.7.0",
@@ -26,7 +25,7 @@ dev = [
 
 [tool.uv]
 required-version = "==0.13.6"
-default-groups = ["dev", "evaluation"]
+default-groups = ["dev"]
 
 [tool.ruff]
 target-version = "py314"
@@ -36,7 +35,7 @@ line-length = 100
 select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
 
 [tool.pyright]
-include = ["src", "tests", "evaluations/linux_resource", "evaluations/fma_validation"]
+include = ["src", "tests", "evaluations/linux_resource"]
 pythonVersion = "3.14"
 pythonPlatform = "Linux"
 typeCheckingMode = "strict"
@@ -45,12 +44,6 @@ typeCheckingMode = "strict"
 pythonpath = ["."]
 testpaths = [
     "tests",
-    "evaluations/linux_resource/test_contract.py",
-    "evaluations/linux_resource/test_overlap_contract.py",
-    "evaluations/linux_resource/test_vbr_contract.py",
-    "evaluations/linux_resource/test_flac_contract.py",
-    "evaluations/linux_resource/test_cancel_contract.py",
-    "evaluations/linux_resource/test_topology_contract.py",
     "evaluations/linux_resource/test_arm64_runner_preflight.py",
 ]
 addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers"]
