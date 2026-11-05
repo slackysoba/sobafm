@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 
 import aiohttp
@@ -315,6 +317,58 @@ def try_requests(*arguments: str) -> subprocess.CompletedProcess[str]:
         check=False,
         env=environment,
     )
+
+
+def load_evaluation_tool() -> ModuleType:
+    path = Path(__file__).resolve().parents[1] / "evaluations/gemini_matching/try_requests.py"
+    spec = importlib.util.spec_from_file_location("try_requests", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def forbid_requests(monkeypatch: pytest.MonkeyPatch, tool: ModuleType) -> list[str]:
+    """Replace every route to a socket, so a regression fails here and never reaches out."""
+    attempts: list[str] = []
+
+    def forbidden(*_: object, **__: object) -> None:
+        attempts.append("request attempted")
+        raise AssertionError("no request may be attempted")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", forbidden)
+    monkeypatch.setattr(tool, "GeminiMatcher", forbidden)
+    return attempts
+
+
+@pytest.mark.parametrize("key", ["", "   ", "\r\n", "﻿", "﻿\r\n", "﻿real", "a b"])
+def test_a_stray_or_empty_key_stops_the_evaluation_before_any_request(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    tool = load_evaluation_tool()
+    attempts = forbid_requests(monkeypatch, tool)
+    monkeypatch.setenv(GEMINI_KEY_VARIABLE, key)
+    monkeypatch.setattr(sys, "argv", ["try_requests", "--send-to-gemini", "a request"])
+    with pytest.raises(SystemExit) as stopped:
+        tool.main()
+    assert stopped.value.code == 2 and attempts == []
+
+
+@pytest.mark.parametrize("flags", [["--dry-run"], []])
+def test_a_valid_key_alone_never_starts_the_evaluation(
+    monkeypatch: pytest.MonkeyPatch, flags: list[str]
+) -> None:
+    tool = load_evaluation_tool()
+    attempts = forbid_requests(monkeypatch, tool)
+    monkeypatch.setenv(GEMINI_KEY_VARIABLE, KEY)
+    monkeypatch.setattr(sys, "argv", ["try_requests", *flags, "a request"])
+    if flags:
+        assert tool.main() == 0
+    else:
+        with pytest.raises(SystemExit) as stopped:
+            tool.main()
+        assert stopped.value.code == 2
+    assert attempts == []
 
 
 def test_the_evaluation_makes_no_call_unless_told_to_and_given_a_key() -> None:
