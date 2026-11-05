@@ -101,6 +101,29 @@ docker compose up --build -d
 
 Read the release notes and `docs/requirements.md` first. Updating the files in `./data` needs a restart: `docker compose restart`.
 
+## Build the FMA catalog
+
+The catalog comes from the [FMA research dataset](https://github.com/mdeff/fma) (Defferrard, Benzi, Vandergheynst and Bresson, ISMIR 2017; its metadata is CC BY 4.0). [Decision 0007](decisions/0007-fma-dataset-batch-catalog.md) records the rule, the limits and what a review can't establish: the dataset says it's meant for research, it's a third-party copy, and nothing after its 2017 snapshot is known.
+
+The catalog, reviews and manifest for the 167 accepted recordings are in [`evaluations/catalog/fma-2026-11/`](../evaluations/catalog/fma-2026-11/). The audio is never in Git or the image, so another machine has to fetch the files again, under its operator's own decision. Copy the three files into `./data` and the audio into `./data/fma/`.
+
+**Authorization comes first.** These steps send requests to the dataset's host and store audio. Run them only under your own decision, within the limits in that record. Any response other than partial content stops the run, and it stays stopped until you remove the `fma-STOPPED` marker from the state folder. Don't work around a refusal by changing headers, identity or client.
+
+Run each step in a container of your own image, with this repository mounted and `PYTHONPATH=/work/src`. Keep the state folder private. It needs `tracks.csv` and `raw_tracks.csv` from the dataset's metadata archive.
+
+| Step | Network | What it does |
+| --- | --- | --- |
+| `fma_build.py candidates --target N --spares N --strike ID,ID` | No | Applies the rule and writes the list for review. Later steps read only the chosen rows, and the catalog names the rule version that chose them |
+| `fma_fetch.py directory` | Yes | Reads the archive's directory once and screens out files that look cut short |
+| `fma_fetch.py audio --limit N` | Yes | Reads the next files, one at a time, checking each against the archive's CRC-32. A finished file is never requested again |
+| `fma_build.py verify` | No | Reads each file's tags and decodes it with the real producer. Run it at the service limits: `--network none --memory 90177536 --memory-swap 90177536 --pids-limit 64` |
+| `fma_build.py finalize --target N` | No | Writes `catalog.json` and `media.json` for what passed, the final list, every rejection and ten recordings to spot-check. Run it again with `--strike ID,ID` to apply what the maintainer strikes. That keeps the same ten |
+| `fma_build.py reviews` | No | Writes `reviews.json`. Run it only after the maintainer accepts the list. It records that acceptance and doesn't replace it |
+
+Then start the service as usual and check the `catalog source:` lines in the log. A rebuild changes a recording's digest wherever its reviewed metadata changed, so those recordings need a fresh acceptance.
+
+**To remove a recording**, for example after a takedown or a rights conflict, remove its entry from the `reviews` array in `reviews.json` and delete its file from `./data/fma/`, then run `docker compose restart`. The file is one line of JSON, so edit the array rather than deleting a line: invalid JSON stops the whole service at startup with exit 2. Without a review entry the recording can't be chosen. No automatic recheck of rights or availability happens.
+
 ## Exit status and troubleshooting
 
 | Exit | Log line | Meaning and fix |
