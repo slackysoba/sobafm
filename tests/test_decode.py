@@ -71,10 +71,32 @@ def run(producer: DecodeProducer) -> None:
     assert report.cleanup == "clean" and report.settled
 
 
-def test_mpg123_argv_matches_the_established_decoder() -> None:
-    from evaluations.fma_validation.diagnostics import DECODER
+# The argv the #44 evaluation established and its approved real run used. The
+# evaluation was removed from main after that run; commit 81a7519 retains it.
+ESTABLISHED_MPG123_ARGV = (
+    "/usr/bin/mpg123",
+    "--no-control",
+    "--no-visual",
+    "--buffer",
+    "0",
+    "--stdout",
+    "--rate",
+    "48000",
+    "--stereo",
+    "--encoding",
+    "s16",
+    "--resample",
+    "ntom",
+    "--no-resync",
+    "--skip-id3v2",
+    "--no-icy-meta",
+    "--long-tag",
+    "-",
+)
 
-    assert DECODER.argv == MPG123_ARGV
+
+def test_mpg123_argv_matches_the_established_decoder() -> None:
+    assert MPG123_ARGV == ESTABLISHED_MPG123_ARGV
 
 
 def test_complete_decode_reports_every_fact(source: DecodeInput, pool: PcmBankPool) -> None:

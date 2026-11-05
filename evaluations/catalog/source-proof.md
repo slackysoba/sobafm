@@ -1,5 +1,7 @@
 # Fixed ccMixter source-acquisition proof
 
+Historical record. The [`sobafm.ccmixter_proof`](https://github.com/slackysoba/sobafm/blob/81a7519/src/sobafm/ccmixter_proof.py) evaluation, with its [`ccmixter_cases.py`](https://github.com/slackysoba/sobafm/blob/81a7519/src/sobafm/ccmixter_cases.py) definitions, was removed from `main` in [#104](https://github.com/slackysoba/sobafm/issues/104); commit `81a7519` keeps it, and the commands below run only from that commit.
+
 Issue [#19](https://github.com/slackysoba/sobafm/issues/19) implements the
 [candidate's finite source contract](ccmixter-playback-candidate.md#proposed-finite-source-proof).
 This is an opt-in Linux evaluation, with no production source integration,

@@ -1,13 +1,15 @@
 # Pinned mpg123 supply and startup
 
+Historical record, kept because it explains the `Dockerfile` mpg123 package pins. The harness and recorded results it cites were removed from `main` in [#104](https://github.com/slackysoba/sobafm/issues/104); commit `81a7519` keeps them.
+
 Issue [#7](https://github.com/slackysoba/sobafm/issues/7). Status: **authenticated
 metadata, binary binding, no-input startup and owned MP3 decode complete**.
 The later [initial amd64 Q3/Q4 case matrix](../../docs/linux-feasibility.md#recorded-native-amd64-decoder-proof)
 is accepted within its distinct bindings. The stage-specific limitations below
 preserve what this supply/startup evidence established at the time.
-The [complete proposal and selected operation evidence](results/2026-10-27-mpg123-proposal.yaml)
+The [complete proposal and selected operation evidence](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-27-mpg123-proposal.yaml)
 record all 27 proposed additions and the unchanged 87-package base. This follows
-the [fixed FFmpeg startup rejection](decoder-supply.md). The completed mpg123 run
+the [fixed FFmpeg startup rejection](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/decoder-supply.md). The completed mpg123 run
 changes no numeric limit, PCM requirement or supported-input requirement. A
 distinct, stricter address-space startup variant also passed as recorded below.
 
@@ -158,7 +160,7 @@ three-second cleanup deadline was met. The container was observed stopped with
 PID zero, was not OOM-killed, and was removed and verified absent. Internal and
 external cleanup debt are zero. The outer operation took 7.125 seconds, including
 container setup and observation; this is not a decoder latency measurement.
-The [selected result](results/2026-10-27-mpg123-startup.yaml) preserves the actual
+The [selected result](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-27-mpg123-startup.yaml) preserves the actual
 inventory, native hashes, preflight, gate, result and separate build/startup source
 bindings. The DATA/STACK-only startup was not repeated, and no audio followed
 that operation; the separately reviewed AS variant is recorded below.
@@ -206,7 +208,7 @@ no setup/exec failure. The leader was reaped, no descendants remained and the
 original cleanup deadline was met. The container stopped with PID zero and no
 OOM kill, was removed normally and verified absent. Both cleanup debts are zero.
 Outer elapsed time was 6.109 seconds, including container setup and observation.
-The [separate selected AS result](results/2026-10-27-mpg123-as-startup.yaml)
+The [separate selected AS result](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-27-mpg123-as-startup.yaml)
 preserves the actual preflight, gate, output and ownership verdict.
 No retry, numeric tuning or input followed. Raw output SHA256 is
 `1c9e1f1a5a09437a1d51c91ef4f3768a0b7164de5da75a431988367d39f8df60`.
@@ -261,7 +263,7 @@ readiness and clean release, but remained incomplete because its diagnostic
 matcher rejected two expected messages. One separately reviewed confirmation
 passed after that narrow correction, with all capacities unchanged.
 The AS startup pass establishes no useful decode or PCM qualification.
-The [first owned MP3 result](mpg123-fixture-plan.md#corrected-confirmation) binds
+The [first owned MP3 result](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/mpg123-fixture-plan.md#corrected-confirmation) binds
 that useful-fit result and preserves the remaining Q3/Q4 cases. Each subsequent
 native case needs its concrete reviewed procedure before execution.
 
@@ -275,7 +277,7 @@ as complete audio: the inspected CLI can exit zero after a decoding error.
 [resampler allocation and cleanup](https://scm.orgis.org/mpg123/tags/1.33.7/src/libsyn123/resample.c),
 [CLI completion](https://scm.orgis.org/mpg123/tags/1.33.7/src/mpg123.c).
 
-The [first owned decode receipt](results/2026-10-28-owned-mp3-decode-first.yaml)
+The [first owned decode receipt](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-28-owned-mp3-decode-first.yaml)
 preserves that incomplete verdict and actual observations. Any MP3 result remains partial: FLAC,
 aggregate PCM coverage, Q4 cleanup, native arm64 and real source/Discord acceptance
 remain outstanding. The existing product guarantees still apply.
