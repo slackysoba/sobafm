@@ -1,6 +1,6 @@
 # Operations
 
-**Status: amd64 first slice, not yet qualified.** This guide describes the first playback slice for Linux amd64 with Docker Compose. The image has been built once locally, at commit `5ad8594`, for a decode fit check; that is not qualification of the image, its limits or the release, and the bot has not been tested against Discord. Treat it as a preview of the operator path, not a release. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)).
+**Status: amd64 first slice, not yet qualified.** This guide describes the first playback slice for Linux amd64 with Docker Compose. The image at commit `d6923c8` ran in one private Discord session on Docker Desktop under WSL2 ([#97](https://github.com/slackysoba/sobafm/issues/97)); that is not qualification of the image, its limits or the release. Treat it as a preview of the operator path, not a release. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)).
 
 The slice joins a voice channel, plays one admitted local recording per `/play` request, shows its full credits through `/now`, stops and shuts down cleanly. It has no settings, persistence, `/skip`, `/freestyle` or continuous selection.
 
@@ -112,6 +112,7 @@ During playback:
 - `Playback could not start (capacity is busy ...)`: both audio banks are still held, possibly by cleanup that has not finished. Retry shortly.
 - `audio producer missed its cleanup deadline`: a decoder took longer than three seconds to settle. Its bank stays held until it actually settles, and shutdown then exits 1.
 - If the bot loses its voice connection, playback commands report that it has not joined; use `/join` again.
+- Discord shows "The application did not respond": Discord rejected the bot's acknowledgement, usually because it arrived after the three-second window. `/stop` and `/leave` still take effect (check with `/now`) and log `interaction acknowledgement failed: command=<name> age_seconds=<seconds> status=<http> code=<discord>`, where `code=10062` is Unknown interaction. If the acknowledgement request itself fails, for example on a network error or timeout, the line ends with `error=<exception type>` instead of the status and code, and the commands still take effect. The age counts from the interaction's creation, so it includes network and Discord delay as well as any delay in the bot. A rejected `/join` or `/play` starts nothing; repeat it.
 
 ## Memory scope and exclusions
 
