@@ -35,6 +35,7 @@ Use option 4.
 
 - The per-request cost grows with the catalog, since every call sends it. The song list is capped at 512,000 characters and refused at startup if larger. At the documented $0.30 per million input tokens, a catalog of 768 short entries is on the order of one or two US cents per request; the free tier costs nothing but allows Google to use the content to improve its products.
 - First audio now waits on a provider call, bounded at 10 seconds. It counts against the 15-second median latency target and hasn't been measured.
+- A program lasts at most the 20 ranked recordings, then ends with the existing explanation instead of repeating one. That is roughly an hour at typical lengths. Going further would need a second call or a longer list, which is a later choice.
 - The model reads descriptions and can't hear the music, so recordings with sparse metadata will match poorly.
 - A small catalog limits how good any best fit can be. Growing the real catalog is separate work and remains the largest gap in match quality.
 - Metadata goes into the prompt as untrusted data, and a hostile tag could steer a choice. Doing so can only select another admitted recording. Replies use fixed wording and catalog text, not model text.
