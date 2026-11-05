@@ -727,9 +727,8 @@ async def test_now_privately_shows_complete_credits_to_ordinary_listeners() -> N
 
     listener = await run(h.adapter.now, inter(None))  # not in voice, not a manager
     assert listener.texts()[0] == (
-        "Now heard (full credits follow). This is the program's last recording: every "
-        "recording chosen for its request has been played. Use `/play` to start "
-        "a new program."
+        "Now heard (full credits follow). This is the program's last recording: no "
+        "recording chosen for its request is left to try. Use `/play` to start a new program."
     )  # the one-recording catalog has nothing to continue with
     pages = listener.sent[1:]
     assert [p.text for p in pages] == [heard.credits.page(n).text for n in range(1, len(pages) + 1)]
@@ -1437,8 +1436,8 @@ async def test_exhaustion_ends_the_program_without_repeating_or_looping() -> Non
     assert station.desired is None and station.heard is None and h.pool.leased == 0
     assert station.ended is discord_adapter.EndReason.EXHAUSTED
     assert await now_texts(h) == [
-        "Nothing is audible. The last program ended: every recording chosen for its "
-        "request has been played. Use `/play` to start a new one."
+        "Nothing is audible. The last program ended: no recording chosen for its "
+        "request is left to try. Use `/play` to start a new one."
     ]
     assert source.read() == b""
 
@@ -1525,7 +1524,7 @@ async def test_skip_failure_keeps_the_current_audio() -> None:
     source2 = await start_program(h2)
     await join_retirements(h2)
     text = await skip(h2)
-    assert text.startswith("Nothing follows: every recording chosen") and "continues" in text
+    assert text.startswith("Nothing follows: no recording chosen") and "continues" in text
     assert source2.read() == tag("a")
     assert await h.adapter.shutdown() is True and await h2.adapter.shutdown() is True
 
@@ -1666,6 +1665,43 @@ async def test_the_next_track_waits_for_capacity_held_by_a_retiring_track() -> N
     assert tagged.finished == ["a"] and h.pool.leased == 2
     assert source.read() == tag("c")
     await until(lambda: heard_id(h) == "c")
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_replacement_gets_its_own_continuation_while_the_old_one_waits() -> None:
+    h, tagged = program_harness("a", "b", "c", producer=Tagged(frames=50))
+    blocker = h.pool.acquire()  # the old program's next track waits for a bank
+    source = await start_program(h)
+    player = h.adapter.players[1]
+    station = player.station
+    old, waiting = station.desired, player.continuation
+    assert old is not None and waiting is not None
+    await until(lambda: bool(h.adapter._capacity_waiters))  # pyright: ignore[reportPrivateUsage]
+    assert not waiting.done()
+    assert h.pool.leased == 2 and next_id(h) is None
+
+    assert blocker.release()  # without a capacity change, so the old task keeps waiting
+    h.adapter.matcher = FakeMatcher(recording("d"), recording("e"))
+    await h.play()
+    new = station.desired
+    assert new is not None and new != old and not waiting.done()
+    await prepared_next(h, "d")
+    assert source.read() == tag("d")  # d switches in while the old continuation waits
+    await until(lambda: heard_id(h) == "d")
+
+    # e is prepared for the replacement although d has not drained.
+    await prepared_next(h, "e")
+    assert player.continuation is not waiting and waiting.done()
+    assert tagged.started == ["a", "d", "e"]  # the old program prepared nothing
+
+    # The old program's continuation cannot change the newer program.
+    attempts, heard = player.attempts, station.heard
+    await h.adapter._continue(player, old)  # pyright: ignore[reportPrivateUsage]
+    await join_retirements(h)
+    assert station.desired == new and station.heard is heard and next_id(h) == "e"
+    assert player.attempts == attempts and tagged.started == ["a", "d", "e"]
+    assert station.ending is None and h.pool.leased == 2
     assert await h.adapter.shutdown() is True
 
 
