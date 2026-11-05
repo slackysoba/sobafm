@@ -69,6 +69,8 @@ Describe the behavior change, reason, scope, risk and validation. Link the closi
 
 Applicable checks and independent review must pass. Resolve findings publicly. Changes requiring maintainer approval must receive that approval. Squash merge; do not push directly to main after bootstrap or rewrite shared history.
 
+`scripts/check-commit.sh <branch-or-sha> [slot]` runs the required checks on a pushed commit from a clean Linux clone. On a Windows host, run it inside WSL. `scripts/merge-reviewed.sh <pr> <issue> <subject> <body-file>` squash merges only after a clean review of the current commit, with passing CI and an unchanged patch. Agent sessions follow [`docs/agent-briefs.md`](docs/agent-briefs.md).
+
 For stacked PRs, retarget dependents before merging their base and retain required branches. Distinguish implementation, review, merge and release status.
 
 ## Decisions and safety

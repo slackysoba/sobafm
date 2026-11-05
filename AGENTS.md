@@ -34,6 +34,8 @@ Retarget dependent PRs before merging their base and retain branches needed by d
 
 Use one coordinator and integration owner per milestone. Delegate substantial independent implementation to separate, individually inspectable project sessions with their own conversation contexts. Nested/internal subagents may have separate contexts, but do not substitute them for independently manageable sessions when that lifecycle is required. Do not simulate workers with headings or silently perform delegated implementation in the coordinator.
 
+Run workers as local sessions in their own worktrees, with their work committed and pushed to their branch. Use a cloud session only when it's actually helpful. Standing worker and reviewer instructions are in `docs/agent-briefs.md`.
+
 Preflight the client's actual session creation, reading, messaging and archival capabilities and execution environments. If a required capability is unavailable, report the limitation and request a supported alternative. Instructions do not configure tools, hooks or isolation.
 
 Use a newly proposed operational default of at most three concurrent implementation workers, state the limit in the startup plan and follow maintainer adjustments. Do not expand it silently or add redundant approval gates for already-authorized work. Launch only independent Ready tasks; avoid recursive fan-out and duplicate clones. Concurrent writers require separate worktrees and exclusive scope ownership. For delegated work, use Claude Opus 5.5 at extra-high effort unless the maintainer changes that assignment.
