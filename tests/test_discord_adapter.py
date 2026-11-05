@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import os
 import signal
@@ -12,6 +13,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import disnake
 import pytest
 
 from sobafm import discord_adapter
@@ -148,6 +150,11 @@ class Sent:
     options: dict[str, object]
 
 
+class RejectedResponse:
+    status = 404
+    reason = "Not Found"
+
+
 @dataclass(eq=False)
 class FakeInteraction:
     guild: FakeGuild | None
@@ -155,6 +162,9 @@ class FakeInteraction:
     permissions: FakePermissions = field(default_factory=FakePermissions)
     sent: list[Sent] = field(default_factory=lambda: [])
     deferred: float | None = None
+    created_at: datetime.datetime = field(default_factory=lambda: disnake.utils.utcnow())
+    token: str = "synthetic-interaction-token"
+    rejected: bool = False  # Discord answers the acknowledgement with 10062
 
     @property
     def guild_id(self) -> int | None:
@@ -175,6 +185,10 @@ class FakeInteraction:
     async def defer(self, **options: object) -> None:
         assert self.deferred is None
         self.deferred = time.monotonic()
+        if self.rejected:
+            raise disnake.NotFound(
+                cast(Any, RejectedResponse()), {"code": 10062, "message": "Unknown interaction"}
+            )
 
     async def send(self, text: str, **options: object) -> None:
         assert self.deferred is not None
@@ -670,6 +684,88 @@ def test_underruns_and_retained_banks_are_logged(caplog: pytest.LogCaptureFixtur
         "shutdown: released=False leases_held=1 cleanup_failures=0",
         "shutdown: released=True leases_held=0 cleanup_failures=0",
     ]
+
+
+# A late acknowledgement that Discord rejects (#99).
+
+
+def rejected(channel: FakeChannel, *, age_seconds: float = 0.0) -> FakeInteraction:
+    fake = inter(channel, manager=True)
+    fake.rejected = True
+    fake.created_at = disnake.utils.utcnow() - datetime.timedelta(seconds=age_seconds)
+    return fake
+
+
+async def heard_track(h: Harness) -> StationSource:
+    source = await h.join()
+    await h.play()
+    await settle()
+    assert source.read() != SILENCE
+    await settle()
+    assert h.adapter.players[1].station.heard is not None and h.pool.leased == 1
+    return source
+
+
+async def join_retirements(h: Harness) -> None:
+    for task in list(h.adapter.tasks):
+        await task
+
+
+@offline
+async def test_stop_silences_and_retires_when_its_acknowledgement_is_rejected() -> None:
+    h = harness()
+    source = await heard_track(h)
+    fake = await run(h.adapter.stop, rejected(h.room))  # does not raise
+    assert fake.sent == []  # no follow-up to a gone interaction
+    station = h.adapter.players[1].station
+    assert station.heard is None and station.desired is None
+    assert source.read() == b""  # the callback emits nothing of the stopped track
+    await join_retirements(h)
+    assert h.pool.leased == 0 and len(h.producer.settled) == 1
+    assert h.room.voice is not None and h.room.voice.connected  # stop stays connected
+
+
+@offline
+async def test_leave_silences_and_disconnects_when_its_acknowledgement_is_rejected() -> None:
+    h = harness()
+    source = await heard_track(h)
+    fake = await run(h.adapter.leave, rejected(h.room))  # does not raise
+    assert fake.sent == []
+    assert h.adapter.players == {}
+    assert h.room.voice is not None and h.room.voice.disconnects == 1
+    assert source.read() == b""
+    await join_retirements(h)
+    assert h.pool.leased == 0 and len(h.producer.settled) == 1
+
+
+def test_a_rejected_acknowledgement_logs_command_and_age_without_token(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="sobafm")
+    fakes: list[FakeInteraction] = []
+
+    async def scenario() -> None:
+        h = harness()
+        await heard_track(h)
+        fakes.append(await run(h.adapter.stop, rejected(h.room, age_seconds=7.5)))
+        fakes.append(await run(h.adapter.leave, rejected(h.room, age_seconds=2.25)))
+        assert await h.adapter.shutdown() is True
+
+    asyncio.run(scenario())
+    lines = [
+        line
+        for line in adapter_log(caplog)
+        if line.startswith("interaction acknowledgement rejected")
+    ]
+    assert len(lines) == 2
+    for line, command, age in zip(lines, ("stop", "leave"), (7.5, 2.25), strict=True):
+        prefix = f"interaction acknowledgement rejected: command={command} age_seconds="
+        assert line.startswith(prefix)
+        seconds, rest = line.removeprefix(prefix).split(" ", 1)
+        assert age <= float(seconds) < age + 1
+        assert rest == "status=404 code=10062"
+    for fake in fakes:
+        assert fake.token not in caplog.text
 
 
 # Ownership and shutdown.

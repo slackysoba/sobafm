@@ -17,6 +17,10 @@ Safe INFO lines record what was played: heard-source changes by recording key an
 credit snapshot ID, each track's settled retirement (frames handed to the voice
 player, underruns and the bank's facts), voice connection changes and the shutdown
 outcome. They never contain request text, tokens or interaction data.
+
+`/stop` and `/leave` take effect even when Discord rejects their late acknowledgement
+(for example `10062 Unknown interaction`); they then send no follow-up and log one
+WARNING line with the command name and the interaction's age, never its token.
 """
 
 from __future__ import annotations
@@ -238,6 +242,29 @@ class Adapter:
     async def _refuse(self, inter: Inter, text: str) -> None:
         await inter.response.send_message(text, ephemeral=True, allowed_mentions=NO_MENTIONS)
 
+    @staticmethod
+    async def _defer(inter: Inter, command: str) -> bool:
+        """Defer privately; report whether Discord accepted it.
+
+        Used where the command must take effect even if Discord rejects a late
+        acknowledgement. A rejected interaction gets no follow-up. The log line names
+        the command and the interaction's age from its creation time, never its token.
+        """
+        try:
+            await inter.response.defer(ephemeral=True)
+        except disnake.HTTPException as exc:
+            age = (disnake.utils.utcnow() - inter.created_at).total_seconds()
+            log.warning(
+                "interaction acknowledgement rejected: command=%s age_seconds=%.3f "
+                "status=%d code=%d",
+                command,
+                age,
+                exc.status,
+                exc.code,
+            )
+            return False
+        return True
+
     def _player(self, inter: Inter) -> GuildPlayer | None:
         player = self.players.get(inter.guild_id or 0)
         return player if player is not None and player.voice.is_connected() else None
@@ -380,9 +407,11 @@ class Adapter:
             return await self._refuse(inter, NOT_JOINED)
         if not (self._listening(inter, player) or inter.permissions.manage_guild):
             return await self._refuse(inter, NOT_LISTENING)
-        await inter.response.defer(ephemeral=True)
+        acknowledged = await self._defer(inter, "stop")
         async with player.lock:
             tracks = self._silence(player)
+        if not acknowledged:
+            return  # the interaction is gone; retirements stay owned by the adapter
         if tracks:  # join the stopped producers, bounded; their retirement stays owned
             await asyncio.wait(tracks, timeout=SETTLE_SECONDS)
         await inter.followup.send(
@@ -407,8 +436,11 @@ class Adapter:
             return await self._refuse(inter, SERVER_ONLY)
         if (player := self.players.get(inter.guild.id)) is None:
             return await self._refuse(inter, "SobaFM is not in a voice channel.")
-        await inter.response.defer(ephemeral=True)
-        if tracks := await self._disconnect(inter.guild.id, player):
+        acknowledged = await self._defer(inter, "leave")
+        tracks = await self._disconnect(inter.guild.id, player)
+        if not acknowledged:
+            return  # the interaction is gone; retirements stay owned by the adapter
+        if tracks:
             await asyncio.wait(tracks, timeout=SETTLE_SECONDS)
         await inter.followup.send("Stopped and left.", ephemeral=True, allowed_mentions=NO_MENTIONS)
 
