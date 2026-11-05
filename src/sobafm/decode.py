@@ -65,8 +65,8 @@ from sobafm.pcm import GLOBAL_PCM_BANKS, PcmBank, PcmBankPool, PcmError, PcmFact
 CLEANUP_SECONDS = 3.0
 INPUT_CHUNK_BYTES = 16_384
 
-# The stock decoder invocation established by the #44 evaluation
-# (evaluations/fma_validation): stereo signed 16-bit at 48 kHz on stdout,
+# The stock decoder invocation established by the #44 evaluation (removed from
+# main; kept at commit 81a7519): stereo signed 16-bit at 48 kHz on stdout,
 # input on stdin, no resynchronisation past corrupt frames.
 MPG123_ARGV = (
     "/usr/bin/mpg123",

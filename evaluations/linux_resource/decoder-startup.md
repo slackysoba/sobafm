@@ -1,8 +1,10 @@
 # Stock FFmpeg startup check preparation
 
+Historical record, kept because it explains the `Dockerfile` base pin. Its [`decoder_startup.py`](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/decoder_startup.py) harness and recorded results were removed from `main` in [#104](https://github.com/slackysoba/sobafm/issues/104); commit `81a7519` keeps them.
+
 Issue: [#7](https://github.com/slackysoba/sobafm/issues/7). Current status: **binary
 supply recovered; exact image/binding reviewed; fixed no-input startup rejected**.
-See [recovery and actual startup evidence](decoder-supply.md). The initial supply
+See [recovery and actual startup evidence](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/decoder-supply.md). The initial supply
 attempts below remain historical evidence; no limits were increased.
 This is one supplemental-limit rejection check within ADR 0001, not a new product
 cap or a Q3 pass. No fixture, audio, provider, credentials or Discord input exists.
@@ -56,12 +58,12 @@ hard per-thread ceiling. No sampled RSS or startup success fills this gap.
 ## Supply gate before acquisition or build
 
 The exact proposed transitive binary closure is **resolved and reviewed for the
-recorded bounded assembly attempts**. The [selected result](results/2026-10-27-debian-metadata.yaml) records
+recorded bounded assembly attempts**. The [selected result](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-27-debian-metadata.yaml) records
 authenticated metadata, 205 additions, zero upgrades/removals and the retained
 manifest hash. During that metadata-only phase, no `.deb` files were downloaded,
 installed or executed. The initial assembly attempts below acquired some
 binaries but did not produce a complete verified archive set or result image.
-The later [retained-cache recovery](decoder-supply.md) verified the unchanged full
+The later [retained-cache recovery](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/decoder-supply.md) verified the unchanged full
 set, installed it offline, and passed actual binary-binding review before the
 recorded startup rejection. Metadata alone does not qualify startup or audio.
 
@@ -79,7 +81,7 @@ figures, not measured runtime memory or installed disk usage. All selected binar
 records are amd64/all from Debian main; no development/debug/source package was
 selected. Five print-URI rows omit a legacy digest, while every selected Packages
 record supplies SHA256. The full hash manifest, not URI text alone, binds the set.
-The [complete public proposal](results/2026-10-27-debian-package-proposal.yaml)
+The [complete public proposal](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-27-debian-package-proposal.yaml)
 is a faithful YAML representation of the retained JSON: decoded data equality
 was checked, and the result record distinguishes both serialization hashes.
 Its historical pending-review fields describe the metadata step, not the later
@@ -87,7 +89,7 @@ coordinator release. It contains public package/source/image identities only.
 
 ### Acquisition outcome
 
-The [assembly attempts](results/2026-10-27-debian-build.yaml) used the pinned base,
+The [assembly attempts](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-27-debian-build.yaml) used the pinned base,
 all 205 exact versions/hashes and ordinary APT. The first stopped before binary
 download because a generated package-pin text file had CRLF endings, which the
 Linux shell passed as part of each version. Its exact inputs were preserved. The
@@ -110,7 +112,7 @@ solve/step failure evidence, so no uncertain active-build ownership remains;
 client exit alone would not establish that. Selected receipts and scoped cache
 observations are retained. No cleanup or pruning was performed.
 
-That supply gate was subsequently cleared by the [recovery procedure](decoder-supply.md).
+That supply gate was subsequently cleared by the [recovery procedure](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/decoder-supply.md).
 The transport outcome did not invalidate the signed metadata evidence or justify
 changing the runtime cap or source-access restriction. The fixed supplemental
 DATA/STACK candidate then failed its no-input startup check; no audio followed.
@@ -273,7 +275,7 @@ is ten seconds including setup; cleanup has one original three-second deadline.
 
 After supply review, substitute the actual immutable result image and approved
 ELF hash in a private invocation record. Reuse the [Q1/Q2 external ownership
-procedure](README.md#reviewed-invocation), with a new container name/case
+procedure](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/README.md#reviewed-invocation), with a new container name/case
 `sobafm-q7-startup`/`startup`, the unchanged settings above, and a read-only mount
 of `evaluations` at `/evaluations`. The fixed container command is:
 

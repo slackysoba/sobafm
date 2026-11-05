@@ -7,6 +7,11 @@ This is the bounded feasibility slice of
 [requirements](requirements.md#approved-memory-definition) remain authoritative.
 The associated [accepted experimental decision](decisions/0001-linux-resource-proposal.md)
 records the approved interpretation and remaining execution gates.
+The experiment harness, its contract tests and its recorded results were removed
+from `main` in [#104](https://github.com/slackysoba/sobafm/issues/104). Links to them point at commit `81a7519`,
+which keeps them. The kept [decoder startup](../evaluations/linux_resource/decoder-startup.md)
+and [mpg123 supply](../evaluations/linux_resource/mpg123-proposal.md) records explain
+the `Dockerfile` decoder pins.
 
 ## Result and evidence boundary
 
@@ -21,7 +26,7 @@ The proposed controlled-capacity total is **98,979,840 decimal bytes**, below
 100,000,000. Arithmetic alone does not establish useful fit; the distinct
 owned-workload and process-release evidence is recorded below. The maintainer
 [approved the grouped-cap/runtime-placement interpretation and bounded proof](https://github.com/slackysoba/sobafm/issues/7#issuecomment-6439759990).
-The [recorded Q1/Q2 pass](../evaluations/linux_resource/README.md#recorded-amd64-result)
+The [recorded Q1/Q2 pass](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/README.md#recorded-amd64-result)
 demonstrates runtime placement, effective namespace reachability, inherited
 descendant membership and deliberate memory enforcement for its exact amd64
 image/source/host. Application cgroup delegation is not required for this
@@ -51,16 +56,16 @@ documentation commit. This is not one all-case source/image pass.
 
 | Q3 case and original result | Actual source / image | Readiness | Known completion |
 | --- | --- | --- | --- |
-| [120-second CBR, 48 kHz stereo](../evaluations/linux_resource/results/2026-10-28-owned-mp3-decode-confirmation.yaml) | `e0d54f1c5ec16808994138645f05c642c68ba78f` / A | 1,167,360 bytes at 0.045588931 seconds | All 1,920,768 input bytes; exactly 23,040,000 PCM bytes. |
-| [120-second VBR, 44.1 kHz mono to 48 kHz stereo](../evaluations/linux_resource/results/2026-10-31-owned-vbr-decode.yaml) | `45a184b5f0017eb3037a10a9e3e1a1345fef7d9d` / A | 1,179,648 bytes at 0.229574477 seconds | All 916,598 input bytes; exact header-derived 23,039,448 PCM bytes; 5,759,862 equal-channel frames and nonzero output. |
-| [120-second FLAC, 48 kHz stereo](../evaluations/linux_resource/results/2026-11-01-owned-flac-decode.yaml) | `e5e2f8cc0f53478a83b6b22b15f20b5f1ec65ed5` / B | 1,159,168 bytes at 0.066463983 seconds | All 3,478,328 input bytes; 23,040,000 PCM bytes with the original lossless hash. |
-| [Two-decoder CBR overlap](../evaluations/linux_resource/results/2026-10-28-owned-mp3-overlap.yaml) | `188081e56839bd92239f0b23e668b219c6cc136b` / A | Each 1,179,648 bytes at 0.075801715 / 0.075247779 seconds | Both live for 30.016542233 seconds; each drained 5,760,000 bytes during overlap and completed 23,040,000 PCM bytes with the confirmation hash. |
+| [120-second CBR, 48 kHz stereo](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-28-owned-mp3-decode-confirmation.yaml) | `e0d54f1c5ec16808994138645f05c642c68ba78f` / A | 1,167,360 bytes at 0.045588931 seconds | All 1,920,768 input bytes; exactly 23,040,000 PCM bytes. |
+| [120-second VBR, 44.1 kHz mono to 48 kHz stereo](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-31-owned-vbr-decode.yaml) | `45a184b5f0017eb3037a10a9e3e1a1345fef7d9d` / A | 1,179,648 bytes at 0.229574477 seconds | All 916,598 input bytes; exact header-derived 23,039,448 PCM bytes; 5,759,862 equal-channel frames and nonzero output. |
+| [120-second FLAC, 48 kHz stereo](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-11-01-owned-flac-decode.yaml) | `e5e2f8cc0f53478a83b6b22b15f20b5f1ec65ed5` / B | 1,159,168 bytes at 0.066463983 seconds | All 3,478,328 input bytes; 23,040,000 PCM bytes with the original lossless hash. |
+| [Two-decoder CBR overlap](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-28-owned-mp3-overlap.yaml) | `188081e56839bd92239f0b23e668b219c6cc136b` / A | Each 1,179,648 bytes at 0.075801715 / 0.075247779 seconds | Both live for 30.016542233 seconds; each drained 5,760,000 bytes during overlap and completed 23,040,000 PCM bytes with the confirmation hash. |
 
 Every case passed its diagnostic/completion predicate, had no OOM or swap use,
 and met both original native and external three-second cleanup deadlines with
 actual release and no debt. The original diagnostic failure and partial FLAC
 generation remain failed/incomplete at their original bindings. The
-[complete FLAC generation](../evaluations/linux_resource/results/2026-11-01-owned-flac-fixture.yaml)
+[complete FLAC generation](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-11-01-owned-flac-fixture.yaml)
 used a separate encoder image and development budget; it is not decoder-fit evidence.
 
 Each Q3 case allocated and touched both 2,304,000-byte banks and the 4,194,304-byte
@@ -85,10 +90,10 @@ actual admission gates, process/control witnesses, signal times and release.
 
 | Q4 case | Actual witness | Native release after first cancellation |
 | --- | --- | --- |
-| [Feed](../evaluations/linux_resource/results/2026-11-01-q4-feed.yaml) | Unfinished input after 65,536 accepted compressed bytes and 8,192 PCM bytes received. | 0.001828242 seconds |
-| [Stdout backpressure](../evaluations/linux_resource/results/2026-11-01-q4-stdout-backpressure.yaml) | Full 65,536-byte pipe; same decoder sleeping in stdout write. | 0.001632895 seconds |
-| [Ignored TERM](../evaluations/linux_resource/results/2026-11-01-q4-ignoring-launcher.yaml) | Owned non-media launcher retained TERM-ignore disposition and answered PONG; KILL and actual launcher reaping followed. | 1.027698228 seconds |
-| [Descendant after leader exit](../evaluations/linux_resource/results/2026-11-01-q4-descendant-after-leader-exit.yaml) | Leader reaped; same running decoder observed adopted by init before cancellation, then actual process/group/native-inventory release. | 0.002612263 seconds |
+| [Feed](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-11-01-q4-feed.yaml) | Unfinished input after 65,536 accepted compressed bytes and 8,192 PCM bytes received. | 0.001828242 seconds |
+| [Stdout backpressure](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-11-01-q4-stdout-backpressure.yaml) | Full 65,536-byte pipe; same decoder sleeping in stdout write. | 0.001632895 seconds |
+| [Ignored TERM](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-11-01-q4-ignoring-launcher.yaml) | Owned non-media launcher retained TERM-ignore disposition and answered PONG; KILL and actual launcher reaping followed. | 1.027698228 seconds |
+| [Descendant after leader exit](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-11-01-q4-descendant-after-leader-exit.yaml) | Leader reaped; same running decoder observed adopted by init before cancellation, then actual process/group/native-inventory release. | 0.002612263 seconds |
 
 All original native and external cleanup deadlines passed. No process, descriptor,
 original I/O, payload-view or CLI debt remained; stopped/no-OOM state, removal and
@@ -299,7 +304,7 @@ adopts the application architecture.
 ## Decoder supply and source obligations
 
 Documentation and package metadata were initially checked on 2026-10-27 without
-acquiring packages. The subsequent [signed metadata result](../evaluations/linux_resource/results/2026-10-27-debian-metadata.yaml)
+acquiring packages. The subsequent [signed metadata result](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/results/2026-10-27-debian-metadata.yaml)
 resolves 205 proposed binary additions on the pinned base. See the linked
 [startup preparation](../evaluations/linux_resource/decoder-startup.md) for later
 acquisition status. No source archive, audio fixture or restricted file was
@@ -308,7 +313,7 @@ acquired or hashed.
 | Binary distribution path | Evidence and fit | Disposition |
 | --- | --- | --- |
 | Debian stable `ffmpeg`, `7:7.1.5-0+deb13u1` at review time | Distribution-maintained binaries exist for amd64 and arm64. Broad codec support avoids a custom native build. The published binary file lists contain tools, documentation and presets rather than the restricted source files. Dependencies and installed size are not a memory-fit measurement. | Exact binary set acquired and installed offline; binding reviewed. The fixed supplemental DATA/STACK candidate failed loader startup on amd64. |
-| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | Supply, startup, owned CBR decode/overlap, [VBR mono conversion](../evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode) and all four controlled Q4 cases passed under unchanged limits. The distinct FLAC case completes the initial Q3 matrix; application and native-arm64 qualification remain separate. |
+| Debian `mpg123` family, all four packages `1.33.7-1` from forky | Upstream fixes relevant decoder paths missing from the older stable family. The authenticated amd64 proposal selects only these four packages from forky, with 23 stable additions and no base/libc change. | Supply, startup, owned CBR decode/overlap, [VBR mono conversion](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode) and all four controlled Q4 cases passed under unchanged limits. The distinct FLAC case completes the initial Q3 matrix; application and native-arm64 qualification remain separate. |
 
 Sources: [Debian FFmpeg package](https://packages.debian.org/trixie/ffmpeg),
 [amd64 file list](https://packages.debian.org/trixie/amd64/ffmpeg/filelist),
@@ -419,7 +424,7 @@ evidence as a single-image, single-pass execution of this original proposal.
 
 ### Initial stop-or-go proof
 
-The concrete [Q1/Q2 runner, configuration and results](../evaluations/linux_resource/README.md)
+The concrete [Q1/Q2 runner, configuration and results](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/README.md)
 used the already present pinned amd64 Python image without decoder installation
 or an image build. Q1/Q2 passed and that finite pass stopped without Q3/Q4 evidence.
 The later separately reviewed native decoder cases and aggregate PCM reconciliation
@@ -449,7 +454,7 @@ No fixture uses `18.raw`, a source catalog
 download or a reconstructed restricted sample. Bound fixtures to 20 MB total;
 retain provenance and compact results rather than decoded output.
 
-The [owned FLAC harness](../evaluations/linux_resource/flac-fixture-plan.md) uses
+The [owned FLAC harness](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/flac-fixture-plan.md) uses
 exact original PCM count/hash, bounded metadata/diagnostic
 contracts and explicit input/EOF/release evidence. The accepted narrow encoder
 source review is bound. Its first encoding attempt failed at the 2,500,000-byte
@@ -526,18 +531,18 @@ qualify it at its real boundaries. Native arm64 is on hold until after the first
 amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)). The
 larger-cap alternative remains outside the approval.
 
-The [direct-decoder cancellation preparation](../evaluations/linux_resource/mpg123-cancellation-plan.md)
-implements the first two Q4 cases and deterministic ownership regressions. Both
+The [direct-decoder cancellation preparation](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/mpg123-cancellation-plan.md)
+implemented the first two Q4 cases and deterministic ownership regressions. Both
 native cases passed after Q3 acceptance and exact review/release. The two
 noncooperative process-topology cases have a separately
-[prepared launcher/descendant implementation](../evaluations/linux_resource/mpg123-topology-plan.md)
+[prepared launcher/descendant implementation](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/mpg123-topology-plan.md)
 under the same limits, and both also passed. The selected records and independent
 acceptance above qualify only these four controlled cases.
 
 The [prepared stock-decoder startup check](../evaluations/linux_resource/decoder-startup.md)
-tests one supplemental DATA/STACK-limit candidate with `-version` and no input.
+tested one supplemental DATA/STACK-limit candidate with `-version` and no input.
 Its signed dependency resolution and actual installed-binary review are complete.
-The [recorded recovery and startup result](../evaluations/linux_resource/decoder-supply.md)
+The [recorded recovery and startup result](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/decoder-supply.md)
 shows exit 127 at a shared-library mapping failure under the fixed DATA/STACK
 candidate, with verified cleanup. That candidate is rejected; no memory tuning
 or audio followed. The whole-service ledger is unchanged. This does not establish
@@ -551,17 +556,17 @@ Its separately reviewed hard/soft AS 12,524,288 startup variant retains the
 original DATA/STACK and group limits. The source-derived ordinary-mapping scope,
 special-map exclusions and conditional PCM arithmetic are recorded there. That
 variant also passed one no-input startup. The subsequent
-[first owned decode](../evaluations/linux_resource/mpg123-fixture-plan.md#first-decode-observation-and-diagnostic-correction)
+[first owned decode](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/mpg123-fixture-plan.md#first-decode-observation-and-diagnostic-correction)
 observed exact output, readiness and clean release but retained an incomplete
 verdict after its diagnostic matcher rejected two expected messages. One
-[corrected confirmation](../evaluations/linux_resource/mpg123-fixture-plan.md#corrected-confirmation)
+[corrected confirmation](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/mpg123-fixture-plan.md#corrected-confirmation)
 subsequently passed under the same limits. This does not reclassify the first run
 or establish the remaining Q3/Q4 cases. One subsequent
-[retained-fixture overlap](../evaluations/linux_resource/mpg123-overlap-plan.md#recorded-overlap-result)
+[retained-fixture overlap](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/mpg123-overlap-plan.md#recorded-overlap-result)
 passed with two admitted decoders live for 30.016542233 seconds, independent
 readiness and complete output, both original cleanup deadlines met and no
 retained resource debt. A separate
-[owned VBR 44.1 kHz mono decode](../evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode)
+[owned VBR 44.1 kHz mono decode](https://github.com/slackysoba/sobafm/blob/81a7519/evaluations/linux_resource/mpg123-vbr-plan.md#recorded-decode)
 then passed once: exact header-derived 23,039,448-byte output, identical stereo
 channels for every frame, nonzero output overall, 0.229574-second readiness and
 both original cleanup deadlines met. The separately recorded FLAC and Q4 cases
