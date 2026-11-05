@@ -122,7 +122,7 @@ Run each step in a container of your own image, with this repository mounted and
 
 Then start the service as usual and check the `catalog source:` lines in the log. A rebuild changes a recording's digest wherever its reviewed metadata changed, so those recordings need a fresh acceptance.
 
-**To remove a recording**, for example after a takedown or a rights conflict, delete its line from `reviews.json` and its file from `./data/fma/`, then run `docker compose restart`. Without a review line it can't be chosen. No automatic recheck of rights or availability happens.
+**To remove a recording**, for example after a takedown or a rights conflict, remove its entry from the `reviews` array in `reviews.json` and delete its file from `./data/fma/`, then run `docker compose restart`. The file is one line of JSON, so edit the array rather than deleting a line: invalid JSON stops the whole service at startup with exit 2. Without a review entry the recording can't be chosen. No automatic recheck of rights or availability happens.
 
 ## Exit status and troubleshooting
 

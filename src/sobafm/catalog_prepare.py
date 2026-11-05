@@ -66,9 +66,18 @@ _NOT_MUSIC_GENRES = frozenset(
     }
 )
 _NOT_A_SONG_WORDS = re.compile(
-    r"\b(stems?|a ?cappella|acapella|samples?|sample ?pack|preview|excerpt|snippet|interview)\b"
+    r"\b(stems?|a ?cappella|acapella|samples?|sample ?pack|preview|excerpt|snippet|loops?"
+    r"|interview)\b"
 )
 _UNSAFE_EXPLICIT = frozenset({"Radio-Unsafe", "Adults-Only"})
+# A track is refused rather than have one of these dropped from its credits.
+_REQUIRED_IF_LISTED = (
+    "track_copyright_c",
+    "track_copyright_p",
+    "track.publisher",
+    "track.composer",
+    "track.lyricist",
+)
 _TRACK_COLUMNS = (
     "album.information",
     "album.tags",
@@ -106,6 +115,8 @@ _RAW_COLUMNS = (
 _MAX_HINT_CHARACTERS = 200
 # What some listings hold in a field nobody filled in. It isn't a name or a holder.
 _MISSING = "null"
+# A contact address in an artist's notes is personal data, not a description of the music.
+_EMAIL = re.compile(r"(?:mailto:)?[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.IGNORECASE)
 DATASET_NOTICE = (
     "Listing and file from the FMA research dataset (Defferrard et al., 2017); "
     "its metadata is under CC BY 4.0."
@@ -164,6 +175,12 @@ def _listed(row: Listing, key: str) -> str:
     """An optional credit field to reproduce, or "" if it's blank, a marker or unsafe."""
     text = _single_line(row.get(key, ""))
     return text if text.casefold() != _MISSING and _importable(text) else ""
+
+
+def _credit_would_be_lost(row: Listing, key: str) -> bool:
+    """Whether the listing gives this credit but the importer can't carry it in full."""
+    text = _single_line(row.get(key, ""))
+    return bool(text) and text.casefold() != _MISSING and not _importable(text)
 
 
 def license_class(row: Listing) -> str | None:
@@ -232,12 +249,14 @@ def rejection(row: Listing, licenses: frozenset[str] = ANY_CC) -> str | None:
         return "flagged as not radio-safe"
     if row["album.type"] in _NOT_A_SONG_ALBUMS:
         return "part of a radio program"
-    if not row.get("license_title") or not all(
-        _importable(row[key]) for key in ("track.title", "artist.name", "license_title")
+    if (
+        not row.get("license_title")
+        or not all(_importable(row[key]) for key in ("track.title", "artist.name", "license_title"))
+        or any(_credit_would_be_lost(row, key) for key in _REQUIRED_IF_LISTED)
     ):
         return "credit text can't be reproduced safely in full"
     if _NOT_A_SONG_WORDS.search(_words(row["track.title"])):
-        return "title names a sample, stem, preview, excerpt or interview"
+        return "title names a sample, stem, preview, excerpt, loop or similar"
     titles = genres(row)
     if not titles:
         return "no listed genre"
@@ -287,8 +306,9 @@ def candidates(
 
 
 def _plain_text(value: str) -> str:
-    """Description text without markup, bounded, as a matching hint."""
-    return _single_line(html.unescape(re.sub(r"<[^>]+>", " ", value)))[:_MAX_HINT_CHARACTERS]
+    """Description text without markup or email addresses, bounded, as a matching hint."""
+    text = html.unescape(re.sub(r"<[^>]+>", " ", value))
+    return _single_line(_EMAIL.sub(" ", text))[:_MAX_HINT_CHARACTERS]
 
 
 def manifest_row(row: Listing, embedded: Sequence[str] = ()) -> Row:

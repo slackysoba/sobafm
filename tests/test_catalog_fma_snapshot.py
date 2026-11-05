@@ -20,6 +20,7 @@ ACCEPTANCE_COMMENT = "6659945011"
 # Struck by the maintainer from the listing (first three) or the final list (last two).
 STRUCK = {"57892", "23943", "37909", "48387", "91974"}
 MISSING_VALUE = re.compile(r":\s*null\b", re.IGNORECASE)
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 
 
 def text(name: str) -> str:
@@ -56,6 +57,22 @@ def test_the_catalog_fits_the_song_list_and_every_credit_renders_in_full(
         assert credits_ is not None
         assert not any(MISSING_VALUE.search(notice) for notice in credits_.notices)
         assert render_credits(recording).pages
+
+
+def test_removing_one_review_entry_takes_out_only_that_recording(
+    admitted: tuple[Recording, ...],
+) -> None:
+    document = cast(dict[str, list[dict[str, object]]], json.loads(text("reviews.json")))
+    removed = document["reviews"].pop(0)
+    remaining = eligible(parse_catalog(text("catalog.json")), parse_reviews(json.dumps(document)))
+    assert len(remaining) == len(admitted) - 1
+    key = cast(dict[str, str], removed["key"])
+    assert key["recording_id"] not in {item.key.recording_id for item in remaining}
+
+
+def test_no_email_address_is_committed() -> None:
+    for name in ("catalog.json", "media.json", "reviews.json"):
+        assert EMAIL.search(text(name)) is None, name
 
 
 def test_no_audio_is_kept_in_the_repository() -> None:

@@ -310,13 +310,57 @@ def test_details_stay_bounded_and_keep_the_descriptions_ahead_of_tags() -> None:
     assert all(len(line) <= 160 for line in recording.details)
 
 
-def test_unsafe_optional_credit_text_is_left_out_not_fatal() -> None:
-    row = listing(**{"track.composer": "See https://example.org", "track_copyright_c": "<b>x</b>"})
-    result = imported([manifest_row(row)])
-    assert result.report.normalized == 1
-    recording = result.catalog.partitions[0].recordings[0]
-    assert recording.creators == ("Artist 100",)
-    assert recording.composer is None
+@pytest.mark.parametrize(
+    "field",
+    [
+        "track_copyright_c",
+        "track_copyright_p",
+        "track.publisher",
+        "track.composer",
+        "track.lyricist",
+    ],
+)
+@pytest.mark.parametrize("text", ["See https://example.org", "<b>x</b>", "x" * 201])
+def test_a_listed_credit_that_cant_be_carried_in_full_rejects_the_track(
+    field: str, text: str
+) -> None:
+    assert rejection(listing(**{field: text})) == "credit text can't be reproduced safely in full"
+
+
+@pytest.mark.parametrize("text", ["", "   ", "null", "NULL"])
+def test_a_blank_or_null_credit_is_not_a_lost_one(text: str) -> None:
+    fields = {"track.composer": text, "track_copyright_c": text, "track.publisher": text}
+    assert rejection(listing(**fields)) is None
+
+
+@pytest.mark.parametrize(
+    "title", ["Drum Loop 4", "Helplessness Loop_02", "Loops", "A Cappella", "Snippet (2)"]
+)
+def test_titles_naming_a_loop_a_cappella_or_snippet_are_rejected(title: str) -> None:
+    assert (rejection(listing(**{"track.title": title})) or "").startswith("title names")
+
+
+@pytest.mark.parametrize("title", ["Loophole", "Fruit Loopy", "Stemless"])
+def test_title_words_match_whole_words_only(title: str) -> None:
+    assert rejection(listing(**{"track.title": title})) is None
+
+
+def test_email_addresses_never_reach_the_details() -> None:
+    row = listing(
+        **{
+            "artist.bio": (
+                "Write to a.person+tag@mail.example.org or <a href='mailto:b@c.org'>me</a>."
+            ),
+            "track.information": "Booking: x&#64;example.com today",
+            "album.information": "Mail mailto:y@example.net for more",
+        }
+    )
+    built = manifest_row(row)
+    details = {label: value for label, value in cast(list[list[str]], built["details"])}
+    assert details["artist"] == "Write to or me ."
+    assert details["description"] == "Booking: today"
+    assert details["album description"] == "Mail for more"
+    assert "@" not in json.dumps(built["details"])
 
 
 def test_the_listings_null_marker_is_not_a_credit() -> None:

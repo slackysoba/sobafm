@@ -30,7 +30,7 @@ For admission:
 
 Use the dataset, and admit by rule.
 
-**The rule, version `fma-dataset-1`.** It lives in `src/sobafm/catalog_prepare.py` and has no model in it. A track qualifies only if it has a Creative Commons license link, a usable FMA track page, a length of 1–15 minutes, at least 128 kbps, a predicted size of at most 20 MB, at least 1,000 listens and a listed genre. It must not be flagged Radio-Unsafe or Adults-Only, be part of a radio program, be listed as spoken word, poetry, interview, radio, comedy, sound effects or field recordings, or name a sample, stem, preview, excerpt or interview in its title. Its title, artist and license must be reproducible in full.
+**The rule, version `fma-dataset-1`.** It lives in `src/sobafm/catalog_prepare.py` and has no model in it. A track qualifies only if it has a Creative Commons license link, a usable FMA track page, a length of 1–15 minutes, at least 128 kbps, a predicted size of at most 20 MB, at least 1,000 listens and a listed genre. It must not be flagged Radio-Unsafe or Adults-Only, be part of a radio program, be listed as spoken word, poetry, interview, radio, comedy, sound effects or field recordings, or name a sample, stem, preview, excerpt, snippet, a cappella, loop or interview in its title. Its title, artist and license must be reproducible in full, and so must any copyright line, publisher, composer or lyricist it lists. A track is refused rather than have one of those dropped from its credits.
 
 **Selection.** Genres take turns from most to least listened, each picking its most listened remaining track, with at most two tracks per artist and one per artist and title. The maintainer struck three tracks with vulgar titles from the list, and two more from the final list because their own listings point at someone else's rights. One names a composer whose work is copyright controlled in some countries, and the other's artist says some of their music has uncleared samples.
 
@@ -46,8 +46,8 @@ Use the dataset, and admit by rule.
 | --- | --- |
 | Location | `./data/fma/` on the operator's machine, mounted read-only at `/data`; never in Git or the image |
 | Limits | At most 256 recordings, 20 MB per file and 3 GB in total; MP3 only |
-| Requests | The dataset's host only, one file at a time, at least two seconds apart, ordinary range requests with no changed headers or identity, stopping at the first refusal |
-| Removal | On a takedown, rights conflict or failed check, delete the review line and the file, then restart |
+| Requests | The dataset's host only, one file at a time, with at least two seconds between request starts, ordinary range requests with no changed headers or identity, stopping at the first refusal |
+| Removal | On a takedown, rights conflict or failed check, remove the recording's entry from the `reviews` array and delete the file, then restart |
 | Backup | None; the metadata is in Git, and the audio can be fetched again while the dataset's host offers it |
 
 **Rechecks.** None happen. The requirements ask for availability and rights to be rechecked, and this snapshot can't do that, so the maintainer accepted it for now, with the takedown path above. Reading FMA's public pages stays out unless they approve it.
@@ -71,9 +71,10 @@ The acceptance is a decision to go ahead despite these, not evidence about them.
 - The dataset holds some cut-short files and exact duplicates. Validation and the one-per-artist-and-title rule handle those. Others could still get through as the same recording under different names.
 - Listen counts favor what FMA's audience liked up to 2017, which is a quality signal only in a loose sense.
 - The dataset's metadata is CC BY 4.0, so the docs and each recording's credits name it.
+- Artists' and albums' notes can hold email addresses. They're removed before the notes reach the catalog, because the notes go to Gemini on every `/play`.
 - The catalog, reviews and manifest are metadata and live in Git. Audio doesn't. Using them on another machine means fetching the files again, which needs that operator's own decision.
 - A rebuild changes digests wherever reviewed metadata changed, so those recordings need a fresh acceptance. Changing the `details` alone doesn't, because they stay outside the digest.
 
 ## Verification needed
 
-Offline tests establish the rule, the request limits and the stop conditions against a loopback fake. The real run's results are on the issue: request counts, validation outcomes, the startup check and peak memory at the service limits. None of that establishes music quality, availability over time or Discord behavior.
+Offline tests establish the rule, and that a refusal or repeated dropped transfers stop a run against a loopback fake. They don't pin the request spacing or the file and byte limits, so the real run's meter log and counts are the evidence for those. The real run's results are on the issue: request counts, validation outcomes, the startup check and peak memory at the service limits. None of that establishes music quality, availability over time or Discord behavior.
