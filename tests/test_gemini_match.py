@@ -346,9 +346,7 @@ def test_waiting_for_a_slot_counts_toward_the_timeout_and_frees_it_afterwards() 
     async def scenario() -> None:
         transport = HeldTransport(interaction(plan((0, "close"))))
         limited = GeminiMatcher(SONGS, KEY, transport=transport, timeout=0.05)
-        holding = [
-            asyncio.create_task(limited.match(str(n))) for n in range(MAX_CONCURRENT_CALLS)
-        ]
+        holding = [asyncio.create_task(limited.match(str(n))) for n in range(MAX_CONCURRENT_CALLS)]
         for _ in range(10):
             await asyncio.sleep(0)
         with pytest.raises(MatchFailed) as error:
@@ -396,7 +394,7 @@ def test_the_evaluation_refuses_an_oversized_catalog_before_parsing(tmp_path: Pa
     assert refused.returncode == 2 and "byte limit" in refused.stderr
     assert "model=" not in refused.stdout
 
-    catalog.write_text("{}")
+    catalog.write_text('{"schema":"sobafm-catalog-1","synthetic":true,"partitions":[]}')
     reviews.write_bytes(b" " * (MAX_REVIEWS_BYTES + 1))
     refused = try_requests(*arguments)
     assert refused.returncode == 2 and "byte limit" in refused.stderr
