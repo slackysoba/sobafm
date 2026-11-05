@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import signal
+import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
@@ -615,7 +616,6 @@ def test_played_tracks_are_logged_without_request_text(caplog: pytest.LogCapture
         await settle()
         for task in list(h.adapter.tasks):
             await task
-        await settle()  # let finished retirements leave the adapter's task set
         assert await h.adapter.shutdown() is True
 
     asyncio.run(scenario())
@@ -657,7 +657,6 @@ def test_underruns_and_retained_banks_are_logged(caplog: pytest.LogCaptureFixtur
         assert pending is not None
         assert await h.adapter.shutdown() is False
         current.bank.commit_write(0)
-        await settle()
         assert await h.adapter.shutdown() is True
 
     asyncio.run(scenario())
@@ -714,6 +713,26 @@ async def test_shutdown_reports_a_bank_that_cannot_be_released() -> None:
     pending.bank.commit_write(0)
     assert await h.adapter.shutdown() is True and h.pool.leased == 0
     assert source.read() == b""
+
+
+def test_shutdown_yields_while_a_finished_tasks_callback_is_queued() -> None:
+    """A retirement done in the same loop iteration as shutdown must not spin it."""
+    outcome: list[bool] = []
+
+    async def scenario() -> None:
+        adapter = Adapter(None, Producer(), pool=PcmBankPool())
+        task = asyncio.create_task(asyncio.sleep(0))
+        await task  # done; awaiting it did not run any callback
+        adapter._own(task)  # pyright: ignore[reportPrivateUsage]
+        assert task in adapter.tasks  # its discard callback is only queued
+        outcome.append(await adapter.shutdown())
+
+    # A spinning loop cannot honour its own timeout, so run it on a separate thread.
+    thread = threading.Thread(target=asyncio.run, args=(scenario(),), daemon=True)
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive(), "shutdown spun with the event loop blocked"
+    assert outcome == [True]
 
 
 @offline

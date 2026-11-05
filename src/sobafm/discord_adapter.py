@@ -551,6 +551,9 @@ class Adapter:
                 await self._disconnect(guild_id, player)
             if self.tasks:
                 await asyncio.gather(*self.tasks, return_exceptions=True)
+            # Gathering tasks that are all done does not yield, so a finished task
+            # whose ``tasks.discard`` callback is still queued would spin this loop.
+            await asyncio.sleep(0)
         self.debt = [bank for bank in self.debt if not bank.release()]
         if self.debt or self._pool.leased:
             log.error("%d PCM bank lease(s) remain at shutdown", self._pool.leased)
