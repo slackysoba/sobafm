@@ -144,7 +144,7 @@ SKIPPING = (
     "the current one continues until then."
 )
 ENDED = {
-    EndReason.EXHAUSTED: "every recording chosen for its request has been played",
+    EndReason.EXHAUSTED: "every recording chosen for its request has played or could not start",
     EndReason.UNAVAILABLE: "the next recording could not be prepared",
     EndReason.NO_LISTENERS: "no listeners remained",
 }
@@ -362,6 +362,8 @@ class GuildPlayer:
     matching: bool = False
     silenced: int = 0
     continuation: asyncio.Task[None] | None = None
+    # The program ``continuation`` serves; a newer desired program gets its own task.
+    continuation_program: Program | None = None
     # Next-track preparations since the last heard switch, bounded per heard track.
     attempts: int = 0
     # A `/skip` waiting for its next track, which then switches as soon as it is ready.
@@ -584,13 +586,19 @@ class Adapter:
             bank.cancel()  # the voice callback then reports the failure
 
     def _schedule_continue(self, player: GuildPlayer) -> asyncio.Task[None]:
-        """Start (once at a time) preparing the desired program's next track."""
+        """Start (once at a time per program) preparing the desired program's next track.
+
+        A task still running for a superseded program, for example while it waits for
+        capacity, is not reused: the desired program gets its own task. The old task
+        stays owned and exits through its stale check without touching the newer program.
+        """
+        program = player.station.desired
+        assert program is not None
         task = player.continuation
-        if task is None or task.done():
-            program = player.station.desired
-            assert program is not None
+        if task is None or task.done() or player.continuation_program != program:
             task = self._own(asyncio.create_task(self._continue(player, program)))
             player.continuation = task
+            player.continuation_program = program
         return task
 
     async def _continue(self, player: GuildPlayer, program: Program) -> None:
