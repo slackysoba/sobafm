@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from sobafm.catalog import (
+    MAX_CATALOG_BYTES,
     Availability,
     CatalogInputError,
     CreditSnapshot,
@@ -25,7 +26,7 @@ from sobafm.catalog import (
     parse_catalog,
     parse_reviews,
 )
-from sobafm.discord_adapter import GEMINI_KEY_VARIABLE
+from sobafm.discord_adapter import GEMINI_KEY_VARIABLE, MAX_REVIEWS_BYTES
 from sobafm.gemini_match import (
     MODEL,
     GeminiMatcher,
@@ -174,14 +175,22 @@ def synthetic_recordings() -> tuple[Recording, ...]:
     )
 
 
+def read_bounded(path: Path, maximum: int) -> str:
+    with path.open("rb") as file:
+        payload = file.read(maximum + 1)
+    if len(payload) > maximum:
+        raise CatalogInputError("input file exceeds byte limit")
+    return payload.decode("utf-8")
+
+
 def load_recordings(catalog: Path | None, reviews: Path | None) -> tuple[Recording, ...]:
     if catalog is None and reviews is None:
         return synthetic_recordings()
     if catalog is None or reviews is None:
         raise CatalogInputError("--catalog and --reviews must be given together")
     return eligible(
-        parse_catalog(catalog.read_text(encoding="utf-8")),
-        parse_reviews(reviews.read_text(encoding="utf-8")),
+        parse_catalog(read_bounded(catalog, MAX_CATALOG_BYTES)),
+        parse_reviews(read_bounded(reviews, MAX_REVIEWS_BYTES)),
     )
 
 

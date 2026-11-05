@@ -12,6 +12,7 @@ service runs under a 90 MB whole-service limit (ADR 0004). See ADR 0006.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -36,6 +37,9 @@ ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
 API_REVISION = "2026-05-20"
 
 TIMEOUT_SECONDS = 10.0
+# Calls in flight across all servers. A request body exists only while its call holds one
+# of these, so together they bound the memory that bodies can use.
+MAX_CONCURRENT_CALLS = 4
 MAX_RANKED = 20
 MAX_OUTPUT_TOKENS = 2_048
 MAX_RESPONSE_BYTES = 64_000
@@ -111,16 +115,19 @@ class Transport(Protocol):
 
 
 class AiohttpTransport:
-    """Bounded POSTs with no redirects, retries or environment proxies."""
+    """Bounded POSTs with no redirects, retries or environment proxies; none after close."""
 
     def __init__(self, *, timeout: float = TIMEOUT_SECONDS) -> None:
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._session: aiohttp.ClientSession | None = None
+        self._closed = False
 
     async def post(self, url: str, headers: Mapping[str, str], body: bytes) -> tuple[int, bytes]:
+        if self._closed:  # a late request must not open a session nobody would close
+            raise aiohttp.ClientConnectionError("transport is closed")
         if self._session is None:  # created here so it binds to the running event loop
             self._session = aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(limit=4, force_close=True),
+                connector=aiohttp.TCPConnector(limit=MAX_CONCURRENT_CALLS, force_close=True),
                 timeout=self._timeout,
             )
         async with self._session.post(
@@ -134,6 +141,7 @@ class AiohttpTransport:
             return response.status, bytes(payload)
 
     async def close(self) -> None:
+        self._closed = True
         session, self._session = self._session, None
         if session is not None:
             await session.close()
@@ -287,11 +295,14 @@ class GeminiMatcher:
         api_key: str,
         *,
         transport: Transport | None = None,
+        timeout: float = TIMEOUT_SECONDS,
     ) -> None:
         self._recordings = tuple(recordings)
         self._songs = render_songs(self._recordings)
         self._api_key = api_key
         self._transport: Transport = transport if transport is not None else AiohttpTransport()
+        self._timeout = timeout
+        self._slots = asyncio.Semaphore(MAX_CONCURRENT_CALLS)
 
     def request_body(self, request: str) -> bytes:
         # The unchanging song list comes first so repeated calls share a long prefix.
@@ -325,9 +336,12 @@ class GeminiMatcher:
         started = time.monotonic()
         try:
             try:
-                status, payload = await self._transport.post(
-                    ENDPOINT, headers, self.request_body(request)
-                )
+                # Waiting for a slot counts toward the budget, and the body is built only
+                # once this call holds one.
+                async with asyncio.timeout(self._timeout), self._slots:
+                    status, payload = await self._transport.post(
+                        ENDPOINT, headers, self.request_body(request)
+                    )
             except TimeoutError as exc:
                 raise MatchFailed("timeout") from exc
             except (aiohttp.ClientError, OSError) as exc:

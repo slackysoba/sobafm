@@ -44,7 +44,7 @@ Edit `.env` and replace the placeholders. Never commit `.env`. The variables are
 | `SOBAFM_MEDIA` | With the catalog | Media manifest locating each admitted recording's file. |
 | `SOBAFM_GEMINI_API_KEY` | With the catalog | The key for matching requests. It is removed from the environment at startup, sent only as a request header and never logged. |
 
-The catalog, reviews, media manifest and Gemini key must be set together, or none of them. Without them `/play` and `/skip` are not registered. The files live in `./data`, which Compose mounts read-only at `/data`. The container runs as UID 1000, so that user must be able to read the files.
+The catalog, reviews and media manifest must be set together, or none of them, and the Gemini key is required with them. Without them `/play` and `/skip` are not registered, and a key on its own is ignored. The files live in `./data`, which Compose mounts read-only at `/data`. The container runs as UID 1000, so that user must be able to read the files.
 
 **What Gemini receives and what it costs.** Each `/play` makes one call containing the request text and each admitted recording's title, creators, length, labels and details. It contains no Discord identities or credits, and SobaFM asks Google not to store the interaction. `/skip` and continuation make no call. Cost grows with the catalog, because every call sends it; see [ADR 0006](decisions/0006-gemini-play-matching.md). Google's [pricing page](https://ai.google.dev/gemini-api/docs/pricing) says free-tier content may be used to improve its products and paid-tier content isn't. There is no cooldown setting yet: each server runs one match at a time, and only members in the bot's voice channel can use `/play`.
 

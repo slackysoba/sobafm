@@ -19,11 +19,20 @@ import aiohttp
 import pytest
 from aiohttp import web
 
-from sobafm.catalog import MAX_DETAILS, CatalogInputError, Fact, Feature, Recording, Strength
-from sobafm.discord_adapter import GEMINI_KEY_VARIABLE
+from sobafm.catalog import (
+    MAX_CATALOG_BYTES,
+    MAX_DETAILS,
+    CatalogInputError,
+    Fact,
+    Feature,
+    Recording,
+    Strength,
+)
+from sobafm.discord_adapter import GEMINI_KEY_VARIABLE, MAX_REVIEWS_BYTES
 from sobafm.gemini_match import (
     API_REVISION,
     ENDPOINT,
+    MAX_CONCURRENT_CALLS,
     MAX_RANKED,
     MAX_RESPONSE_BYTES,
     MODEL,
@@ -286,6 +295,111 @@ def test_success_logs_never_contain_the_request_or_key(caplog: pytest.LogCapture
         asyncio.run(matcher(transport).match("my private request text"))
     assert "outcome=match ranked=1" in caplog.text
     assert "my private request text" not in caplog.text and KEY not in caplog.text
+
+
+class HeldTransport(FakeTransport):
+    """Keeps every call, and so its slot, until released, even past its timeout."""
+
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self.release = asyncio.Event()
+
+    async def post(self, url: str, headers: Mapping[str, str], body: bytes) -> tuple[int, bytes]:
+        self.calls.append((url, dict(headers), body))
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            await self.release.wait()
+            raise
+        return self.status, self.payload
+
+
+def test_requests_beyond_the_limit_build_no_body_until_a_slot_frees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        transport = HeldTransport(interaction(plan((0, "close"))))
+        limited = matcher(transport)
+        built: list[str] = []
+        original = limited.request_body
+
+        def counted(request: str) -> bytes:
+            built.append(request)
+            return original(request)
+
+        monkeypatch.setattr(limited, "request_body", counted)
+        calls = [
+            asyncio.create_task(limited.match(str(n))) for n in range(MAX_CONCURRENT_CALLS + 1)
+        ]
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert len(built) == MAX_CONCURRENT_CALLS == len(transport.calls)
+        transport.release.set()
+        results = await asyncio.gather(*calls)
+        assert all(isinstance(result, Matched) for result in results)
+        assert len(built) == MAX_CONCURRENT_CALLS + 1 == len(transport.calls)
+
+    asyncio.run(scenario())
+
+
+def test_waiting_for_a_slot_counts_toward_the_timeout_and_frees_it_afterwards() -> None:
+    async def scenario() -> None:
+        transport = HeldTransport(interaction(plan((0, "close"))))
+        limited = GeminiMatcher(SONGS, KEY, transport=transport, timeout=0.05)
+        holding = [
+            asyncio.create_task(limited.match(str(n))) for n in range(MAX_CONCURRENT_CALLS)
+        ]
+        for _ in range(10):
+            await asyncio.sleep(0)
+        with pytest.raises(MatchFailed) as error:
+            await limited.match("waits for a slot")
+        assert error.value.kind == "timeout"
+        assert len(transport.calls) == MAX_CONCURRENT_CALLS  # it never built a body
+
+        transport.release.set()
+        settled = await asyncio.gather(*holding, return_exceptions=True)
+        assert all(isinstance(s, MatchFailed) and s.kind == "timeout" for s in settled)
+        assert isinstance(await limited.match("a slot is free again"), Matched)
+
+    asyncio.run(scenario())
+
+
+def test_a_closed_transport_refuses_a_late_call_and_opens_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*_: object, **__: object) -> None:
+        raise AssertionError("no session may be opened after close")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", forbidden)
+
+    async def scenario() -> None:
+        transport = AiohttpTransport()
+        await transport.close()
+        with pytest.raises(aiohttp.ClientConnectionError):
+            await transport.post("http://127.0.0.1:9/", {}, b"")
+
+        late = GeminiMatcher(SONGS, KEY, transport=AiohttpTransport())
+        await late.close()
+        with pytest.raises(MatchFailed) as error:
+            await late.match("arrives during shutdown")
+        assert error.value.kind == "transport_error"
+
+    asyncio.run(scenario())
+
+
+def test_the_evaluation_refuses_an_oversized_catalog_before_parsing(tmp_path: Path) -> None:
+    catalog, reviews = tmp_path / "catalog.json", tmp_path / "reviews.json"
+    catalog.write_bytes(b" " * (MAX_CATALOG_BYTES + 1))
+    reviews.write_text("{}")
+    arguments = ("--dry-run", "--catalog", str(catalog), "--reviews", str(reviews), "a request")
+    refused = try_requests(*arguments)
+    assert refused.returncode == 2 and "byte limit" in refused.stderr
+    assert "model=" not in refused.stdout
+
+    catalog.write_text("{}")
+    reviews.write_bytes(b" " * (MAX_REVIEWS_BYTES + 1))
+    refused = try_requests(*arguments)
+    assert refused.returncode == 2 and "byte limit" in refused.stderr
 
 
 def test_the_key_is_not_rendered() -> None:
