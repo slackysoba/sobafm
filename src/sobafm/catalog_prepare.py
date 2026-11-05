@@ -28,7 +28,7 @@ from sobafm.catalog import Catalog, Source, credential_free_url, metadata_digest
 from sobafm.catalog_import import catalog_document
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES
 
-RULE = "fma-dataset-1"
+RULE = "fma-dataset-2"
 MIN_SECONDS = 60
 MAX_SECONDS = 900
 MIN_BIT_RATE = 128_000
@@ -116,7 +116,8 @@ _MAX_HINT_CHARACTERS = 200
 # What some listings hold in a field nobody filled in. It isn't a name or a holder.
 _MISSING = "null"
 # A contact address in an artist's notes is personal data, not a description of the music.
-_EMAIL = re.compile(r"(?:mailto:)?[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.IGNORECASE)
+# The lookbehind stops a retry at every position of a long word, which would be quadratic.
+_EMAIL = re.compile(r"(?<![\w.+-])(?:mailto:)?[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.IGNORECASE)
 DATASET_NOTICE = (
     "Listing and file from the FMA research dataset (Defferrard et al., 2017); "
     "its metadata is under CC BY 4.0."

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
@@ -343,6 +344,13 @@ def test_titles_naming_a_loop_a_cappella_or_snippet_are_rejected(title: str) -> 
 @pytest.mark.parametrize("title", ["Loophole", "Fruit Loopy", "Stemless"])
 def test_title_words_match_whole_words_only(title: str) -> None:
     assert rejection(listing(**{"track.title": title})) is None
+
+
+def test_a_very_long_word_in_notes_does_not_slow_the_email_check() -> None:
+    row = listing(**{"artist.bio": "x" * 2_000_000})
+    started = time.monotonic()
+    manifest_row(row)
+    assert time.monotonic() - started < 5
 
 
 def test_email_addresses_never_reach_the_details() -> None:

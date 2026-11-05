@@ -16,7 +16,7 @@ from typing import cast
 import pytest
 
 from sobafm.catalog import Recording, eligible, parse_catalog, parse_reviews
-from sobafm.catalog_prepare import MAX_FILE_BYTES, Listing, Row
+from sobafm.catalog_prepare import MAX_FILE_BYTES, RULE, Listing, Row
 from sobafm.decode import DecoderCommand
 from sobafm.media import parse_media
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES, GLOBAL_PCM_BANKS
@@ -328,6 +328,19 @@ def test_a_strike_changes_only_the_struck_track_and_keeps_the_spot_check(tmp_pat
     assert {key.recording_id for key in media} == set(after)
     table = (tmp_path / "final-rejections.md").read_text(encoding="utf-8")
     assert "struck by the maintainer" in table
+
+
+def test_the_catalog_names_the_rule_that_selected_its_list(tmp_path: Path) -> None:
+    out, args = finalize(tmp_path)
+
+    def note() -> str:
+        return parse_catalog((out / "catalog.json").read_text(encoding="utf-8")).partitions[0].note
+
+    assert RULE in note()
+    # A later version of the rule mustn't claim a list an earlier one selected.
+    (tmp_path / "selection-rule.txt").write_text("fma-dataset-0\n", encoding="utf-8")
+    BUILD._finalize(args)  # pyright: ignore[reportPrivateUsage]
+    assert "fma-dataset-0" in note() and RULE not in note()
 
 
 def test_a_track_that_failed_validation_cannot_be_struck(tmp_path: Path) -> None:

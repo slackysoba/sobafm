@@ -229,8 +229,11 @@ _ALL_RIGHTS = re.compile(r"all\s+rights\s+reserved", re.IGNORECASE)
 # FMA's own license for tracks that weren't Creative Commons, written as
 # "FMA-Limited: http://freemusicarchive.org/FMA_License" in the tags it added.
 _FMA_LIMITED = re.compile(r"FMA[-_ ]?(?:Limited|License)", re.IGNORECASE)
+# A license's identity includes its country, such as /by/3.0/nl, so that is part of the match.
+# A deed or legal-code page of the same license isn't a different license.
 _CC_LICENSE = re.compile(
-    r"creativecommons\.org/(?:licenses/([a-z+-]+)/([0-9.]+)|publicdomain/[a-z]+/[0-9.]+)",
+    r"creativecommons\.org/(?:licenses/[a-z+-]+/[0-9]+(?:\.[0-9]+)*(?:/(?!deed|legalcode)[a-z-]+)?"
+    r"|publicdomain/[a-z]+/[0-9.]+)",
     re.IGNORECASE,
 )
 

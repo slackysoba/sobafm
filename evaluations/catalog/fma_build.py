@@ -53,12 +53,12 @@ from sobafm.media_check import (
 from sobafm.pcm import BYTES_PER_SECOND
 
 OBSERVED_AT = "2026-11-05"
-SCOPE = "FMA research dataset, chosen by rule " + prepare.RULE
 NARROW_LICENSES = frozenset({"by", "by-nc"})
 MAX_LENGTH_DIFFERENCE_SECONDS = 2.0
 # Room above the listed length, so an overrun means a file far longer than its listing.
 PCM_LIMIT_MARGIN_SECONDS = 30
 SPOT_CHECK_COUNT = 10
+SELECTION_RULE_FILE = "selection-rule.txt"
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -73,10 +73,14 @@ def _read_json(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _import(rows: list[Row]) -> Catalog:
+def _scope(rule: str) -> str:
+    return "FMA research dataset, chosen by rule " + rule
+
+
+def _import(rows: list[Row], rule: str) -> Catalog:
     """Run the real importer. It drops anything it can't carry in full, and says so."""
     context = ImportContext(
-        OBSERVED_AT, "observed", SCOPE, "partial", tuple(str(row["id"]) for row in rows), ()
+        OBSERVED_AT, "observed", _scope(rule), "partial", tuple(str(row["id"]) for row in rows), ()
     )
     payload = json.dumps(prepare.manifest(rows), ensure_ascii=False)
     return normalize(Source.FMA, payload, context).catalog
@@ -132,7 +136,7 @@ def _candidates(args: argparse.Namespace) -> None:
         for row in prepare.candidates(listing.values(), MAX_RECORDS_PER_SOURCE)
         if row["id"] not in struck
     ]
-    catalog = _import([prepare.manifest_row(row) for row in ordered])
+    catalog = _import([prepare.manifest_row(row) for row in ordered], prepare.RULE)
     imported = {item.key.recording_id: item for item in catalog.partitions[0].recordings}
     refused = [row["id"] for row in ordered[:wanted] if row["id"] not in imported]
     kept = [row for row in ordered if row["id"] in imported][:wanted]
@@ -146,7 +150,7 @@ def _candidates(args: argparse.Namespace) -> None:
             credit_refused.append(row["id"])
     first_recordings = tuple(imported[row["id"]] for row in first)
     songs = render_songs(first_recordings)
-    partition = Partition(Source.FMA, SnapshotState.PARTIAL, SCOPE, first_recordings)
+    partition = Partition(Source.FMA, SnapshotState.PARTIAL, _scope(prepare.RULE), first_recordings)
     document = json.dumps(
         catalog_document(Catalog(False, (partition,))), ensure_ascii=False, separators=(",", ":")
     )
@@ -193,6 +197,7 @@ def _candidates(args: argparse.Namespace) -> None:
     _write_json(state / "chosen.json", [row["id"] for row in kept])
     # Later stages read only these rows: the listing files don't fit in the service's limits.
     _write_json(state / "chosen-rows.json", {row["id"]: row for row in kept})
+    (state / SELECTION_RULE_FILE).write_text(prepare.RULE + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(summary, ensure_ascii=False, indent=1))
 
 
@@ -292,7 +297,8 @@ def _finalize(args: argparse.Namespace) -> None:
     prepared = [
         prepare.manifest_row(rows[t], cast(list[str], results[t]["embedded"])) for t in passed
     ]
-    draft = _import(prepared)
+    # The catalog names the rule that selected this list, which a later version of it didn't.
+    draft = _import(prepared, (state / SELECTION_RULE_FILE).read_text(encoding="utf-8").strip())
     imported = {item.key.recording_id for item in draft.partitions[0].recordings}
     for track_id in passed:
         if track_id not in imported:

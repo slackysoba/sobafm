@@ -229,6 +229,43 @@ def test_matching_or_silent_tags_do_not_conflict(text: str) -> None:
     assert tag_conflict([("copyright", text)], BY_NC) is None
 
 
+CC = "http://creativecommons.org/licenses/"
+
+
+@pytest.mark.parametrize(
+    ("listed", "tagged"),
+    [
+        ("by-nc-sa/3.0/nl/", "by-nc-sa/3.0/us/"),
+        ("by-nc-sa/3.0/", "by-nc-sa/3.0/us/"),
+        ("by-nc-sa/3.0/us/", "by-nc-sa/3.0/"),
+        ("by/2.5/scotland/", "by/2.5/"),
+    ],
+)
+def test_a_license_in_another_country_conflicts(listed: str, tagged: str) -> None:
+    assert tag_conflict([("copyright", CC + tagged)], CC + listed) is not None
+
+
+def test_the_listed_license_beside_another_countrys_still_conflicts() -> None:
+    values = [("copyright", CC + "by-nc-sa/3.0/us/"), ("comment", CC + "by-nc-sa/3.0/")]
+    assert tag_conflict(values, CC + "by-nc-sa/3.0/us/") is not None
+
+
+@pytest.mark.parametrize(
+    ("listed", "tagged"),
+    [
+        ("by-nc-sa/3.0/us/", "by-nc-sa/3.0/us/"),
+        ("by-nc-sa/3.0/us/", "by-nc-sa/3.0/US"),
+        ("by-nc-sa/3.0/us/", "by-nc-sa/3.0/us/deed.en"),
+        ("by-nc-sa/3.0/", "by-nc-sa/3.0/deed.en"),
+        ("by-nc-sa/3.0/", "by-nc-sa/3.0/legalcode"),
+        ("by/2.5/scotland/", "by/2.5/scotland/"),
+        ("by-nc/3.0/", "by-nc/3.0."),
+    ],
+)
+def test_the_same_license_in_any_form_does_not_conflict(listed: str, tagged: str) -> None:
+    assert tag_conflict([("copyright", "See " + CC + tagged)], CC + listed) is None
+
+
 def test_a_comment_can_conflict_but_only_notices_are_kept() -> None:
     values = [
         ("copyright", "2012 Artist"),
