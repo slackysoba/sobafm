@@ -36,6 +36,7 @@ from sobafm.gemini_match import (
     output_text,
     parse_plan,
     render_songs,
+    valid_api_key,
 )
 from tests.test_discord_adapter import LINK, recording
 
@@ -287,6 +288,12 @@ def test_success_logs_never_contain_the_request_or_key(caplog: pytest.LogCapture
 
 def test_the_key_is_not_rendered() -> None:
     assert KEY not in repr(matcher(FakeTransport()))
+
+
+def test_only_a_single_printable_token_counts_as_a_key() -> None:
+    assert valid_api_key(KEY)
+    for bad in ("", "﻿", "﻿real", "\r", "one\ntwo", "one two", "café"):
+        assert not valid_api_key(bad)
 
 
 def test_request_text_is_checked_before_any_call() -> None:

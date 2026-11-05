@@ -69,6 +69,7 @@ from sobafm.gemini_match import (
     Ranked,
     Refused,
     checked_request,
+    valid_api_key,
 )
 from sobafm.pcm import (
     BANK_COUNT,
@@ -175,6 +176,8 @@ class Config:
             raise ConfigError(f"{CATALOG_VARIABLE} and {REVIEWS_VARIABLE} must be set together")
         if not api_key:
             raise ConfigError(f"{GEMINI_KEY_VARIABLE} is required with {CATALOG_VARIABLE}")
+        if not valid_api_key(api_key):
+            raise ConfigError(f"{GEMINI_KEY_VARIABLE} contains unsupported characters")
         try:
             catalog = parse_catalog(_read(Path(paths[0]), MAX_CATALOG_BYTES))
             reviews = parse_reviews(_read(Path(paths[1]), MAX_REVIEWS_BYTES))

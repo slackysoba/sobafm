@@ -33,6 +33,7 @@ from sobafm.gemini_match import (
     MatchFailed,
     checked_request,
     render_songs,
+    valid_api_key,
 )
 
 MAX_REQUESTS = 20
@@ -228,8 +229,8 @@ def main() -> int:
     if args.dry_run:
         return 0
     key = os.environ.pop(GEMINI_KEY_VARIABLE, "").strip()
-    if not key:
-        parser.error(f"{GEMINI_KEY_VARIABLE} must be set in this shell's environment")
+    if not valid_api_key(key):
+        parser.error(f"{GEMINI_KEY_VARIABLE} must hold a valid key in this shell's environment")
     return asyncio.run(run(recordings, requests, key))
 
 

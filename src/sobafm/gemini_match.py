@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -136,6 +137,11 @@ class AiohttpTransport:
         session, self._session = self._session, None
         if session is not None:
             await session.close()
+
+
+def valid_api_key(key: str) -> bool:
+    """Whether ``key`` is one printable token. A stray byte from a file or pipe is not."""
+    return re.fullmatch(r"[!-~]+", key) is not None
 
 
 def checked_request(request: str) -> str:

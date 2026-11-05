@@ -384,6 +384,19 @@ def test_a_catalog_requires_the_gemini_key(monkeypatch: pytest.MonkeyPatch) -> N
         Config.from_environ()
 
 
+@pytest.mark.parametrize("key", ["﻿", "﻿real", "one\ntwo", "one two", "café"])
+def test_a_gemini_key_with_stray_characters_is_refused_without_showing_it(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    monkeypatch.setenv(discord_adapter.TOKEN_VARIABLE, "placeholder-not-a-token")
+    monkeypatch.setenv(discord_adapter.GEMINI_KEY_VARIABLE, key)
+    monkeypatch.setenv(discord_adapter.CATALOG_VARIABLE, "/nonexistent/catalog.json")
+    monkeypatch.setenv(discord_adapter.REVIEWS_VARIABLE, "/nonexistent/reviews.json")
+    with pytest.raises(ConfigError, match="unsupported characters") as error:
+        Config.from_environ()
+    assert key not in str(error.value)
+
+
 # Commands.
 
 
