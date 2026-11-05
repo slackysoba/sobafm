@@ -7,28 +7,19 @@ stale and change nothing. Only the player's report of an actual switch changes
 the heard source, so a pending, failed or cancelled replacement never alters the
 heard title or credits.
 
-A catalog program continues until stopped or replaced. Its validated `Query` is
-fixed when `/play` interprets the request, and every later track comes from
-`select_next` with that query and the program's bounded no-repeat history; the
-request text is never read again.
+A catalog program continues until stopped or replaced. Its ranked plan is fixed
+when `/play` interprets the request, and every later track comes from `select_next`
+with that plan and the program's bounded no-repeat history; the request is never
+interpreted again.
 """
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from enum import StrEnum
 
-from sobafm.catalog import (
-    MAX_RECORDS_PER_SOURCE,
-    AdmissionReview,
-    Catalog,
-    Query,
-    Recording,
-    RecordingKey,
-    Source,
-    select,
-)
+from sobafm.catalog import MAX_RECORDS_PER_SOURCE, Recording, RecordingKey, Source
 from sobafm.credits import CreditRejected, RenderedCredits, render_credits
 
 MAX_REQUEST_CHARACTERS = 200
@@ -46,7 +37,7 @@ class Outcome(StrEnum):
 class EndReason(StrEnum):
     """Why a program has no further track."""
 
-    EXHAUSTED = "exhausted"  # every eligible recording for its query was played or tried
+    EXHAUSTED = "exhausted"  # every recording in its plan was played or tried
     UNAVAILABLE = "unavailable"  # the next track could not be prepared within its bounds
     NO_LISTENERS = "no_listeners"  # the listener grace period expired
 
@@ -57,7 +48,8 @@ class Program:
 
     generation: int
     request: str
-    query: Query = field(default_factory=Query)
+    # Validated recordings for this request, best first. Later tracks come from here.
+    plan: tuple[Recording, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,23 +78,9 @@ class _Progress:
     ending: EndReason | None = None  # no track follows the one heard
 
 
-def select_next(
-    catalog: Catalog,
-    reviews: tuple[AdmissionReview, ...],
-    query: Query,
-    history: frozenset[RecordingKey],
-) -> Recording | None:
-    """The best eligible recording for ``query`` that ``history`` does not hold.
-
-    This is the single seam for choosing a program's tracks: a later matching
-    decision replaces only this function.
-    """
-    partitions = tuple(
-        replace(p, recordings=tuple(r for r in p.recordings if r.key not in history))
-        for p in catalog.partitions
-    )
-    selection = select(replace(catalog, partitions=partitions), query, reviews, limit=1)
-    return selection.matches[0].recording if selection.matches else None
+def select_next(plan: tuple[Recording, ...], history: frozenset[RecordingKey]) -> Recording | None:
+    """The best-ranked recording in ``plan`` that ``history`` does not hold."""
+    return next((r for r in plan if r.key not in history), None)
 
 
 class Station:
@@ -207,13 +185,13 @@ class Station:
         self._ended = reason
         self._prune()
 
-    def request(self, request: str, query: Query | None = None) -> Replacement:
+    def request(self, request: str, plan: tuple[Recording, ...] = ()) -> Replacement:
         """Accept a new desired program; heard audio continues until a switch."""
         if type(request) is not str or not 1 <= len(request) <= MAX_REQUEST_CHARACTERS:
             raise ValueError("request must be 1 to 200 characters")
         superseded = self._pending()
         self._generation += 1
-        self._desired = Program(self._generation, request, query or Query())
+        self._desired = Program(self._generation, request, plan)
         self._preparing = True
         self._ready = None
         self._ended = None

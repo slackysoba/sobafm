@@ -62,7 +62,7 @@ def load_settings() -> Settings:
     """Read the token, catalog, reviews and media manifest from the environment."""
     config = Config.from_environ()
     location = os.environ.get(MEDIA_VARIABLE, "")
-    if config.catalog is None:
+    if config.matcher is None:
         if location:
             raise ConfigError(f"{MEDIA_VARIABLE} requires {CATALOG_VARIABLE}")
         return Settings(config, {})

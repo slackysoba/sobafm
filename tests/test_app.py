@@ -23,6 +23,7 @@ from sobafm.catalog import RecordingKey, Source
 from sobafm.decode import DecodeInput, DecoderCommand
 from sobafm.discord_adapter import (
     CATALOG_VARIABLE,
+    GEMINI_KEY_VARIABLE,
     REVIEWS_VARIABLE,
     TOKEN_VARIABLE,
     Adapter,
@@ -35,6 +36,7 @@ from tests.test_discord_adapter import recording
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "placeholder-token-value"  # pragma: allowlist secret - test placeholder
+GEMINI_KEY = "placeholder-gemini-value"  # pragma: allowlist secret - test placeholder
 PAYLOAD = bytes(range(256)) * 8
 LIMITS = {"memory.max": "90177536\n", "memory.swap.max": "0\n", "pids.max": "64\n"}
 
@@ -119,7 +121,7 @@ DEMO_KEY = RecordingKey(Source.JAMENDO, "demo-j-fit")
 
 
 def write_snapshot(directory: Path) -> tuple[Path, Path, Path]:
-    """Copy the synthetic selector demo snapshot and reviews beside a media manifest."""
+    """Copy the synthetic demo snapshot and reviews beside a media manifest."""
     paths = (directory / "catalog.json", directory / "reviews.json", directory / "media.json")
     paths[0].write_bytes((DEMO / "selector-demo.json").read_bytes())
     paths[1].write_bytes((DEMO / "selector-demo-reviews.json").read_bytes())
@@ -130,6 +132,7 @@ def write_snapshot(directory: Path) -> tuple[Path, Path, Path]:
 def environment(monkeypatch: pytest.MonkeyPatch, **values: str) -> None:
     for name in (TOKEN_VARIABLE, CATALOG_VARIABLE, REVIEWS_VARIABLE, app.MEDIA_VARIABLE):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(GEMINI_KEY_VARIABLE, GEMINI_KEY)
     for name, value in values.items():
         monkeypatch.setenv(name, value)
 
@@ -139,7 +142,7 @@ def test_token_only_configuration_has_no_catalog_or_media(
 ) -> None:
     environment(monkeypatch, SOBAFM_DISCORD_TOKEN=TOKEN)
     settings = app.load_settings()
-    assert settings.config.catalog is None and settings.media == {}
+    assert settings.config.matcher is None and settings.media == {}
 
 
 def test_media_must_accompany_the_catalog(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -169,10 +172,12 @@ def test_full_configuration_resolves_media_beside_the_manifest(
         SOBAFM_MEDIA=str(media_path),
     )
     settings = app.load_settings()
-    assert settings.config.catalog is not None
+    assert settings.config.matcher is not None
+    assert GEMINI_KEY not in repr(settings)
     (source,) = settings.media.values()
     assert source.path == tmp_path / "song.mp3"
     assert TOKEN_VARIABLE not in app.os.environ
+    assert GEMINI_KEY_VARIABLE not in app.os.environ
 
 
 def test_an_unreadable_media_manifest_is_a_configuration_error(
@@ -298,7 +303,7 @@ def test_main_runs_the_gate_then_connects_the_media_producer(
 
     assert app.main(root=cgroup(tmp_path), runner=runner) == 0
     ((config, producer),) = seen
-    assert config.catalog is not None and isinstance(producer, MediaProducer)
+    assert config.matcher is not None and isinstance(producer, MediaProducer)
 
 
 def test_media_producer_fills_the_adapters_bank_and_leaves_the_lease_to_it(
@@ -436,7 +441,13 @@ def test_dockerfile_runs_non_root_with_the_reviewed_decoder_and_no_ffmpeg() -> N
 def test_env_example_holds_placeholders_only() -> None:
     lines = (ROOT / ".env.example").read_text().splitlines()
     values = dict(line.split("=", 1) for line in lines if line and not line.startswith("#"))
-    assert set(values) == {TOKEN_VARIABLE, CATALOG_VARIABLE, REVIEWS_VARIABLE, app.MEDIA_VARIABLE}
+    assert set(values) == {
+        TOKEN_VARIABLE,
+        GEMINI_KEY_VARIABLE,
+        CATALOG_VARIABLE,
+        REVIEWS_VARIABLE,
+        app.MEDIA_VARIABLE,
+    }
     assert values[TOKEN_VARIABLE].startswith("replace-with-")
     for value in values.values():
         # Discord tokens are three base64url segments; nothing here resembles one.

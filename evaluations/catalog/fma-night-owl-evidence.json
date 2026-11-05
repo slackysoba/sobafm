@@ -195,7 +195,7 @@
       },
       {
         "file": "fma-night-owl-catalog.json",
-        "sha256": "4ecb37b8bec8ccff38c3ff2e05c2f9cf8c450c529a4a523d61d8b02eff18a9aa", "sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret"
+        "sha256": "c4406a4cc33e7600d1443e2ea70ee9b94549596dfbf6e5f1ba6299fada06e4a0", "sha256_note": "Public response or artifact SHA-256, not a credential. # pragma: allowlist secret"
       },
       {
         "file": "fma-night-owl-import-report.json",

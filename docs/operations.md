@@ -2,13 +2,13 @@
 
 **Status: amd64 first slice, not yet qualified.** This guide describes the first playback slice for Linux amd64 with Docker Compose. The image at commit `d6923c8` ran in one private Discord session on Docker Desktop under WSL2 ([#97](https://github.com/slackysoba/sobafm/issues/97)); that is not qualification of the image, its limits or the release. Treat it as a preview of the operator path, not a release. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)).
 
-The slice joins a voice channel and plays a catalog program per `/play` request: admitted local recordings matching the request, one after another, until it is stopped, replaced, runs out of recordings or plays for a minute with no listener. `/skip` moves on to the next one, `/now` shows the heard recording's full credits, and it stops and shuts down cleanly. It has no settings, persistence, `/freestyle` or request matching beyond the fixed phrase vocabulary.
+The slice joins a voice channel and plays a catalog program per `/play` request: the admitted local recordings Gemini ranks for the request, up to 20, one after another, until it is stopped, replaced, runs out of recordings or plays for a minute with no listener. `/skip` moves on to the next one, `/now` shows the heard recording's full credits, and it stops and shuts down cleanly. It has no settings, persistence or `/freestyle`.
 
 ## Requirements
 
 - Linux amd64 with Docker Engine and the Compose plugin, using cgroup v2 (the default on current distributions). No compiler is needed.
 - A Discord application with a bot user and its token.
-- Optionally, a prepared catalog snapshot, its admission reviews, a media manifest and the admitted MP3 files. Without them the bot runs with `/join`, `/now`, `/stop` and `/leave` only; `/play` and `/skip` are not registered.
+- Optionally, a prepared catalog snapshot, its admission reviews, a media manifest, the admitted MP3 files and a Gemini API key. Without them the bot runs with `/join`, `/now`, `/stop` and `/leave` only; `/play` and `/skip` are not registered.
 
 ## Discord setup
 
@@ -34,16 +34,19 @@ cp .env.example .env
 mkdir data
 ```
 
-Edit `.env` and replace the placeholder token. Never commit `.env`. The variables are:
+Edit `.env` and replace the placeholders. Never commit `.env`. The variables are:
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `SOBAFM_DISCORD_TOKEN` | Yes | The bot token. SobaFM removes it from its own environment at startup, so the decoder never inherits it, and never logs it. |
-| `SOBAFM_CATALOG` | With the next two | Prepared catalog snapshot (`sobafm-catalog-1`). |
+| `SOBAFM_CATALOG` | With the next three | Prepared catalog snapshot (`sobafm-catalog-1`). |
 | `SOBAFM_REVIEWS` | With the catalog | Trusted admission reviews (`sobafm-admission-1`). |
 | `SOBAFM_MEDIA` | With the catalog | Media manifest locating each admitted recording's file. |
+| `SOBAFM_GEMINI_API_KEY` | With the catalog | The key for matching requests. It is removed from the environment at startup, sent only as a request header and never logged. |
 
-The catalog, reviews and media manifest must be set together, or none of them. Without them `/play` and `/skip` are not registered. The files live in `./data`, which Compose mounts read-only at `/data`. The container runs as UID 1000, so that user must be able to read the files.
+The catalog, reviews and media manifest must be set together, or none of them, and the Gemini key is required with them. Without them `/play` and `/skip` are not registered, and a key on its own is ignored. The files live in `./data`, which Compose mounts read-only at `/data`. The container runs as UID 1000, so that user must be able to read the files.
+
+**What Gemini receives and what it costs.** Each `/play` makes one call containing the request text and each admitted recording's title, creators, length, labels and details. It contains no Discord identities or credits, and SobaFM asks Google not to store the interaction. `/skip` and continuation make no call. Cost grows with the catalog, because every call sends it; see [ADR 0006](decisions/0006-gemini-play-matching.md). Google's [pricing page](https://ai.google.dev/gemini-api/docs/pricing) says free-tier content may be used to improve its products and paid-tier content isn't. There is no cooldown setting yet: each server runs one match at a time, and only members in the bot's voice channel can use `/play`.
 
 The media manifest binds each playable recording to one local file:
 
@@ -75,9 +78,9 @@ The service runs with Docker's default seccomp profile, a read-only root, all ca
 
 Before reading any configuration or connecting to Discord, SobaFM reads its own cgroup's `memory.max`, `memory.swap.max` and `pids.max` and refuses to start unless they are exactly 90177536, 0 and 64. Do not change those limits in `compose.yaml`: the app will refuse to run, and no other values are accepted.
 
-Then, in Discord: a manager uses `/join` from a voice channel, a listener uses `/play` with a request such as `quiet solo piano`, and `/now` shows the heard recording and its credits. Audio becomes audible after six seconds of buffered PCM, or at the verified end of a shorter recording.
+Then, in Discord: a manager uses `/join` from a voice channel, a listener uses `/play` with any request, such as `a haunted carnival on the moon`, and `/now` shows the heard recording and its credits. The reply says how close the match is: the recording asked for, the closest match or just the nearest thing in the catalog. Audio becomes audible after six seconds of buffered PCM, or at the verified end of a shorter recording.
 
-The request is interpreted once. While a recording plays, the next matching recording the program has not yet played is prepared in the second audio bank and follows the last frame directly, with no fade or overlap. A program never repeats a recording: when none is left, it ends after the current one and `/now` says so; `/play` starts a new program. With a one-recording catalog that is the normal result once the recording ends. `/skip` switches to the next recording as soon as it is buffered; the current recording keeps playing until then, and keeps playing if the next one cannot be prepared. `/play`, `/stop`, `/leave` and shutdown discard a prepared next recording.
+The request is interpreted once. While a recording plays, the next ranked recording the program has not yet played is prepared in the second audio bank and follows the last frame directly, with no fade or overlap. A program never repeats a recording: when none is left, it ends after the current one and `/now` says so; `/play` starts a new program. With a one-recording catalog that is the normal result once the recording ends. `/skip` switches to the next recording as soon as it is buffered; the current recording keeps playing until then, and keeps playing if the next one cannot be prepared. `/play`, `/stop`, `/leave` and shutdown discard a prepared next recording.
 
 A program ends 60 seconds after the last listener leaves the bot's voice channel. A listener is a member in that channel who is neither a bot nor deafened, whether self-deafened or deafened by the server; muting does not matter. If a listener joins or undeafens before then, the program continues untouched. When the period ends, the program stops as with `/stop`: the bot stays connected and silent, and `/now` says the program ended because no listeners remained and that `/play` starts a new one. Moving the bot with `/join` to a channel with no listener starts the same period. Because the bot does not request the members intent, it cannot tell whether a member who was already in the channel when it connected, and has not changed voice state since, is a bot; such a member counts as a listener, so the program keeps playing for them until they leave or deafen.
 
@@ -103,14 +106,15 @@ Read the release notes and `docs/requirements.md` first. Updating the files in `
 | Exit | Log line | Meaning and fix |
 | --- | --- | --- |
 | 3 | `container limits refused: <file> must be <value>` | The cgroup limits differ from ADR 0004, or cgroup v2 is unavailable. Use the unchanged `compose.yaml` on a cgroup v2 host. |
-| 2 | `configuration error: ...` | A missing token, an incomplete catalog/reviews/media set, or a file that is unreadable, too large or invalid. Messages name variables, never values. |
+| 2 | `configuration error: ...` | A missing token, an incomplete catalog/reviews/media/key set, or a file that is unreadable, too large or invalid, including a catalog too large to send for matching. Messages name variables, never values. |
 | 1 | `... lease(s) remain at shutdown`, `cleanup deadline(s) were missed` or `Discord client stopped: <type>` | Shutdown could not confirm release, or the Discord client failed (for example an invalid token). |
 | 0 | | Clean shutdown. |
 
-INFO lines record what was played, without request text or tokens: `voice connected` and `voice disconnected`; `heard source changed: recording=<source:id> credit_snapshot=<id>` and `heard source cleared`; `program has no further eligible recording` and `listener grace started: seconds=60` and `listener grace cancelled`; `program ended: reason=<exhausted|unavailable|no_listeners>`; one `track retired: ...` line per track with `frames_handed_to_voice` (frames given to the voice player, not packets confirmed delivered), `underruns` (silence frames returned while the track was playing or ready, including a momentarily busy bank), the completion facts, `failure`, `bank_released` and `cancel_to_release_seconds`; and `shutdown: released=... leases_held=... cleanup_failures=...`.
+INFO lines record what was played, without request text or tokens: `voice connected` and `voice disconnected`; `heard source changed: recording=<source:id> credit_snapshot=<id>` and `heard source cleared`; `program has no further recording in its plan`; `listener grace started: seconds=60` and `listener grace cancelled`; `program ended: reason=<exhausted|unavailable|no_listeners>`; one `track retired: ...` line per track with `frames_handed_to_voice` (frames given to the voice player, not packets confirmed delivered), `underruns` (silence frames returned while the track was playing or ready, including a momentarily busy bank), the completion facts, `failure`, `bank_released` and `cancel_to_release_seconds`; and `shutdown: released=... leases_held=... cleanup_failures=...`. At startup, `catalog source: source=<name> state=<state> provided=<n> admitted=<n>` reports each source; `admitted=0` everywhere means `/play` has nothing to choose from. Each request logs `request matched: outcome=<match|refuse> ranked=<n> seconds=<s>`.
 
 During playback:
 
+- `request matching failed: kind=<kind> seconds=<s>`: no plan was produced and the current audio continues. `http_401` or `http_403` usually means a wrong key, `http_429` a rate or quota limit, and `timeout` no answer within 10 seconds. `interaction_not_completed`, `response_shape` and `output_*` mean Gemini's answer wasn't usable, which may mean the API has changed.
 - `decode failed: <kind>` names the decode failure, for example `input_hash` (the file differs from the manifest), `input_open`, `output_overrun` or `decoder_exit`. The previous audio, if any, keeps playing.
 - `audio producer failed: MediaMissingError`: the selected recording has no media manifest entry.
 - `Playback could not start (capacity is busy ...)`: both audio banks are still held, possibly by cleanup that has not finished. Retry shortly.

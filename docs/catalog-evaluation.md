@@ -39,17 +39,17 @@ No Discord presence or permission changes are part of this preparation.
 
 ## Current selection contract
 
-The [accepted decision](decisions/0002-prompt-catalog-selection.md) prioritizes
-strong prompt matches and complete recordings across all three prepared sources.
+[Decision 0002](decisions/0002-prompt-catalog-selection.md) pools complete
+recordings from all three prepared sources, and [decision
+0006](decisions/0006-gemini-play-matching.md) ranks them with one Gemini call.
 Listening is optional deferred evidence, not a prerequisite for this implementation.
 
 `sobafm.catalog` accepts `sobafm-catalog-1` JSON: a `synthetic` boolean and at most
 one partition per source (`jamendo`, `ccmixter`, `fma`). Each partition declares
 `complete`, `partial` or `unavailable`, a note identifying its scope/date, and
 at most 256 records. These are bounded prepared subsets, not entire source
-catalogs. An omitted partition is `missing`; a complete zero-record partition
-is `empty`; a partial zero-record result stays `partial`. Report provided,
-admitted and matched counts before the result limit, including zero matches.
+catalogs. The service logs each source's state, provided count and admitted count
+at startup; an omitted partition is logged as `missing`.
 
 Each recording preserves a stable source/recording key, title, primary artist,
 all supplied creators, credential-free provenance, complete-recording evidence,
@@ -60,19 +60,23 @@ inferred from a missing tag. False facts require evidence too. A source tag alon
 does not automatically deserve strong confidence. Preserve upstream remix notices
 in the credit snapshot; missing required information remains inadmissible.
 
+An optional `details` list holds at most 24 lines of up to 160 characters: source
+text such as tags, tempo and album. These are hints for the matcher, not admitted
+facts, so conflicting or unverified source claims may appear in them.
+
 The separate `sobafm-admission-1` review input is **trusted operator data**, never
 provider/model output. Each review contains the source/recording key, canonical
 `metadata_digest(recording)`, `credits_complete`, `access_ready`, matching
 `synthetic` status, an evidence link and an optional bounded explanatory note.
 True flags assert an actual scoped review;
 the parser cannot establish that the assertion is true. SHA-256 binds the review
-to the full parsed recording, including notices and descriptors; it is not a
-signature or authorization service. Any metadata change needs a fresh review.
-Admission does not prove successful audio retrieval, decoding or playback.
+to the full parsed recording except `details`, including notices and descriptors;
+it is not a signature or authorization service. Any other metadata change needs a
+fresh review. Admission does not prove successful audio retrieval, decoding or playback.
 
-`parse_catalog`, `parse_reviews` and `parse_query` reject unknown fields,
-duplicate identities/facts, conflicting constraints, invalid types, unsafe links
-and unbounded data before selection. Catalog JSON is capped at 2,000,000 UTF-8
+`parse_catalog` and `parse_reviews` reject unknown fields, duplicate
+identities/facts, invalid types, unsafe links and unbounded data before admission.
+Catalog JSON is capped at 2,000,000 UTF-8
 bytes; review JSON at 256,000 bytes; each recording at 32 facts, 16 creators and
 16 notice paragraphs of at most 1,024 characters. Text forbids control/bidi
 characters; links require HTTPS with no credentials, query or fragment. Preserve
@@ -80,45 +84,13 @@ complete credits or reject the import; never truncate required notices to fit.
 Duration is an optional integer from 1 to 86,400 seconds, a finite metadata bound
 that permits long recordings, not a claim of full-file duration or completeness.
 
-The query model permits at most 16 soft and 16 required feature predicates,
-inclusive minimum/maximum seconds, exact source/recording key, title, primary
-artist, composition and composer, and up to 32 excluded recordings or creators.
-Identity uses case-folded Unicode normalization and collapsed whitespace, not
-fuzzy substitution. Creator exclusions check every supplied credited creator.
-Hard constraints need known evidence; required facts must be strong. For soft
-requests, a candidate must support at least one preference to remain a match.
-
-All sources enter one pool. Sort by most strong supported preferences, fewest
-contradictions, most weak supported preferences, fewest unknown preferences,
-then longer known duration and stable source/recording key. Missing duration
-sorts after known duration only when fit is tied. Return at most 20 results,
-with separate strong/weak/contradicted/unknown facts, full credits, rejection
-reasons and source coverage. There is no source preference or early-source exit.
-
-`catalog_prompt` uses a small phrase table, not general language understanding.
-It supports descriptor preferences, `no`/`without` plus a known descriptor,
-`instrumental`, `only piano`, `play <title> by <artist>`, and numeric
-`at least`/`at most`/`under`/`over`/`exactly` seconds/minutes/hours.
-Unknown positive terms are returned explicitly. Unsupported exclusions,
-mandatory wording, duration or identity syntax produce no executable query;
-use validated explicit queries for constraints outside this grammar. The fixed
-16 requests exercise bounded interpretation; they do not create listening scores.
-
-Run the offline demo after the normal locked setup:
-
-```sh
-uv run python -m sobafm.catalog_demo "Quiet solo piano, no singing" \
-  --catalog evaluations/catalog/selector-demo.json \
-  --reviews evaluations/catalog/selector-demo-reviews.json --limit 3
-```
-
-The fixtures contain six invented recordings and five synthetic review records.
-The complete ccMixter candidate ranks first, ahead of longer weaker matches;
-the preview and unreviewed candidate are rejected. ccMixter coverage remains
-partial. These files grant no real permissions and contain no music or media URL.
-The same CLI accepts reviewed real metadata with `synthetic: false`; it does
-not generate reviews or turn the earlier incomplete inventory into eligible songs.
-It performs no provider calls, audio acquisition, listening or Discord activity.
+All sources enter one pool in stable identity order, with no source preference.
+The [opt-in evaluation](../evaluations/gemini_matching/README.md) shows what Gemini
+ranks for real requests over 20 invented songs or a reviewed snapshot; a dry run
+reports only the prompt size. It does not generate reviews or turn the earlier
+incomplete inventory into eligible songs. The fixed 16 requests in
+`evaluations/catalog/requests.json` remain available for it and do not create
+listening scores.
 
 ## Saved source metadata imports
 
@@ -181,7 +153,8 @@ of a file does not establish a complete mix, file integrity or audio readiness.
 
 All descriptor mappings are weak source claims. Conflicting vocal/instrumental
 tags become unknown, and unsupported descriptors are reported rather than
-invented. Source links must match the record identity. Known official HTTP
+invented. Source tags, tempo, album, release date and similar text are also kept
+as labeled `details` for matching, truncated to the catalog's limits. Source links must match the record identity. Known official HTTP
 Jamendo/ccMixter/Creative Commons links are normalized to HTTPS; credentials,
 queries and fragments are rejected. License family is inferred only from a
 recognized Creative Commons host/path. Other safe supplied license links retain

@@ -5,18 +5,12 @@ from dataclasses import replace
 import pytest
 
 from sobafm.catalog import (
-    AdmissionReview,
     Availability,
-    Catalog,
     CreditSnapshot,
-    Partition,
-    Query,
     Recording,
     RecordingKey,
     RecordingKind,
-    SnapshotState,
     Source,
-    metadata_digest,
 )
 from sobafm.credits import render_credits
 from sobafm.station import HISTORY_LIMIT, EndReason, Outcome, Station, select_next
@@ -259,15 +253,17 @@ def test_a_failed_replacement_restores_the_heard_programs_progress() -> None:
     assert station.desired == old and station.ending is EndReason.EXHAUSTED
 
 
-def test_select_next_skips_history_and_reports_exhaustion() -> None:
-    lengths = (("a", 300), ("b", 200))
-    recordings = tuple(replace(recording(i), duration_seconds=d) for i, d in lengths)
-    catalog = Catalog(True, (Partition(Source.JAMENDO, SnapshotState.COMPLETE, "", recordings),))
-    reviews = tuple(
-        AdmissionReview(r.key, metadata_digest(r), True, True, True, LINK) for r in recordings
-    )
-    first = select_next(catalog, reviews, Query(), frozenset())
-    assert first is not None and first.key.recording_id == "a"  # longer first on a tie
-    second = select_next(catalog, reviews, Query(), frozenset({first.key}))
-    assert second is not None and second.key.recording_id == "b"
-    assert select_next(catalog, reviews, Query(), frozenset({first.key, second.key})) is None
+def test_select_next_follows_the_plan_skips_history_and_reports_exhaustion() -> None:
+    plan = (recording("b"), recording("a"))  # the model's order, not identity order
+    first = select_next(plan, frozenset())
+    assert first is not None and first.key.recording_id == "b"
+    second = select_next(plan, frozenset({first.key}))
+    assert second is not None and second.key.recording_id == "a"
+    assert select_next(plan, frozenset({first.key, second.key})) is None
+    assert select_next((), frozenset()) is None
+
+
+def test_a_program_carries_its_plan() -> None:
+    plan = (recording("b"), recording("a"))
+    assert Station().request("calm piano", plan).program.plan == plan
+    assert Station().request("calm piano").program.plan == ()

@@ -31,7 +31,7 @@ Build around a catalog prepared ahead of playback: admit eligible recordings wit
 
 The [accepted selection decision](decisions/0002-prompt-catalog-selection.md) follows the maintainer's direction to progress without listening tests. Compare all supplied Jamendo, ccMixter and FMA metadata in one pool; never stop after a match from the first source. Report missing, partial, unavailable and empty partitions explicitly. A complete prepared snapshot is a bounded subset, not a claim to have searched a provider's entire catalog.
 
-Use deterministic regressions to establish selection behavior. The [earlier comparison protocol](catalog-evaluation.md) remains available for optional future human enjoyment, fit and fidelity evidence. It is deferred, supplies no invented ratings, and is not a gate for this slice. Audio acquisition, source integration and deployment retain their separate authorization and qualification requirements.
+Use deterministic regressions to establish validation and failure behavior; [matching quality](decisions/0006-gemini-play-matching.md) needs opt-in evaluation against the real provider. The [earlier comparison protocol](catalog-evaluation.md) remains available for optional future human enjoyment, fit and fidelity evidence. It is deferred, supplies no invented ratings, and is not a gate for this slice. Audio acquisition, source integration and deployment retain their separate authorization and qualification requirements.
 
 | Candidate | Intended contribution | Retrieval and qualification boundary |
 | --- | --- | --- |
@@ -46,13 +46,13 @@ Do not assume Pixabay's standalone-use restrictions or video-focused NCS/other c
 
 Keep a stable source identity, recording identity, title/creators, provenance, license/notices, permitted retrieval/storage policy, availability, duration/format and curation state. Keep authored descriptors and their confidence/provenance distinguishable from source tags. Deduplicate imported recordings where identifiable.
 
-The initial selector ranks by most strong supported preferences, fewest contradictions, most weak supported preferences, fewest unknown preferences, then longer known duration and stable source/recording identity. Duration cannot overcome a stronger fit. Require complete recordings; reject previews, excerpts, stems, loops and sample packs rather than padding them. Duration alone never establishes completeness. Explicit duration, exact identity and exclusion constraints are hard filters; unknown or weak evidence cannot satisfy a required descriptor. Return no match when the constraints cannot be established.
+[Gemini ranks every admitted recording](decisions/0006-gemini-play-matching.md) against the request, using everything known about each: title, creators, duration, descriptors and retained source details such as tags, tempo and album. Require complete recordings; reject previews, excerpts, stems, loops and sample packs rather than padding them. Duration alone never establishes completeness. Explicit duration, exact identity and exclusion wording informs the ranking and isn't a hard filter.
 
-Preserve source-bound immutable credits and provenance. Provider/model metadata cannot approve itself: a separate trusted review binds credit completeness and access readiness to the exact metadata digest. Report supported, weak, contradicted and unknown evidence separately; metadata fit is not an enjoyment or fidelity score. Recent-history diversity and exploration belong to a later continuous-station slice. A skip is weak evidence of dislike, and favorite/dislike commands remain a later enhancement.
+Preserve source-bound immutable credits and provenance. Provider/model metadata cannot approve itself: a separate trusted review binds credit completeness and access readiness to the exact metadata digest. Source details are matching hints outside that digest and cannot grant admission. Metadata fit is not an enjoyment or fidelity score. Recent-history diversity and exploration belong to a later continuous-station slice. A skip is weak evidence of dislike, and favorite/dislike commands remain a later enhancement.
 
 Screen corrupt or incomplete files, unintended long silence and severe clipping separately from musical taste. Intentional lo-fi texture is not automatically a defect. Add automated instrument/vocal/tempo/energy descriptions or text/audio embeddings only if a bounded comparison demonstrates better matching that justifies dependency, compute and maintenance costs. Do not require CLAP, a vector database, GPU service or an LLM analysis call per track by default.
 
-Where an eligible exact recording exists, artist/title requests may match it. Otherwise return no exact match; do not silently substitute a stylistic match or promise mainstream catalog coverage. A separately requested stylistic search may use descriptors. Catalog lookup must not inherit generated-music artist-imitation restrictions accidentally.
+A musical request always gets the nearest admitted recording, and the reply says how close it is: the named recording, a close match or the nearest available. Where the catalog lacks a requested artist or title, play the nearest fit and say so; never present a substitute as the requested recording or promise mainstream catalog coverage. Catalog lookup must not inherit generated-music artist-imitation restrictions accidentally.
 
 ### Source-specific audio storage
 
@@ -105,7 +105,7 @@ Bound catalog selection attempts, retries, prefetched work and no-repeat history
 
 ## Interpretation and selection
 
-Use Gemini to turn a request into a validated mode-specific plan. One request should normally require one interpretation call, not an agent conversation or chain of speculative calls. Validate model output before it changes state or causes provider activity.
+Use Gemini to turn a request into a validated mode-specific plan: a ranked list of admitted recordings for catalog mode. One request should normally require one interpretation call, not an agent conversation or chain of speculative calls. Validate model output before it changes state or causes provider activity.
 
 Generated plans include a short title, one to four weighted styles and supported optional tempo, key, density, brightness, drum and wordless-vocal controls. Use relative context only within the same mode; switching modes starts a fresh interpretation and explains that behavior where needed.
 
@@ -115,7 +115,7 @@ On generated interpretation failure, use the original musical request as a simpl
 
 Generated requests for an artist's style should be translated into descriptive musical characteristics. Existing-recording search follows the curated catalog policy above; do not prohibit legitimate artist/title lookup by reusing generative-music restrictions.
 
-Only send the request and necessary current musical context to the model provider. Do not send Discord identities. Keep provider credentials out of model prompts.
+Only send the request, necessary current musical context and, for catalog mode, descriptive metadata about admitted recordings to the model provider. Do not send Discord identities. Keep provider credentials out of model prompts. Disable provider storage of interactions where the API allows it.
 
 Pin a supported current model/API after checking official documentation and performing the applicable opt-in evaluation. Treat dated model names, timeouts and provider observations as assumptions requiring relevant validation. Avoid changing models without rechecking behavior.
 
@@ -181,7 +181,7 @@ Escape provider/model text, strip bidirectional controls, disable mentions and p
 
 Provide one documented Docker/Compose deployment, a persistent `/data` volume, graceful signal handling, an init process and a sensible restart policy. Run non-root with default Docker security settings. The operator should not need a compiler.
 
-Use environment variables and placeholder-only examples. Discord and generated-mode credentials are required for their respective capabilities; source-specific catalog configuration follows the final provider decision. Never commit or read real `.env` files while developing. Do not put credentials in child arguments, logs, prompts, published diagnostics or documentation.
+Use environment variables and placeholder-only examples. Discord, catalog-matching and generated-mode credentials are required for their respective capabilities; source-specific catalog configuration follows the final provider decision. Never commit or read real `.env` files while developing. Do not put credentials in child arguments, logs, prompts, published diagnostics or documentation.
 
 Request only the necessary Discord Guilds and Voice States intents. Explain installation permissions and ordinary-listener command access.
 
@@ -201,7 +201,7 @@ Prove behavior on the deployment target, not only through fakes.
 
 | Area | Release evidence |
 | --- | --- |
-| Catalog selection | Deterministic evidence establishes prompt fit ordering, complete-recording preference, hard constraints and honest three-source coverage. Actual availability and file integrity require source integration evidence. Subjective enjoyment and fidelity remain unmeasured until an optional authorized listening evaluation; preserve poor matches and unavailable cases. |
+| Catalog selection | Deterministic evidence establishes output validation, complete-recording admission, disclosed fit and honest three-source coverage. Opt-in provider evaluation establishes that real requests rank sensibly. Actual availability and file integrity require source integration evidence. Subjective enjoyment and fidelity remain unmeasured until an optional authorized listening evaluation; preserve poor matches and unavailable cases. |
 | Command/access behavior | Both modes, all controls, cooldown ownership, manager overrides and regular-listener now-playing access work as specified. |
 | Continuity | A 60-minute program has at most two seconds of total underrun under normal service conditions. Measure both applicable modes. |
 | Latency | Median request-to-audible music is at most 15 seconds for generated playback and admitted catalog play requests; measure catalog skip separately against the same target. Report admitted failures/timeouts separately. |
