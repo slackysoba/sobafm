@@ -84,7 +84,7 @@ docker compose up --build -d
 docker compose logs -f
 ```
 
-The service runs with Docker's default seccomp profile, a read-only root, all capabilities dropped, no new privileges, an init process, two CPUs and the [ADR 0004](decisions/0004-amd64-whole-service-adoption.md) limits: memory and memory-plus-swap 90,177,536 bytes and 64 tasks. Logs go to stdout and are kept in at most two 1 MB files. The restart policy is `on-failure:5`: Docker restarts a container that exits nonzero at most five times, so a refused start (exit 2 or 3) or a failed Discord login does not retry indefinitely. A clean shutdown (exit 0) is not restarted. After fixing the cause, start it again with `docker compose up -d`.
+The service runs with Docker's default seccomp profile, a read-only root, all capabilities dropped, no new privileges, an init process, two CPUs and the [ADR 0004](decisions/0004-amd64-whole-service-adoption.md) limits: memory and memory-plus-swap 90,177,536 bytes and 64 tasks. Logs go to stdout and are kept in at most two 1 MB files. The restart policy is `on-failure:5`: Docker restarts a container that exits nonzero at most five times, so a refused start (exit 2, 3 or 4) or a failed Discord login does not retry indefinitely. A clean shutdown (exit 0) is not restarted. After fixing the cause, start it again with `docker compose up -d`.
 
 Before reading any configuration or connecting to Discord, SobaFM reads its own cgroup's `memory.max`, `memory.swap.max` and `pids.max` and refuses to start unless they are exactly 90177536, 0 and 64. Do not change those limits in `compose.yaml`: the app will refuse to run, and no other values are accepted.
 
@@ -108,7 +108,7 @@ Settings are saved before they take effect, and each server keeps its own. If sa
 
 **Volume** applies to current audio from its next 20 ms frame, with no restart. It can only lower the level, so it can't clip, and 100% leaves the recording's samples unchanged. It defaults to 50%, so a recording plays at half the level it would without this setting.
 
-**Change cooldown** is one wait per server across `/play` and `/skip`, whoever asked. A request during it is refused with the time left, before Gemini is called or a recording is chosen, and current audio continues. It counts from when the last accepted request arrived, and refused requests don't extend it. A request that fails or changes nothing doesn't hold it: an invalid request, one Gemini refuses or fails on, a `/skip` with nothing to skip, or a recording that can't start. A `/stop` doesn't clear it, unless the stopped request was still being matched. A changed `cooldown` applies at once, including to a wait already running, and 0 turns it off. The wait itself isn't saved, so it starts afresh after a restart or when the bot leaves voice.
+**Change cooldown** is one wait per server across `/play` and `/skip`, whoever asked. A request during it is refused with the time left, before Gemini is called or a recording is chosen, and current audio continues. It counts from when the last accepted request arrived, and refused requests don't extend it. A request that fails or changes nothing doesn't hold it: an invalid request, one Gemini refuses or fails on, a `/skip` with nothing to skip, or a recording that can't start. A `/stop` doesn't clear it, unless the request it interrupts hasn't been answered yet: a `/play` still being matched, or a `/skip` still waiting up to five seconds for its next track. A changed `cooldown` applies at once, including to a wait already running, and 0 turns it off. The wait itself isn't saved, so it starts afresh after a restart or when the bot leaves voice.
 
 **Generated duration** is stored and validated, but nothing uses it until `/freestyle` exists.
 
@@ -154,7 +154,7 @@ Read the release notes and `docs/requirements.md` first. Updating the files in `
 mv data catalog
 ```
 
-Then, in `.env`, add `SOBAFM_DATABASE=/data/sobafm.db` and change `SOBAFM_CATALOG`, `SOBAFM_REVIEWS` and `SOBAFM_MEDIA` to start with `/catalog/` instead of `/data/`. Until then the service exits 2 with a message naming what's wrong. Files in the manifest are relative to its own directory, so it needs no change.
+Then, in `.env`, add `SOBAFM_DATABASE=/data/sobafm.db` and change `SOBAFM_CATALOG`, `SOBAFM_REVIEWS` and `SOBAFM_MEDIA` to start with `/catalog/` instead of `/data/`. Until then the service exits 2: an old catalog path logs `catalog snapshot or reviews could not be loaded`, and a missing database location logs `SOBAFM_DATABASE is required`. Files in the manifest are relative to its own directory, so it needs no change.
 
 ## Build the FMA catalog
 

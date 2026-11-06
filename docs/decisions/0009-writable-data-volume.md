@@ -1,6 +1,6 @@
 # 0009: Keep settings on a writable /data volume and move the catalog to /catalog
 
-Status: **Accepted** (2026-11-05), under [#126](https://github.com/slackysoba/sobafm/issues/126), which asks the implementer to decide the layout.
+Status: **Selected** (2026-11-05) under the layout choice delegated by issue [#126](https://github.com/slackysoba/sobafm/issues/126), which asks the implementer to decide the layout. It becomes accepted when it merges after the issue's required checks and independent review.
 
 This record supersedes one part of [ADR 0007](0007-fma-dataset-batch-catalog.md): its Location row, `./data/fma/` mounted read-only at `/data`. The audio moves to `./catalog/fma/`, mounted read-only at `/catalog`. It stays out of Git and the image. ADR 0007's limits, requests, removal path and acceptance are unchanged, and that record isn't edited.
 
@@ -25,7 +25,7 @@ A write that fails while running changes nothing and tells the manager so. Playb
 
 ## Consequences
 
-- Operators with an existing `./data` run `mv data catalog` once and update `SOBAFM_CATALOG`, `SOBAFM_REVIEWS` and `SOBAFM_MEDIA` in `.env`. Without that, startup refuses with exit 2 and a message naming the variable.
+- Operators with an existing `./data` run `mv data catalog` once and update `SOBAFM_CATALOG`, `SOBAFM_REVIEWS` and `SOBAFM_MEDIA` in `.env`. Without that, startup refuses with exit 2. An old catalog path logs `catalog snapshot or reviews could not be loaded`, which names no variable, and a missing database location logs `SOBAFM_DATABASE is required`.
 - `docker compose down -v` deletes the settings. [Operations](../operations.md) says so and gives a backup command.
 - The decoder runs as the same user, so it could write to `/data` if it were compromised. Its command line writes only to stdout. A damaged database stops the next startup rather than being trusted, and it holds only settings, with no credentials. Separating the decoder's user would need capabilities the service deliberately drops.
 - The service gains one worker thread and the `sqlite3` module. Both count against the unchanged [ADR 0004](0004-amd64-whole-service-adoption.md) group: no limit or capacity partition changes.
