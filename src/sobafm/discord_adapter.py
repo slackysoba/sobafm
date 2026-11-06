@@ -579,7 +579,7 @@ class WatchedVoiceClient(disnake.VoiceClient):
 
     async def disconnect(self, *, force: bool = False) -> None:
         """End this client once; a caller during that waits for it to finish."""
-        if self._ended or (not force and not self.is_connected()):
+        if not force and not self.is_connected():
             return
         if self._disconnecting is not None:
             await self._disconnecting.wait()

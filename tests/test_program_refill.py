@@ -890,9 +890,9 @@ async def test_a_connection_thats_ending_starts_nothing_while_it_waits_for_the_l
 
     h.adapter._voice_gone(1, player.voice)  # pyright: ignore[reportPrivateUsage]
     assert player.closing and player.station.needs_next
-    continuation = player.continuation
+    player.continuation = None  # as when its task has finished, so a new one could start
     h.adapter._resume(player)  # pyright: ignore[reportPrivateUsage]
-    assert player.continuation is continuation  # nothing new is scheduled
+    assert player.continuation is None  # nothing new is scheduled
 
     player.lock.release()
     assert await second == [STOPPED_WHILE_MATCHING]

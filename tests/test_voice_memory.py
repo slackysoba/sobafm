@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1553,6 +1554,7 @@ def test_cancelling_the_loop_closes_the_websocket_it_holds(wire: Wire) -> None:
         h, _, _, _ = wire_harness()
         await h.join()
         voice = player_of(h).voice
+        await settle()  # the loop has started and is polling
         runner = voice._runner  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType, reportUnknownVariableType]
         runner.cancel()
         await until_settled(runner.done)
@@ -1570,9 +1572,12 @@ def test_an_ended_client_reports_disconnected_and_stays_ended(wire: Wire) -> Non
         await run(h.adapter.leave, inter(room, manager=True))
         assert not voice.is_connected()
         guild.changes.clear()
+        newer = cast(Any, object())
+        guild.state.clients[GUILD] = newer  # a later client now holds this server's slot
         await voice.disconnect(force=True)
         voice.cleanup()
         assert guild.changes == []  # nothing further reaches the gateway
+        assert guild.state.clients[GUILD] is newer  # and the slot is left alone
 
     asyncio.run(scenario())
 
@@ -1592,6 +1597,7 @@ def test_callers_during_a_disconnect_wait_for_it_to_finish(wire: Wire) -> None:
             await original(channel=channel)
 
         guild.change_voice_state = held
+        guild.changes.clear()
         first = asyncio.create_task(voice.disconnect(force=True))
         await settle()
         second = asyncio.create_task(voice.disconnect(force=True))
@@ -1612,6 +1618,18 @@ class Frames(disnake.AudioSource):
         return SILENCE
 
 
+class ConnectedEvent(threading.Event):
+    """The event the player thread waits on, which says when the thread has parked on it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parked = threading.Event()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        self.parked.set()
+        return super().wait(timeout)
+
+
 def test_a_player_thread_waiting_for_a_lost_connection_ends_with_it(wire: Wire) -> None:
     """`AudioPlayer.stop` doesn't wake a thread parked on a connection that's already down."""
 
@@ -1619,10 +1637,12 @@ def test_a_player_thread_waiting_for_a_lost_connection_ends_with_it(wire: Wire) 
         h, _, _, _ = wire_harness()
         await h.join()
         voice = player_of(h).voice
-        voice._connected.clear()  # pyright: ignore[reportPrivateUsage]
+        down = ConnectedEvent()  # not set: the connection is already down
+        voice._connected = down  # pyright: ignore[reportPrivateUsage]
         thread = disnake.player.AudioPlayer(Frames(), voice)
         voice._player = thread  # pyright: ignore[reportPrivateUsage]
         thread.start()
+        assert await asyncio.to_thread(down.parked.wait, 5)
 
         await voice.disconnect(force=True)
 
