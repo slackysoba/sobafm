@@ -1,6 +1,6 @@
 """Lyria RealTime audio into PCM banks, over one bounded WebSocket per bank.
 
-ADR 0008 (proposed) records the choices here and the copy budget they implement. No
+ADR 0008 records the choices here and the copy budget they implement. No
 Discord code calls this module yet.
 
 ``LyriaSession`` owns one WebSocket feeding one leased ``pcm.py`` bank. It uses the
@@ -78,8 +78,11 @@ ENDPOINT = (
 )
 
 # The copy budget in ADR 0008. aiohttp holds a frame's reads and their join together, so
-# a message may be half the 1,048,576-byte network slot. Two seconds of PCM is 512,000
-# base64 bytes, which leaves 12,288 for the JSON around them.
+# a message may be half the 1,048,576-byte network slot. Fragment assembly's transient
+# third copy uses the existing shared 524,288-byte drain reservation: it exists only
+# inside a synchronous reader call, so sessions cannot hold it concurrently. Closing
+# drops the connection without reading and uses no message drain. Two seconds of PCM
+# is 512,000 base64 bytes, which leaves 12,288 for the JSON around them.
 MAX_MESSAGE_BYTES = 524_288
 MAX_MESSAGE_PCM_BYTES = MAX_MESSAGE_BYTES * 3 // 4
 # Everything in a message except its audio. Bounding it bounds the JSON parse, including
@@ -103,7 +106,7 @@ MAX_PROMPT_CHARACTERS = 200
 PREPARE_SECONDS = 15.0  # connection to six seconds of pre-roll, per attempt
 STALL_SECONDS = 5.0  # no audio while the bank has room, after readiness
 CLEANUP_SECONDS = 3.0  # one original deadline from the first stop or cancellation
-FORCE_CLOSE_SECONDS = 2.0  # stop waiting for a polite close, inside that deadline
+FORCE_CLOSE_SECONDS = 2.0  # interrupt unsettled cleanup, without abandoning its owner
 CLOSE_HANDSHAKE_SECONDS = 1.0
 MIN_SPACE_WAIT_SECONDS = 0.02  # one frame
 # The music API documents no session limit; the Live API documents about ten minutes.
@@ -416,13 +419,12 @@ class _MusicSocket:
         return message
 
     async def close(self) -> None:
-        """Close politely within a bound. A cancellation here drops the connection at once."""
-        # A close frame can't be read while the transport is paused.
-        self._protocol.resume_reading()
-        try:
-            await self._websocket.close()
-        finally:
-            await _join(self._session.close())
+        """Drop the connection without resuming reads or draining more audio.
+
+        A WebSocket close handshake keeps reading while awaiting the peer's close,
+        retaining one message while the next assembles. That exceeds our network slot.
+        """
+        await _join(self._session.close())
 
 
 async def _connect(
@@ -559,6 +561,7 @@ class LyriaSession:
     def start(self) -> None:
         self._deadline = self._clock() + PREPARE_SECONDS
         self._pump_task = asyncio.create_task(self._pump())
+        self._pump_task.add_done_callback(self._pump_done)
         self._watch_task = asyncio.create_task(self._watch())
 
     def cancel(self) -> None:
@@ -569,7 +572,7 @@ class LyriaSession:
         if self._stopped_at is None or cancelled_at < self._stopped_at:
             self._stopped_at = cancelled_at
         if self._stopped.is_set():
-            return  # the pump is already closing; don't turn that into an abort
+            return  # the pump already owns cleanup; don't interrupt it repeatedly
         self._mark_stopped()
         if self._pump_task is not None:
             self._pump_task.cancel()
@@ -587,7 +590,7 @@ class LyriaSession:
         if pump is not None and watch is not None:
             await self._wait_until({pump, watch}, self._stopped_at + FORCE_CLOSE_SECONDS)
             if not pump.done():
-                pump.cancel()  # drops the connection if a polite close is stuck
+                pump.cancel()  # interrupt a stuck close; _join retains its actual owner
             await self._wait_until({pump, watch}, self._stopped_at + CLEANUP_SECONDS)
         return SessionReport(self._failure, self._pcm_bytes, self._close_code, self._verdict())
 
@@ -598,6 +601,14 @@ class LyriaSession:
             await asyncio.wait(tasks)
 
     # Internals.
+
+    def _pump_done(self, task: asyncio.Task[None]) -> None:
+        # Cancellation before the first coroutine step skips _pump's finally entirely.
+        # Do not overwrite the earlier settlement time on the ordinary path.
+        if self._settled_at is None:
+            self._settled_at = self._clock()
+        if self._watch_task is not None:
+            self._watch_task.cancel()
 
     def _verdict(self) -> CleanupVerdict:
         """Decide once, at the first report: a later settlement changes nothing."""
@@ -693,7 +704,8 @@ class LyriaSession:
         except asyncio.CancelledError:
             pass  # `cancel` or the watchdog recorded why
         except aiohttp.WSServerHandshakeError as exc:
-            self._stop("rejected" if 300 <= exc.status < 500 else "connect")
+            permanent = 300 <= exc.status < 500 and exc.status not in (408, 429)
+            self._stop("rejected" if permanent else "connect")
         except aiohttp.ClientError, OSError:
             self._stop("connect" if connection is None else "truncated")
         except Exception as exc:

@@ -827,7 +827,14 @@ def test_a_corrupt_message_commits_none_of_its_audio() -> None:
 
 @pytest.mark.parametrize(
     ("status", "expected"),
-    [(401, "rejected"), (403, "rejected"), (404, "rejected"), (429, "rejected"), (503, "connect")],
+    [
+        (401, "rejected"),
+        (403, "rejected"),
+        (404, "rejected"),
+        (408, "connect"),
+        (429, "connect"),
+        (503, "connect"),
+    ],
 )
 def test_a_refused_handshake_is_classified(status: int, expected: str) -> None:
     async def scenario() -> None:
@@ -1169,23 +1176,18 @@ class StuckClose:
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
         self.cancellations = 0
-        original = aiohttp.ClientWebSocketResponse.close
+        original = aiohttp.ClientSession.close
 
-        async def stuck(
-            websocket: aiohttp.ClientWebSocketResponse[Any],
-            *,
-            code: int = 1000,
-            message: bytes = b"",
-        ) -> bool:
+        async def stuck(session: aiohttp.ClientSession) -> None:
             self.entered.set()
             while not self.release.is_set():
                 try:
                     await self.release.wait()
                 except asyncio.CancelledError:
                     self.cancellations += 1
-            return await original(websocket, code=code, message=message)
+            await original(session)
 
-        monkeypatch.setattr(aiohttp.ClientWebSocketResponse, "close", stuck)
+        monkeypatch.setattr(aiohttp.ClientSession, "close", stuck)
 
     async def __aenter__(self) -> Self:
         return self
@@ -1226,8 +1228,8 @@ def test_a_missed_deadline_is_a_failed_verdict_that_settling_later_never_changes
             finishing = asyncio.create_task(harness.session.finish())
             await until(lambda: bool(time.delays()))
             time.advance(1.0)  # two seconds: the connection is told to drop
-            await until(lambda: stuck.cancellations >= 1)
-            await until(lambda: bool(time.delays()))
+            await until(lambda: 1.0 in time.delays())
+            assert stuck.cancellations == 0  # _join shields the actual close owner
             assert not finishing.done()
             time.advance(0.5)  # 2.5 seconds: still inside the original deadline
             for _ in range(20):
@@ -1279,6 +1281,37 @@ def test_cancelling_a_session_that_never_started_needs_no_cleanup() -> None:
             harness.session.cancel()
             assert await harness.session.finish() == SessionReport(None, 0, None, "clean")
             assert harness.released()
+
+    run(scenario())
+
+
+def test_cancelling_before_the_pumps_first_step_settles_cleanly() -> None:
+    async def scenario() -> None:
+        async with FakeLyria() as fake:
+            harness = Harness(fake)
+            harness.session.start()
+            harness.session.cancel()  # no yield: the coroutine's finally cannot run
+            assert await harness.session.finish() == SessionReport(None, 0, None, "clean")
+            await harness.session.settle()
+            assert not fake.requests
+            assert not harness.time.delays()
+            assert harness.released()
+
+    run(scenario())
+
+
+def test_finishing_a_stream_before_its_pump_runs_has_no_failed_cleanup() -> None:
+    async def scenario() -> None:
+        async with FakeLyria() as fake:
+            harness = StreamHarness(fake)
+            harness.stream.start()
+            await asyncio.sleep(0)  # supervisor creates the session; pump has not run
+            report = await harness.stream.finish()
+            assert report.sessions_started == 1
+            assert report.failed_cleanups == 0
+            assert report.retained_banks == 0
+            assert harness.pool.leased == 0
+            assert not fake.requests
 
     run(scenario())
 
@@ -1472,9 +1505,10 @@ def test_a_rejected_start_makes_one_attempt_and_nothing_becomes_ready() -> None:
     run(scenario())
 
 
-def test_a_failing_start_uses_every_attempt_then_reports_why() -> None:
+@pytest.mark.parametrize("status", [408, 429, 503])
+def test_a_failing_start_uses_every_attempt_then_reports_why(status: int) -> None:
     async def scenario() -> None:
-        async with FakeLyria(Refuse(503), Refuse(503), Refuse(503), Refuse(503)) as fake:
+        async with FakeLyria(*(Refuse(status) for _ in range(4))) as fake:
             harness = StreamHarness(fake)
             harness.stream.start()
             ready = asyncio.create_task(harness.stream.wait_ready())
@@ -1483,6 +1517,37 @@ def test_a_failing_start_uses_every_attempt_then_reports_why() -> None:
             report = await harness.stream.finish()
             assert report.failure == "connect"
             assert len(fake.requests) == 3
+            assert harness.pool.leased == 0
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("status", [408, 429])
+def test_a_transient_renewal_refusal_retries_while_old_audio_plays(status: int) -> None:
+    async def scenario() -> None:
+        async with FakeLyria(serves(1_000), Refuse(status), serves(3_000)) as fake:
+            harness = StreamHarness(fake)
+            stream = harness.stream
+            stream.start()
+            assert await stream.wait_ready()
+            await harness.renewal_due()
+            # Wait for the retry delay, without advancing the healthy session's clock.
+            await until(
+                lambda: (
+                    len(fake.requests) == 2
+                    and 1.0 in harness.time.delays()
+                    and harness.pool.leased == 1
+                )
+            )
+            assert sample_of(harness.read_frames(1)[0]) == 1_000
+            harness.time.advance(1.0)
+            await until(lambda: stream.crossfading)
+            harness.read_frames(CROSSFADE_FRAMES)
+            assert sample_of(harness.read_frames(1)[0]) == 3_000
+            report = await stream.finish()
+            assert report.sessions_started == 3
+            assert report.failure is None
+            assert report.failed_cleanups == 0
             assert harness.pool.leased == 0
 
     run(scenario())
@@ -1714,8 +1779,8 @@ def test_a_stream_keeps_a_stuck_session_charged_until_it_settles(
             for _ in range(20):
                 await asyncio.sleep(0)
             harness.time.advance(1.0)
-            await until(lambda: stuck.cancellations >= 1)
             await until(lambda: 1.0 in harness.time.delays())
+            assert stuck.cancellations == 0  # repeated cancellation abandons no close
             assert "missed its cleanup deadline" not in caplog.text
             harness.time.advance(1.0)
             await until(lambda: "missed its cleanup deadline" in caplog.text)
@@ -1822,17 +1887,32 @@ class RawSender:
 
 # The network slot, plus the plain-socket part of the read slot, plus decoded slices.
 PLAIN_SOCKET_PEAK_LIMIT = 1_048_576 + 2 * 65_536 + 49_152 + 65_536
+# Fragment assembly's third copy is synchronous and shared across the two sessions.
+FRAGMENT_DRAIN_BYTES = 524_288
 
 
+@pytest.mark.parametrize("fragmented", [False, True])
+@pytest.mark.parametrize("at_limit", [False, True])
 def test_a_full_bank_holds_one_message_and_copies_stay_inside_the_budget(
     monkeypatch: pytest.MonkeyPatch,
+    fragmented: bool,
+    at_limit: bool,
 ) -> None:
     """Without the pause between messages, two more would assemble here and this fails."""
     monkeypatch.setattr("sobafm.lyria.STALL_SECONDS", 1e9)
 
     async def scenario() -> None:
         encoded = audio_message(11).encode()
-        frame = frame_header(len(encoded)) + encoded
+        if at_limit:
+            encoded += b" " * (MAX_MESSAGE_BYTES - 1 - len(encoded))
+        frame = (
+            frame_header(1, fin=False)
+            + encoded[:1]
+            + frame_header(len(encoded) - 1, opcode=0)
+            + encoded[1:]
+            if fragmented
+            else frame_header(len(encoded)) + encoded
+        )
         sender = RawSender([frame] * 14)
         time = ManualTime()
         pool = PcmBankPool(clock=time.clock)
@@ -1858,13 +1938,65 @@ def test_a_full_bank_holds_one_message_and_copies_stay_inside_the_budget(
             _, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
-        assert peak - baseline <= PLAIN_SOCKET_PEAK_LIMIT
-        session.cancel()
-        await session.finish()
-        await session.settle()
-        drain(bank)
-        assert bank.release()
-        sender.close()
+            session.cancel()
+            await session.finish()
+            await session.settle()
+            drain(bank)
+            assert bank.release()
+            sender.close()
+            assert not sender.thread.is_alive()
+        limit = PLAIN_SOCKET_PEAK_LIMIT + (FRAGMENT_DRAIN_BYTES if fragmented else 0)
+        assert peak - baseline <= limit
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_stopping_drops_the_socket_without_reading_more_audio(
+    malformed: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel a full bank, or fail validation, while a real peer keeps sending."""
+    monkeypatch.setattr("sobafm.lyria.STALL_SECONDS", 1e9)
+
+    async def scenario() -> None:
+        encoded = audio_message(11).encode()
+        frame = frame_header(len(encoded)) + encoded
+        frames = [frame] * 14
+        if malformed:
+            frames.insert(0, frame_header(1) + b"!")
+        sender = RawSender(frames)
+        time = ManualTime()
+        pool = PcmBankPool(clock=time.clock)
+        bank = pool.acquire()
+        session = LyriaSession(
+            REQUEST, bank, api_key=KEY, endpoint=sender.url, clock=time.clock, sleep=time.sleep
+        )
+        tracemalloc.start()
+        try:
+            baseline, _ = tracemalloc.get_traced_memory()
+            tracemalloc.reset_peak()
+            session.start()
+            if malformed:
+                await session.wait_stopped()
+            else:
+                await until(lambda: 0.0 < min(time.delays(), default=9.0) < 3.0)
+                session.cancel()
+            # Settlement must not depend on finish(), a close reply, or advancing time.
+            await asyncio.wait_for(session.settle(), timeout=2)
+            _, peak = tracemalloc.get_traced_memory()
+            assert peak - baseline <= PLAIN_SOCKET_PEAK_LIMIT
+            assert (await session.finish()).cleanup == "clean"
+            assert session.failure == ("malformed" if malformed else None)
+        finally:
+            tracemalloc.stop()
+            session.cancel()
+            time.advance(2)
+            await session.finish()
+            await session.settle()
+            assert bank.release()
+            sender.close()
+            assert not sender.thread.is_alive()
 
     run(scenario())
 
