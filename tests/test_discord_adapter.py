@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import itertools
 import logging
 import os
 import signal
@@ -106,9 +107,29 @@ class FakeSettings:
         self.current = ServerSettings(cooldown_seconds=0)
         self.failure: SettingsError | None = None
         self.writes = 0
+        self.remembered: dict[int, int] = {}
+        self.channel_writes = 0
 
     def get(self, guild_id: int) -> ServerSettings:
         return self.current
+
+    def channel(self, guild_id: int) -> int | None:
+        return self.remembered.get(guild_id)
+
+    def channels(self) -> dict[int, int]:
+        return dict(self.remembered)
+
+    async def remember_channel(self, guild_id: int, channel_id: int) -> None:
+        if self.failure is not None:
+            raise self.failure
+        self.channel_writes += 1
+        self.remembered[guild_id] = channel_id
+
+    async def forget_channel(self, guild_id: int) -> None:
+        if self.failure is not None:
+            raise self.failure
+        self.channel_writes += 1
+        self.remembered.pop(guild_id, None)
 
     async def update(
         self,
@@ -135,6 +156,7 @@ class FakeSettings:
 
 BOT_ID = 1
 LISTENER_ID = 100
+CHANNEL_IDS = itertools.count(1_000)
 
 
 @dataclass(frozen=True)
@@ -180,12 +202,13 @@ class FakeChannel:
     voice_states: dict[int, FakeVoiceState] = field(
         default_factory=lambda: {LISTENER_ID: FakeVoiceState(None)}
     )
+    id: int = field(default_factory=lambda: next(CHANNEL_IDS))
 
     @property
     def mention(self) -> str:
         return f"<#{self.name}>"
 
-    async def connect(self) -> FakeVoice:
+    async def connect(self, *, timeout: float, cls: object) -> FakeVoice:
         self.voice = FakeVoice(self)
         return self.voice
 

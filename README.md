@@ -9,7 +9,7 @@ A self-hosted Discord music bot for Linux and Docker.
 
 ## Development status
 
-`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. The real catalog holds 167 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching has run against the live API in one private session ([#124](https://github.com/slackysoba/sobafm/issues/124)), but match quality hasn't been rated. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings, `/skip` moves on and `/settings` keeps each server's volume and change cooldown in SQLite ([operations](docs/operations.md)). The settings have only been tested offline. Release qualification is not yet complete.
+`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. The real catalog holds 167 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching has run against the live API in one private session ([#124](https://github.com/slackysoba/sobafm/issues/124)), but match quality hasn't been rated. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings, `/skip` moves on, `/settings` keeps each server's volume and change cooldown in SQLite, and the bot rejoins its voice channel after a restart, with no program, until someone uses `/play` ([operations](docs/operations.md)). The settings and the rejoin haven't been tested on Discord. Release qualification is not yet complete.
 
 The Python development toolchain and Linux CI are available. Listening comparisons are deferred optional evidence.
 
@@ -55,7 +55,7 @@ mkdir catalog
 docker compose up --build -d
 ```
 
-The catalog and audio go in `./catalog`, mounted read-only. Settings go in a named volume at `/data`, the only writable path. See [Operations](docs/operations.md) for Discord permissions, the catalog and media files, settings, stopping, updates, troubleshooting and the memory scope.
+The catalog and audio go in `./catalog`, mounted read-only. Settings and remembered voice channels go in a named volume at `/data`, the only writable path. See [Operations](docs/operations.md) for Discord permissions, the catalog and media files, settings, voice channel memory, stopping, updates, troubleshooting and the memory scope.
 
 ## Documentation
 
