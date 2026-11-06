@@ -29,22 +29,24 @@ from sobafm.catalog import (
     Strength,
 )
 from sobafm.discord_adapter import GEMINI_KEY_VARIABLE, MAX_REVIEWS_BYTES
-from sobafm.gemini_match import (
+from sobafm.gemini_interactions import (
     API_REVISION,
     ENDPOINT,
     MAX_CONCURRENT_CALLS,
-    MAX_RANKED,
     MAX_RESPONSE_BYTES,
     MODEL,
-    NO_RECORDINGS,
     AiohttpTransport,
+    output_text,
+)
+from sobafm.gemini_match import (
+    MAX_RANKED,
+    NO_RECORDINGS,
     Fit,
     GeminiMatcher,
     Matched,
     MatchFailed,
     Refused,
     checked_request,
-    output_text,
     parse_plan,
     render_songs,
     valid_api_key,
