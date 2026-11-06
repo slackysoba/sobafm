@@ -7,6 +7,7 @@ import json
 import logging
 import math
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -15,11 +16,13 @@ import pytest
 from sobafm.catalog import Recording, RecordingKey, Source, eligible, parse_catalog, parse_reviews
 from sobafm.discord_adapter import (
     MAX_REFILL_ATTEMPTS,
-    REFILL_RETRY_SECONDS,
+    REFILL_RESERVE_SECONDS,
+    REFILL_WAIT_SECONDS,
     SKIPPING,
     Adapter,
     EndReason,
     GuildPlayer,
+    refill_wait,
 )
 from sobafm.gemini_interactions import TIMEOUT_SECONDS
 from sobafm.gemini_match import (
@@ -31,7 +34,7 @@ from sobafm.gemini_match import (
     Ranked,
     Refused,
 )
-from sobafm.pcm import BYTES_PER_SECOND, READY_BYTES, PcmBankPool
+from sobafm.pcm import FRAME_MILLISECONDS, READY_SECONDS, PcmBankPool
 from sobafm.settings import ServerSettings
 from sobafm.station import Program, Station
 from tests.test_discord_adapter import (
@@ -42,6 +45,7 @@ from tests.test_discord_adapter import (
     FakeSettings,
     Harness,
     Tagged,
+    current,
     heard_id,
     inter,
     matcher_of,
@@ -111,8 +115,8 @@ async def calls_reach(fake: FakeMatcher, count: int) -> None:
     await until(lambda: len(fake.requests) == count)
 
 
-async def retry_waiting(h: Harness) -> None:
-    await until(lambda: h.clock.pending == [REFILL_RETRY_SECONDS])
+async def retry_waiting(h: Harness, seconds: float = REFILL_WAIT_SECONDS[0]) -> None:
+    await until(lambda: h.clock.pending == [seconds])
 
 
 # A refill at the last song.
@@ -223,7 +227,8 @@ async def test_a_failing_refill_retries_within_its_bound_and_ends_honestly() -> 
     source = player_of(h).source
     for attempt in range(1, MAX_REFILL_ATTEMPTS):
         await calls_reach(fake, 1 + attempt)
-        await retry_waiting(h)  # a timed wait between calls, so never a hot loop
+        # A timed wait between calls, so never a hot loop.
+        await retry_waiting(h, REFILL_WAIT_SECONDS[attempt - 1])
         assert source.read() == tag("a") and station_of(h).ending is None
         assert await skip(h) == NOTHING_READY
         h.clock.expire()
@@ -281,7 +286,7 @@ def test_a_refill_failing_with_nothing_audible_ends_at_once_and_says_so(
         await until(lambda: heard_id(h) is None)
         assert station_of(h).desired is not None
         h.clock.expire()
-        await retry_waiting(h)
+        await retry_waiting(h)  # with nothing audible, the second wait stays short too
         h.clock.expire()
         await until(lambda: station_of(h).desired is None)
         assert station_of(h).ended is EndReason.REFILL_FAILED
@@ -294,6 +299,105 @@ def test_a_refill_failing_with_nothing_audible_ends_at_once_and_says_so(
     ]
     assert lines.count("program ended: reason=refill_failed") == 1
     assert "piano" not in caplog.text
+
+
+# How retries are spaced.
+
+
+@pytest.mark.parametrize(
+    ("attempt", "seconds_left", "expected"),
+    [
+        (1, 665.0, 15.0),  # the first wait never changes
+        (1, 74.0, 15.0),
+        (1, 0.0, 15.0),
+        (2, 650.0, 60.0),  # a long track has time to outlast a per-minute limit
+        (2, 76.0, 60.0),
+        (2, 75.0, 59.0),  # after that the wait keeps 16 seconds before the track ends
+        (2, 59.0, 43.0),
+        (2, 39.0, 23.0),
+        (2, 31.0, 15.0),
+        (2, 30.0, 15.0),  # a short track still gets the shortest wait, as a silent program does
+        (2, 0.0, 15.0),
+        (2, -5.0, 15.0),  # a recording that ran past its listed length
+    ],
+)
+def test_a_retry_waits_as_long_as_the_heard_track_leaves_time_for(
+    attempt: int, seconds_left: float, expected: float
+) -> None:
+    assert refill_wait(attempt, seconds_left) == expected
+
+
+@pytest.mark.parametrize(
+    ("duration", "heard", "expected"),
+    [
+        (665, 15, 60.0),  # the longest admitted recording
+        (227, 15, 60.0),  # about the mean
+        (74, 15, 43.0),  # the shortest, after a fast failure
+        (74, 35, 23.0),  # the shortest, after two timeouts
+        (180, 170, 15.0),  # nearly over, so as short as a wait gets
+        (None, 15, 15.0),  # no listed length to plan around
+    ],
+)
+def test_the_second_wait_comes_from_the_heard_recordings_time_left(
+    duration: int | None, heard: int, expected: float
+) -> None:
+    async def scenario() -> None:
+        h, tagged = program_harness("a", producer=Tagged(frames=50))
+        first = replace(recording("a"), duration_seconds=duration)
+        fake = FakeMatcher(first, recording("b"))
+        fake.batch = 1
+        h.adapter.matcher = fake
+        await first_heard(h, fake, MatchFailed("http_429"))
+        await retry_waiting(h)  # the first wait is the same on any recording
+        assert current(h).frames < 10
+        current(h).frames = heard * 1000 // FRAME_MILLISECONDS
+        h.clock.expire()
+        await calls_reach(fake, 3)
+        await retry_waiting(h, expected)
+        for _ in range(50):  # nothing moves until the timer does
+            await asyncio.sleep(0)
+        assert len(fake.requests) == 3 and station_of(h).ending is None
+
+        # The last call can still succeed, once a limit has passed.
+        fake.outcome = None
+        h.clock.expire()
+        await prepared_next(h, "b")
+        assert tagged.started == ["a", "b"] and station_of(h).ending is None
+        assert await h.adapter.shutdown() is True
+
+    asyncio.run(scenario())
+
+
+def last_call_starts(duration: int, call_seconds: float) -> float:
+    """When a refill's last call starts on a track of ``duration``, if each one before fails."""
+    now = 0.0
+    for attempt in range(1, MAX_REFILL_ATTEMPTS):
+        now += call_seconds
+        now += refill_wait(attempt, duration - now)
+    return now
+
+
+def test_the_last_call_fits_every_admitted_recording_and_outlasts_a_minute_when_it_can() -> None:
+    admitted = eligible(
+        parse_catalog((SNAPSHOT / "catalog.json").read_text(encoding="utf-8")),
+        parse_reviews((SNAPSHOT / "reviews.json").read_text(encoding="utf-8")),
+    )
+    durations = [r.duration_seconds for r in admitted if r.duration_seconds is not None]
+    assert len(durations) == len(admitted)
+    assert REFILL_RESERVE_SECONDS == TIMEOUT_SECONDS + READY_SECONDS
+    for duration in durations:
+        # From failures at once to full timeouts. Six seconds of pre-roll is what a decoder
+        # only as fast as real time would take.
+        for call_seconds in (0.0, TIMEOUT_SECONDS):
+            finished = last_call_starts(duration, call_seconds) + TIMEOUT_SECONDS
+            assert finished + READY_SECONDS <= duration
+
+    # Fast failures span more than a minute on all but the three shortest recordings.
+    assert last_call_starts(max(durations), 0.0) == 75.0
+    assert last_call_starts(min(durations), 0.0) == 58.0
+    assert sum(last_call_starts(d, 0.0) <= 60.0 for d in durations) == 3
+    # ADR 0011's estimate: about 21 calls for the current catalog, with no retries.
+    assert math.ceil(len(admitted) / MAX_RANKED) == 21
 
 
 # Refusal and empty results.
@@ -314,7 +418,7 @@ def test_a_refusal_or_nothing_new_cannot_start_a_hot_loop(outcome: Matched | Ref
         await first_heard(h, fake, outcome)
         for attempt in range(1, MAX_REFILL_ATTEMPTS):
             await calls_reach(fake, 1 + attempt)
-            await retry_waiting(h)
+            await retry_waiting(h, REFILL_WAIT_SECONDS[attempt - 1])
             for _ in range(50):  # nothing moves until the timer does
                 await asyncio.sleep(0)
             assert len(fake.requests) == 1 + attempt
@@ -445,17 +549,21 @@ async def test_a_superseded_program_makes_no_further_call() -> None:
     assert await h.adapter.shutdown() is True
 
 
+@pytest.mark.parametrize("waits", [1, 2], ids=["first_wait", "second_wait"])
 @pytest.mark.parametrize("ending", ["stop", "shutdown"])
-def test_ending_a_program_cancels_a_refill_waiting_to_retry(ending: str) -> None:
+def test_ending_a_program_cancels_a_refill_waiting_to_retry(ending: str, waits: int) -> None:
     async def scenario() -> None:
         h, _, fake = one_at_a_time("a", "b")
         await first_heard(h, fake, MatchFailed("http_503"))
         await retry_waiting(h)
+        if waits == 2:
+            h.clock.expire()
+            await retry_waiting(h, REFILL_WAIT_SECONDS[1])
         if ending == "stop":
             await run(h.adapter.stop, inter(h.room))
             await settle()
             assert h.clock.pending == []  # the timer's task was cancelled, not left waiting
-            assert len(fake.requests) == 2 and station_of(h).ended is None
+            assert len(fake.requests) == 1 + waits and station_of(h).ended is None
         assert await h.adapter.shutdown() is True
         assert h.clock.pending == [] and h.adapter.tasks == set()
 
@@ -508,6 +616,32 @@ async def test_a_failed_replacement_hands_the_refill_back_to_the_program() -> No
     h.adapter._capacity_changed()  # pyright: ignore[reportPrivateUsage]
     await prepared_next(h, "c")
     assert tagged.started == ["a", "c"]
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_replacement_failing_in_its_deferred_start_hands_the_refill_back() -> None:
+    """A `/play` accepted while a switch report is in flight starts when that report settles."""
+    h, tagged, fake = one_at_a_time("a", "b")
+    source = await h.join()
+    await h.play()
+    await settle()
+    assert source.read() == tag("a")  # the switch is reported but not yet settled
+    assert "Request accepted" in (await h.play("second"))[0]
+    assert station_of(h).ready is not None and heard_id(h) is None
+    blocker = h.pool.acquire()  # the settled report's start finds no capacity
+
+    # a is still playing, so nothing else would act until it ended. Its program asks for more.
+    await calls_reach(fake, 3)
+    assert fake.requests == ["piano", "second", "piano"] and fake.played[-1] == keys("a")
+    assert heard_id(h) == "a" and station_of(h).ready is None
+    heard = station_of(h).heard
+    assert heard is not None and desired_of(h) == heard.program
+
+    assert blocker.release()
+    h.adapter._capacity_changed()  # pyright: ignore[reportPrivateUsage]
+    await prepared_next(h, "b")
+    assert tagged.started == ["a", "b"]
     assert await h.adapter.shutdown() is True
 
 
@@ -669,18 +803,3 @@ async def test_a_whole_program_through_the_real_matcher_stays_within_its_call_bo
     assert transport.sent[2] == [f"Song {i}" for i in identifiers[16:]]
     assert clock.pending == []
     assert await h.adapter.shutdown() is True
-
-
-def test_the_retry_bound_leaves_time_on_the_shortest_admitted_recording() -> None:
-    admitted = eligible(
-        parse_catalog((SNAPSHOT / "catalog.json").read_text(encoding="utf-8")),
-        parse_reviews((SNAPSHOT / "reviews.json").read_text(encoding="utf-8")),
-    )
-    durations = [r.duration_seconds for r in admitted if r.duration_seconds is not None]
-    assert len(durations) == len(admitted)
-    calls = MAX_REFILL_ATTEMPTS * TIMEOUT_SECONDS
-    waits = (MAX_REFILL_ATTEMPTS - 1) * REFILL_RETRY_SECONDS
-    # Six seconds of pre-roll, even at a decoder only as fast as real time.
-    assert calls + waits + READY_BYTES / BYTES_PER_SECOND < min(durations)
-    # ADR 0011's estimate: about 21 calls for the current catalog, with no retries.
-    assert math.ceil(len(admitted) / MAX_RANKED) == 21

@@ -86,6 +86,7 @@ from sobafm.catalog import (
 )
 from sobafm.cooldown import Claim, Cooldown
 from sobafm.credits import escaped_text
+from sobafm.gemini_interactions import TIMEOUT_SECONDS
 from sobafm.gemini_match import (
     NO_RECORDINGS,
     Fit,
@@ -100,7 +101,9 @@ from sobafm.gemini_match import (
 from sobafm.pcm import (
     BANK_COUNT,
     FRAME_BYTES,
+    FRAME_MILLISECONDS,
     GLOBAL_PCM_BANKS,
+    READY_SECONDS,
     PcmBank,
     PcmBankPool,
     PcmCapacityError,
@@ -145,11 +148,13 @@ MAX_SELECTION_ATTEMPTS = 3
 # past the three-second cleanup deadline of the program's own drained track. While the
 # program's track is still audible, it waits for that track's end, which frees a bank.
 CAPACITY_WAIT_SECONDS = 10.0
-# Bounds on a refill (ADR 0011): calls to get more recordings, and the wait between them.
-# With the 10-second call timeout the worst case is 60 seconds, which still leaves time to
-# prepare the next track during the shortest admitted recording, now 74 seconds.
-MAX_REFILL_ATTEMPTS = 3
-REFILL_RETRY_SECONDS = 15.0
+# Bounds on a refill (ADR 0011): the waits after its first and second failed calls. Three
+# fast failures then span 75 seconds, so the last call can outlast a per-minute rate limit.
+REFILL_WAIT_SECONDS = (15.0, 60.0)
+MAX_REFILL_ATTEMPTS = len(REFILL_WAIT_SECONDS) + 1
+# What a wait leaves before the heard track ends: the last call's timeout and the pre-roll
+# of the next track. It fits even the shortest admitted recording, now 74 seconds.
+REFILL_RESERVE_SECONDS = TIMEOUT_SECONDS + READY_SECONDS
 # How long a program continues after the last listener leaves (docs/requirements.md).
 LISTENER_GRACE_SECONDS = 60.0
 SILENCE = bytes(FRAME_BYTES)
@@ -382,6 +387,12 @@ class StationSource(disnake.AudioSource):
             self._pending = track
             idle, self._idle = self._idle, False
             return idle
+
+    def current_seconds(self) -> float:
+        """How much of the current track has been handed to the voice player."""
+        with self._lock:
+            frames = 0 if self._current is None else self._current.frames
+        return frames * FRAME_MILLISECONDS / 1000
 
     def cut_pending(self, claim: Claim) -> bool:
         """Make a pending track switch as soon as it is ready, for the request holding
@@ -820,9 +831,9 @@ class Adapter:
         This runs beside the music and takes the player lock only to settle a result,
         which is discarded if the program is no longer desired. A failed call, a refusal
         and a list with nothing new each use up one of ``MAX_REFILL_ATTEMPTS``, with a
-        wait between them, so none can loop. Once they are used up the program ends after
-        its heard track, or at once if nothing is heard. A refill isn't a member action,
-        so it takes no change cooldown.
+        `refill_wait` between them, so none can loop. Once they are used up the program
+        ends after its heard track, or at once if nothing is heard. A refill isn't a
+        member action, so it takes no change cooldown.
         """
         assert self.matcher is not None
         station = player.station
@@ -858,10 +869,22 @@ class Adapter:
                     if attempt == MAX_REFILL_ATTEMPTS:
                         self._end_after_heard(player, program, EndReason.REFILL_FAILED)
                         return
-                await self._sleep(REFILL_RETRY_SECONDS)
+                await self._sleep(refill_wait(attempt, self._seconds_left(player, program)))
         finally:
             self._capacity_changed()  # a bank this program yielded may now go elsewhere
             self._review_listeners(player)  # the program may have ended
+
+    @staticmethod
+    def _seconds_left(player: GuildPlayer, program: Program) -> float:
+        """About how long ``program``'s heard track has left, or 0 if nothing says.
+
+        The catalog's duration is only a timing hint here: a wrong one moves a refill's
+        next call, and nothing else depends on it.
+        """
+        heard = player.station.heard
+        if heard is None or heard.program != program or heard.recording.duration_seconds is None:
+            return 0.0
+        return heard.recording.duration_seconds - player.source.current_seconds()
 
     @staticmethod
     def _end_after_heard(player: GuildPlayer, program: Program, reason: EndReason) -> None:
@@ -1345,6 +1368,17 @@ class Adapter:
 def _recording_label(recording: Recording) -> str:
     """The catalog recording key; never request text."""
     return f"{recording.key.source.value}:{recording.key.recording_id}"
+
+
+def refill_wait(attempt: int, seconds_left: float) -> float:
+    """How long a refill waits after failed call ``attempt``, with ``seconds_left`` heard.
+
+    The wait is capped so the next call can finish and the next track prepare before the
+    heard track ends. It's never shorter than the first wait, so a short track, a silent
+    program and an unknown length all still space their calls.
+    """
+    fits = seconds_left - REFILL_RESERVE_SECONDS
+    return max(REFILL_WAIT_SECONDS[0], min(REFILL_WAIT_SECONDS[attempt - 1], fits))
 
 
 def _accepted(choice: Ranked) -> str:
