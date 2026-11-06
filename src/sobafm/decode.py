@@ -4,12 +4,20 @@ One ``DecodeProducer`` owns one decode: the verified local input, a fresh
 decoder process in its own process group, its stdin/stdout pipes, a feeder and
 a reader thread, and one ``pcm.py`` bank lease, or a bank its caller already
 leased and keeps. The decoder starts before this
-producer allocates PCM or starts threads. ``subprocess.Popen`` returns only
-after the child has exec'd, so whatever parent memory a forked child image held
-is gone before any input; any banks it could have inherited were already leased
-and therefore charged. The reviewed resource limits are applied to the decoder
-after exec and before the first input byte. Decoder stderr is discarded and no
-PTY is used: completeness of a recording belongs to ingestion.
+producer allocates PCM or starts threads. ``subprocess.Popen`` returns once exec
+has replaced the child's image, so whatever parent memory a forked child image
+held is gone before any input; any banks it could have inherited were already
+leased and therefore charged. Decoder stderr is discarded and no PTY is used:
+completeness of a recording belongs to ingestion.
+
+The reviewed resource limits hold before the first input byte. ``Popen`` returns
+partway through exec, and the kernel ends exec by restoring the stack limit it
+pinned at the start, so a stack limit set from this process can be lost. The child
+therefore sets it first: a one-line shell step lowers the limit and then execs the
+decoder. That stays one process in one group, with the decoder's own argv and
+environment. Exec keeps the other limits, so ``prlimit`` sets them after ``Popen``
+returns. It sets the stack limit too, which reports one that can't be set as
+``decoder_limits`` before any input.
 
 The feeder streams the input in fixed chunks, checking its exact size and
 SHA-256, and closes the decoder's stdin only at exact verified EOF. On any input
@@ -97,6 +105,9 @@ MPG123_LIMITS = (
     (resource.RLIMIT_AS, 12_524_288),
 )
 DECODER_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "HOME": "/nonexistent"}
+# Exec replaces the shell, so no extra process runs. dash would otherwise add PWD to the
+# decoder's environment. The status is only ever seen if the limit can't be set.
+STACK_LIMIT_LAUNCH = 'ulimit -s {kib} || exit 125; unset PWD; exec "$@"'
 
 type DecodeFailure = Literal[
     "input_open",
@@ -160,6 +171,22 @@ class DecoderCommand:
     argv: tuple[str, ...] = MPG123_ARGV
     limits: tuple[tuple[int, int], ...] = MPG123_LIMITS
     env: Mapping[str, str] = field(default_factory=lambda: dict(DECODER_ENV))
+
+    def __post_init__(self) -> None:
+        if dict(self.limits).get(resource.RLIMIT_STACK, 0) % 1024:
+            raise ValueError("a stack limit must be a whole number of KiB")
+
+
+def launch_argv(command: DecoderCommand) -> tuple[str, ...]:
+    """What to start: the decoder, after a step that sets its stack limit if it has one."""
+    stack = dict(command.limits).get(resource.RLIMIT_STACK)
+    if stack is None:
+        return command.argv
+    # The shell could only report a missing decoder as an exit status, after input had begun.
+    if not os.access(command.argv[0], os.X_OK):
+        raise FileNotFoundError(command.argv[0])
+    step = STACK_LIMIT_LAUNCH.format(kib=stack // 1024)
+    return ("/bin/sh", "-c", step, "decoder", *command.argv)
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +288,7 @@ class DecodeProducer:
             return
         try:
             process = subprocess.Popen(
-                self._command.argv,
+                launch_argv(self._command),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -283,6 +310,8 @@ class DecodeProducer:
         if self._stopped_during_start():
             return
         try:
+            # launch_argv is what makes a stack limit hold. Setting it here as well reports
+            # one that can't be set as decoder_limits, before any input.
             for kind, limit in self._command.limits:
                 resource.prlimit(process.pid, kind, (limit, limit))
         except OSError:

@@ -20,15 +20,34 @@ import pytest
 
 from sobafm.decode import (
     MPG123_ARGV,
+    MPG123_LIMITS,
     DecodeInput,
     DecodeProducer,
     DecoderCommand,
     DecodeReport,
     RawInput,
+    launch_argv,
 )
 from sobafm.pcm import FRAME_BYTES, PcmBankPool
 
 PAYLOAD = bytes(range(256)) * 40
+# Shell builtins only, because an external tool may not fit under the real address-space
+# limit. It records its limits after end of input, when all of them should be in force.
+RECORD_LIMITS = f"""\
+while read -r _; do :; done
+while read -r line; do echo "$line"; done < /proc/$$/limits > "$FACTS/limits"
+i=0
+while [ "$i" -lt {FRAME_BYTES} ]; do printf '\\000'; i=$((i + 1)); done
+"""
+REVIEWED_LIMIT_ROWS = {
+    "Max core file size": ["0", "0"],
+    "Max stack size": ["524288", "524288"],
+    "Max data size": ["12000000", "12000000"],
+    "Max address space": ["12524288", "12524288"],
+}
+# The old launch lost the stack limit in about a quarter or more of launches in a loop like
+# this, so all of these holding is not chance. See the kernel's finalize_exec.
+LAUNCHES = 100
 
 
 def child(script: str) -> DecoderCommand:
@@ -614,3 +633,117 @@ def test_limits_are_applied_before_input(tmp_path: Path, pool: PcmBankPool) -> N
     assert report.pcm is not None and report.pcm.pcm_valid
     assert report.pcm.written_bytes == FRAME_BYTES
     assert producer.release()
+
+
+def small_input(tmp_path: Path) -> DecodeInput:
+    path = tmp_path / "input"
+    path.write_bytes(b"x\n")
+    return DecodeInput(path, 2, hashlib.sha256(b"x\n").hexdigest(), FRAME_BYTES)
+
+
+def test_every_reviewed_limit_holds_on_every_launch(tmp_path: Path, pool: PcmBankPool) -> None:
+    command = DecoderCommand(
+        argv=("/bin/sh", "-c", RECORD_LIMITS),
+        limits=MPG123_LIMITS,
+        env={"FACTS": str(tmp_path)},
+    )
+    source = small_input(tmp_path)
+    for launch in range(LAUNCHES):
+        producer = DecodeProducer(source, command=command, pool=pool)
+        run(producer)
+        assert producer.report().failure is None
+        assert producer.release()
+        lines = (tmp_path / "limits").read_text().splitlines()
+        rows = {line[:25].strip(): line[25:].split()[:2] for line in lines}
+        for name, expected in REVIEWED_LIMIT_ROWS.items():
+            assert rows[name] == expected, f"{name} on launch {launch}"
+
+
+def test_the_decoder_keeps_its_own_process_argv_and_environment(
+    tmp_path: Path, pool: PcmBankPool
+) -> None:
+    script = (
+        "while read -r _; do :; done\n"
+        "read -r _ _ _ ppid pgrp _ < /proc/$$/stat\n"
+        'echo "$$ $ppid $pgrp" > "$FACTS/identity"\n'
+        'cat /proc/$$/cmdline > "$FACTS/cmdline"\n'
+        'cat /proc/$$/environ > "$FACTS/environ"\n'
+        f"i=0; while [ \"$i\" -lt {FRAME_BYTES} ]; do printf '\\000'; i=$((i + 1)); done\n"
+    )
+    env = {"FACTS": str(tmp_path), "PATH": "/usr/bin:/bin", "LANG": "C"}
+    argv = ("/bin/sh", "-c", script, "marker")
+    command = DecoderCommand(argv=argv, limits=((resource.RLIMIT_STACK, 524_288),), env=env)
+    producer = DecodeProducer(small_input(tmp_path), command=command, pool=pool)
+    run(producer)
+    assert producer.report().failure is None
+    assert producer.release()
+    own, ppid, pgrp = map(int, (tmp_path / "identity").read_text().split())
+    # This process's own child, leading its own group: no process left between them.
+    assert ppid == os.getpid() and pgrp == own
+    assert (tmp_path / "cmdline").read_bytes().split(b"\0")[:-1] == [a.encode() for a in argv]
+    environ = (tmp_path / "environ").read_bytes().split(b"\0")[:-1]
+    assert sorted(environ) == sorted(f"{k}={v}".encode() for k, v in env.items())
+
+
+def test_all_input_reaches_the_decoder_through_the_launch_step(
+    source: DecodeInput, tmp_path: Path, pool: PcmBankPool
+) -> None:
+    script = (
+        'cat > "$FACTS/received"\n'
+        f"i=0; while [ \"$i\" -lt {FRAME_BYTES} ]; do printf '\\000'; i=$((i + 1)); done\n"
+    )
+    command = DecoderCommand(
+        argv=("/bin/sh", "-c", script),
+        limits=((resource.RLIMIT_STACK, 524_288),),
+        env={"FACTS": str(tmp_path), "PATH": "/usr/bin:/bin"},
+    )
+    producer = DecodeProducer(source, command=command, pool=pool)
+    run(producer)
+    assert producer.report().failure is None
+    assert producer.release()
+    assert (tmp_path / "received").read_bytes() == PAYLOAD
+
+
+def test_cancelling_at_any_point_of_the_launch_is_clean(
+    source: DecodeInput, pool: PcmBankPool
+) -> None:
+    command = DecoderCommand(
+        argv=("/bin/sh", "-c", "while :; do :; done"), limits=MPG123_LIMITS, env={}
+    )
+    for _ in range(20):
+        producer = DecodeProducer(source, command=command, pool=pool)
+        producer.start()
+        producer.cancel()
+        report = producer.finish()
+        assert report.cleanup == "clean" and report.settled
+        assert report.returncode == -signal.SIGTERM
+        assert producer.release()
+
+
+def test_a_missing_decoder_under_a_stack_limit_is_still_a_spawn_failure(
+    source: DecodeInput, pool: PcmBankPool
+) -> None:
+    command = DecoderCommand(argv=("/nonexistent/decoder",), limits=MPG123_LIMITS, env={})
+    producer = DecodeProducer(source, command=command, pool=pool)
+    run(producer)
+    assert producer.report().failure == "decoder_spawn"
+    assert producer.release()
+
+
+def test_a_stack_limit_must_be_a_whole_number_of_kib() -> None:
+    with pytest.raises(ValueError, match="KiB"):
+        DecoderCommand(limits=((resource.RLIMIT_STACK, 524_289),))
+
+
+def test_only_a_stack_limit_adds_the_launch_step() -> None:
+    argv = ("/bin/sh", "-c", "true")
+    assert launch_argv(DecoderCommand(argv=argv, limits=(), env={})) == argv
+    limits = ((resource.RLIMIT_CORE, 0), (resource.RLIMIT_AS, 12_524_288))
+    assert launch_argv(DecoderCommand(argv=argv, limits=limits, env={})) == argv
+    assert launch_argv(DecoderCommand(argv=argv, limits=MPG123_LIMITS, env={})) == (
+        "/bin/sh",
+        "-c",
+        'ulimit -s 512 || exit 125; unset PWD; exec "$@"',
+        "decoder",
+        *argv,
+    )
