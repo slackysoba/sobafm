@@ -32,8 +32,8 @@ Outcome 3 needs generated audio to reach the player: continuously, for up to 240
 
 **Generation path, which is the maintainer's choice.** All of these depend first on the purpose clause above. No option answers it, and confirming that listeners are adults answers only the age clause.
 
-1. **Lyria RealTime on a billed project.** One continuous stream steered by prompts and documented as instrumental. No decoder involved, and the audio is already in the player's format. It is experimental, its price and limits are unknown, and its paid status isn't established. A small Prepay balance with auto-reload off can limit a first check, as above. That limits only the check. Afterwards the price stays unpublished and can change, `lyria.py` has no spend limit, and the only stops are that balance, an optional project cap and the tier's monthly cap.
-2. **Lyria RealTime on the free tier.** The same stream with no spend, but free-tier access isn't documented. Google may use prompts and output, with human review, and it can't be offered to users in the EEA, Switzerland or the UK.
+1. **Lyria RealTime on a billed project.** One continuous stream steered by prompts and documented as instrumental. No decoder involved, and the audio is already in the player's format. It is experimental, its price and limits are unknown, and its paid status isn't established. A small Prepay balance with auto-reload off can limit a first check, as above. That limits only the check. Afterwards the price stays unpublished and can change, `lyria.py` has no spend limit, and the only stops are that balance, an optional project cap and the tier's monthly cap. The [open findings](#open-review-findings) need fixing first.
+2. **Lyria RealTime on the free tier.** The same stream with no spend, but free-tier access isn't documented. Google may use prompts and output, with human review, and it can't be offered to users in the EEA, Switzerland or the UK. The open findings apply here too.
 3. **Lyria 3.5, one song at a time.** Generally available since 2026-09-03, at $0.08 per song with no free tier. Price is per song and the prompt sets the length, so at an assumed two to three minutes a song, a 60-minute program costs about $1.60 to $2.40, and 240 minutes four times that. It makes vocals and generated lyrics by default, which the requirements bar. Instrumental output is only a prompt instruction with no parameter, so choosing it means trusting that instruction or changing the requirement. Its MP3s would go through the existing decoder, and each song takes time to generate, which changes the continuity design. Little here would apply.
 4. **Wait** for a stable real-time model. Generated mode, and with it Outcome 3, waits too.
 
@@ -49,7 +49,11 @@ Import memory was measured on Python 3.14 under WSL2 x86_64: `disnake` first, th
 
 ## Decision
 
-Recommended, if the maintainer judges the use to be within the purpose clause: **option 1 over transport C, starting with a small Prepay check.** It is the only option documented as instrumental that also streams continuously. Its risk is an unknown price, and the check is how to learn it before committing. This is what is built so far, with [open findings](#open-review-findings). `src/sobafm/lyria.py` adds no distribution. It makes the existing `audioop-lts` a direct pin for mixing.
+Recommended, if the maintainer judges the use to be within the purpose clause: **option 1 over transport C, starting with a small Prepay check.** Options 1 and 2 are the only ones documented as instrumental that also stream continuously. Option 1 is preferred over 2 because Google doesn't document that the free tier serves this model, and the free tier lets Google use prompts and output and can't reach EEA, Swiss or UK users. Its risks are an unknown price, which the check can show, and an experimental model with no fallback here, which no check removes. This is what is built so far, with [open findings](#open-review-findings).
+
+The order is the maintainer's answers, then the four code fixes, then any Prepay check. Before the fixes, a renewal refused with 429 would end the check early, and a closing session would keep reading a stream that may be billed.
+
+`src/sobafm/lyria.py` adds no distribution. It makes the existing `audioop-lts` a direct pin for mixing.
 
 ### How audio maps onto capacity
 
@@ -105,7 +109,7 @@ Measured once on TLS loopback, for development and not as L2: the real client's 
 
 ## Open review findings
 
-The [review at `d08e8b6`](https://github.com/slackysoba/sobafm/pull/136#pullrequestreview-5797091896) found these in the code. They aren't fixed. They wait for the maintainer's answer, which decides whether this module stays. Until the first two are fixed, the module doesn't stay inside its partitions on those paths, though the contract itself is unchanged.
+The [review at `d08e8b6`](https://github.com/slackysoba/sobafm/pull/136#pullrequestreview-5797091896) found these in the code. They aren't fixed. They wait for the maintainer's answers, which decide whether this module stays, and they come before any Prepay check. Until the first two are fixed, the module doesn't stay inside its partitions on those paths, though the contract itself is unchanged.
 
 1. **A closing session exceeds its network slot.** Reading until a close frame holds three copies: review measured 1,536,141 bytes for two-second messages and 1,572,861 at the limit, against 1,048,576. Two sessions closing together, as in a stop during a crossfade, would need 975,130 from the drain reservation's 524,288. The correction is to close without reading, by dropping the connection.
 2. **A fragmented message takes three copies while being received.** It peaked at 1,543,411 bytes for a two-second message and 1,592,371 at the limit. The correction is to charge the third copy to the drain reservation, which only one session can use at a time because the copy exists inside one synchronous reader call.
@@ -128,6 +132,6 @@ The tests run the real aiohttp client over real sockets, and one runs over TLS w
 Each of these needs its own explicit authorization, and none is approved by issue #128.
 
 1. **L2 from the [feasibility plan](../linux-feasibility.md#later-application-qualification).** Ten bounded loopback sessions with renewal overlap in the actual image, under the group limit. The transport is real and a safe local endpoint now exists, so this needs no provider, only an execution scope.
-2. **A bounded opt-in provider check.** Its limits should be chosen with the maintainer: for example one program of a few minutes with one forced renewal and a hard stop on time, funded by a small Prepay balance with auto-reload off on a billing account `/play` doesn't share. It should record the facts above, including whether the bounded receive window holds real-time throughput on the deployment's route.
+2. **A bounded opt-in provider check,** after the maintainer's answers and the four code fixes. Its limits should be chosen with the maintainer: for example one program of a few minutes with one forced renewal and a hard stop on time, funded by a small Prepay balance with auto-reload off on a billing account `/play` doesn't share. It should record the facts above, including whether the bounded receive window holds real-time throughput on the deployment's route.
 3. **Station integration.** L1, L4 and L5 at the real station, and L6-style continuity for generated programs, including the 60-minute underrun target.
 4. **A listening check,** optional as elsewhere, for the crossfades.
