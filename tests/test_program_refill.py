@@ -7,7 +7,6 @@ import json
 import logging
 import math
 from collections.abc import Mapping
-from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -102,6 +101,10 @@ async def first_heard(
     await settle()
     assert source.read() == tag("a")
     await until(lambda: heard_id(h) == "a")
+
+
+async def heard_becomes(h: Harness, identifier: str) -> None:
+    await until(lambda: heard_id(h) == identifier)
 
 
 async def calls_reach(fake: FakeMatcher, count: int) -> None:
@@ -590,7 +593,7 @@ async def test_every_song_played_ends_the_program_with_no_extra_call_or_repeat()
         await prepared_next(h, identifier)
         assert fake.played[-1] == keys(*identifiers[:played])
         assert source.read() == tag(identifier)
-        await until(partial(lambda expected: heard_id(h) == expected, identifier))
+        await heard_becomes(h, identifier)
     await until(lambda: station_of(h).ending is not None)
     assert station_of(h).ending is EndReason.EXHAUSTED
 
