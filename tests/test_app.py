@@ -19,6 +19,7 @@ import pytest
 import yaml  # pyright: ignore[reportMissingTypeStubs]
 
 from sobafm import __main__ as app
+from sobafm import discord_adapter
 from sobafm.catalog import RecordingKey, Source
 from sobafm.decode import DecodeInput, DecoderCommand
 from sobafm.discord_adapter import (
@@ -32,7 +33,8 @@ from sobafm.discord_adapter import (
 )
 from sobafm.media import MediaInputError, MediaMissingError, MediaProducer, parse_media
 from sobafm.pcm import FRAME_BYTES, PcmBankPool
-from tests.test_discord_adapter import recording
+from sobafm.settings import SettingsError, SettingsStore
+from tests.test_discord_adapter import FakeSettings, recording
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "placeholder-token-value"  # pragma: allowlist secret - test placeholder
@@ -96,7 +98,7 @@ def test_limit_gate_refuses_each_wrong_value_before_any_input(
     with pytest.raises(app.LimitError, match=re.escape(name)):
         app.check_limits(root)
     read: list[str] = []
-    monkeypatch.setattr(app, "load_settings", lambda: read.append("config"))
+    monkeypatch.setattr(app, "load_startup", lambda: read.append("config"))
     assert app.main(root=root, runner=never_run) == app.EXIT_LIMITS
     assert read == []
 
@@ -109,7 +111,7 @@ def test_limit_gate_refuses_a_missing_file(tmp_path: Path, name: str) -> None:
         app.check_limits(root)
 
 
-async def never_run(config: Config, producer: Producer) -> int:
+async def never_run(config: Config, producer: Producer, store: SettingsStore) -> int:
     raise AssertionError("must not run")
 
 
@@ -133,6 +135,7 @@ def environment(monkeypatch: pytest.MonkeyPatch, **values: str) -> None:
     for name in (TOKEN_VARIABLE, CATALOG_VARIABLE, REVIEWS_VARIABLE, app.MEDIA_VARIABLE):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(GEMINI_KEY_VARIABLE, GEMINI_KEY)
+    monkeypatch.setenv(app.DATABASE_VARIABLE, "unused-unless-a-test-opens-it.db")
     for name, value in values.items():
         monkeypatch.setenv(name, value)
 
@@ -141,8 +144,8 @@ def test_token_only_configuration_has_no_catalog_or_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     environment(monkeypatch, SOBAFM_DISCORD_TOKEN=TOKEN)
-    settings = app.load_settings()
-    assert settings.config.matcher is None and settings.media == {}
+    startup = app.load_startup()
+    assert startup.config.matcher is None and startup.media == {}
 
 
 def test_media_must_accompany_the_catalog(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -154,10 +157,17 @@ def test_media_must_accompany_the_catalog(monkeypatch: pytest.MonkeyPatch, tmp_p
         SOBAFM_REVIEWS=str(reviews_path),
     )
     with pytest.raises(app.ConfigError, match="SOBAFM_MEDIA is required"):
-        app.load_settings()
+        app.load_startup()
     environment(monkeypatch, SOBAFM_DISCORD_TOKEN=TOKEN, SOBAFM_MEDIA=str(media_path))
     with pytest.raises(app.ConfigError, match="requires SOBAFM_CATALOG"):
-        app.load_settings()
+        app.load_startup()
+
+
+def test_the_database_location_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    environment(monkeypatch, SOBAFM_DISCORD_TOKEN=TOKEN)
+    monkeypatch.delenv(app.DATABASE_VARIABLE)
+    with pytest.raises(app.ConfigError, match="SOBAFM_DATABASE is required"):
+        app.load_startup()
 
 
 def test_full_configuration_resolves_media_beside_the_manifest(
@@ -171,10 +181,10 @@ def test_full_configuration_resolves_media_beside_the_manifest(
         SOBAFM_REVIEWS=str(reviews_path),
         SOBAFM_MEDIA=str(media_path),
     )
-    settings = app.load_settings()
-    assert settings.config.matcher is not None
-    assert GEMINI_KEY not in repr(settings)
-    (source,) = settings.media.values()
+    startup = app.load_startup()
+    assert startup.config.matcher is not None
+    assert GEMINI_KEY not in repr(startup)
+    (source,) = startup.media.values()
     assert source.path == tmp_path / "song.mp3"
     assert TOKEN_VARIABLE not in app.os.environ
     assert GEMINI_KEY_VARIABLE not in app.os.environ
@@ -193,7 +203,7 @@ def test_an_unreadable_media_manifest_is_a_configuration_error(
         SOBAFM_MEDIA=str(media_path),
     )
     with pytest.raises(app.ConfigError, match="media manifest could not be loaded"):
-        app.load_settings()
+        app.load_startup()
 
 
 def test_missing_token_exits_with_a_message_that_never_prints_a_value(
@@ -229,6 +239,53 @@ def test_a_configuration_error_never_prints_the_token_or_paths(
     text = caplog.text
     assert TOKEN not in text
     assert str(tmp_path) not in text
+
+
+# The settings database at startup.
+
+
+def test_a_database_that_cannot_be_opened_stops_startup_before_discord(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    environment(
+        monkeypatch,
+        SOBAFM_DISCORD_TOKEN=TOKEN,
+        SOBAFM_DATABASE=str(tmp_path / "absent" / "sobafm.db"),
+    )
+    assert app.main(root=cgroup(tmp_path), runner=never_run) == app.EXIT_DATABASE
+    assert "settings database refused: SQLITE_CANTOPEN" in caplog.text
+    assert TOKEN not in caplog.text and str(tmp_path) not in caplog.text
+
+
+def test_a_database_that_is_not_one_stops_startup_and_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    database = tmp_path / "sobafm.db"
+    database.write_bytes(b"not a database, and long enough to be read as one" * 100)
+    before = database.read_bytes()
+    environment(monkeypatch, SOBAFM_DISCORD_TOKEN=TOKEN, SOBAFM_DATABASE=str(database))
+    assert app.main(root=cgroup(tmp_path), runner=never_run) == app.EXIT_DATABASE
+    assert "settings database refused: SQLITE_NOTADB" in caplog.text
+    assert database.read_bytes() == before
+
+
+def test_a_refused_limit_gate_never_creates_the_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database = tmp_path / "sobafm.db"
+    environment(monkeypatch, SOBAFM_DISCORD_TOKEN=TOKEN, SOBAFM_DATABASE=str(database))
+    root = cgroup(tmp_path, pids_max="65\n")
+    assert app.main(root=root, runner=never_run) == app.EXIT_LIMITS
+    assert not database.exists()
+
+
+def test_a_configuration_error_never_creates_the_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database = tmp_path / "sobafm.db"
+    environment(monkeypatch, SOBAFM_DATABASE=str(database))
+    assert app.main(root=cgroup(tmp_path), runner=never_run) == app.EXIT_CONFIG
+    assert not database.exists()
 
 
 # Media manifest.
@@ -288,22 +345,72 @@ def test_main_runs_the_gate_then_connects_the_media_producer(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     catalog_path, reviews_path, media_path = write_snapshot(tmp_path)
+    database = tmp_path / "sobafm.db"
     environment(
         monkeypatch,
         SOBAFM_DISCORD_TOKEN=TOKEN,
         SOBAFM_CATALOG=str(catalog_path),
         SOBAFM_REVIEWS=str(reviews_path),
         SOBAFM_MEDIA=str(media_path),
+        SOBAFM_DATABASE=str(database),
     )
-    seen: list[tuple[Config, Producer]] = []
+    seen: list[tuple[Config, Producer, SettingsStore]] = []
 
-    async def runner(config: Config, producer: Producer) -> int:
-        seen.append((config, producer))
+    async def runner(config: Config, producer: Producer, store: SettingsStore) -> int:
+        seen.append((config, producer, store))
+        assert await store.close() is True
         return 0
 
     assert app.main(root=cgroup(tmp_path), runner=runner) == 0
-    ((config, producer),) = seen
+    ((config, producer, store),) = seen
     assert config.matcher is not None and isinstance(producer, MediaProducer)
+    assert isinstance(store, SettingsStore) and database.exists()
+
+
+class FakeBot:
+    """Stands in for the Discord client: it starts, stops at once and never connects."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def start(self, token: str) -> None:
+        pass
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def test_run_closes_the_database_on_shutdown_and_reports_a_close_that_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bot = FakeBot()
+
+    def fake_bot(adapter: Adapter) -> FakeBot:
+        return bot
+
+    monkeypatch.setattr(discord_adapter, "create_bot", fake_bot)
+    config = Config(TOKEN, None)
+
+    async def clean() -> None:
+        store = SettingsStore.open(tmp_path / "sobafm.db")
+        assert await discord_adapter.run(config, MediaProducer({}), store) == 0
+        assert bot.closed
+        with pytest.raises(SettingsError, match="closed"):
+            await store.update(1, volume_percent=20)
+
+    asyncio.run(clean())
+
+    class StuckStore(SettingsStore):
+        async def close(self) -> bool:
+            await super().close()
+            return False
+
+    async def stuck() -> None:
+        store = SettingsStore.open(tmp_path / "sobafm.db")
+        store.__class__ = StuckStore
+        assert await discord_adapter.run(config, MediaProducer({}), store) == 1
+
+    asyncio.run(stuck())
 
 
 def test_media_producer_fills_the_adapters_bank_and_leaves_the_lease_to_it(
@@ -311,7 +418,7 @@ def test_media_producer_fills_the_adapters_bank_and_leaves_the_lease_to_it(
 ) -> None:
     async def scenario() -> None:
         pool = PcmBankPool()
-        adapter = Adapter(None, MediaProducer({}), pool=pool)
+        adapter = Adapter(None, MediaProducer({}), FakeSettings(), pool=pool)
         producer = MediaProducer(
             media_for(tmp_path),
             command=child(
@@ -407,8 +514,6 @@ def test_compose_carries_the_adr_limits_and_hardening() -> None:
     assert service["restart"] == "on-failure:5"
     assert service["platform"] == "linux/amd64"
     assert service["env_file"] == ".env"
-    volumes = cast(list[str], service["volumes"])
-    assert [v.split(":")[1] for v in volumes] == ["/data"]
     assert service["logging"] == {
         "driver": "json-file",
         "options": {"max-size": "1m", "max-file": "2"},
@@ -420,6 +525,36 @@ def test_compose_carries_the_adr_limits_and_hardening() -> None:
         ("memory.swap.max", "0"),
         ("pids.max", str(service["pids_limit"])),
     ) == app.REQUIRED_LIMITS
+
+
+def test_only_data_is_writable_and_it_persists_for_the_non_root_user() -> None:
+    """The layout in ADR 0009: read-only catalog, one named volume, and a read-only root."""
+    service = compose_service()
+    assert service["read_only"] is True
+    assert service["volumes"] == ["./catalog:/catalog:ro", "data:/data"]
+    assert "tmpfs" not in service
+    document = cast(
+        dict[str, dict[str, object]],
+        yaml.safe_load((ROOT / "compose.yaml").read_text()),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert document["volumes"] == {"data": {"name": "sobafm-data"}}
+    # A new named volume takes the ownership of the image's own directory.
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert "mkdir -p /data" in dockerfile and "chown 1000:1000 /data" in dockerfile
+
+
+def test_the_example_paths_match_the_volumes() -> None:
+    lines = (ROOT / ".env.example").read_text().splitlines()
+    values = dict(line.split("=", 1) for line in lines if line and not line.startswith("#"))
+    assert values[app.DATABASE_VARIABLE].startswith("/data/")
+    for name in (CATALOG_VARIABLE, REVIEWS_VARIABLE, app.MEDIA_VARIABLE):
+        assert values[name].startswith("/catalog/")
+
+
+def test_a_host_catalog_directory_stays_out_of_git() -> None:
+    assert "/catalog/" in (ROOT / ".gitignore").read_text().splitlines()
+    # Everything is excluded from the build context unless listed, audio included.
+    assert (ROOT / ".dockerignore").read_text().splitlines()[0] == "*"
 
 
 def test_dockerfile_runs_non_root_with_the_reviewed_decoder_and_no_ffmpeg() -> None:
@@ -447,9 +582,10 @@ def test_env_example_holds_placeholders_only() -> None:
         CATALOG_VARIABLE,
         REVIEWS_VARIABLE,
         app.MEDIA_VARIABLE,
+        app.DATABASE_VARIABLE,
     }
     assert values[TOKEN_VARIABLE].startswith("replace-with-")
     for value in values.values():
         # Discord tokens are three base64url segments; nothing here resembles one.
         assert re.fullmatch(r"[\w-]{20,}\.[\w-]{5,}\.[\w-]{20,}", value) is None
-        assert value.startswith(("replace-with-", "/data/"))
+        assert value.startswith(("replace-with-", "/data/", "/catalog/"))
