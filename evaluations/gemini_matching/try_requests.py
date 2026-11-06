@@ -27,8 +27,8 @@ from sobafm.catalog import (
     parse_reviews,
 )
 from sobafm.discord_adapter import GEMINI_KEY_VARIABLE, MAX_REVIEWS_BYTES
+from sobafm.gemini_interactions import MODEL
 from sobafm.gemini_match import (
-    MODEL,
     GeminiMatcher,
     Matched,
     MatchFailed,
