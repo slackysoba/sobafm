@@ -120,9 +120,7 @@ def output_text(payload: bytes) -> str:
     raise GeminiFailed("response_shape")
 
 
-def interaction_body(
-    *, system_instruction: str, text: str, schema: Mapping[str, object]
-) -> bytes:
+def interaction_body(*, system_instruction: str, text: str, schema: Mapping[str, object]) -> bytes:
     """A JSON-output request with no tools or conversation, and with `store` off."""
     return json.dumps(
         {

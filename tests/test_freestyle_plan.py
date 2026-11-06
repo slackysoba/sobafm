@@ -35,8 +35,8 @@ from sobafm.freestyle_plan import (
     GeneratedPlan,
     Key,
     PlanFallback,
-    Planned,
     PlanInterpreter,
+    Planned,
     PlanRefused,
     Style,
     fallback_plan,
@@ -542,7 +542,9 @@ def test_hostile_request_text_is_never_read_as_a_plan() -> None:
     assert result == PlanFallback(plan, "transport_error")
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "x" * 201, "line\nbreak", "bell\x07", "\u202eflip", "\ud800"])
+@pytest.mark.parametrize(
+    "bad", ["", "   ", "x" * 201, "line\nbreak", "bell\x07", "\u202eflip", "\ud800"]
+)
 def test_a_request_that_fails_its_check_makes_no_call_and_no_fallback(bad: str) -> None:
     transport = FakeTransport(interaction(output()))
     with pytest.raises(CatalogInputError):

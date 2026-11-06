@@ -20,8 +20,8 @@ from sobafm.freestyle_plan import (
     GeneratedPlan,
     Interpretation,
     PlanFallback,
-    Planned,
     PlanInterpreter,
+    Planned,
     PlanRefused,
     request_body,
 )
