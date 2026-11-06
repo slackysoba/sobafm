@@ -3,6 +3,7 @@
 A caller supplies a fixed instruction, its input text and a response schema, and gets back
 the model's text, which it must still validate in full. `store` is disabled on every call,
 the API key appears only in a request header and nothing here logs a request or a response.
+When Gemini says it blocked a call, `GeminiFailed.blocked` records that and nothing it wrote.
 
 This uses the documented REST API over the `aiohttp` already in the lock because the
 service runs under a 90 MB whole-service limit (ADR 0004). See ADR 0006.
@@ -29,14 +30,39 @@ TIMEOUT_SECONDS = 10.0
 MAX_CONCURRENT_CALLS = 4
 MAX_OUTPUT_TOKENS = 2_048
 MAX_RESPONSE_BYTES = 64_000
+# Every code Gemini documents as a block on this API, checked on 2026-11-05. `jailbreak` comes
+# from the safety settings page and the rest from the API errors page's blocked table:
+# https://aistudio.google.com/docs/safety-settings#when-content-is-blocked
+# https://aistudio.google.com/docs/api-errors#generation-blocked-codes
+BLOCK_CODES = frozenset(
+    {
+        "safety",
+        "jailbreak",
+        "prohibited_content",
+        "blocklist",
+        "recitation",
+        "language",
+        "spii",
+        "image_safety",
+        "image_prohibited_content",
+        "image_recitation",
+        "image_other",
+        "content_blocked",
+    }
+)
 
 
 class GeminiFailed(Exception):
-    """No validated answer exists. ``kind`` is safe to log; it carries no provider text."""
+    """No validated answer exists. ``kind`` is safe to log; it carries no provider text.
 
-    def __init__(self, kind: str) -> None:
+    ``blocked`` means Gemini says it blocked the request or its output, which is a verdict on
+    the text rather than a fault. Its reason and message are not kept.
+    """
+
+    def __init__(self, kind: str, *, blocked: bool = False) -> None:
         super().__init__(kind)
         self.kind = kind
+        self.blocked = blocked
 
 
 class Transport(Protocol):
@@ -95,13 +121,32 @@ def _items(value: object) -> list[object]:
     return cast(list[object], value) if isinstance(value, list) else []
 
 
+def _is_block(error: object) -> bool:
+    fields = as_mapping(error)
+    code = fields.get("code") if fields is not None else None
+    return isinstance(code, str) and code in BLOCK_CODES
+
+
+def _body_is_block(payload: bytes) -> bool:
+    """Whether a response body's `error.code` is a block; an unreadable body isn't one."""
+    try:
+        document = as_mapping(load_json(payload, "response_not_json"))
+    except GeminiFailed:
+        return False
+    return document is not None and _is_block(document.get("error"))
+
+
 def output_text(payload: bytes) -> str:
     """The model's text from an interaction, requiring a completed status."""
     interaction = as_mapping(load_json(payload, "response_not_json"))
     if interaction is None:
         raise GeminiFailed("response_shape")
-    if interaction.get("status") != "completed":
-        raise GeminiFailed("interaction_not_completed")
+    status = interaction.get("status")
+    if status != "completed":
+        # Documented for background calls, which this client doesn't make. No other status has
+        # a documented block: `incomplete` with empty text means the tokens ran out.
+        blocked = status == "failed" and any(map(_is_block, _items(interaction.get("errors"))))
+        raise GeminiFailed("interaction_not_completed", blocked=blocked)
     for step in reversed(_items(interaction.get("steps"))):
         fields = as_mapping(step)
         if fields is None or fields.get("type") != "model_output":
@@ -175,7 +220,8 @@ class GeminiClient:
         except (aiohttp.ClientError, OSError) as exc:
             raise GeminiFailed("transport_error") from exc
         if status != 200:
-            raise GeminiFailed(f"http_{status}")
+            # A block on a foreground call is documented as a 400 and only a 400.
+            raise GeminiFailed(f"http_{status}", blocked=status == 400 and _body_is_block(payload))
         return output_text(payload)
 
     async def close(self) -> None:

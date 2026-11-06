@@ -291,6 +291,35 @@ def test_failures_make_one_call_and_log_only_a_safe_kind(
         assert private not in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("transport", "kind"),
+    [
+        (
+            FakeTransport(
+                b'{"error":{"code":"safety","message":"Input blocked: provider text"}}', status=400
+            ),
+            "http_400",
+        ),
+        (
+            FakeTransport(
+                b'{"status":"failed","errors":[{"code":"safety","message":"provider text"}]}'
+            ),
+            "interaction_not_completed",
+        ),
+    ],
+)
+def test_a_provider_block_is_an_ordinary_failure_for_play(
+    transport: FakeTransport, kind: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    request = "my private request text"
+    with caplog.at_level(logging.INFO), pytest.raises(MatchFailed) as error:
+        asyncio.run(matcher(transport).match(request))
+    assert error.value.kind == kind and len(transport.calls) == 1
+    assert f"request matching failed: kind={kind} " in caplog.text
+    for private in (request, KEY, "provider text", "safety"):
+        assert private not in caplog.text
+
+
 def test_success_logs_never_contain_the_request_or_key(caplog: pytest.LogCaptureFixture) -> None:
     transport = FakeTransport(interaction(plan((0, "close"))))
     with caplog.at_level(logging.INFO):

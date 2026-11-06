@@ -2,8 +2,9 @@
 
 Not wired in yet: nothing calls this from Discord. A call has three outcomes, each its own
 type. `Planned` holds a plan that passed validation. `PlanRefused` means the model declined
-the text, so current music must not change. `PlanFallback` means no verdict exists, so the
-checked request itself becomes the direction and the caller must disclose that.
+the text or Gemini blocked the call, so current music must not change. `PlanFallback` means
+the call failed with no verdict on the text, so the checked request itself becomes the
+direction and the caller must disclose that.
 
 The model has no tools and only its validated output reaches the plan. Only the request and,
 for a relative request, the generated plan now playing are sent. The signature admits nothing
@@ -39,12 +40,15 @@ from sobafm.gemini_interactions import (
     load_json,
 )
 from sobafm.gemini_match import checked_request
+from sobafm.station import MAX_REQUEST_CHARACTERS
 
 log = logging.getLogger(__name__)
 
 MAX_TITLE_CHARACTERS = 60
 MAX_STYLES = 4
-MAX_STYLE_CHARACTERS = 100
+# As long as a request, so a fallback plan's style stays valid if the model keeps it after
+# seeing that plan as relative context.
+MAX_STYLE_CHARACTERS = MAX_REQUEST_CHARACTERS
 # Lyria normalizes weights and doesn't take zero, so only their ratio matters. Keeping them
 # positive and within one order of magnitude rules zero out and leaves every useful blend.
 MIN_STYLE_WEIGHT = 0.1
@@ -108,7 +112,12 @@ class Planned:
 
 @dataclass(frozen=True)
 class PlanRefused:
-    """Unrelated to music, a prompt-injection attempt or disallowed; current music stays."""
+    """Current music stays: the model declined the text or Gemini blocked the call.
+
+    The model declines text unrelated to music, prompt-injection attempts and disallowed
+    requests. A block is Gemini's own verdict and can concern the model's output or the
+    request's language, so a reply shouldn't assume the listener asked for anything disallowed.
+    """
 
 
 @dataclass(frozen=True)
@@ -133,7 +142,7 @@ Use outcome "plan" whenever the request describes music or anything music could 
 including unusual, poetic or absurd wording. Work out the genre, mood, instruments, texture, \
 rhythm and era it suggests, then give:
 - title: a short name for the program, at most {MAX_TITLE_CHARACTERS} characters.
-- styles: one to {MAX_STYLES} different phrases, each at most {MAX_STYLE_CHARACTERS} \
+- styles: one to {MAX_STYLES} different short phrases, each at most {MAX_STYLE_CHARACTERS} \
 characters, naming a genre, instrument, mood or texture, such as "bossa nova guitar" or \
 "subtle vinyl crackle". Give each a weight from {MIN_STYLE_WEIGHT} to {MAX_STYLE_WEIGHT}; \
 higher weights matter more.
@@ -355,6 +364,7 @@ class PlanInterpreter:
         Text that fails `checked_request` raises `CatalogInputError` with no call or fallback,
         because the fallback may only ever send a checked request onward. Cancellation also
         propagates: a fallback must never start music for a request nobody is waiting on.
+        A provider block is a refusal rather than a failure, so its text is never sent onward.
         """
         text = checked_request(request)
         started = time.monotonic()
@@ -363,6 +373,13 @@ class PlanInterpreter:
             result = parse_plan(output)
         except GeminiFailed as exc:
             # Provider errors can quote their input, so only the kind is logged.
+            if exc.blocked:
+                log.info(
+                    "freestyle interpreted: outcome=blocked kind=%s seconds=%.3f",
+                    exc.kind,
+                    time.monotonic() - started,
+                )
+                return PlanRefused()
             log.warning(
                 "freestyle interpretation fell back: kind=%s seconds=%.3f",
                 exc.kind,

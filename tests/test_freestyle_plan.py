@@ -47,6 +47,7 @@ from sobafm.freestyle_plan import (
 )
 from sobafm.gemini_interactions import (
     API_REVISION,
+    BLOCK_CODES,
     ENDPOINT,
     MAX_CONCURRENT_CALLS,
     MAX_RESPONSE_BYTES,
@@ -56,10 +57,27 @@ from sobafm.gemini_interactions import (
     GeminiFailed,
 )
 from sobafm.gemini_match import GeminiMatcher, MatchFailed
+from sobafm.station import MAX_REQUEST_CHARACTERS
 from tests.test_discord_adapter import recording
 
 KEY = "placeholder-gemini-value"  # pragma: allowlist secret - test placeholder
 PRIVATE = "my private request text"
+# The codes listed at aistudio.google.com/docs/safety-settings#when-content-is-blocked and
+# aistudio.google.com/docs/api-errors#generation-blocked-codes on 2026-11-05.
+DOCUMENTED_BLOCK_CODES = (
+    "safety",
+    "jailbreak",
+    "prohibited_content",
+    "blocklist",
+    "recitation",
+    "language",
+    "spii",
+    "image_safety",
+    "image_prohibited_content",
+    "image_recitation",
+    "image_other",
+    "content_blocked",
+)
 # The scale values listed at aistudio.google.com/docs/realtime-music-generation on 2026-11-05.
 DOCUMENTED_KEYS = (
     "C_MAJOR_A_MINOR",
@@ -417,6 +435,135 @@ def test_every_failure_makes_one_call_falls_back_and_logs_only_a_safe_kind(
         assert private not in caplog.text
 
 
+def error_body(code: object) -> bytes:
+    return json.dumps({"error": {"code": code, "message": "Input blocked: provider text"}}).encode()
+
+
+def test_block_codes_are_exactly_the_documented_ones() -> None:
+    assert set(DOCUMENTED_BLOCK_CODES) == BLOCK_CODES
+
+
+@pytest.mark.parametrize("code", DOCUMENTED_BLOCK_CODES)
+def test_a_documented_block_is_a_refusal_from_one_call(
+    code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    transport = FakeTransport(error_body(code), status=400)
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(interpreter(transport).interpret(PRIVATE))
+    assert result == PlanRefused() and len(transport.calls) == 1
+    assert "outcome=blocked kind=http_400" in caplog.text
+    for private in (PRIVATE, KEY, "provider text", code):
+        assert private not in caplog.text
+
+
+@pytest.mark.parametrize("code", DOCUMENTED_BLOCK_CODES)
+def test_a_block_recorded_on_a_failed_interaction_is_a_refusal(
+    code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    errors = [{"code": "api_error"}, {"code": code, "message": "Input blocked: provider text"}]
+    transport = FakeTransport(json.dumps({"status": "failed", "errors": errors}).encode())
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(interpreter(transport).interpret(PRIVATE))
+    assert result == PlanRefused() and len(transport.calls) == 1
+    assert "outcome=blocked kind=interaction_not_completed" in caplog.text
+    for private in (PRIVATE, KEY, "provider text", code):
+        assert private not in caplog.text
+
+
+def test_a_blocked_relative_request_is_a_refusal_too() -> None:
+    current = GeneratedPlan("Slow Rain", (Style("rainy piano", 1.0),))
+    transport = FakeTransport(error_body("safety"), status=400)
+    assert asyncio.run(interpreter(transport).interpret("faster", current)) == PlanRefused()
+
+
+@pytest.mark.parametrize(
+    ("payload", "status", "kind"),
+    [
+        (error_body("invalid_request"), 400, "http_400"),
+        (error_body("failed_precondition"), 400, "http_400"),
+        (error_body("parameter_unknown"), 400, "http_400"),
+        (error_body("SAFETY"), 400, "http_400"),
+        (error_body(5), 400, "http_400"),
+        (error_body(None), 400, "http_400"),
+        (error_body(["safety"]), 400, "http_400"),
+        (error_body({"safety": 1}), 400, "http_400"),
+        (b"", 400, "http_400"),
+        (b"{}", 400, "http_400"),
+        (b"[]", 400, "http_400"),
+        (b"null", 400, "http_400"),
+        (b"not json", 400, "http_400"),
+        (b"\xff", 400, "http_400"),
+        (b'{"error":"safety"}', 400, "http_400"),
+        (b'{"error":{}}', 400, "http_400"),
+        (b'{"code":"safety"}', 400, "http_400"),
+        (b'{"error":{"message":"Input blocked: provider text"}}', 400, "http_400"),
+        # A block is documented as a 400, so these aren't one whatever their code says.
+        (error_body("safety"), 401, "http_401"),
+        (error_body("safety"), 403, "http_403"),
+        (error_body("safety"), 429, "http_429"),
+        (error_body("safety"), 500, "http_500"),
+        (error_body("safety"), 503, "http_503"),
+    ],
+)
+def test_any_other_error_response_still_falls_back(
+    payload: bytes, status: int, kind: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    transport = FakeTransport(payload, status=status)
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(interpreter(transport).interpret(PRIVATE))
+    assert result == PlanFallback(fallback_plan(PRIVATE), kind)
+    assert "provider text" not in caplog.text
+
+
+def test_a_pathological_error_body_still_falls_back() -> None:
+    transport = FakeTransport(b"[" * 200_000, status=400)
+    result = asyncio.run(interpreter(transport).interpret(PRIVATE))
+    assert result == PlanFallback(fallback_plan(PRIVATE), "http_400")
+
+
+@pytest.mark.parametrize(
+    ("document", "kind"),
+    [
+        ({"status": "failed"}, "interaction_not_completed"),
+        ({"status": "failed", "errors": []}, "interaction_not_completed"),
+        ({"status": "failed", "errors": "safety"}, "interaction_not_completed"),
+        ({"status": "failed", "errors": ["safety"]}, "interaction_not_completed"),
+        ({"status": "failed", "errors": [{"code": "api_error"}]}, "interaction_not_completed"),
+        ({"status": "failed", "errors": [{"code": ["safety"]}]}, "interaction_not_completed"),
+        ({"status": "failed", "error": {"code": "safety"}}, "interaction_not_completed"),
+        # Documented at aistudio.google.com/docs/long-decode#background-status: the model used
+        # all of max_output_tokens. Nothing documents a block here or on the statuses below.
+        ({"status": "incomplete", "steps": []}, "interaction_not_completed"),
+        ({"status": "incomplete", "errors": [{"code": "safety"}]}, "interaction_not_completed"),
+        ({"status": "cancelled", "errors": [{"code": "safety"}]}, "interaction_not_completed"),
+        ({"status": "completed", "steps": []}, "response_shape"),
+        ({"status": "completed", "errors": [{"code": "safety"}]}, "response_shape"),
+        ({"status": "completed", "steps": [{"type": "model_output"}]}, "response_shape"),
+    ],
+)
+def test_a_200_with_no_usable_output_is_a_block_only_in_its_documented_form(
+    document: dict[str, object], kind: str
+) -> None:
+    transport = FakeTransport(json.dumps(document).encode())
+    result = asyncio.run(interpreter(transport).interpret(PRIVATE))
+    assert result == PlanFallback(fallback_plan(PRIVATE), kind)
+
+
+def test_a_block_keeps_nothing_the_provider_wrote() -> None:
+    client = GeminiClient(KEY, transport=FakeTransport(error_body("safety"), status=400))
+    with pytest.raises(GeminiFailed) as blocked:
+        asyncio.run(client.interact(lambda: b""))
+    assert vars(blocked.value) == {"kind": "http_400", "blocked": True}
+    assert blocked.value.args == ("http_400",)
+    assert blocked.value.__cause__ is None and blocked.value.__context__ is None
+
+    unreadable = GeminiClient(KEY, transport=FakeTransport(b"not json", status=400))
+    with pytest.raises(GeminiFailed) as failed:
+        asyncio.run(unreadable.interact(lambda: b""))
+    assert vars(failed.value) == {"kind": "http_400", "blocked": False}
+    assert failed.value.__cause__ is None and failed.value.__context__ is None
+
+
 def test_a_call_that_never_answers_falls_back_at_the_timeout() -> None:
     async def scenario() -> None:
         transport = HeldTransport()
@@ -512,6 +659,16 @@ def test_a_relative_request_that_fails_falls_back_to_the_request_alone() -> None
     transport = FakeTransport(error=OSError("provider text"))
     result = asyncio.run(interpreter(transport).interpret("faster", current))
     assert result == PlanFallback(fallback_plan("faster"), "transport_error")
+
+
+def test_a_fallback_plan_stays_valid_when_the_model_keeps_it_as_context() -> None:
+    assert MAX_STYLE_CHARACTERS == MAX_REQUEST_CHARACTERS
+    request = "x" * MAX_REQUEST_CHARACTERS
+    kept = output(styles=[{"text": request, "weight": 1.0}, {"text": "faster", "weight": 0.5}])
+    transport = FakeTransport(interaction(kept))
+    result = asyncio.run(interpreter(transport).interpret("faster", fallback_plan(request)))
+    assert isinstance(result, Planned)
+    assert result.plan.styles == (Style(request, 1.0), Style("faster", 0.5))
 
 
 HOSTILE = (
@@ -730,6 +887,20 @@ def test_the_real_transport_failures_fall_back(
             await runner.cleanup()
         assert result == PlanFallback(fallback_plan(PRIVATE), kind)
         assert PRIVATE not in caplog.text and "provider text" not in caplog.text
+
+    asyncio.run(scenario())
+
+
+def test_a_block_arrives_through_the_real_transport_as_a_refusal() -> None:
+    async def scenario() -> None:
+        response = web.Response(status=400, body=error_body("prohibited_content"))
+        runner, url, _ = await _served(response)
+        client = GeminiClient(KEY, transport=LoopbackTransport(url))
+        try:
+            assert await PlanInterpreter(client).interpret(PRIVATE) == PlanRefused()
+        finally:
+            await client.close()
+            await runner.cleanup()
 
     asyncio.run(scenario())
 
