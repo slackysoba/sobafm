@@ -2,14 +2,14 @@
 
 A self-hosted Discord music bot for Linux and Docker.
 
-- **/play** takes any request, however unusual, and uses Gemini to find the best fit in a curated catalog of existing recordings. The program continues, one recording after another without repeats, until stopped or replaced; **/skip** moves on.
+- **/play** takes any request, however unusual, and uses Gemini to find the best fit in a curated catalog of existing recordings. The program continues, one recording after another without repeats, asking Gemini for more as its list runs out, until stopped, replaced or out of recordings; **/skip** moves on.
 - **/freestyle** produces continuous generated music with Lyria RealTime.
 - Both modes share one station per server, access controls and accurate now-playing information.
 - **/settings** lets a server's managers set its volume and how often requests can change the music. The values persist across restarts.
 
 ## Development status
 
-`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. The real catalog holds 167 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching has run against the live API in one private session ([#124](https://github.com/slackysoba/sobafm/issues/124)), but match quality hasn't been rated. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings, `/skip` moves on and `/settings` keeps each server's volume and change cooldown in SQLite ([operations](docs/operations.md)). The settings have only been tested offline. Release qualification is not yet complete.
+`/play` ranks complete recordings from prepared catalog metadata with validated Gemini calls, [8 recordings at a time](docs/decisions/0011-program-refill.md), so the bot keeps making calls while a program plays. The real catalog holds 167 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching has run against the live API in one private session ([#124](https://github.com/slackysoba/sobafm/issues/124)), but match quality hasn't been rated. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings, `/skip` moves on and `/settings` keeps each server's volume and change cooldown in SQLite ([operations](docs/operations.md)). The settings and the song-list refill have only been tested offline. Release qualification is not yet complete.
 
 The Python development toolchain and Linux CI are available. Listening comparisons are deferred optional evidence.
 
