@@ -19,6 +19,7 @@ from sobafm.discord_adapter import (
     REFILL_RESERVE_SECONDS,
     REFILL_WAIT_SECONDS,
     SKIPPING,
+    STOPPED_WHILE_MATCHING,
     Adapter,
     EndReason,
     GuildPlayer,
@@ -40,7 +41,10 @@ from sobafm.station import Program, Station
 from tests.test_discord_adapter import (
     BOT_ID,
     LISTENER_ID,
+    FakeChannel,
     FakeClock,
+    FakeGuild,
+    FakeInteraction,
     FakeMatcher,
     FakeSettings,
     Harness,
@@ -93,6 +97,11 @@ def one_at_a_time(*identifiers: str, frames: int = 50) -> tuple[Harness, Tagged,
     fake = matcher_of(h)
     fake.batch = 1
     return h, tagged, fake
+
+
+def program_and_second_track() -> tuple[Harness, Tagged, FakeMatcher]:
+    h, tagged = program_harness("a", "b", producer=Tagged(frames=50))
+    return h, tagged, matcher_of(h)
 
 
 async def first_heard(
@@ -580,11 +589,34 @@ async def test_losing_voice_cancels_a_refill() -> None:
     await settle()
     assert source.read() == tag("a")
     await calls_reach(fake, 2)
-    refill = player_of(h).refill
+    player = player_of(h)
+    refill = player.refill
+    assert refill is not None
+    # The library reports that the connection ended, as `WatchedVoiceClient` does.
+    h.adapter._voice_gone(1, player.voice)  # pyright: ignore[reportPrivateUsage]
+    await asyncio.wait({refill.task}, timeout=5)  # bounded, so a regression fails
+    assert refill.task.cancelled() and player.refill is None
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_brief_reconnect_leaves_a_refill_running() -> None:
+    """SobaFM's own state has no channel during the library's reconnect; that's no loss."""
+    h, _, fake = one_at_a_time("a", "b")
+    await h.join()
+    await h.play()
+    fake.gate = asyncio.Event()
+    source = player_of(h).source
+    await settle()
+    assert source.read() == tag("a")
+    await calls_reach(fake, 2)
+    player = player_of(h)
+    refill = player.refill
     assert refill is not None
     h.voice_update(BOT_ID, None)
-    await asyncio.wait({refill.task}, timeout=5)  # bounded, so a regression fails
-    assert refill.task.cancelled() and player_of(h).refill is None
+    await settle()
+    assert player.refill is refill and not refill.task.done()
+    assert player_of(h) is player and player.station.heard is not None
     assert await h.adapter.shutdown() is True
 
 
@@ -802,4 +834,125 @@ async def test_a_whole_program_through_the_real_matcher_stays_within_its_call_bo
     assert transport.sent[1] == [f"Song {i}" for i in identifiers[8:]]
     assert transport.sent[2] == [f"Song {i}" for i in identifiers[16:]]
     assert clock.pending == []
+    assert await h.adapter.shutdown() is True
+
+
+# Losing voice during a refill (ADR 0011 with #137's disconnection signal).
+
+
+@offline
+async def test_a_voice_loss_during_a_refill_cant_restart_it_through_a_request_matching() -> None:
+    h, tagged, fake = one_at_a_time("a", "b")
+    await h.join()
+    await h.play()
+    fake.gate = asyncio.Event()
+    source = player_of(h).source
+    await settle()
+    assert source.read() == tag("a")
+    await calls_reach(fake, 2)  # the refill is waiting for its answer
+    player = player_of(h)
+    refill = player.refill
+    assert refill is not None
+    second = asyncio.create_task(h.play("second"))
+    await calls_reach(fake, 3)  # and so is a /play
+
+    h.adapter._voice_gone(1, player.voice)  # pyright: ignore[reportPrivateUsage]
+    await until(lambda: 1 not in h.adapter.players)
+    assert refill.task.cancelling() > 0 or refill.task.cancelled()
+    assert player.refill is None and player.station.desired is None
+
+    fake.gate.set()
+    assert await second == [STOPPED_WHILE_MATCHING]
+    await settle()
+    # Nothing came back to life: no further call, track, refill or bank.
+    assert len(fake.requests) == 3 and tagged.started == ["a"]
+    assert player.refill is None and player.station.desired is None
+    await until(lambda: h.adapter.tasks == set())
+    assert h.pool.leased == 0
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_connection_thats_ending_starts_nothing_while_it_waits_for_the_lock() -> None:
+    """Between the library's report and `_silence`, which needs the player lock."""
+    h, tagged, _ = program_and_second_track()
+    await h.join()
+    await h.play()
+    source = player_of(h).source
+    await settle()
+    player = player_of(h)
+    await player.lock.acquire()
+    assert source.read() == tag("a")
+    await settle()  # the report starts a continuation, which queues for the lock first
+    assert player.continuation is not None and not player.continuation.done()
+    second = asyncio.create_task(h.play("second"))
+    await settle()  # and a /play that has finished matching queues behind it
+
+    h.adapter._voice_gone(1, player.voice)  # pyright: ignore[reportPrivateUsage]
+    assert player.closing and player.station.needs_next
+    player.continuation = None  # as when its task has finished, so a new one could start
+    h.adapter._resume(player)  # pyright: ignore[reportPrivateUsage]
+    assert player.continuation is None  # nothing new is scheduled
+
+    player.lock.release()
+    assert await second == [STOPPED_WHILE_MATCHING]
+    await until(lambda: 1 not in h.adapter.players and h.adapter.tasks == set())
+    assert tagged.started == ["a"] and h.pool.leased == 0
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_connection_thats_ending_has_no_priority_for_a_bank() -> None:
+    h, _ = program_harness("a", "b", producer=Tagged(frames=1))
+    room2 = FakeChannel("room2")
+
+    def second(manager: bool = False) -> FakeInteraction:
+        fake = inter(room2, manager=manager)
+        fake.guild = FakeGuild(2)
+        return fake
+
+    source1 = await h.join()
+    await h.play()
+    await run(h.adapter.join, second(manager=True))
+    await run(lambda i: h.adapter.play(i, "piano"), second())
+    source2 = h.adapter.players[2].source
+    await settle()
+    assert source1.read() == tag("a") and source2.read() == tag("a")
+    one, two = h.adapter.players[1], h.adapter.players[2]
+    await until(lambda: one.station.heard is not None and two.station.heard is not None)
+
+    # Hold server 1 before it can take the bank its own ended track is about to free.
+    await one.lock.acquire()
+    assert source1.read() == b""
+    await until(lambda: one.station.heard is None and h.pool.leased == 1)
+    bank_free = h.adapter._bank_free  # pyright: ignore[reportPrivateUsage]
+    assert one.station.needs_next and not bank_free(two)  # silent, so it outranks server 2
+
+    h.adapter._voice_gone(1, one.voice)  # pyright: ignore[reportPrivateUsage]
+    assert one.closing and bank_free(two)  # server 2 no longer waits on a lost connection
+
+    one.lock.release()
+    await until(lambda: 1 not in h.adapter.players)
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_retry_falling_due_while_a_connection_ends_makes_no_further_call() -> None:
+    h, _, fake = one_at_a_time("a", "b")
+    await first_heard(h, fake, MatchFailed("timeout"))
+    await retry_waiting(h)  # the refill failed once and waits to try again
+    calls = len(fake.requests)
+    player = player_of(h)
+    await player.lock.acquire()  # `_silence` hasn't got the lock yet
+    h.adapter._voice_gone(1, player.voice)  # pyright: ignore[reportPrivateUsage]
+    assert player.closing
+
+    h.clock.expire()
+    refill = player.refill
+    assert refill is not None
+    await asyncio.wait({refill.task}, timeout=5)  # bounded, so a regression fails
+    assert refill.task.done() and len(fake.requests) == calls
+
+    player.lock.release()
+    await until(lambda: 1 not in h.adapter.players and h.adapter.tasks == set())
     assert await h.adapter.shutdown() is True

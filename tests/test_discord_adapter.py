@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import itertools
 import logging
 import os
 import signal
@@ -126,9 +127,29 @@ class FakeSettings:
         self.current = ServerSettings(cooldown_seconds=0)
         self.failure: SettingsError | None = None
         self.writes = 0
+        self.remembered: dict[int, int] = {}
+        self.channel_writes = 0
 
     def get(self, guild_id: int) -> ServerSettings:
         return self.current
+
+    def channel(self, guild_id: int) -> int | None:
+        return self.remembered.get(guild_id)
+
+    def channels(self) -> dict[int, int]:
+        return dict(self.remembered)
+
+    async def remember_channel(self, guild_id: int, channel_id: int) -> None:
+        if self.failure is not None:
+            raise self.failure
+        self.channel_writes += 1
+        self.remembered[guild_id] = channel_id
+
+    async def forget_channel(self, guild_id: int) -> None:
+        if self.failure is not None:
+            raise self.failure
+        self.channel_writes += 1
+        self.remembered.pop(guild_id, None)
 
     async def update(
         self,
@@ -155,6 +176,7 @@ class FakeSettings:
 
 BOT_ID = 1
 LISTENER_ID = 100
+CHANNEL_IDS = itertools.count(1_000)
 
 
 @dataclass(frozen=True)
@@ -177,6 +199,8 @@ class FakeVoice:
         return bool(self.plays) and self.connected
 
     def play(self, source: disnake.AudioSource) -> None:
+        if not self.connected:  # as `VoiceClient.play` refuses
+            raise disnake.ClientException("Not connected to voice.")
         self.plays.append(source)
 
     def stop(self) -> None:
@@ -200,12 +224,17 @@ class FakeChannel:
     voice_states: dict[int, FakeVoiceState] = field(
         default_factory=lambda: {LISTENER_ID: FakeVoiceState(None)}
     )
+    id: int = field(default_factory=lambda: next(CHANNEL_IDS))
+    allowed: FakeChannelPermissions = field(default_factory=lambda: FakeChannelPermissions())
 
     @property
     def mention(self) -> str:
         return f"<#{self.name}>"
 
-    async def connect(self) -> FakeVoice:
+    def permissions_for(self, member: object) -> FakeChannelPermissions:
+        return self.allowed
+
+    async def connect(self, *, timeout: float, cls: object) -> FakeVoice:
         self.voice = FakeVoice(self)
         return self.voice
 
@@ -227,6 +256,12 @@ class FakePermissions:
     manage_guild: bool = False
 
 
+@dataclass
+class FakeChannelPermissions:
+    connect: bool = True
+    speak: bool = True
+
+
 @dataclass(frozen=True)
 class FakeMember:
     id: int
@@ -240,6 +275,14 @@ class FakeGuild:
 
     def get_member(self, user_id: int) -> FakeMember | None:
         return self.members.get(user_id)
+
+    @property
+    def me(self) -> FakeMember:
+        return FakeMember(BOT_ID, True)
+
+    @property
+    def voice_client(self) -> None:
+        return None
 
 
 @dataclass
