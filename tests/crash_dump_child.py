@@ -15,6 +15,7 @@ import resource
 import runpy
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -22,7 +23,13 @@ from pathlib import Path
 
 from sobafm import crash_dumps
 from sobafm.crash_dumps import CrashDumpError, disable_crash_dumps
-from sobafm.decode import MPG123_LIMITS, DecodeInput, DecodeProducer, DecoderCommand
+from sobafm.decode import (
+    MPG123_LIMITS,
+    DecodeInput,
+    DecodeProducer,
+    DecoderCommand,
+    launch_argv,
+)
 from sobafm.pcm import FRAME_BYTES, PcmBankPool
 
 NOBODY = 65534
@@ -150,8 +157,42 @@ def decoder() -> None:
             decoder_filter=int((facts / "filter").read_text(), 16),
             decoder_dumpable=(facts / "dumpable").exists(),
             decoder_limits=limit_rows(facts / "limits"),
-            parent_limits=limit_rows(Path("/proc/self/limits")),
             parent_dumpable=crash_dumps.prctl(crash_dumps.PR_GET_DUMPABLE),
+        )
+    finally:
+        shutil.rmtree(facts)
+
+
+def stack_limit_refused() -> None:
+    """Ask for more stack than a non-root process may grant, so no route can set it."""
+    resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, 1 << 20))
+    give_up_root()
+    facts = Path(tempfile.mkdtemp())
+    try:
+        payload = b"x\n"
+        source = facts / "input"
+        source.write_bytes(payload)
+        command = DecoderCommand(
+            argv=("/bin/sh", "-c", "echo reached"),
+            limits=((resource.RLIMIT_STACK, 2 << 20),),
+            env={},
+        )
+        alone = subprocess.run(launch_argv(command), env={}, capture_output=True, text=True)
+        producer = DecodeProducer(
+            DecodeInput(source, len(payload), hashlib.sha256(payload).hexdigest(), FRAME_BYTES),
+            command=command,
+            pool=PcmBankPool(),
+        )
+        producer.start()
+        result = producer.finish()
+        report(
+            uid=os.geteuid(),
+            failure=result.failure,
+            cleanup=result.cleanup,
+            settled=result.settled,
+            released=producer.release(),
+            launch_status=alone.returncode,
+            launch_output=alone.stdout,
         )
     finally:
         shutil.rmtree(facts)
@@ -180,6 +221,7 @@ SCENARIOS: dict[str, Callable[..., None]] = {
     "wrong_order": wrong_order,
     "crash": crash,
     "decoder": decoder,
+    "stack_limit_refused": stack_limit_refused,
     "entry": entry,
 }
 
