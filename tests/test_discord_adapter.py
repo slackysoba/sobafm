@@ -223,10 +223,14 @@ class FakeChannel:
         default_factory=lambda: {LISTENER_ID: FakeVoiceState(None)}
     )
     id: int = field(default_factory=lambda: next(CHANNEL_IDS))
+    allowed: FakeChannelPermissions = field(default_factory=lambda: FakeChannelPermissions())
 
     @property
     def mention(self) -> str:
         return f"<#{self.name}>"
+
+    def permissions_for(self, member: object) -> FakeChannelPermissions:
+        return self.allowed
 
     async def connect(self, *, timeout: float, cls: object) -> FakeVoice:
         self.voice = FakeVoice(self)
@@ -250,6 +254,12 @@ class FakePermissions:
     manage_guild: bool = False
 
 
+@dataclass
+class FakeChannelPermissions:
+    connect: bool = True
+    speak: bool = True
+
+
 @dataclass(frozen=True)
 class FakeMember:
     id: int
@@ -263,6 +273,14 @@ class FakeGuild:
 
     def get_member(self, user_id: int) -> FakeMember | None:
         return self.members.get(user_id)
+
+    @property
+    def me(self) -> FakeMember:
+        return FakeMember(BOT_ID, True)
+
+    @property
+    def voice_client(self) -> None:
+        return None
 
 
 @dataclass

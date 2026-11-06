@@ -167,12 +167,15 @@ LISTENER_GRACE_SECONDS = 60.0
 # disnake's voice connect timeout. It also bounds how long disnake waits after a forced
 # close before giving up, so how long a removed bot takes to notice (see WatchedVoiceClient).
 VOICE_TIMEOUT_SECONDS = 20.0
-# Bounds on rejoining remembered channels at startup: attempts per channel, seconds per
-# attempt (disnake can retry within one connect) and rejoins running at once.
+# The whole of one connection attempt, by `/join` or a rejoin. disnake's timeout covers only
+# the handshake: it can retry within one connect, and its UDP discovery has no timeout.
+CONNECT_ATTEMPT_SECONDS = 45.0
+# Bounds on rejoining remembered channels at startup: attempts per channel and rejoins
+# running at once.
 REJOIN_ATTEMPTS = 2
-REJOIN_ATTEMPT_SECONDS = 45.0
 MAX_CONCURRENT_REJOINS = 4
 VOCAL_CHANNEL_TYPES = (disnake.ChannelType.voice, disnake.ChannelType.stage_voice)
+LOCAL_FAILURE = "local_failure"
 SILENCE = bytes(FRAME_BYTES)
 NO_MENTIONS = disnake.AllowedMentions.none()
 Inter = disnake.ApplicationCommandInteraction[commands.InteractionBot]
@@ -206,10 +209,8 @@ SETTINGS_INVALID = (
 SETTINGS_UNAVAILABLE = "The settings could not be saved, so nothing was changed. Try again shortly."
 VOICE_BUSY = "SobaFM is still changing its voice connection. Try again in a moment."
 JOIN_NOT_SAVED = "SobaFM couldn't save that channel, so nothing changed. Try again shortly."
-JOIN_FAILED = (
-    "SobaFM couldn't connect to that channel, so it won't rejoin it after a restart. "
-    "Check that it can connect and speak there, then try again."
-)
+JOIN_NOT_ALLOWED = "SobaFM needs the Connect and Speak permissions there, so nothing changed."
+JOIN_FAILED = "SobaFM couldn't connect to that channel. Try again shortly."
 LEAVE_NOT_SAVED = (
     "SobaFM couldn't save that it left, so it stayed connected and current audio continues. "
     "`/stop` still ends the program. Try again shortly."
@@ -520,6 +521,13 @@ class WatchedVoiceClient(disnake.VoiceClient):
     leaving a dead client still registered and reporting connected, so a polling loop
     that ends is treated as the same event.
 
+    An ended client must stay ended, because it shares one slot per server with whichever
+    client comes next. `disconnect` doesn't stop `poll_voice_ws`, which could otherwise
+    reconnect, or time out and clear the slot, on top of a newer client (404-408, 510-512).
+    And closing the websocket wakes that loop before `cleanup` has run, so a second
+    `disconnect` could otherwise finish last and send the gateway a stale "no channel". So
+    `disconnect` runs once, `cleanup` cancels the loop, and neither acts again.
+
     Lines are in disnake 2.12.2's `voice_client.py`:
     https://github.com/DisnakeDev/disnake/blob/v2.12.2/disnake/voice_client.py
     """
@@ -535,6 +543,21 @@ class WatchedVoiceClient(disnake.VoiceClient):
         self._report_ready = ready
         self._report_gone = gone
         self._ended = False
+        self._disconnecting: asyncio.Event | None = None
+
+    def is_connected(self) -> bool:
+        # `cleanup` sets the event the player thread waits on, so it can't answer this alone.
+        return not self._ended and super().is_connected()
+
+    def send_audio_packet(self, data: bytes, *, encode: bool = True) -> None:
+        """Drop a frame that has nowhere to go, rather than end the player thread for good.
+
+        A voice server update sets `endpoint_ip` to MISSING while still connected (line
+        310), and `sendto` would then raise until the reconnect finishes. The thread would
+        not restart until the next track. An ended client has closed its socket.
+        """
+        if not self._ended and self.endpoint_ip is not disnake.utils.MISSING:
+            super().send_audio_packet(data, encode=encode)
 
     async def connect_websocket(self, *, resume: bool = False) -> None:
         await super().connect_websocket(resume=resume)
@@ -543,17 +566,40 @@ class WatchedVoiceClient(disnake.VoiceClient):
     async def poll_voice_ws(self, reconnect: bool) -> None:
         try:
             await super().poll_voice_ws(reconnect)
-        except Exception:
-            await self._end_if_left_open()
+        except asyncio.CancelledError:
+            # `cleanup` ended it, perhaps with a reconnect's new websocket already open.
+            if self.ws:
+                with contextlib.suppress(Exception):
+                    await self.ws.close()
             raise
-        await self._end_if_left_open()
-
-    async def _end_if_left_open(self) -> None:
-        if not self._ended:
+        except Exception:
             await self.disconnect(force=True)
+            raise
+        await self.disconnect(force=True)
+
+    async def disconnect(self, *, force: bool = False) -> None:
+        """End this client once; a caller during that waits for it to finish."""
+        if self._ended or (not force and not self.is_connected()):
+            return
+        if self._disconnecting is not None:
+            await self._disconnecting.wait()
+            return
+        self._disconnecting = asyncio.Event()
+        try:
+            await super().disconnect(force=force)
+        finally:
+            self._disconnecting.set()
 
     def cleanup(self) -> None:
+        if self._ended:
+            return
         self._ended = True
+        runner = cast(asyncio.Task[None], self._runner)  # pyright: ignore[reportUnknownMemberType]
+        if runner:  # MISSING, and so false, until a connection has finished
+            runner.cancel()
+        # The player thread may be waiting for a connection that will never come back, and
+        # `AudioPlayer.stop` doesn't wake it. It reads one more frame and then sees it ended.
+        self._connected.set()
         try:
             super().cleanup()
         finally:
@@ -668,8 +714,11 @@ class Adapter:
     ) -> str:
         """Save the channel, then connect or move there, undoing the save if that fails.
 
-        Saving first means a failed save changes nothing at all, with no voice action.
+        Saving first means a failed save changes nothing at all, with no voice action. A
+        move is only a request to Discord, so it's checked first and reported as a request.
         """
+        if not self._can_connect_and_speak(channel):
+            return JOIN_NOT_ALLOWED
         previous = self._settings.channel(guild_id)
         if previous != channel.id:
             try:
@@ -683,9 +732,12 @@ class Adapter:
             player = None
         try:
             if player is not None:
+                if player.voice.channel == channel:
+                    return f"SobaFM is already in {channel.mention}."
                 await player.voice.move_to(channel)
                 self._review_listeners(player)  # the new channel may have no listener
-            elif await self._connect(guild_id, channel) is None:
+                return f"Moving to {channel.mention}."
+            if await self._connect(guild_id, channel) is None:
                 return SHUTTING_DOWN  # shutdown began while connecting
         except Exception as exc:
             log.warning("voice connection failed: %s", type(exc).__name__)
@@ -694,13 +746,30 @@ class Adapter:
             return JOIN_FAILED
         return f"Joined {channel.mention}."
 
+    @staticmethod
+    def _can_connect_and_speak(channel: disnake.VoiceChannel | disnake.StageChannel) -> bool:
+        permissions = channel.permissions_for(channel.guild.me)
+        return permissions.connect and permissions.speak
+
     async def _connect(
         self, guild_id: int, channel: disnake.VoiceChannel | disnake.StageChannel
     ) -> GuildPlayer | None:
-        """Connect and register an idle player, or return None if shutdown began meanwhile."""
-        voice = await channel.connect(
-            timeout=VOICE_TIMEOUT_SECONDS, cls=self._voice_client_factory(guild_id)
-        )
+        """Connect and register an idle player, or return None if shutdown began meanwhile.
+
+        A failed attempt closes its client: disnake does only for its own handshake timeout
+        (abc.py `Connectable.connect`), so after a cancelled connect or any other failure
+        the client stays registered and every later attempt reports "already connected".
+        """
+        try:
+            async with asyncio.timeout(CONNECT_ATTEMPT_SECONDS):
+                voice = await channel.connect(
+                    timeout=VOICE_TIMEOUT_SECONDS, cls=self._voice_client_factory(guild_id)
+                )
+        except Exception:
+            if (stale := channel.guild.voice_client) is not None:
+                with contextlib.suppress(Exception):
+                    await stale.disconnect(force=True)
+            raise
         if self.stopping.is_set():
             await voice.disconnect(force=True)
             return None
@@ -777,7 +846,7 @@ class Adapter:
             async with player.lock:
                 if self.stopping.is_set():
                     return SHUTTING_DOWN
-                if player.silenced != silenced:
+                if player.silenced != silenced or player.closing:
                     return STOPPED_WHILE_MATCHING
                 station = player.station
                 # Later tracks come from this list, and from more of the same when it runs out.
@@ -879,7 +948,12 @@ class Adapter:
 
     def _resume(self, player: GuildPlayer) -> None:
         """Keep the desired program going if it has no next track in progress."""
-        if not self.stopping.is_set() and self.matcher is not None and player.station.needs_next:
+        if (
+            not self.stopping.is_set()
+            and not player.closing  # its connection is ending, and so is the program
+            and self.matcher is not None
+            and player.station.needs_next
+        ):
             self._schedule_continue(player)
 
     def _schedule_continue(self, player: GuildPlayer) -> asyncio.Task[None]:
@@ -919,6 +993,7 @@ class Adapter:
                     station = player.station
                     if (
                         self.stopping.is_set()
+                        or player.closing
                         or station.desired != program
                         or not station.needs_next
                     ):
@@ -1067,7 +1142,10 @@ class Adapter:
         if self._pool.leased >= BANK_COUNT:
             return False
         return not self._audible(player) or not any(
-            other is not player and other.station.needs_next and not self._audible(other)
+            other is not player
+            and not other.closing  # a connection that's ending has no claim on a bank
+            and other.station.needs_next
+            and not self._audible(other)
             for other in self.players.values()
         )
 
@@ -1410,6 +1488,8 @@ class Adapter:
             )
             if reason is None:
                 log.info("voice rejoin: outcome=joined")
+            elif reason == LOCAL_FAILURE:
+                log.warning("voice rejoin: outcome=kept reason=%s", reason)
             elif not self.stopping.is_set():
                 log.warning("voice rejoin: outcome=forgotten reason=%s", reason)
                 await self._forget_channel(guild_id)
@@ -1424,21 +1504,19 @@ class Adapter:
         if found is None or found.type not in VOCAL_CHANNEL_TYPES:
             return "channel_gone"
         channel = cast(disnake.VoiceChannel | disnake.StageChannel, found)
-        permissions = channel.permissions_for(guild.me)
-        if not (permissions.connect and permissions.speak):
+        if not self._can_connect_and_speak(channel):
             return "no_permission"
         for _ in range(REJOIN_ATTEMPTS):
             try:
-                async with asyncio.timeout(REJOIN_ATTEMPT_SECONDS):
-                    player = await self._connect(guild_id, channel)
+                player = await self._connect(guild_id, channel)
                 return None if player is not None else "shutting_down"
+            except RuntimeError as exc:
+                # This host's limit, such as no task left for a voice keep-alive thread. It
+                # says nothing about the channel, and trying again here wouldn't help.
+                log.warning("voice rejoin attempt failed: %s", type(exc).__name__)
+                return LOCAL_FAILURE
             except Exception as exc:
                 log.warning("voice rejoin attempt failed: %s", type(exc).__name__)
-                # A timeout here cancels the connect, which leaves its client registered
-                # and would make the next attempt report "already connected".
-                if (stale := guild.voice_client) is not None:
-                    with contextlib.suppress(Exception):
-                        await stale.disconnect(force=True)
         return "connect_failed"
 
     # Listener grace.
