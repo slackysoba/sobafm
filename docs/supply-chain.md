@@ -11,7 +11,7 @@ Everything below was read from one actual image:
 | Fact | Value |
 | --- | --- |
 | Image | Local tag `sobafm-live:ab10a71`, ID `sha256:4a91d588f7d49389e0caa01aafabcdb9d86e4b009e96092fb1115472cdfb1355`, linux/amd64, 336,429,161 bytes |
-| Bound to | Commit `ab10a71`. All 13 `.py` files of the installed `sobafm` package match it by SHA-256. `Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock` and `src/` didn't change from that commit to `347870a`, the `main` this record started from |
+| Bound to | Commit `ab10a71`. All 13 `.py` files of the installed `sobafm` package match it by SHA-256. `Dockerfile`, `.dockerignore`, `pyproject.toml` and `uv.lock` didn't change from that commit to `b5ef66e`, the latest `main` this record was checked against, so the inventory still applies. `src/` has changed since, for settings and `/freestyle` plans, adding no dependency |
 | Read on | 2026-11-05, US Pacific time |
 
 That image predates the [notices file](#notices-file), which is the only change this record makes to what an image contains. No image was built for it.
