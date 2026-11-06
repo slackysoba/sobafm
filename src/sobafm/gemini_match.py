@@ -1,10 +1,11 @@
-"""Rank a `/play` request against every admitted recording with one Gemini call.
+"""Rank a `/play` request against the admitted recordings, a few at a time, with Gemini.
 
-The model gets the request and compact information about the admitted recordings,
-and has no tools. It returns recordings by their position in that list, so it can
-only ever name something already admitted, and its output is rejected unless it is
-exactly the expected shape. Request text and the API key are never logged. The call
-itself goes through `gemini_interactions.py`. See ADR 0006.
+The model gets the request and compact information about the admitted recordings a
+program hasn't played, and has no tools. It returns recordings by their position in
+that list, so it can only ever name something admitted and unplayed, and its output is
+rejected unless it is exactly the expected shape. Request text and the API key are
+never logged. The call itself goes through `gemini_interactions.py`. See ADR 0006 and
+ADR 0011.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
-from sobafm.catalog import CatalogInputError, Recording
+from sobafm.catalog import CatalogInputError, Recording, RecordingKey
 from sobafm.gemini_interactions import (
     TIMEOUT_SECONDS,
     GeminiClient,
@@ -33,10 +34,11 @@ from sobafm.station import MAX_REQUEST_CHARACTERS
 
 log = logging.getLogger(__name__)
 
-MAX_RANKED = 20
+# How many recordings each call asks for (ADR 0011). A program asks again when they run out.
+MAX_RANKED = 8
 # Bounds the cost of each call and the memory held for the prompt.
 MAX_SONG_CHARACTERS = 512_000
-# The `MatchFailed` kind for a catalog with nothing admitted; no call is made.
+# The `MatchFailed` kind when no admitted recording is left to send; no call is made.
 NO_RECORDINGS = "no_eligible_recordings"
 
 # No validated plan exists. Its ``kind`` is safe to log and carries no provider text.
@@ -54,9 +56,9 @@ You may use what you know to understand the request, including artists it names.
 each song only on what is listed for it, and treat a song with little information as \
 uncertain rather than as a poor fit.
 
-Use outcome "match" with up to {MAX_RANKED} different songs, best first, whenever the \
-request describes music or anything music could evoke, even if nothing fits well. Always \
-return at least one song in that case.
+Use outcome "match" with {MAX_RANKED} different songs, best first, whenever the request \
+describes music or anything music could evoke, even if nothing fits well. Return fewer \
+only when fewer are listed.
 
 Give each song a fit:
 - "exact": it is the specific recording the listener named.
@@ -206,23 +208,34 @@ class GeminiMatcher:
         self._songs = render_songs(self._recordings)
         self.client = GeminiClient(api_key, transport=transport, timeout=timeout)
 
-    def request_body(self, request: str) -> bytes:
-        # The unchanging song list comes first so repeated calls share a long prefix.
+    def request_body(self, request: str, recordings: Sequence[Recording] | None = None) -> bytes:
+        """The call's body, over ``recordings`` when they are fewer than every admitted one."""
+        sent = self._recordings if recordings is None else recordings
+        # A smaller list is rendered only now, while its call holds a slot, as is the body.
+        songs = self._songs if len(sent) == len(self._recordings) else render_songs(sent)
+        # The song list comes first so repeated calls share a long prefix.
         encoded = json.dumps(request, ensure_ascii=False)
         return interaction_body(
             system_instruction=SYSTEM_INSTRUCTION,
-            text=f"SONGS:\n{self._songs}\n\nREQUEST:\n{encoded}",
-            schema=response_schema(len(self._recordings)),
+            text=f"SONGS:\n{songs}\n\nREQUEST:\n{encoded}",
+            schema=response_schema(len(sent)),
         )
 
-    async def match(self, request: str) -> Matched | Refused:
-        """Make one call, with no retries; `MatchFailed` means nothing was decided."""
-        if not self._recordings:
+    async def match(
+        self, request: str, played: frozenset[RecordingKey] = frozenset()
+    ) -> Matched | Refused:
+        """Make one call, with no retries, leaving ``played`` recordings out of the list.
+
+        `MatchFailed` means nothing was decided. Its kind is `NO_RECORDINGS`, with no call
+        made, when no recording is left to send.
+        """
+        remaining = tuple(r for r in self._recordings if r.key not in played)
+        if not remaining:
             raise MatchFailed(NO_RECORDINGS)
         started = time.monotonic()
         try:
-            text = await self.client.interact(lambda: self.request_body(request))
-            result = parse_plan(text, self._recordings)
+            text = await self.client.interact(lambda: self.request_body(request, remaining))
+            result = parse_plan(text, remaining)
         except MatchFailed as exc:
             # Provider errors can quote their input, so only the kind is logged.
             log.warning(

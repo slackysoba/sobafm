@@ -265,5 +265,72 @@ def test_select_next_follows_the_plan_skips_history_and_reports_exhaustion() -> 
 
 def test_a_program_carries_its_plan() -> None:
     plan = (recording("b"), recording("a"))
-    assert Station().request("calm piano", plan).program.plan == plan
-    assert Station().request("calm piano").program.plan == ()
+    station = Station()
+    assert station.plan(station.request("calm piano", plan).program) == plan
+    assert station.plan(station.request("calm piano").program) == ()
+
+
+def test_a_refill_replaces_the_plan_of_a_program_awaiting_its_next_track() -> None:
+    station = Station()
+    program = station.request("calm piano", (recording("a"),)).program
+    assert station.prepared(program, recording("a")) is Outcome.ACCEPTED
+    audio = station.claim_ready()
+    assert audio is not None and station.switched(audio) is Outcome.ACCEPTED
+    assert select_next(station.plan(program), station.history(program)) is None
+
+    # A repeat doesn't count: the program never plays a recording twice.
+    fresh = (recording("a"), recording("b"), recording("c"))
+    assert station.refilled(program, fresh) is Outcome.ACCEPTED
+    assert station.plan(program) == fresh[1:]
+    assert station.history(program) == {recording("a").key}
+    next_track = select_next(station.plan(program), station.history(program))
+    assert next_track == recording("b")
+
+
+@pytest.mark.parametrize("recordings", [(), (recording("a"),)])
+def test_a_refill_with_nothing_new_changes_nothing(recordings: tuple[Recording, ...]) -> None:
+    station = playing("a")
+    program = station.desired
+    assert program is not None
+    assert station.refilled(program, recordings) is Outcome.REJECTED
+    assert station.plan(program) == () and station.needs_next and station.ending is None
+
+
+def test_a_stale_refill_changes_nothing() -> None:
+    station = playing("a")
+    old = station.desired
+    assert old is not None
+    assert station.refilled(old, (recording("b"),)) is Outcome.ACCEPTED
+
+    # While its next track is preparing, a program awaits no refill.
+    assert station.continue_program(old) is Outcome.ACCEPTED
+    assert station.refilled(old, (recording("c"),)) is Outcome.STALE
+    assert station.plan(old) == (recording("b"),)
+
+    newer = station.request("other", (recording("d"),)).program
+    assert station.refilled(old, (recording("c"),)) is Outcome.STALE
+    assert station.plan(newer) == (recording("d"),)
+
+    station.stop()
+    assert station.refilled(newer, (recording("c"),)) is Outcome.STALE
+
+
+def test_a_failed_replacement_restores_the_heard_programs_plan() -> None:
+    station = playing("a")
+    old = station.desired
+    assert old is not None
+    assert station.refilled(old, (recording("b"),)) is Outcome.ACCEPTED
+    replacement = station.request("other", (recording("d"),)).program
+    assert station.preparation_failed(replacement) is Outcome.ACCEPTED
+    assert station.desired == old and station.plan(old) == (recording("b"),)
+
+
+def test_a_failed_refill_ends_the_program_after_its_heard_track() -> None:
+    station = playing("a")
+    program, heard = station.desired, station.heard
+    assert program is not None and heard is not None
+    assert station.exhausted(program, EndReason.REFILL_FAILED) is Outcome.ACCEPTED
+    assert station.desired == program and station.ending is EndReason.REFILL_FAILED
+    assert station.ended is None and not station.needs_next
+    assert station.drained(heard) is Outcome.ACCEPTED
+    assert station.desired is None and station.ended is EndReason.REFILL_FAILED

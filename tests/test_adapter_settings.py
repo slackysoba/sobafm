@@ -229,8 +229,8 @@ def test_a_failed_save_changes_nothing_and_logs_only_its_kind(
 ) -> None:
     async def scenario() -> None:
         h = harness(Patterned())
-        settings_of(h).failure = SettingsError("SQLITE_FULL")
         player = await heard_pattern(h)
+        settings_of(h).failure = SettingsError("SQLITE_FULL")
         assert await settings(h, volume=100) == [SETTINGS_UNAVAILABLE]
         assert player.output.volume == 0.5
 
