@@ -22,7 +22,7 @@ import pytest
 from sobafm import __main__ as app
 from sobafm import crash_dumps
 from sobafm.crash_dumps import PR_GET_DUMPABLE, PR_SET_DUMPABLE, CrashDumpError, disable_crash_dumps
-from sobafm.decode import MPG123_LIMITS
+from sobafm.decode import MPG123_LIMITS, DecoderCommand
 
 CHILD = Path(__file__).with_name("crash_dump_child.py")
 TOKEN = "placeholder-token-value"  # pragma: allowlist secret - test placeholder
@@ -190,12 +190,14 @@ def test_a_real_crash_after_the_controls_leaves_no_dump(tmp_path: Path) -> None:
 
 
 def test_the_reviewed_decoder_limits_are_unchanged() -> None:
-    assert MPG123_LIMITS == (
+    reviewed = (
         (resource.RLIMIT_CORE, 0),
         (resource.RLIMIT_STACK, 524_288),
         (resource.RLIMIT_DATA, 12_000_000),
         (resource.RLIMIT_AS, 12_524_288),
     )
+    assert reviewed == MPG123_LIMITS
+    assert DecoderCommand().limits == reviewed
 
 
 def test_a_decoder_launches_normally_and_inherits_only_the_filter() -> None:
@@ -208,16 +210,22 @@ def test_a_decoder_launches_normally_and_inherits_only_the_filter() -> None:
     assert facts["decoder_filter"] == 0
     # Exec resets the attribute, so only the filter reaches the decoder.
     assert facts["decoder_dumpable"] is True
-    # The parent's prlimit still reaches it, soft and hard.
+    # Every reviewed limit reaches it, soft and hard.
     limits = cast(dict[str, list[str]], facts["decoder_limits"])
     assert limits["Max core file size"] == ["0", "0"]
+    assert limits["Max stack size"] == ["524288", "524288"]
     assert limits["Max data size"] == ["12000000", "12000000"]
     assert limits["Max address space"] == ["12524288", "12524288"]
-    # The stack limit can't be asserted exactly yet, with or without these controls. A prlimit
-    # that lands while the child is still in execve is overwritten: the kernel's finalize_exec
-    # restores the value it pinned at the start of exec. Tighten this when that race is fixed.
-    parent = cast(dict[str, list[str]], facts["parent_limits"])
-    assert limits["Max stack size"] in (["524288", "524288"], parent["Max stack size"])
+
+
+def test_a_stack_limit_that_cannot_be_set_is_refused_before_the_decoder_runs() -> None:
+    facts = run_child("stack_limit_refused")
+    assert facts["uid"] != 0
+    # The existing failure kind, reported before any input.
+    assert facts["failure"] == "decoder_limits"
+    assert facts["cleanup"] == "clean" and facts["settled"] is True and facts["released"] is True
+    # On its own, the launch step stops rather than start the decoder with the wrong limit.
+    assert facts["launch_status"] == 125 and facts["launch_output"] == ""
 
 
 def test_running_the_program_applies_the_controls_and_reaches_the_limit_gate() -> None:
