@@ -39,6 +39,23 @@ image reproduces the notices of those crates. Settle that before publishing this
 image: https://github.com/slackysoba/sobafm/issues/132
 
 ------------------------------------------------------------------------
+sqv 1.3.0-3+b2 (/usr/bin/sqv)
+------------------------------------------------------------------------
+
+A Debian package that apt depends on. SobaFM does not run it.
+
+KNOWN GAP. /usr/share/doc/sqv/copyright covers sqv itself. The binary also
+statically links 64 Debian Rust crates and rustc's libraries, which the package
+names in its Static-Built-Using field:
+
+    dpkg-query -W -f '${Static-Built-Using}\n' sqv
+
+Some are under other terms, such as rust-regex and rust-libc under MIT or
+Apache-2.0. Neither this file nor anything else in the image reproduces the
+notices of those crates. They are in those packages' Debian source. Settle that
+before publishing this image: https://github.com/slackysoba/sobafm/issues/132
+
+------------------------------------------------------------------------
 libffi, in cffi 2.1.1
 ------------------------------------------------------------------------
 
