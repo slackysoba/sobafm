@@ -49,7 +49,8 @@ make its audio available.
 
 [Decision 0002](decisions/0002-prompt-catalog-selection.md) pools complete
 recordings from every prepared source partition, and [decision
-0006](decisions/0006-gemini-play-matching.md) ranks them with one Gemini call.
+0006](decisions/0006-gemini-play-matching.md) ranks them with one Gemini call per
+[8 songs](decisions/0011-program-refill.md).
 Listening is optional deferred evidence, not a prerequisite for this implementation.
 
 `sobafm.catalog` accepts `sobafm-catalog-1` JSON: a `synthetic` boolean and at most

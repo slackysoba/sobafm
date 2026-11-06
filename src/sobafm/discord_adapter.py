@@ -7,6 +7,9 @@ private and open to ordinary listeners.
 
 `/play` asks an injected `Matcher` for a validated plan. A refusal or failure changes
 nothing, one request is matched at a time per server, and a stop during that wait wins.
+When the last recording on a program's list starts, the `Matcher` is asked in the
+background for more, leaving out what the program has played (ADR 0011). Music, `/skip`
+and `/stop` never wait on that call, and it takes no change cooldown.
 
 Each server's `Station` settles desired, prepared and heard facts on the event loop.
 Audio comes from an injected `Producer` that fills a leased `pcm.py` bank. The voice
@@ -14,7 +17,7 @@ callback (`StationSource.read`) only copies prepared frames: it never waits on t
 network, a process, a database or cleanup, and hands every report back to the loop.
 The heard source changes only when the callback emits the first frame of new audio.
 A catalog program continues: once a track is heard, the next one is taken from the
-program's ranked plan and history and prepared in the second bank, and the
+program's current list and history and prepared in the second bank, and the
 callback plays it successively after the heard track's last frame. Without a free
 bank the next track waits, bounded and woken by capacity changes, through its heard
 track and briefly after it. `/skip` and a replacement instead switch as soon as the
@@ -75,6 +78,7 @@ from sobafm.catalog import (
     Catalog,
     CatalogInputError,
     Recording,
+    RecordingKey,
     Source,
     eligible,
     parse_catalog,
@@ -141,6 +145,11 @@ MAX_SELECTION_ATTEMPTS = 3
 # past the three-second cleanup deadline of the program's own drained track. While the
 # program's track is still audible, it waits for that track's end, which frees a bank.
 CAPACITY_WAIT_SECONDS = 10.0
+# Bounds on a refill (ADR 0011): calls to get more recordings, and the wait between them.
+# With the 10-second call timeout the worst case is 60 seconds, which still leaves time to
+# prepare the next track during the shortest admitted recording, now 74 seconds.
+MAX_REFILL_ATTEMPTS = 3
+REFILL_RETRY_SECONDS = 15.0
 # How long a program continues after the last listener leaves (docs/requirements.md).
 LISTENER_GRACE_SECONDS = 60.0
 SILENCE = bytes(FRAME_BYTES)
@@ -175,7 +184,8 @@ SETTINGS_INVALID = (
 )
 SETTINGS_UNAVAILABLE = "The settings could not be saved, so nothing was changed. Try again shortly."
 ENDED = {
-    EndReason.EXHAUSTED: "no recording chosen for its request is left to try",
+    EndReason.EXHAUSTED: "every recording in the catalog has been played or tried",
+    EndReason.REFILL_FAILED: "Gemini did not supply more recordings",
     EndReason.UNAVAILABLE: "the next recording could not be prepared",
     EndReason.NO_LISTENERS: "no listeners remained",
 }
@@ -197,9 +207,15 @@ class Producer(Protocol):
 
 
 class Matcher(Protocol):
-    """Turns one request into a validated plan, or raises `MatchFailed`."""
+    """Turns one request into a validated plan, or raises `MatchFailed`.
 
-    async def match(self, request: str) -> Matched | Refused: ...
+    ``played`` recordings are left out of the call. With none left to send it makes no
+    call, and the failure's kind is `NO_RECORDINGS`.
+    """
+
+    async def match(
+        self, request: str, played: frozenset[RecordingKey] = frozenset()
+    ) -> Matched | Refused: ...
 
     async def close(self) -> None: ...
 
@@ -403,6 +419,14 @@ class Grace:
 
 
 @dataclass(eq=False)
+class Refill:
+    """A background call for more recordings for ``program``; its task is adapter-owned."""
+
+    program: Program
+    task: asyncio.Task[None]
+
+
+@dataclass(eq=False)
 class GuildPlayer:
     guild_id: int
     voice: disnake.VoiceClient
@@ -424,6 +448,8 @@ class GuildPlayer:
     skip_requested: bool = False
     # At most one listener grace period per server.
     grace: Grace | None = None
+    # At most one refill per server, for its desired program.
+    refill: Refill | None = None
     cooldown: Cooldown = field(default_factory=Cooldown)
     # The claim of a request whose track has not been offered to the callback yet.
     waiting_claim: Claim | None = None
@@ -446,7 +472,7 @@ class Adapter:
         self._producer = producer
         self._settings = settings
         self._pool = pool
-        self._sleep = sleep  # the grace timer's clock; tests inject a controlled one
+        self._sleep = sleep  # the grace and refill timers' clock; tests inject one
         self._clock = clock  # the cooldown's clock, injected the same way
         self.players: dict[int, GuildPlayer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
@@ -584,8 +610,9 @@ class Adapter:
                 if player.silenced != silenced:
                     return STOPPED_WHILE_MATCHING
                 station = player.station
-                # The request is interpreted once: later tracks come from this ranked plan.
-                program = station.request(request, tuple(c.recording for c in plan.ranked)).program
+                # Later tracks come from this list, and from more of the same when it runs out.
+                program = station.request(text, tuple(c.recording for c in plan.ranked)).program
+                self._cancel_refill(player)  # the replaced program's; `_resume` covers a failure
                 player.attempts = 0
                 player.skip_requested = False
                 player.waiting_claim = claim
@@ -612,6 +639,7 @@ class Adapter:
         finally:
             if not accepted:
                 self._give_back(player, claim)
+                self._resume(player)  # a failed replacement hands the place back to the program
 
     def _claim(self, player: GuildPlayer) -> Claim | str:
         """Take the server's cooldown for one request, or return the reply refusing it."""
@@ -679,6 +707,11 @@ class Adapter:
             log.warning("audio producer failed: %s", type(exc).__name__)
             bank.cancel()  # the voice callback then reports the failure
 
+    def _resume(self, player: GuildPlayer) -> None:
+        """Keep the desired program going if it has no next track in progress."""
+        if not self.stopping.is_set() and self.matcher is not None and player.station.needs_next:
+            self._schedule_continue(player)
+
     def _schedule_continue(self, player: GuildPlayer) -> asyncio.Task[None]:
         """Start (once at a time per program) preparing the desired program's next track.
 
@@ -703,7 +736,9 @@ class Adapter:
         such. Without a free bank it waits, woken by capacity changes rather than
         polling: through its program's audible track, whose end frees that bank,
         then at most ``CAPACITY_WAIT_SECONDS``. Exhaustion of either bound ends the
-        program after the heard track instead of repeating a recording.
+        program after the heard track instead of repeating a recording. With nothing
+        left on its list it starts a refill and returns at once, whatever the capacity,
+        so a `/skip` waiting on this task never waits on the model.
         """
         deadline: float | None = None  # set once the program has nothing audible
         try:
@@ -718,6 +753,9 @@ class Adapter:
                         or not station.needs_next
                     ):
                         return  # replaced, stopped or already continued: this work is stale
+                    if select_next(station.plan(program), station.history(program)) is None:
+                        self._start_refill(player, program)
+                        return
                     if not self._bank_free(player):
                         if not self._audible(player):
                             now = time.monotonic()
@@ -736,10 +774,10 @@ class Adapter:
                             return
                         station.continue_program(program)
                         for _ in range(MAX_SELECTION_ATTEMPTS):
-                            recording = select_next(program.plan, station.history(program))
-                            if recording is None:
-                                station.exhausted(program, EndReason.EXHAUSTED)
-                                log.info("program has no further recording in its plan")
+                            recording = select_next(station.plan(program), station.history(program))
+                            if recording is None:  # credits rejected the rest of the list
+                                station.preparation_failed(program)
+                                self._start_refill(player, program)
                                 return
                             if station.prepared(program, recording) is Outcome.ACCEPTED:
                                 break
@@ -760,6 +798,76 @@ class Adapter:
                 self._give_back(player, player.waiting_claim)
             self._capacity_changed()  # a bank this program yielded may now go elsewhere
             self._review_listeners(player)  # exhaustion can end the program
+
+    def _start_refill(self, player: GuildPlayer, program: Program) -> None:
+        """Ask for more recordings for ``program``, unless that is already under way."""
+        refill = player.refill
+        if refill is not None and refill.program == program and not refill.task.done():
+            return
+        self._cancel_refill(player)
+        task = self._own(asyncio.create_task(self._refill(player, program)))
+        player.refill = Refill(program, task)
+
+    @staticmethod
+    def _cancel_refill(player: GuildPlayer) -> None:
+        refill, player.refill = player.refill, None
+        if refill is not None:
+            refill.task.cancel()
+
+    async def _refill(self, player: GuildPlayer, program: Program) -> None:
+        """Get more recordings for ``program``, whose list has run out (ADR 0011).
+
+        This runs beside the music and takes the player lock only to settle a result,
+        which is discarded if the program is no longer desired. A failed call, a refusal
+        and a list with nothing new each use up one of ``MAX_REFILL_ATTEMPTS``, with a
+        wait between them, so none can loop. Once they are used up the program ends after
+        its heard track, or at once if nothing is heard. A refill isn't a member action,
+        so it takes no change cooldown.
+        """
+        assert self.matcher is not None
+        station = player.station
+        try:
+            for attempt in range(1, MAX_REFILL_ATTEMPTS + 1):
+                if self.stopping.is_set() or station.desired != program:
+                    return
+                recordings: tuple[Recording, ...] = ()
+                nothing_left = False
+                try:
+                    plan = await self.matcher.match(program.request, station.history(program))
+                except MatchFailed as exc:
+                    nothing_left = exc.kind == NO_RECORDINGS
+                else:
+                    if isinstance(plan, Matched):
+                        recordings = tuple(c.recording for c in plan.ranked)
+                async with player.lock:
+                    if self.stopping.is_set() or station.desired != program:
+                        return  # replaced or stopped meanwhile: the result changes nothing
+                    if nothing_left:
+                        log.info("program has no recording left in the catalog")
+                        self._end_after_heard(player, program, EndReason.EXHAUSTED)
+                        return
+                    if station.refilled(program, recordings) is Outcome.ACCEPTED:
+                        log.info(
+                            "program refilled: recordings=%d attempt=%d",
+                            len(station.plan(program)),
+                            attempt,
+                        )
+                        self._schedule_continue(player)
+                        return
+                    log.warning("program refill failed: attempt=%d", attempt)
+                    if attempt == MAX_REFILL_ATTEMPTS:
+                        self._end_after_heard(player, program, EndReason.REFILL_FAILED)
+                        return
+                await self._sleep(REFILL_RETRY_SECONDS)
+        finally:
+            self._capacity_changed()  # a bank this program yielded may now go elsewhere
+            self._review_listeners(player)  # the program may have ended
+
+    @staticmethod
+    def _end_after_heard(player: GuildPlayer, program: Program, reason: EndReason) -> None:
+        player.station.exhausted(program, reason)
+        if player.station.desired is None:  # nothing was heard, so no drain will report it
+            log.info("program ended: reason=%s", reason.value)
 
     @staticmethod
     def _audible(player: GuildPlayer) -> bool:
@@ -890,6 +998,7 @@ class Adapter:
     ) -> set[asyncio.Task[None]]:
         """End the program, remove all audio from the callback and start retirements."""
         self._cancel_grace(player)
+        self._cancel_refill(player)
         player.silenced += 1
         player.station.stop(ended)
         player.skip_requested = False
@@ -981,7 +1090,9 @@ class Adapter:
         if player is None:
             return
         if user_id == player.voice.user.id and channel is None:
-            self._cancel_grace(player)  # voice was lost; settled at the next `/join` or `/leave`
+            # Voice was lost; settled at the next `/join` or `/leave`.
+            self._cancel_grace(player)
+            self._cancel_refill(player)
             return
         self._review_listeners(player)
 
@@ -1138,13 +1249,14 @@ class Adapter:
         self._review_listeners(player)
         if kind in ("switched", "failed") and player.station.ready:
             self._own(asyncio.create_task(self._start_locked(player)))
-        elif self.matcher is not None and player.station.needs_next:
-            self._schedule_continue(player)
+        else:
+            self._resume(player)
 
     async def _start_locked(self, player: GuildPlayer) -> None:
         async with player.lock:
             if not await self._start(player):
                 self._give_back(player, player.waiting_claim)
+                self._resume(player)  # a failed replacement hands the place back to the program
             self._review_listeners(player)  # a failed start can revert the desired program
 
     # Ownership.
