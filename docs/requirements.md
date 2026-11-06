@@ -48,7 +48,7 @@ Do not assume Pixabay's standalone-use restrictions or video-focused NCS/other c
 
 Keep a stable source identity, recording identity, title/creators, provenance, license/notices, permitted retrieval/storage policy, availability, duration/format and curation state. Keep authored descriptors and their confidence/provenance distinguishable from source tags. Deduplicate imported recordings where identifiable.
 
-[Gemini ranks every admitted recording](decisions/0006-gemini-play-matching.md) against the request, using everything known about each: title, creators, duration, descriptors and retained source details such as tags, tempo and album. Require complete recordings; reject previews, excerpts, stems, loops and sample packs rather than padding them. Duration alone never establishes completeness. Explicit duration, exact identity and exclusion wording informs the ranking and isn't a hard filter.
+[Gemini ranks the admitted recordings](decisions/0006-gemini-play-matching.md) a program hasn't played against the request, [a few at a time](decisions/0011-program-refill.md), using everything known about each: title, creators, duration, descriptors and retained source details such as tags, tempo and album. Require complete recordings; reject previews, excerpts, stems, loops and sample packs rather than padding them. Duration alone never establishes completeness. Explicit duration, exact identity and exclusion wording informs the ranking and isn't a hard filter.
 
 Preserve source-bound immutable credits and provenance. Provider/model metadata cannot approve itself: a separate trusted review binds credit completeness and access readiness to the exact metadata digest. Source details are matching hints outside that digest and cannot grant admission. Metadata fit is not an enjoyment or fidelity score. Recent-history diversity and exploration belong to a later continuous-station slice. A skip is weak evidence of dislike, and favorite/dislike commands remain a later enhancement.
 
@@ -95,7 +95,7 @@ Each server has one connected player and at most one desired program. There is n
 
 A failed or cancelled replacement preserves current playable audio where possible. Rapid requests settle deterministically. Stale callbacks cannot replace the newer request's state, release its cooldown or announce its credits.
 
-Generated programs last the configured duration, restarting that duration on a new accepted generated request. Catalog programs continue until stopped, replaced, voice is lost or listener grace expires.
+Generated programs last the configured duration, restarting that duration on a new accepted generated request. Catalog programs continue until stopped, replaced, voice is lost, listener grace expires, every admitted recording has been played or tried, or Gemini doesn't supply more within [a finite bound](decisions/0011-program-refill.md).
 
 End the program 60 seconds after the last listener leaves. A listener is neither a bot nor deafened. Cancel the grace period if a listener returns. Stay connected and silent after the program ends.
 
@@ -107,13 +107,13 @@ Bound catalog selection attempts, retries, prefetched work and no-repeat history
 
 ## Interpretation and selection
 
-Use Gemini to turn a request into a validated mode-specific plan: a ranked list of admitted recordings for catalog mode. One request should normally require one interpretation call, not an agent conversation or chain of speculative calls. Validate model output before it changes state or causes provider activity.
+Use Gemini to turn a request into a validated mode-specific plan: a ranked list of admitted recordings for catalog mode. One request starts with one interpretation call, not an agent conversation or chain of speculative calls. A catalog program makes [a further bounded call](decisions/0011-program-refill.md) only when the last recording on its list starts. Validate model output before it changes state or causes provider activity.
 
 Generated plans include a short title, one to four weighted styles and supported optional tempo, key, density, brightness, drum and wordless-vocal controls. Use relative context only within the same mode; switching modes starts a fresh interpretation and explains that behavior where needed.
 
 Requests unrelated to music, prompt-injection attempts and disallowed requests leave current music unchanged. Do not hand model output arbitrary tool access.
 
-On generated interpretation failure, use the original musical request as a simple generation direction and disclose the fallback. Catalog interpretation failure preserves the current program and explains the problem; do not send unvalidated raw text into a provider-specific search path.
+On generated interpretation failure, use the original musical request as a simple generation direction and disclose the fallback. Catalog interpretation failure preserves the current program and explains the problem; do not send unvalidated raw text into a provider-specific search path. When a later call for the same program fails, the current recording finishes and, after bounded retries, the program ends with an explanation.
 
 Generated requests for an artist's style should be translated into descriptive musical characteristics. Existing-recording search follows the curated catalog policy above; do not prohibit legitimate artist/title lookup by reusing generative-music restrictions.
 
