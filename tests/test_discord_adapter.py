@@ -48,7 +48,15 @@ from sobafm.discord_adapter import (
     create_bot,
     intents,
 )
-from sobafm.gemini_match import NO_RECORDINGS, Fit, Matched, MatchFailed, Ranked, Refused
+from sobafm.gemini_match import (
+    MAX_RANKED,
+    NO_RECORDINGS,
+    Fit,
+    Matched,
+    MatchFailed,
+    Ranked,
+    Refused,
+)
 from sobafm.pcm import FRAME_BYTES, READY_BYTES, PcmBank, PcmBankPool
 from sobafm.settings import ServerSettings, SettingsError
 
@@ -75,24 +83,36 @@ def recording(identifier: str, notices: tuple[str, ...] = ("Synthetic notice.",)
 
 
 class FakeMatcher:
-    """Ranks its recordings in order unless a test sets another outcome; no provider."""
+    """Ranks its unplayed recordings in order unless a test sets another outcome; no provider.
+
+    Like the real matcher, it makes no call when none are left. ``requests`` and ``played``
+    record the calls it would have made.
+    """
 
     def __init__(self, *recordings: Recording, fit: Fit = Fit.CLOSE) -> None:
         self.recordings = recordings
         self.fit = fit
-        self.outcome: Refused | MatchFailed | None = None
+        self.outcome: Matched | Refused | MatchFailed | None = None
         self.gate: asyncio.Event | None = None
         self.requests: list[str] = []
+        self.played: list[frozenset[RecordingKey]] = []
+        self.batch = MAX_RANKED
 
-    async def match(self, request: str) -> Matched | Refused:
+    async def match(
+        self, request: str, played: frozenset[RecordingKey] = frozenset()
+    ) -> Matched | Refused:
+        remaining = [r for r in self.recordings if r.key not in played]
+        if not remaining:
+            raise MatchFailed(NO_RECORDINGS)
         self.requests.append(request)
+        self.played.append(played)
         if self.gate is not None:
             await self.gate.wait()
         if isinstance(self.outcome, MatchFailed):
             raise self.outcome
         if self.outcome is not None:
             return self.outcome
-        return Matched(tuple(Ranked(r, self.fit) for r in self.recordings))
+        return Matched(tuple(Ranked(r, self.fit) for r in remaining[: self.batch]))
 
     async def close(self) -> None:
         pass
@@ -781,8 +801,8 @@ async def test_now_privately_shows_complete_credits_to_ordinary_listeners() -> N
 
     listener = await run(h.adapter.now, inter(None))  # not in voice, not a manager
     assert listener.texts()[0] == (
-        "Now heard (full credits follow). This is the program's last recording: no "
-        "recording chosen for its request is left to try. Use `/play` to start a new program."
+        "Now heard (full credits follow). This is the program's last recording: every "
+        "recording in the catalog has been played or tried. Use `/play` to start a new program."
     )  # the one-recording catalog has nothing to continue with
     pages = listener.sent[1:]
     assert [p.text for p in pages] == [heard.credits.page(n).text for n in range(1, len(pages) + 1)]
@@ -944,7 +964,7 @@ def test_played_tracks_are_logged_without_request_text(caplog: pytest.LogCapture
     assert [*lines[:5], retired, *lines[6:]] == [
         "voice connected",
         "heard source changed: recording=jamendo:a credit_snapshot=credit-a",
-        "program has no further recording in its plan",
+        "program has no recording left in the catalog",
         "heard source cleared",
         "program ended: reason=exhausted",
         "track retired: recording=jamendo:a frames_handed_to_voice=2 underruns=0 "
@@ -1449,7 +1469,7 @@ async def test_a_program_continues_successively_with_heard_credits_at_each_bound
 
     assert [source.read(), source.read(), source.read()] == [tag("b"), tag("c"), tag("c")]
     await until(lambda: heard_id(h) == "c")
-    assert matcher_of(h).requests == ["piano"]  # the request was interpreted exactly once
+    assert matcher_of(h).requests == ["piano"]  # one call: nothing is left to send
     station = h.adapter.players[1].station
     assert station.desired is not None and station.desired.request == "piano"
     assert station.history(station.desired) == {RecordingKey(Source.JAMENDO, i) for i in "abc"}
@@ -1500,8 +1520,8 @@ async def test_exhaustion_ends_the_program_without_repeating_or_looping() -> Non
     assert station.desired is None and station.heard is None and h.pool.leased == 0
     assert station.ended is discord_adapter.EndReason.EXHAUSTED
     assert await now_texts(h) == [
-        "Nothing is audible. The last program ended: no recording chosen for its "
-        "request is left to try. Use `/play` to start a new one."
+        "Nothing is audible. The last program ended: every recording in the catalog "
+        "has been played or tried. Use `/play` to start a new one."
     ]
     assert source.read() == b""
 
@@ -1588,7 +1608,7 @@ async def test_skip_failure_keeps_the_current_audio() -> None:
     source2 = await start_program(h2)
     await join_retirements(h2)
     text = await skip(h2)
-    assert text.startswith("Nothing follows: no recording chosen") and "continues" in text
+    assert text.startswith("Nothing follows: every recording") and "continues" in text
     assert source2.read() == tag("a")
     assert await h.adapter.shutdown() is True and await h2.adapter.shutdown() is True
 
