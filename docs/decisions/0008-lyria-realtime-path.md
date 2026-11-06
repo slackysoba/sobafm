@@ -95,7 +95,7 @@ Measured once on TLS loopback, for development and not as L2: the real client's 
 - If real messages exceed 524,287 bytes, every session fails `oversized` at once. That would be visible on the first live message, and it would need a new mapping with a measured alternative rather than a larger limit here.
 - Renewal uses two concurrent sessions for a few seconds every nine minutes. If the service allows only one, renewal fails, playback continues, and the eventual server close leaves a gap.
 - A second server's generated program can't renew smoothly while both banks are held, and the gap at its renewal is about six seconds or more.
-- The stream exposes `read_frame` and `ready_now` but isn't a `PcmBank`. Connecting it means `StationSource` and `Track` must accept that shape, with the stream's `finish` in place of the producer-and-bank retirement. That belongs to the station work and needs no change to `pcm.py`.
+- The stream exposes `read_frame` and `ready_now` but isn't a `PcmBank`. Connecting it means `StationSource` and `Track` must accept that shape, with the stream's `finish` in place of the producer-and-bank retirement. That belongs to the station work and needs no change to `pcm.py`. `freestyle_plan.GeneratedPlan` already maps field for field onto `MusicRequest`, which stays free of plan types just as the plan stays free of transport types.
 
 ## What a fake can't establish
 
