@@ -15,5 +15,6 @@ build/
 *.db
 *.db-*
 data/
+/catalog/
 .local/
 .claude/worktrees/
