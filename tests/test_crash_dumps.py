@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import resource
 import signal
 import subprocess
 import sys
@@ -21,6 +22,7 @@ import pytest
 from sobafm import __main__ as app
 from sobafm import crash_dumps
 from sobafm.crash_dumps import PR_GET_DUMPABLE, PR_SET_DUMPABLE, CrashDumpError, disable_crash_dumps
+from sobafm.decode import MPG123_LIMITS
 
 CHILD = Path(__file__).with_name("crash_dump_child.py")
 TOKEN = "placeholder-token-value"  # pragma: allowlist secret - test placeholder
@@ -187,6 +189,15 @@ def test_a_real_crash_after_the_controls_leaves_no_dump(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
+def test_the_reviewed_decoder_limits_are_unchanged() -> None:
+    assert MPG123_LIMITS == (
+        (resource.RLIMIT_CORE, 0),
+        (resource.RLIMIT_STACK, 524_288),
+        (resource.RLIMIT_DATA, 12_000_000),
+        (resource.RLIMIT_AS, 12_524_288),
+    )
+
+
 def test_a_decoder_launches_normally_and_inherits_only_the_filter() -> None:
     facts = run_child("decoder")
     assert facts["uid"] != 0
@@ -195,10 +206,18 @@ def test_a_decoder_launches_normally_and_inherits_only_the_filter() -> None:
     assert facts["released"] is True
     assert facts["parent_dumpable"] == 0
     assert facts["decoder_filter"] == 0
-    # Exec resets the attribute: a non-dumpable decoder's files would be root-owned.
-    assert facts["decoder_owner"] == facts["uid"]
-    # The parent's prlimit reached it, soft and hard.
-    assert cast(list[str], facts["decoder_core_limit"])[-3:-1] == ["0", "0"]
+    # Exec resets the attribute, so only the filter reaches the decoder.
+    assert facts["decoder_dumpable"] is True
+    # The parent's prlimit still reaches it, soft and hard.
+    limits = cast(dict[str, list[str]], facts["decoder_limits"])
+    assert limits["Max core file size"] == ["0", "0"]
+    assert limits["Max data size"] == ["12000000", "12000000"]
+    assert limits["Max address space"] == ["12524288", "12524288"]
+    # The stack limit can't be asserted exactly yet, with or without these controls. A prlimit
+    # that lands while the child is still in execve is overwritten: the kernel's finalize_exec
+    # restores the value it pinned at the start of exec. Tighten this when that race is fixed.
+    parent = cast(dict[str, list[str]], facts["parent_limits"])
+    assert limits["Max stack size"] in (["524288", "524288"], parent["Max stack size"])
 
 
 def test_running_the_program_applies_the_controls_and_reaches_the_limit_gate() -> None:

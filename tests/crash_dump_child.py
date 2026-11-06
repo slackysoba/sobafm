@@ -22,24 +22,38 @@ from pathlib import Path
 
 from sobafm import crash_dumps
 from sobafm.crash_dumps import CrashDumpError, disable_crash_dumps
-from sobafm.decode import DecodeInput, DecodeProducer, DecoderCommand
+from sobafm.decode import MPG123_LIMITS, DecodeInput, DecodeProducer, DecoderCommand
 from sobafm.pcm import FRAME_BYTES, PcmBankPool
 
 NOBODY = 65534
 SELF_FILTER = Path("/proc/self/coredump_filter")
 CGROUP_CONTROLLERS = Path("/sys/fs/cgroup/cgroup.controllers")
-# Reads its facts only after end of input, so the parent's limits are already applied.
+# Shell builtins only, because an external tool may not fit the decoder's address-space
+# limit. So these are the facts of the decoder's own process. It records them only after
+# end of input, when the parent's limits are already applied. A non-dumpable process's
+# /proc files would be root-owned, so owning its own shows it is dumpable.
 DECODER = """\
-cat > /dev/null
-cat /proc/self/coredump_filter > "$FACTS/filter"
-stat -c %u /proc/self/coredump_filter > "$FACTS/owner"
-cat /proc/self/limits > "$FACTS/limits"
-head -c {bytes} /dev/zero
+while read -r _; do :; done
+read -r value < /proc/$$/coredump_filter
+echo "$value" > "$FACTS/filter"
+while read -r line; do echo "$line"; done < /proc/$$/limits > "$FACTS/limits"
+if [ -O "/proc/$$/coredump_filter" ]; then echo yes > "$FACTS/dumpable"; fi
+i=0
+while [ "$i" -lt {bytes} ]; do printf '\\000'; i=$((i + 1)); done
 """
+# The width of the name column in /proc/pid/limits.
+LIMIT_NAME_WIDTH = 25
 
 
 def report(**facts: object) -> None:
     print(json.dumps(facts), flush=True)
+
+
+def limit_rows(path: Path) -> dict[str, list[str]]:
+    return {
+        line[:LIMIT_NAME_WIDTH].strip(): line[LIMIT_NAME_WIDTH:].split()[:2]
+        for line in path.read_text().splitlines()
+    }
 
 
 def give_up_root() -> None:
@@ -105,7 +119,7 @@ def crash(directory: str) -> None:
 
 
 def decoder() -> None:
-    """Launch a stand-in decoder the way the service does, from a protected process."""
+    """Launch a stand-in under the real limits, the way the service does, once protected."""
     give_up_root()
     disable_crash_dumps()
     facts = Path(tempfile.mkdtemp())
@@ -118,14 +132,13 @@ def decoder() -> None:
             DecodeInput(source, len(payload), hashlib.sha256(payload).hexdigest(), pcm_bytes),
             command=DecoderCommand(
                 argv=("/bin/sh", "-c", DECODER.format(bytes=pcm_bytes)),
-                limits=((resource.RLIMIT_CORE, 0),),
-                env={"PATH": "/usr/bin:/bin", "FACTS": str(facts)},
+                limits=MPG123_LIMITS,
+                env={"FACTS": str(facts)},
             ),
             pool=PcmBankPool(),
         )
         producer.start()
         result = producer.finish()
-        limits = (facts / "limits").read_text().splitlines()
         report(
             uid=os.geteuid(),
             failure=result.failure,
@@ -135,8 +148,9 @@ def decoder() -> None:
             decoder_complete=result.decoder_complete,
             released=producer.release(),
             decoder_filter=int((facts / "filter").read_text(), 16),
-            decoder_owner=int((facts / "owner").read_text()),
-            decoder_core_limit=[line for line in limits if line.startswith("Max core")][0].split(),
+            decoder_dumpable=(facts / "dumpable").exists(),
+            decoder_limits=limit_rows(facts / "limits"),
+            parent_limits=limit_rows(Path("/proc/self/limits")),
             parent_dumpable=crash_dumps.prctl(crash_dumps.PR_GET_DUMPABLE),
         )
     finally:
