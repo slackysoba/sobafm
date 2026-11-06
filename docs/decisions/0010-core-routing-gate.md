@@ -115,7 +115,7 @@ Each option keeps the 98,979,840 controlled bytes and the cleanup deadline, and 
 
 The parent control is separate from the host rule. It can be added to any option, and it is going ahead on its own as [#138](https://github.com/slackysoba/sobafm/issues/138) under every option. "Not covered" describes each option as drawn, without #138.
 
-#138 also reaches the decoder. `PR_SET_DUMPABLE` doesn't, because exec resets it, but the filter #138 writes first [survives fork and exec](https://man7.org/linux/man-pages/man5/core.5.html). So once #138 lands, a decoder crash on a piped host sends no memory mappings under any option, unless the decoder's launch restores the filter, which nothing here proposes.
+That issue also reaches the decoder. `PR_SET_DUMPABLE` doesn't, because exec resets it, but the filter #138 writes first [survives fork and exec](https://man7.org/linux/man-pages/man5/core.5.html). So once #138 lands, a decoder crash on a piped host sends no memory mappings under any option, unless the decoder's launch restores the filter, which nothing here proposes.
 
 ### Option 1: keep exact `core`
 
@@ -181,7 +181,7 @@ If the native cases show the write refused in the container, or a handler wait t
 
 ## Consequences if accepted
 
-- #138 delivers the code for both processes, whatever the answer. A later issue removes the host rule from the records and runs the native cases. This record changes nothing itself.
+- The code for both processes comes from #138, whatever the answer. A later issue removes the host rule from the records and runs the native cases. This record changes nothing itself.
 - ADR 0004's gate bullet and its "core-routing premises" are superseded by a new accepted record, not edited. ADR 0004's other qualification premises stay.
 - The arm64 preflight and `Linux checks (arm64)` stay unchanged. If #60 resumes, a "reviewed change to the rule" is already one of its listed routes, and this would inform that review without deciding it.
 - Existing amd64 results stay bound to their original cases. They don't depend on the route, because none involved a core-dump signal.
