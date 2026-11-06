@@ -84,7 +84,7 @@ docker compose up --build -d
 docker compose logs -f
 ```
 
-The service runs with Docker's default seccomp profile, a read-only root, all capabilities dropped, no new privileges, an init process, two CPUs and the [ADR 0004](decisions/0004-amd64-whole-service-adoption.md) limits: memory and memory-plus-swap 90,177,536 bytes and 64 tasks. Logs go to stdout and are kept in at most two 1 MB files. The restart policy is `on-failure:5`: Docker restarts a container that exits nonzero at most five times, so a refused start (exit 2, 3 or 4) or a failed Discord login does not retry indefinitely. A clean shutdown (exit 0) is not restarted. After fixing the cause, start it again with `docker compose up -d`.
+The service runs with Docker's default seccomp profile, a read-only root, all capabilities dropped, no new privileges, an init process, two CPUs and the [ADR 0004](decisions/0004-amd64-whole-service-adoption.md) limits: memory and memory-plus-swap 90,177,536 bytes and 64 tasks. Logs go to stdout and are kept in at most two 1 MB files. The restart policy is `on-failure:5`: Docker restarts a container that exits nonzero at most five times, so a refused start (exit 2, 3, 4 or 5) or a failed Discord login does not retry indefinitely. A clean shutdown (exit 0) is not restarted. After fixing the cause, start it again with `docker compose up -d`.
 
 Before reading any configuration or connecting to Discord, SobaFM reads its own cgroup's `memory.max`, `memory.swap.max` and `pids.max` and refuses to start unless they are exactly 90177536, 0 and 64. Do not change those limits in `compose.yaml`: the app will refuse to run, and no other values are accepted.
 
@@ -203,6 +203,7 @@ Then start the service as usual and check the `catalog source:` lines in the log
 
 | Exit | Log line | Meaning and fix |
 | --- | --- | --- |
+| 5 | `crash dump controls refused: <what>` | SobaFM couldn't keep its memory out of crash dumps, so it stopped before loading its dependencies or reading any configuration. This shouldn't happen under the unchanged `compose.yaml`. Look for a custom seccomp or AppArmor profile, or a changed `/proc` mount. See [Crash dumps](#crash-dumps). |
 | 4 | `settings database refused: <kind>` | The database couldn't be opened, read and written, so SobaFM stopped rather than lose settings silently, before connecting to Discord. It leaves a file it refuses unchanged. See the kinds below. |
 | 3 | `container limits refused: <file> must be <value>` | The cgroup limits differ from ADR 0004, or cgroup v2 is unavailable. Use the unchanged `compose.yaml` on a cgroup v2 host. |
 | 2 | `configuration error: ...` | A missing token or database location, an incomplete catalog/reviews/media/key set, or a file that is unreadable, too large or invalid, including a catalog too large to send for matching. Messages name variables, never values. |
@@ -233,6 +234,16 @@ During playback:
 - `voice connection ended: reason=disconnected`: the bot was kicked or removed, or its connection couldn't be recovered. The program ended and the channel is forgotten; use `/join` again.
 - `voice connection failed: <type>`: a `/join` couldn't connect. The reply asks the manager to check that the bot can connect and speak there.
 - Discord shows "The application did not respond": Discord rejected the bot's acknowledgement, usually because it arrived after the three-second window. `/stop` and `/leave` still take effect (check with `/now`) and log `interaction acknowledgement failed: command=<name> age_seconds=<seconds> status=<http> code=<discord>`, where `code=10062` is Unknown interaction. If the acknowledgement request itself fails, for example on a network error or timeout, the line ends with `error=<exception type>` instead of the status and code, and the commands still take effect. The age counts from the interaction's creation, so it includes network and Discord delay as well as any delay in the bot. A rejected `/join` or `/play` starts nothing; repeat it.
+
+### Crash dumps
+
+SobaFM keeps its memory out of crash dumps, because the main process holds your Discord token, your Gemini key and audio. As its first step, before loading its dependencies, it makes itself non-dumpable. A crash of the main process then writes nothing to `/data` and sends nothing to a crash handler on the host, whatever the host's `kernel.core_pattern` says. No host setting is needed or changed.
+
+The cost is that a crash of the main process **leaves no dump to debug**, only the container's exit status and the logs. There is no setting to turn this off. Tools that attach to the process, such as a debugger, are refused too.
+
+The decoder is still stock mpg123 with its limits unchanged, and it isn't made non-dumpable. It inherits only a filter that keeps memory out of any dump it produces. Its core limit of zero means a host that writes dumps to files gets none. On a host that pipes dumps to a handler, such as apport or systemd-coredump, a decoder crash still starts the handler and can leave a small record there, holding registers and small notes such as mapped file names, but no memory contents. Whether SobaFM should require anything of the host's setting is an open question on [#133](https://github.com/slackysoba/sobafm/issues/133).
+
+The init process and the moment before Python reaches SobaFM's first line aren't covered.
 
 ## Memory scope and exclusions
 
