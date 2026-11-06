@@ -1039,6 +1039,8 @@ class ScriptedWebSocket:
     def __init__(self) -> None:
         self.closes: asyncio.Queue[int] = asyncio.Queue()
         self.closed_with: int | None = None
+        self._ready = asyncio.Event()
+        self._ready.set()  # an established session can resume after close code 4015
 
     async def poll_event(self) -> None:
         code = await self.closes.get() if self.closed_with is None else self.closed_with
@@ -2045,5 +2047,96 @@ def test_the_wait_for_a_bank_starts_again_after_a_reconnect(
         await until_settled(lambda: next_id(h) == "b")
         assert tagged.started == ["a", "b"]
         await wire_finish(h, wire)
+
+    asyncio.run(scenario())
+
+
+def test_a_4015_resume_that_never_answers_is_bounded(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Heartbeats can keep the socket alive without a RESUMED event indefinitely."""
+    real_timeout = asyncio.timeout
+
+    async def scenario() -> None:
+        h, guild, _, _ = wire_harness()
+        voice = await wire_program(h)
+        entered = asyncio.Event()
+        resumes: list[bool] = []
+        bounds: list[float | None] = []
+
+        async def unanswered(self: disnake.VoiceClient, *, resume: bool = False) -> None:
+            resumes.append(resume)
+            entered.set()
+            await asyncio.Event().wait()
+
+        def expire_on_wait(delay: float | None) -> asyncio.Timeout:
+            bounds.append(delay)
+            return real_timeout(0)  # expires on suspension, without a wall-clock race
+
+        monkeypatch.setattr(disnake.VoiceClient, "connect_websocket", unanswered)
+        monkeypatch.setattr(asyncio, "timeout", expire_on_wait)
+        wire.closes.put_nowait(4015)
+        await asyncio.wait_for(entered.wait(), 1)
+        runner = cast(asyncio.Task[None], voice._runner)  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+        done, _ = await asyncio.wait({runner}, timeout=1)
+        try:
+            assert resumes[0] is True  # the real library took its direct resume path
+            assert runner in done, "the resume left the voice polling task hung"
+            assert bounds and all(b == discord_adapter.CONNECT_ATTEMPT_SECONDS for b in bounds)
+            # The expired resume falls back to reconnect, which also expires and ends voice.
+            await join_retirements(h)
+            assert h.adapter.players == {} and remembered(h) is None
+            assert guild.state.clients == {} and h.pool.leased == 0
+            assert not voice.is_connected() and h.adapter.cleanup_failures == 0
+        finally:
+            await h.adapter.shutdown()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("command", ["join", "leave"])
+def test_an_explicit_disconnect_wakes_a_continuation_waiting_for_voice(
+    command: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        h, tagged = program_harness("a", "b")
+        await h.join()
+        player = player_of(h)
+        # A silent desired program with a next recording, as after a refill or drain.
+        station = player.station
+        program = station.request("piano", (recording("a"), recording("b"))).program
+        station.prepared(program, recording("a"))
+        audio = station.claim_ready()
+        assert audio is not None
+        station.switched(audio)
+        station.drained(audio)
+        assert station.needs_next
+        cast(FakeVoice, player.voice).connected = False
+        parked = asyncio.Event()
+        waiters: list[asyncio.Future[None]] = []
+
+        async def wait_for_signal(waiter: asyncio.Future[None], timeout: float) -> None:
+            waiters.append(waiter)
+            parked.set()
+            await waiter  # no polling timeout can conceal a missing wakeup
+
+        monkeypatch.setattr(h.adapter, "_await_capacity", wait_for_signal)
+        h.adapter._schedule_continue(player)  # pyright: ignore[reportPrivateUsage]
+        await asyncio.wait_for(parked.wait(), 1)
+        continuation = player.continuation
+        assert continuation is not None
+        action = h.adapter.join if command == "join" else h.adapter.leave
+        try:
+            await run(action, inter(h.room, manager=True))
+            assert waiters[0].done(), "the old continuation was not woken"
+            await asyncio.wait_for(continuation, 1)
+            assert player.station.desired is None and player.closing
+            assert tagged.started == [] and player.attempts == 0 and h.pool.leased == 0
+            assert h.adapter.players.get(GUILD) is not player
+        finally:
+            for waiter in waiters:
+                if not waiter.done():
+                    waiter.set_result(None)
+            await h.adapter.shutdown()
 
     asyncio.run(scenario())

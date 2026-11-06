@@ -531,8 +531,10 @@ class WatchedVoiceClient(disnake.VoiceClient):
     A connection that's down also ends in one of two ways, within a bound, because a next
     track waits for it. Left alone it might never do either: UDP discovery has no timeout
     (`gateway.py` 1166), and after five failed websockets `connect` returns as if it had
-    worked (376-392), so the loop would try again for ever. So `connect` and
-    `potential_reconnect` are bounded, and a `connect` that didn't connect gives up for good.
+    worked (376-392), so the loop would try again for ever. So `connect`,
+    `potential_reconnect` and the direct 4015 websocket resume are bounded, and a `connect`
+    that didn't connect gives up for good. The library's backoff precedes each reconnect
+    attempt and can reach 1,024 seconds on a connection that keeps dropping.
 
     Lines are in disnake 2.12.2's `voice_client.py`:
     https://github.com/DisnakeDev/disnake/blob/v2.12.2/disnake/voice_client.py
@@ -590,7 +592,9 @@ class WatchedVoiceClient(disnake.VoiceClient):
             return False  # `poll_voice_ws` then ends, and that closes this client
 
     async def connect_websocket(self, *, resume: bool = False) -> None:
-        await super().connect_websocket(resume=resume)
+        # A 4015 resumes directly, outside `connect` and `potential_reconnect`.
+        async with asyncio.timeout(CONNECT_ATTEMPT_SECONDS):
+            await super().connect_websocket(resume=resume)
         self._report_ready(self)
 
     async def poll_voice_ws(self, reconnect: bool) -> None:
@@ -1033,9 +1037,9 @@ class Adapter:
                         return
                     if not player.voice.is_connected():
                         # A reconnect the library is handling, which ends within a bound in
-                        # `_voice_ready` or `_lose_voice`, and either wakes this. Nothing can
-                        # start, so this uses up no attempt or recording, and the wait for a
-                        # bank starts again afterwards.
+                        # `_voice_ready` or `_lose_voice`; an explicit `_disconnect` also
+                        # wakes this. Nothing can start, so this uses up no attempt or
+                        # recording, and the wait for a bank starts again afterwards.
                         deadline = None
                         waiter = self._capacity_waiter()
                     elif not self._bank_free(player):
@@ -1181,6 +1185,7 @@ class Adapter:
         return not self._audible(player) or not any(
             other is not player
             and not other.closing  # a connection that's ending has no claim on a bank
+            and other.voice.is_connected()  # a reconnect can't use the bank yet
             and other.station.needs_next
             and not self._audible(other)
             for other in self.players.values()
@@ -1396,6 +1401,7 @@ class Adapter:
         because `cleanup` removes by server. For the same reason this runs once per player.
         """
         player.closing = True
+        self._capacity_changed()  # `/join` and `/leave` also end a wait for this connection
         async with player.lock:
             if player.disconnected:
                 return set()
