@@ -1,5 +1,5 @@
 # SobaFM first amd64 slice. Built once locally for a decode fit; not qualified.
-# See docs/operations.md.
+# See docs/operations.md, and docs/supply-chain.md for what the image contains.
 #
 # Base: the reviewed Python 3.14 trixie-slim uv image recorded in
 # evaluations/linux_resource/decoder-startup.md, pinned by digest.
@@ -64,6 +64,7 @@ RUN set -eu; \
     mkdir -p /data; \
     chown 1000:1000 /data
 COPY --from=build /app/.venv /app/.venv
+COPY THIRD-PARTY-NOTICES.txt /app/THIRD-PARTY-NOTICES.txt
 USER 1000:1000
 WORKDIR /data
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 LANG=C.UTF-8
