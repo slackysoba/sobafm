@@ -934,3 +934,25 @@ async def test_a_connection_thats_ending_has_no_priority_for_a_bank() -> None:
     one.lock.release()
     await until(lambda: 1 not in h.adapter.players)
     assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_retry_falling_due_while_a_connection_ends_makes_no_further_call() -> None:
+    h, _, fake = one_at_a_time("a", "b")
+    await first_heard(h, fake, MatchFailed("timeout"))
+    await retry_waiting(h)  # the refill failed once and waits to try again
+    calls = len(fake.requests)
+    player = player_of(h)
+    await player.lock.acquire()  # `_silence` hasn't got the lock yet
+    h.adapter._voice_gone(1, player.voice)  # pyright: ignore[reportPrivateUsage]
+    assert player.closing
+
+    h.clock.expire()
+    refill = player.refill
+    assert refill is not None
+    await asyncio.wait({refill.task}, timeout=5)  # bounded, so a regression fails
+    assert refill.task.done() and len(fake.requests) == calls
+
+    player.lock.release()
+    await until(lambda: 1 not in h.adapter.players and h.adapter.tasks == set())
+    assert await h.adapter.shutdown() is True

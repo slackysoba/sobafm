@@ -199,6 +199,8 @@ class FakeVoice:
         return bool(self.plays) and self.connected
 
     def play(self, source: disnake.AudioSource) -> None:
+        if not self.connected:  # as `VoiceClient.play` refuses
+            raise disnake.ClientException("Not connected to voice.")
         self.plays.append(source)
 
     def stop(self) -> None:

@@ -528,6 +528,12 @@ class WatchedVoiceClient(disnake.VoiceClient):
     `disconnect` could otherwise finish last and send the gateway a stale "no channel". So
     `disconnect` runs once, `cleanup` cancels the loop, and neither acts again.
 
+    A connection that's down also ends in one of two ways, within a bound, because a next
+    track waits for it. Left alone it might never do either: UDP discovery has no timeout
+    (`gateway.py` 1166), and after five failed websockets `connect` returns as if it had
+    worked (376-392), so the loop would try again for ever. So `connect` and
+    `potential_reconnect` are bounded, and a `connect` that didn't connect gives up for good.
+
     Lines are in disnake 2.12.2's `voice_client.py`:
     https://github.com/DisnakeDev/disnake/blob/v2.12.2/disnake/voice_client.py
     """
@@ -553,11 +559,35 @@ class WatchedVoiceClient(disnake.VoiceClient):
         """Drop a frame that has nowhere to go, rather than end the player thread for good.
 
         A voice server update sets `endpoint_ip` to MISSING while still connected (line
-        310), and `sendto` would then raise until the reconnect finishes. The thread would
-        not restart until the next track. An ended client has closed its socket.
+        310) and replaces the socket, and `sendto` would then raise until the reconnect
+        finishes. The thread would not restart until the next track. An ended client has
+        closed its socket. The encode releases the GIL, so the loop can do this after the
+        check here, which the `except` covers. Any other error still surfaces.
         """
-        if not self._ended and self.endpoint_ip is not disnake.utils.MISSING:
+        if self._ended or self.endpoint_ip is disnake.utils.MISSING:
+            return
+        try:
             super().send_audio_packet(data, encode=encode)
+        except TypeError, OSError:
+            if not self._ended and self.endpoint_ip is not disnake.utils.MISSING:
+                raise
+
+    async def connect(self, *, reconnect: bool, timeout: float) -> None:
+        try:
+            async with asyncio.timeout(CONNECT_ATTEMPT_SECONDS):
+                await super().connect(reconnect=reconnect, timeout=timeout)
+            if not self.is_connected():
+                raise TimeoutError("voice websocket attempts used up")
+        except TimeoutError:
+            await self.disconnect(force=True)
+            raise
+
+    async def potential_reconnect(self) -> bool:
+        try:
+            async with asyncio.timeout(CONNECT_ATTEMPT_SECONDS):
+                return await super().potential_reconnect()
+        except TimeoutError:
+            return False  # `poll_voice_ws` then ends, and that closes this client
 
     async def connect_websocket(self, *, resume: bool = False) -> None:
         await super().connect_websocket(resume=resume)
@@ -1001,7 +1031,14 @@ class Adapter:
                     if select_next(station.plan(program), station.history(program)) is None:
                         self._start_refill(player, program)
                         return
-                    if not self._bank_free(player):
+                    if not player.voice.is_connected():
+                        # A reconnect the library is handling, which ends within a bound in
+                        # `_voice_ready` or `_lose_voice`, and either wakes this. Nothing can
+                        # start, so this uses up no attempt or recording, and the wait for a
+                        # bank starts again afterwards.
+                        deadline = None
+                        waiter = self._capacity_waiter()
+                    elif not self._bank_free(player):
                         if not self._audible(player):
                             now = time.monotonic()
                             deadline = now + timeout if deadline is None else deadline
@@ -1073,7 +1110,7 @@ class Adapter:
         station = player.station
         try:
             for attempt in range(1, MAX_REFILL_ATTEMPTS + 1):
-                if self.stopping.is_set() or station.desired != program:
+                if self.stopping.is_set() or player.closing or station.desired != program:
                     return
                 recordings: tuple[Recording, ...] = ()
                 nothing_left = False
@@ -1085,7 +1122,7 @@ class Adapter:
                     if isinstance(plan, Matched):
                         recordings = tuple(c.recording for c in plan.ranked)
                 async with player.lock:
-                    if self.stopping.is_set() or station.desired != program:
+                    if self.stopping.is_set() or player.closing or station.desired != program:
                         return  # replaced or stopped meanwhile: the result changes nothing
                     if nothing_left:
                         log.info("program has no recording left in the catalog")
@@ -1381,6 +1418,7 @@ class Adapter:
         """A connection or reconnection is up: listeners may differ, or a move may be done."""
         player = self.players.get(guild_id)
         if player is not None and player.voice is voice:
+            self._capacity_changed()  # a next track may be waiting for this connection
             self._review_listeners(player)
 
     def _voice_gone(self, guild_id: int, voice: disnake.VoiceClient) -> None:
@@ -1411,6 +1449,7 @@ class Adapter:
     def _lose_voice(self, guild_id: int, player: GuildPlayer, reason: str, *, ended: bool) -> None:
         """Start ending the program and forgetting the channel; the adapter owns the work."""
         player.closing = True
+        self._capacity_changed()  # a next track waiting for this connection stands down
         log.info("voice connection ended: reason=%s", reason)
         self._own(asyncio.create_task(self._settle_lost_voice(guild_id, player, ended=ended)))
 

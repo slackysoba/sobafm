@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import threading
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
@@ -52,16 +53,20 @@ from tests.test_discord_adapter import (
     FakeVoiceState,
     Harness,
     Producer,
+    Tagged,
     harness,
     heard_track,
     inter,
     join_retirements,
     matcher_of,
+    next_id,
     offline,
+    program_harness,
     recording,
     run,
     settings_of,
     settle,
+    tag,
 )
 
 GUILD = 1
@@ -1062,10 +1067,17 @@ class Wire:
         self.failure: Exception | None = None
         # The next websocket connection never finishes, as with a lost UDP discovery packet.
         self.hangs = False
+        # Every websocket connection is closed by the voice server as it opens.
+        self.refused = False
+        self.playing: set[int] = set()
 
     @property
     def closes(self) -> asyncio.Queue[int]:
         return self.sockets[-1].closes
+
+    def player_stopped(self, voice: disnake.VoiceClient) -> None:
+        """The player thread read the end of the stream, so the client isn't playing now."""
+        self.playing.discard(id(voice))
 
 
 @dataclass
@@ -1138,6 +1150,10 @@ def wire(monkeypatch: pytest.MonkeyPatch) -> Generator[Wire]:
         if edges.failure is not None:
             failure, edges.failure = edges.failure, None
             raise failure
+        if edges.refused:
+            raise disnake.ConnectionClosed(
+                cast(Any, SimpleNamespace(close_code=4006)), shard_id=None, code=4006
+            )
         ws = ScriptedWebSocket()
         edges.sockets.append(ws)
         self.ws = cast(Any, ws)
@@ -1145,17 +1161,24 @@ def wire(monkeypatch: pytest.MonkeyPatch) -> Generator[Wire]:
             await asyncio.Event().wait()
         self._connected.set()  # pyright: ignore[reportPrivateUsage]
 
-    played: set[int] = set()
-
     def play(self: disnake.VoiceClient, source: disnake.AudioSource) -> None:
-        played.add(id(self))
+        if not self.is_connected():  # as the real one refuses (voice_client.py line 636)
+            raise disnake.ClientException("Not connected to voice.")
+        edges.playing.add(id(self))
 
     def is_playing(self: disnake.VoiceClient) -> bool:
-        return id(self) in played
+        return id(self) in edges.playing
+
+    real_stop = disnake.VoiceClient.stop
+
+    def stop(self: disnake.VoiceClient) -> None:
+        edges.playing.discard(id(self))
+        real_stop(self)
 
     monkeypatch.setattr(disnake.VoiceClient, "connect_websocket", connect_websocket)
     monkeypatch.setattr(disnake.VoiceClient, "play", play)
     monkeypatch.setattr(disnake.VoiceClient, "is_playing", is_playing)
+    monkeypatch.setattr(disnake.VoiceClient, "stop", stop)
     monkeypatch.setattr(
         disnake.voice_client,
         "ExponentialBackoff",
@@ -1164,8 +1187,10 @@ def wire(monkeypatch: pytest.MonkeyPatch) -> Generator[Wire]:
     yield edges
 
 
-def wire_harness() -> tuple[Harness, WireGuild, WireChannel, WireChannel]:
-    h = harness()
+def wire_harness(
+    h: Harness | None = None,
+) -> tuple[Harness, WireGuild, WireChannel, WireChannel]:
+    h = h or harness()
     guild = WireGuild(GUILD)
     guild.adapter = h.adapter
     room, other = WireChannel("room", guild=guild), WireChannel("other", guild=guild)
@@ -1749,3 +1774,276 @@ async def test_a_local_limit_with_a_fake_channel_tries_once_and_keeps_it() -> No
     h, guild, channel = rejoin_harness(VocalChannel("x", failures=1_000, failure=RuntimeError))
     await rejoin(h, guild)
     assert channel.connects == 1 and remembered(h) == channel.id
+
+
+# A reconnect while the program is silent, with `play` refusing as the real one does.
+
+
+def silent_program(*identifiers: str) -> tuple[Harness, Tagged, WireGuild]:
+    """A program whose every list holds one recording of one frame, on a real voice client."""
+    h, tagged = program_harness(*identifiers, producer=Tagged(frames=1))
+    matcher_of(h).batch = 1
+    _, guild, _, _ = wire_harness(h)
+    return h, tagged, guild
+
+
+async def heard_track_ended_with_a_refill_out(h: Harness, wire: Wire) -> GuildPlayer:
+    """Join and play; the heard track ends while a refill's call waits for its answer."""
+    fake = matcher_of(h)
+    source = await h.join()
+    await h.play()
+    fake.gate = asyncio.Event()
+    await settle()
+    assert source.read() == tag("a")
+    await until_settled(lambda: len(fake.requests) == 2)
+    player = player_of(h)
+    assert source.read() == b""
+    wire.player_stopped(player.voice)
+    await until_settled(lambda: player.station.heard is None and h.pool.leased == 0)
+    return player
+
+
+def test_a_refill_answered_during_a_reconnect_waits_for_the_connection(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Long enough that only `_voice_ready` waking it can finish in the test's bound.
+    monkeypatch.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 60.0)
+
+    async def scenario() -> None:
+        h, tagged, guild = silent_program("a", "b", "c", "d")
+        player = await heard_track_ended_with_a_refill_out(h, wire)
+        voice = player.voice
+        program = player.station.desired
+        room = h.room
+
+        wire.backoff_seconds = 0.05
+        wire.closes.put_nowait(4006)
+        await until_settled(lambda: not voice.is_connected())
+
+        gate = matcher_of(h).gate
+        assert gate is not None
+        gate.set()  # the answer arrives during the gap
+        await until_settled(lambda: player.refill is None or player.refill.task.done())
+        await settle()
+        assert tagged.started == ["a"] and player.attempts == 0  # no recording was used up
+        assert player.station.desired == program and player.station.ended is None
+
+        await until_settled(lambda: voice.is_connected() and next_id(h) == "b")
+        assert tagged.started == ["a", "b"] and player.attempts == 1  # only the one that worked
+        assert player_of(h) is player and remembered(h) == room.id
+        await until_settled(lambda: "b" in tagged.banks)
+        await settle()
+        assert player.source.read() == tag("b")  # and it plays, after the reconnect
+        assert guild.state.clients[GUILD] is cast(Any, voice)
+        await wire_finish(h, wire)
+
+    asyncio.run(scenario())
+
+
+def test_a_wait_for_a_bank_that_ends_during_a_reconnect_uses_no_attempt(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 60.0)
+
+    async def scenario() -> None:
+        h, tagged, _ = silent_program("a", "b", "c", "d")
+        matcher_of(h).batch = 4  # a next track is on its list, so no refill is involved
+        source = await h.join()
+        await h.play()
+        await settle()
+        blocker = h.pool.acquire()  # the next track has to wait for a bank
+        gate = tagged.holding["a"] = asyncio.Event()  # as does the heard track's retirement
+        assert source.read() == tag("a")
+        player = player_of(h)
+        voice = player.voice
+        await until_settled(lambda: player.station.heard is not None)
+        assert source.read() == b""
+        wire.player_stopped(voice)
+        await until_settled(lambda: player.station.heard is None)
+        assert tagged.started == ["a"] and h.pool.leased == 2
+
+        wire.backoff_seconds = 0.05
+        wire.closes.put_nowait(4006)
+        await until_settled(lambda: not voice.is_connected())
+        assert blocker.release()
+        gate.set()  # a bank comes free during the gap, which wakes the wait
+        await until_settled(lambda: h.pool.leased == 0)
+        await settle()
+        assert tagged.started == ["a"] and player.attempts == 0
+
+        await until_settled(lambda: voice.is_connected() and next_id(h) == "b")
+        assert tagged.started == ["a", "b"] and player.attempts == 1  # only the one that worked
+        assert player.station.ended is None and player.station.desired is not None
+        await wire_finish(h, wire)
+
+    asyncio.run(scenario())
+
+
+def test_a_voice_that_never_comes_back_ends_the_program_with_nothing_left_behind(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lost UDP discovery packet during the reconnect: disnake's loop would wait for ever."""
+    monkeypatch.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 60.0)
+    monkeypatch.setattr(discord_adapter, "CONNECT_ATTEMPT_SECONDS", 0.2)
+
+    async def scenario() -> None:
+        h, tagged, guild = silent_program("a", "b", "c", "d")
+        player = await heard_track_ended_with_a_refill_out(h, wire)
+        voice = player.voice
+
+        wire.hangs = True
+        wire.closes.put_nowait(4006)
+        await until_settled(lambda: not voice.is_connected())
+        gate = matcher_of(h).gate
+        assert gate is not None
+        gate.set()
+
+        # It settles through the disconnection path: program ended, channel forgotten.
+        await until_settled(lambda: GUILD not in h.adapter.players and remembered(h) is None)
+        await until_settled(lambda: h.adapter.tasks == set())  # the wait was woken, not left
+        assert tagged.started == ["a"] and player.attempts == 0  # no attempt was used up
+        assert player.station.desired is None and h.pool.leased == 0
+        assert guild.state.clients == {} and not voice.is_connected()
+        await until_settled(voice._runner.done)  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType, reportUnknownArgumentType]
+
+    asyncio.run(scenario())
+
+
+def test_a_forced_close_that_never_finishes_reconnecting_is_a_disconnection(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Close code 4014 reaches the same discovery by another path, `potential_reconnect`."""
+    monkeypatch.setattr(discord_adapter, "CONNECT_ATTEMPT_SECONDS", 0.2)
+
+    async def scenario() -> None:
+        h, guild, _, other = wire_harness()
+        voice = await wire_program(h)
+        wire.hangs = True
+        wire.closes.put_nowait(4014)
+        await until_settled(lambda: not voice.is_connected())
+        guild.deliver(other)  # the new voice server answers, and then discovery is lost
+        await until_settled(lambda: GUILD not in h.adapter.players and remembered(h) is None)
+        await join_retirements(h)
+        assert guild.state.clients == {} and h.pool.leased == 0
+
+    asyncio.run(scenario())
+
+
+def test_a_voice_server_that_keeps_refusing_ends_the_reconnect(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After five failed websockets disnake's `connect` returns as if it had worked."""
+    real_sleep = asyncio.sleep
+
+    async def no_wait(delay: float, result: None = None) -> None:
+        await real_sleep(0, result)
+
+    monkeypatch.setattr(asyncio, "sleep", no_wait)  # its waits between them come to 25 seconds
+
+    async def scenario() -> None:
+        h, guild, _, _ = wire_harness()
+        await wire_program(h)
+        wire.refused = True
+        wire.closes.put_nowait(4006)
+        await until_settled(lambda: GUILD not in h.adapter.players and remembered(h) is None)
+        await join_retirements(h)
+        assert guild.state.clients == {} and h.pool.leased == 0
+
+    asyncio.run(scenario())
+
+
+def test_a_join_refused_by_the_voice_server_doesnt_say_joined(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_sleep = asyncio.sleep
+
+    async def no_wait(delay: float, result: None = None) -> None:
+        await real_sleep(0, result)
+
+    monkeypatch.setattr(asyncio, "sleep", no_wait)
+
+    async def scenario() -> None:
+        h, guild, room, _ = wire_harness()
+        wire.refused = True
+        fake = await run(h.adapter.join, inter(room, manager=True))
+        assert fake.texts() == [JOIN_FAILED]
+        assert guild.state.clients == {} and h.adapter.players == {} and remembered(h) is None
+
+    asyncio.run(scenario())
+
+
+def test_a_frame_caught_by_a_voice_server_update_during_its_encode_is_dropped(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The encode is a native call that releases the GIL, so the loop can clear the endpoint
+    between the check and `sendto`, which then raises TypeError on the player thread."""
+    # What the real call raises for that address.
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, pytest.raises(TypeError):
+        udp.sendto(b"", (disnake.utils.MISSING, 1))
+
+    errors: list[type[Exception]] = []
+
+    def send(self: disnake.VoiceClient, data: bytes, *, encode: bool = True) -> None:
+        self.endpoint_ip = disnake.utils.MISSING
+        raise errors[0]("synthetic")
+
+    monkeypatch.setattr(disnake.VoiceClient, "send_audio_packet", send)
+
+    async def scenario() -> None:
+        h, _, room, _ = wire_harness()
+        await h.join()
+        voice = player_of(h).voice
+        for error in (TypeError, OSError):  # a socket closed by that update raises this
+            errors[:] = [error]
+            voice.endpoint_ip = "192.0.2.1"
+            voice.send_audio_packet(b"frame")  # dropped, and the thread keeps running
+
+        def fails(self: disnake.VoiceClient, data: bytes, *, encode: bool = True) -> None:
+            raise TypeError("a real defect, with the endpoint still set")
+
+        monkeypatch.setattr(disnake.VoiceClient, "send_audio_packet", fails)
+        voice.endpoint_ip = "192.0.2.1"
+        with pytest.raises(TypeError):
+            voice.send_audio_packet(b"frame")  # anything else still surfaces
+        await run(h.adapter.leave, inter(room, manager=True))
+
+    asyncio.run(scenario())
+
+
+def test_the_wait_for_a_bank_starts_again_after_a_reconnect(
+    wire: Wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gap longer than that wait must not end the program the moment voice is back."""
+    monkeypatch.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 0.5)
+
+    async def scenario() -> None:
+        h, tagged, _ = silent_program("a", "b")
+        matcher_of(h).batch = 2
+        source = await h.join()
+        await h.play()
+        await settle()
+        blocker = h.pool.acquire()
+        gate = tagged.holding["a"] = asyncio.Event()  # no bank comes free for now
+        assert source.read() == tag("a")
+        player = player_of(h)
+        voice = player.voice
+        await until_settled(lambda: player.station.heard is not None)
+        assert source.read() == b""
+        wire.player_stopped(voice)
+        await until_settled(lambda: player.station.heard is None)
+        await settle()  # the wait for a bank has started
+
+        wire.backoff_seconds = 0.7  # longer than that wait
+        wire.closes.put_nowait(4006)
+        await until_settled(lambda: not voice.is_connected())
+        await until_settled(voice.is_connected)
+        await settle()
+        assert player.station.ended is None and player.station.desired is not None
+
+        assert blocker.release()
+        gate.set()
+        await until_settled(lambda: next_id(h) == "b")
+        assert tagged.started == ["a", "b"]
+        await wire_finish(h, wire)
+
+    asyncio.run(scenario())
