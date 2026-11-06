@@ -8,9 +8,9 @@ A self-hosted Discord music bot for Linux and Docker.
 
 ## Development status
 
-`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. The real catalog holds 167 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching hasn't yet been evaluated against the live API. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings and `/skip` moves on ([operations](docs/operations.md)). Release qualification is not yet complete.
+`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. The real catalog holds 167 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching has run against the live API in one private session ([#124](https://github.com/slackysoba/sobafm/issues/124)), but match quality hasn't been rated. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings and `/skip` moves on ([operations](docs/operations.md)). Release qualification is not yet complete.
 
-The Python development toolchain and Linux CI are available. Current work establishes source admission and a feasible Linux resource configuration. A narrow end-to-end playback implementation follows. Listening comparisons are deferred optional evidence.
+The Python development toolchain and Linux CI are available. Listening comparisons are deferred optional evidence.
 
 ## Development setup
 
@@ -46,7 +46,7 @@ This included ccMixter observation retains a missing requested ID and incomplete
 
 ## Run
 
-The first amd64 playback slice runs with Docker Compose. It is not yet qualified: the image ran in one private Discord session on Docker Desktop under WSL2 ([#97](https://github.com/slackysoba/sobafm/issues/97)), but neither the image, its limits nor the release is qualified.
+The first amd64 playback slice runs with Docker Compose. It is not yet qualified: it has run in two private Discord sessions on Docker Desktop under WSL2 ([#97](https://github.com/slackysoba/sobafm/issues/97) and [#124](https://github.com/slackysoba/sobafm/issues/124), the second with the real catalog and Gemini), but neither the image, its limits nor the release is qualified.
 
 ```sh
 cp .env.example .env   # then replace the placeholder token and Gemini key
