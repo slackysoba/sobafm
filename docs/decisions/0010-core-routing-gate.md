@@ -2,9 +2,9 @@
 
 Status: **Proposed** (2026-11-05). Not accepted; the maintainer's question is on the issue.
 Issue: [#133](https://github.com/slackysoba/sobafm/issues/133), under [Outcome 4](https://github.com/slackysoba/sobafm/issues/4).
-Related: [ADR 0004](0004-amd64-whole-service-adoption.md), [#60](https://github.com/slackysoba/sobafm/issues/60).
+Related: [ADR 0004](0004-amd64-whole-service-adoption.md), [#60](https://github.com/slackysoba/sobafm/issues/60), [#138](https://github.com/slackysoba/sobafm/issues/138).
 
-This is research and a proposal. No code, harness, preflight, CI, Docker or host setting changed, and nothing ran natively. Kernel behavior below is read from documentation and source, not observed. Every option keeps the 98,979,840-byte capacity contract and the original three-second cleanup deadline.
+This is research and a proposal. No code, harness, preflight, CI, Docker or host setting changed, and nothing ran natively. Kernel behavior below is read from documentation and source, not observed. Every option keeps the 98,979,840 controlled bytes and the original three-second cleanup deadline. Option 6 keeps those bytes but amends the approved memory definition.
 
 ## Problem
 
@@ -21,7 +21,8 @@ The harness required the value to be exactly `core`, and only a WSL2 host has pa
 - **No requirement backs the exact value `core`.** The gate began as a scoping premise in one harness plan, not as a product rule.
 - **The property behind it does have requirements:** a crash should not copy SobaFM's memory to a handler outside the container. That reading is this record's, and the maintainer should confirm it.
 - **The exact value is a poor test of that property.** Most mainstream server distributions pipe by default, a container can't change the setting and the running service doesn't check it. It also misses the parent process, which holds the credentials: on a host that passes, the parent's dump is expected to land in the writable `/data` volume.
-- **Recommendation: option 3.** Control dumps on SobaFM's own processes, stop requiring a host value, and qualify the result with one bounded native crash case.
+- **Recommendation: option 3.** Control dumps on SobaFM's own processes, stop requiring a host value, and qualify the result with three native crash cases per target kernel, on a host that pipes. No amd64 host that pipes is on record yet.
+- **The code doesn't wait for this decision.** The parent's controls are going ahead separately as [#138](https://github.com/slackysoba/sobafm/issues/138), under every option. Because #138 also writes the filter the decoder inherits, it delivers option 3's code for both processes. What is left to decide here is the host rule and the evidence.
 
 ## Where the gate lives
 
@@ -56,7 +57,7 @@ A dump needs a [core-dump signal](https://man7.org/linux/man-pages/man7/signal.7
 
 - **Decoder.** `DecodeProducer.start` [launches mpg123](../../src/sobafm/decode.py#L263) and then applies the limits. A fault on bad input, or a [stack overflow](https://man7.org/linux/man-pages/man2/getrlimit.2.html) under its 524,288-byte stack limit, enters the kernel's dump path. On the file route the limit stops the dump and the decoder exits at once. On the pipe or socket route the kernel streams the decoder's written memory, including decoded PCM and input bytes, up to its 12,524,288-byte address space. Its [fixed environment](../../src/sobafm/decode.py#L99) holds no secrets, and it takes input on stdin, so no recording's file name appears in its mapped files.
 - **Parent.** The Python parent holds the Discord token, the Gemini key, both PCM banks and the copy pool, and it loads native code such as dave.py, PyNaCl and aiohttp's extensions. It sets no dump control. It [removes the credentials from `os.environ`](../../src/sobafm/discord_adapter.py#L230), but [`/proc/pid/environ` keeps showing the initial environment](https://man7.org/linux/man-pages/man5/proc_pid_environ.5.html). The harness ran without credentials, so the gate's purpose never covered this.
-- **Parent on a host that passes the gate.** The file route writes to the working directory. That is [`/data`](../../Dockerfile), which has been [a writable volume](0009-writable-data-volume.md) since [#131](https://github.com/slackysoba/sobafm/pull/131). The service sets no limit on itself, and [Docker's stock unit sets `LimitCORE=infinity`](https://github.com/moby/moby/blob/402d0a16f131/contrib/init/systemd/docker.service#L24). So a parent crash there is expected to write its memory, credentials included, into `/data`. The gate doesn't prevent this, and passing it is the condition for it. This is read from the files, not observed.
+- **Parent on a host that passes the gate.** The file route writes to the working directory. That is [`/data`](../../Dockerfile), which has been [a writable volume](0009-writable-data-volume.md) since [#131](https://github.com/slackysoba/sobafm/pull/131). The service sets no limit on itself. With no default set, [containers inherit their ulimits](https://docs.docker.com/reference/cli/dockerd/#default-ulimit-settings), and both [Docker's stock unit](https://github.com/moby/moby/blob/402d0a16f131/contrib/init/systemd/docker.service#L24) and [containerd's](https://github.com/containerd/containerd/blob/530e70aeef83/containerd.service#L33), whose shim containers descend from, set `LimitCORE=infinity`. So a parent crash there is expected to write its memory, credentials included, into `/data`. The gate doesn't prevent this, and passing it is the condition for it. This is read from the files, not observed.
 
 ### What fails on a piped host
 
@@ -82,7 +83,7 @@ The operator's host normally holds these credentials already, in `.env`. What a 
 | Host | Default route | Source and limits |
 | --- | --- | --- |
 | Linux kernel | File, `core` | [Sysctl documentation](https://github.com/torvalds/linux/blob/v7.0/Documentation/admin-guide/sysctl/kernel.rst#L144). |
-| Debian 13 | File, unless `systemd-coredump` is installed | The setting ships in [that package's file list](https://packages.debian.org/trixie/amd64/systemd-coredump/filelist), not in [`systemd`'s](https://packages.debian.org/trixie/amd64/systemd/filelist), and `systemd` [neither depends on nor recommends it](https://salsa.debian.org/systemd-team/systemd/-/blob/debian/master/debian/control). Inferred from packaging; not checked on each Debian image. |
+| Debian 13 | File, unless `systemd-coredump` is installed | [`systemd`](https://packages.debian.org/trixie/amd64/systemd/filelist) [sets `core`](https://salsa.debian.org/systemd-team/systemd/-/blob/debian/trixie/debian/extra/sysctl.d/10-coredump-debian.conf). The pipe setting, `50-coredump.conf`, ships only in [`systemd-coredump`](https://packages.debian.org/trixie/amd64/systemd-coredump/filelist), which `systemd` [neither depends on nor recommends](https://salsa.debian.org/systemd-team/systemd/-/blob/debian/master/debian/control). Inferred from packaging; not checked on each Debian image. |
 | Ubuntu | Pipe to apport | [Canonical](https://ubuntu.com/blog/apport-local-information-disclosure-vulnerability-fixes-available) calls apport the Ubuntu default handler, installed in all Ubuntu Server images. Apport [2.28.1](https://packages.ubuntu.com/noble/apport), as in 24.04, [writes the pipe at start](https://github.com/canonical/apport/blob/2.28.1/data/apport#L649) and is [enabled by default](https://github.com/canonical/apport/blob/2.28.1/etc/default/apport). |
 | RHEL 9 | Pipe to systemd-coredump | [Qualys](https://www.qualys.com/2025/05/29/apport-coredump/apport-coredump.txt) and Canonical state it as the default. [Red Hat's guide](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/developing_c_and_cpp_applications_in_rhel_9/debugging-applications_developing-applications) gives it as the configuration to verify, without the word "default" in the text read. That site refused a direct fetch, so its text was read through search results. |
 | Fedora | Pipe to systemd-coredump | [Fedora documentation](https://docs.fedoraproject.org/en-US/qa-docs/guides/coredumpctl/), Qualys. |
@@ -101,7 +102,7 @@ CentOS Stream, Rocky, AlmaLinux, Flatcar and Container-Optimized OS weren't chec
 
 ## Options
 
-Each option keeps the capacity contract and the cleanup deadline. None chooses a host.
+Each option keeps the 98,979,840 controlled bytes and the cleanup deadline, and option 6 also amends the approved memory definition. None chooses a host.
 
 | Option | Default piped hosts | Socket route | Parent's credentials | Changes the reviewed decoder limits |
 | --- | --- | --- | --- | --- |
@@ -112,26 +113,31 @@ Each option keeps the capacity contract and the cleanup deadline. None chooses a
 | 5. Non-dumpable decoder | Needs a changed decoder | Would be covered | Not covered | Replaces the stock decoder |
 | 6. Drop the gate, accept handlers | Accepted | Accepted | Not covered | No |
 
+The parent control is separate from the host rule. It can be added to any option, and it is going ahead on its own as [#138](https://github.com/slackysoba/sobafm/issues/138) under every option. "Not covered" describes each option as drawn, without #138.
+
+#138 also reaches the decoder. `PR_SET_DUMPABLE` doesn't, because exec resets it, but the filter #138 writes first [survives fork and exec](https://man7.org/linux/man-pages/man5/core.5.html). So once #138 lands, a decoder crash on a piped host sends no memory mappings under any option, unless the decoder's launch restores the filter, which nothing here proposes.
+
 ### Option 1: keep exact `core`
 
 - **Evidence needed:** none new. To take effect it would also need a check in `__main__.py`, because the service doesn't have one.
-- **What it changes:** no limits. It makes the host a product constraint, in practice Debian, or requires operators to change a host-wide setting. That needs an explicit exception to the rule against silent host security changes. The parent's dump in `/data` stays unaddressed.
+- **What it changes:** no limits. It makes the host a product constraint, in practice Debian, or requires operators to change a host-wide setting. That needs an explicit exception to the rule against silent host security changes. It does nothing about the parent's dump in `/data`, which #138 handles.
 
 ### Option 2: narrow it to any file route
 
 Accept any value not starting with `|` or `@`, including an empty one, and keep `RLIMIT_CORE` 0. The limit stops file dumps wherever the pattern points, so `core.%p` and absolute paths meet the same property.
 
-- **Evidence needed:** the same read-only observation, and one native crash case.
-- **What it changes:** no limits or requirements. It corrects the test but admits no mainstream default and leaves the parent's dump in `/data`, so it doesn't solve the problem on its own.
+- **Evidence needed:** the same read-only observation, and one native crash case on a host using the file route.
+- **What it changes:** no limits or requirements. It corrects the test but admits no mainstream default, so it doesn't solve the problem on its own. The parent's dump in `/data` is left to #138.
 
 ### Option 3: controls on SobaFM's own processes (recommended)
 
 Stop requiring a host value, and record the route as a fact in qualification evidence.
 
-- **Parent:** at the top of `__main__.py`, before any configuration is read, write 0 to `/proc/self/coredump_filter`, then set `PR_SET_DUMPABLE` 0. The order matters, because [a non-dumpable process's `/proc` files become root-owned](https://man7.org/linux/man-pages/man5/proc_pid.5.html). Read both back and refuse to start, as the existing limit gate does, if either differs. The parent then produces no dump and starts no handler on any route.
+- **Parent:** at the top of `__main__.py`, before any configuration is read, write 0 to `/proc/self/coredump_filter`, then set `PR_SET_DUMPABLE` 0. The order matters, because [a non-dumpable process's `/proc` files become root-owned](https://man7.org/linux/man-pages/man5/proc_pid.5.html). Read both back and refuse to start, as the existing limit gate does, if either differs. The parent then produces no dump and starts no handler on any route. #138 delivers this part.
 - **Decoder:** `RLIMIT_CORE` stays 0. Stock mpg123 needs no change, because it [inherits the filter across fork and exec](https://man7.org/linux/man-pages/man5/core.5.html). On the file route there is no dump. On the pipe or socket route the handler runs but gets no memory mappings: only registers, which can hold a few kilobytes of recent data, and the notes above.
-- **Evidence needed:** see [Verification needed](#verification-needed).
-- **What it changes:** it would supersede ADR 0004's retained-gate bullet and its "core-routing premises" wording, and need an operator note that a decoder crash on a piped host leaves a small record there. Capacity and deadline don't change.
+- **Evidence needed:** three native crash cases per target kernel, on a host that pipes. See [Verification needed](#verification-needed). No amd64 host that pipes is on record.
+- **What it costs:** a parent crash no longer leaves a dump to debug, only its exit status and logs. A decoder dump holds only the notes above. Both costs come with #138, whatever is decided here.
+- **What it changes:** it would supersede ADR 0004's retained-gate bullet and its "core-routing premises" wording, and need an operator note that a decoder crash on a piped host leaves a small record there. The controlled bytes, the memory definition and the deadline don't change.
 - **Limits:** a compromised decoder could raise its own filter, which the requirements don't claim to prevent. The `docker-init` process and the moment between exec and the first lines of `__main__.py` aren't covered.
 
 ### Option 4: soft limit of one
@@ -140,10 +146,10 @@ Set the decoder's hard and soft `RLIMIT_CORE` to 1. The kernel treats that value
 
 - **What's different now, for it:** that comparison was with a plain-`core` host. On the same piped host, one is never worse than zero. It stops an ordinary crash, and lowering it only gets back what zero gives there today.
 - **What's different now, against it:** the socket route ignores it, and systemd 262 moves to that route on new kernels. A host upgrade would silently remove the protection, so the gate would still have to read and refuse host values. The value is explained in a kernel source comment and not, in what was read, in user documentation.
-- **Evidence needed:** the native case on each target kernel, plus that permanent route check.
+- **Evidence needed:** the native cases on each target kernel, plus that permanent route check.
 - **What it changes:** the reviewed decoder core limit. It doesn't cover the parent unless applied there too.
 
-It is a reasonable addition to option 3 if the native case shows that waiting on the handler matters, since it avoids starting one on the pipe route.
+It is a reasonable addition to option 3 if the native cases show that waiting on the handler matters, since it avoids starting one on the pipe route.
 
 ### Option 5: non-dumpable decoder
 
@@ -154,38 +160,42 @@ It is a reasonable addition to option 3 if the native case shows that waiting on
 - **Evidence needed:** a new decoder supply and startup review for any shim or changed decoder.
 - **What it changes:** the stock-decoder premise and the "no custom native build" constraint.
 
-The earlier assessment didn't consider the parent, which has no such problem. Option 3 uses non-dumpability there.
+The earlier assessment didn't consider the parent, which has no such problem. Option 3 and #138 use non-dumpability there.
 
 ### Option 6: drop the gate and accept handlers
 
 - **Evidence needed:** none beyond ordinary qualification.
-- **What it changes:** the requirements. They would have to name the handler's copy as an exclusion, allow audio in host crash stores and accept credentials in them, or tell operators to set `Storage=none`. It is the cheapest option, but it gives up what the small change in option 3 keeps.
+- **What it changes:** the requirements. It keeps the 98,979,840 bytes but amends the approved memory definition, which would have to name the handler's copy as an exclusion. The requirements would also have to allow audio in host crash stores, and credentials too unless the parent control is added, or tell operators to set `Storage=none`.
+
+With #138 in place the parent is covered and the handler's copy holds no memory mappings, so little is left that this option would need to allow. Its practical difference from option 3 narrows to skipping the native cases and rewriting the requirements for a copy that would no longer hold memory.
 
 ## Recommendation
 
-**Option 3.** It covers every route with documented controls, needs no host setting and leaves the reviewed decoder limits alone. It also covers the parent, where the credentials are, including its dump into `/data` on hosts that pass today's gate. The service would refuse to start if the controls don't take effect.
+**Option 3.** It covers every route with documented controls, needs no host setting and leaves the reviewed decoder limits alone. The service would refuse to start if the controls don't take effect. Its code is going ahead as #138, so this decision settles whether to stop requiring a host value and what evidence to collect. Its price is the lost debugging dumps and three native cases on a host that pipes, which nobody has yet.
 
-Options 1 and 2 keep turning away the default configuration of most mainstream distributions. Option 4 protects only until a host moves to the socket route, and option 5 needs a changed decoder. Option 6 changes the requirements to save a few lines of code.
+Options 1 and 2 keep turning away the default configuration of most mainstream distributions. Option 4 protects only until a host moves to the socket route, and option 5 needs a changed decoder. Option 6 skips the native cases, but it amends the requirements for a copy that #138 already empties of memory.
 
-If the native case shows the write refused in the container, or a handler wait that endangers the deadline, the fallback is to add option 4 for the pipe route and return with that result.
+If the native cases show the write refused in the container, or a handler wait that endangers the deadline, the fallback is to add option 4 for the pipe route and return with that result.
+
+**What an answer authorizes.** Accepting option 3 accepts this record and authorizes a later issue to run the native cases on a host that already pipes. That issue must still approve Docker and native decoder use. The answer chooses no host and doesn't authorize changing `core_pattern` anywhere. Counting the handler's bytes and the stalled-handler case need that change, on a disposable runner, and would be asked about separately.
 
 ## Consequences if accepted
 
-- A later issue implements option 3 and its docs. This record changes nothing itself.
+- #138 delivers the code for both processes, whatever the answer. A later issue removes the host rule from the records and runs the native cases. This record changes nothing itself.
 - ADR 0004's gate bullet and its "core-routing premises" are superseded by a new accepted record, not edited. ADR 0004's other qualification premises stay.
 - The arm64 preflight and `Linux checks (arm64)` stay unchanged. If #60 resumes, a "reviewed change to the rule" is already one of its listed routes, and this would inform that review without deciding it.
 - Existing amd64 results stay bound to their original cases. They don't depend on the route, because none involved a core-dump signal.
 
 ## Verification needed
 
-The missing fact is collected at real boundaries, once per target kernel, in a later issue that approves Docker and native decoder use. It needs no Discord, provider or music-source request:
+The missing fact is collected at real boundaries in a later issue that approves Docker and native decoder use: the three native cases below, once per target kernel, on an amd64 host that pipes. None is on record, so finding one is part of that issue. It needs no Discord, provider or music-source request:
 
-1. **Offline:** deterministic tests that the startup check refuses when either value differs.
+1. **Offline:** deterministic tests that the startup check refuses when either value differs. #138 covers these.
 2. **Decoder crash:** on a host that pipes, in the real image, non-root and read-only, with an owned fixture: send a core-dump signal to a running decoder. Record the route class, the exit status, the time to release against the original clock, and whether the handler's bytes contain a known marker from decoder memory.
 3. **Parent crash:** the same with placeholder credentials, expecting no handler at all.
 4. **Stalled handler:** a handler that never exits, then cancellation, expecting SIGKILL at two seconds and release before three.
 
-Counting bytes in case 2 and running case 4 need a capturing handler, which means changing `core_pattern`. Only a disposable runner could take that, and only with the maintainer's explicit authorization, as #60 already says. Without it, inspecting what a default handler retained covers cases 2 and 3 in part, and case 4 stays unproven.
+Counting bytes in case 2 and running case 4 need a capturing handler, which means changing `core_pattern`. Only a disposable runner could take that, and only with the maintainer's explicit authorization, as #60 already says. Without it, inspecting what a default handler retained covers cases 2 and 3 in part, and case 4 stays unproven. So option 3's main claim for the decoder, that the handler gets no memory contents, can't be fully measured without that further authorization.
 
 ## What is established and what isn't
 
@@ -201,6 +211,7 @@ Counting bytes in case 2 and running case 4 need a capturing handler, which mean
 **Not established:**
 
 - Anything observed natively about a dump: its size, handler behavior or timing, on any host. That includes the parent's dump into `/data`, which depends on the limit the container actually gets.
+- An amd64 host that pipes. None is on record. The piped host observed so far is the arm64 runner.
 - That the two writes in option 3 succeed in the non-root, read-only, default-seccomp container, and that `Popen`, `prlimit` and `pidfd_open` keep working from a non-dumpable parent. The documentation gives no reason to doubt it, and [Docker's seccomp profile allows `prctl`](https://github.com/moby/profiles/blob/4b8214fc4971/seccomp/default.json#L269), but it hasn't run.
 - Behavior on kernels older than v6.18, such as those long-term distributions ship. `coredump_filter` has been documented since Linux 2.6.23, but the source was read only at those two versions.
 - Whether malformed input can crash stock mpg123 at all. An outside signal exercises the same kernel path, so the case doesn't depend on it.
