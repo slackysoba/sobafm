@@ -50,6 +50,7 @@ from sobafm.discord_adapter import (
 )
 from sobafm.gemini_match import NO_RECORDINGS, Fit, Matched, MatchFailed, Ranked, Refused
 from sobafm.pcm import FRAME_BYTES, READY_BYTES, PcmBank, PcmBankPool
+from sobafm.settings import ServerSettings, SettingsError
 
 LINK = "https://example.invalid/synthetic/track"
 MANY_NOTICES = tuple(f"Synthetic notice {n}: " + "x" * 150 for n in range(30))
@@ -97,6 +98,38 @@ class FakeMatcher:
         pass
 
 
+class FakeSettings:
+    """Settings in memory, with no cooldown so schedules aren't throttled unless a test
+    sets one. `tests/test_adapter_settings.py` also runs the adapter on the real store."""
+
+    def __init__(self) -> None:
+        self.current = ServerSettings(cooldown_seconds=0)
+        self.failure: SettingsError | None = None
+        self.writes = 0
+
+    def get(self, guild_id: int) -> ServerSettings:
+        return self.current
+
+    async def update(
+        self,
+        guild_id: int,
+        *,
+        generated_minutes: int | None = None,
+        volume_percent: int | None = None,
+        cooldown_seconds: int | None = None,
+    ) -> ServerSettings:
+        updated = self.current.changed(
+            generated_minutes=generated_minutes,
+            volume_percent=volume_percent,
+            cooldown_seconds=cooldown_seconds,
+        )
+        if self.failure is not None:
+            raise self.failure
+        self.writes += 1
+        self.current = updated
+        return updated
+
+
 # Fakes for the disnake objects the adapter touches.
 
 
@@ -114,7 +147,7 @@ class FakeVoice:
     channel: FakeChannel
     user: FakeUser = field(default_factory=FakeUser)
     connected: bool = True
-    plays: list[StationSource] = field(default_factory=lambda: [])
+    plays: list[disnake.AudioSource] = field(default_factory=lambda: [])
     disconnects: int = 0
 
     def is_connected(self) -> bool:
@@ -123,7 +156,7 @@ class FakeVoice:
     def is_playing(self) -> bool:
         return bool(self.plays) and self.connected
 
-    def play(self, source: StationSource) -> None:
+    def play(self, source: disnake.AudioSource) -> None:
         self.plays.append(source)
 
     def stop(self) -> None:
@@ -303,10 +336,15 @@ class Producer:
 
 
 class FakeClock:
-    """The grace timer's sleep: it returns only when the test calls ``expire``."""
+    """The grace timer's sleep, which returns only when the test calls ``expire``, and
+    the cooldown's clock, which moves only when the test moves ``now``."""
 
     def __init__(self) -> None:
         self.sleeps: list[tuple[float, asyncio.Future[None]]] = []
+        self.now = 1_000.0
+
+    def time(self) -> float:
+        return self.now
 
     async def sleep(self, seconds: float) -> None:
         future = asyncio.get_running_loop().create_future()
@@ -355,14 +393,28 @@ class Harness:
 
 
 def harness(
-    producer: Producer | None = None, recordings: tuple[Recording, ...] | None = None
+    producer: Producer | None = None,
+    recordings: tuple[Recording, ...] | None = None,
+    *,
+    settings: discord_adapter.Settings | None = None,
 ) -> Harness:
     pool = PcmBankPool()
     producer = producer or Producer()
     records = recordings if recordings is not None else (recording("a"),)
     clock = FakeClock()
-    adapter = Adapter(FakeMatcher(*records), producer, pool=pool, sleep=clock.sleep)
+    adapter = Adapter(
+        FakeMatcher(*records),
+        producer,
+        settings or FakeSettings(),
+        pool=pool,
+        sleep=clock.sleep,
+        clock=clock.time,
+    )
     return Harness(adapter, pool, producer, clock)
+
+
+def settings_of(h: Harness) -> FakeSettings:
+    return cast(FakeSettings, h.adapter._settings)  # pyright: ignore[reportPrivateUsage]
 
 
 async def settle() -> None:
@@ -384,9 +436,11 @@ def test_intents_are_exactly_guilds_and_voice_states() -> None:
 async def test_command_access_rules_and_server_only_registration() -> (
     None
 ):  # the bot binds the running loop
-    bot = create_bot(Adapter(FakeMatcher(recording("a")), Producer(), pool=PcmBankPool()))
+    bot = create_bot(
+        Adapter(FakeMatcher(recording("a")), Producer(), FakeSettings(), pool=PcmBankPool())
+    )
     bodies = {c.name: c.body for c in bot.slash_commands}
-    assert set(bodies) == {"join", "leave", "play", "skip", "stop", "now"}
+    assert set(bodies) == {"join", "leave", "play", "skip", "stop", "now", "settings"}
     assert len(bot.extra_events["on_voice_state_update"]) == 1  # listener grace
     for name, body in bodies.items():
         assert body.contexts is not None
@@ -394,7 +448,7 @@ async def test_command_access_rules_and_server_only_registration() -> (
             body.contexts.guild and not body.contexts.bot_dm and not body.contexts.private_channel
         )
         manage = body.default_member_permissions
-        if name in ("join", "leave"):
+        if name in ("join", "leave", "settings"):
             assert manage is not None and manage.value == type(manage)(manage_guild=True).value
         else:
             assert manage is None
@@ -409,8 +463,8 @@ async def test_command_access_rules_and_server_only_registration() -> (
 
 @offline
 async def test_play_is_not_registered_without_catalog() -> None:  # the bot binds the running loop
-    bot = create_bot(Adapter(None, Producer(), pool=PcmBankPool()))
-    assert {c.name for c in bot.slash_commands} == {"join", "leave", "stop", "now"}
+    bot = create_bot(Adapter(None, Producer(), FakeSettings(), pool=PcmBankPool()))
+    assert {c.name for c in bot.slash_commands} == {"join", "leave", "stop", "now", "settings"}
 
 
 def test_token_is_removed_from_environment_and_never_rendered(
@@ -1140,7 +1194,7 @@ def test_shutdown_yields_while_a_finished_tasks_callback_is_queued() -> None:
     outcome: list[bool] = []
 
     async def scenario() -> None:
-        adapter = Adapter(None, Producer(), pool=PcmBankPool())
+        adapter = Adapter(None, Producer(), FakeSettings(), pool=PcmBankPool())
         task = asyncio.create_task(asyncio.sleep(0))
         await task  # done; awaiting it did not run any callback
         adapter._own(task)  # pyright: ignore[reportPrivateUsage]
@@ -1157,7 +1211,7 @@ def test_shutdown_yields_while_a_finished_tasks_callback_is_queued() -> None:
 
 @offline
 async def test_sigterm_sets_the_stop_event() -> None:
-    adapter = Adapter(None, Producer(), pool=PcmBankPool())
+    adapter = Adapter(None, Producer(), FakeSettings(), pool=PcmBankPool())
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGTERM, adapter.stopping.set)
     try:
@@ -1196,7 +1250,9 @@ async def test_cleanup_deadline_counts_from_the_first_cancellation() -> None:
     pool = PcmBankPool(clock=lambda: time.monotonic() - discord_adapter.CLEANUP_SECONDS + 0.05)
     producer = Producer()
     producer.hold = True
-    h = Harness(Adapter(FakeMatcher(recording("a")), producer, pool=pool), pool, producer)
+    h = Harness(
+        Adapter(FakeMatcher(recording("a")), producer, FakeSettings(), pool=pool), pool, producer
+    )
     await h.join()
     await h.play()
     await settle()
@@ -1256,7 +1312,7 @@ async def test_a_player_that_cannot_start_retires_the_claimed_track() -> None:
     voice = h.room.voice
     assert voice is not None
 
-    def refuse(source: StationSource) -> None:
+    def refuse(source: disnake.AudioSource) -> None:
         raise RuntimeError("synthetic: not connected")
 
     voice.play = refuse
@@ -1315,7 +1371,14 @@ def program_harness(
     pool = pool or PcmBankPool()
     records = tuple(recording(i) for i in identifiers)
     clock = FakeClock()
-    adapter = Adapter(FakeMatcher(*records), tagged, pool=pool, sleep=clock.sleep)
+    adapter = Adapter(
+        FakeMatcher(*records),
+        tagged,
+        FakeSettings(),
+        pool=pool,
+        sleep=clock.sleep,
+        clock=clock.time,
+    )
     return Harness(adapter, pool, tagged, clock), tagged
 
 
@@ -1398,7 +1461,8 @@ async def test_a_program_follows_the_ranked_order_and_skip_makes_no_new_call() -
     first, second, third = recording("c"), recording("a"), recording("b")
     tagged = Tagged(frames=50)
     pool = PcmBankPool()
-    h = Harness(Adapter(FakeMatcher(first, second, third), tagged, pool=pool), pool, tagged)
+    adapter = Adapter(FakeMatcher(first, second, third), tagged, FakeSettings(), pool=pool)
+    h = Harness(adapter, pool, tagged)
     source = await h.join()
     await h.play()
     await settle()
@@ -1596,7 +1660,7 @@ async def test_a_prepared_next_track_retained_past_its_deadline_stays_charged() 
     tagged = Tagged(frames=50)
     tagged.holding["b"] = asyncio.Event()
     matcher = FakeMatcher(recording("a"), recording("b"))
-    h = Harness(Adapter(matcher, tagged, pool=pool), pool, tagged)
+    h = Harness(Adapter(matcher, tagged, FakeSettings(), pool=pool), pool, tagged)
     await start_program(h)
     await prepared_next(h, "b")
     tagged.holding["a"] = asyncio.Event()
@@ -1715,7 +1779,7 @@ def flaky_voice(h: Harness, failures: int | None) -> FakeVoice:
     play = voice.play
     refused = [0]
 
-    def refusing(source: StationSource) -> None:
+    def refusing(source: disnake.AudioSource) -> None:
         if failures is None or refused[0] < failures:
             refused[0] += 1
             raise RuntimeError("synthetic: voice player could not start")
@@ -1924,7 +1988,9 @@ def test_capacity_that_never_frees_ends_the_program_without_a_hot_loop(
         tagged = Tagged(frames=1)
         tagged.holding["a"] = asyncio.Event()  # a's retirement keeps its bank
         pool = Counting()
-        adapter = Adapter(FakeMatcher(recording("a"), recording("b")), tagged, pool=pool)
+        adapter = Adapter(
+            FakeMatcher(recording("a"), recording("b")), tagged, FakeSettings(), pool=pool
+        )
         h = Harness(adapter, pool, tagged)
         blocker = pool.acquire()  # held elsewhere throughout
         source = await start_program(h)

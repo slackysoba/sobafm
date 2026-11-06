@@ -5,10 +5,11 @@ A self-hosted Discord music bot for Linux and Docker.
 - **/play** takes any request, however unusual, and uses Gemini to find the best fit in a curated catalog of existing recordings. The program continues, one recording after another without repeats, until stopped or replaced; **/skip** moves on.
 - **/freestyle** produces continuous generated music with Lyria RealTime.
 - Both modes share one station per server, access controls and accurate now-playing information.
+- **/settings** lets a server's managers set its volume and how often requests can change the music. The values persist across restarts.
 
 ## Development status
 
-`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. The real catalog holds 167 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching has run against the live API in one private session ([#124](https://github.com/slackysoba/sobafm/issues/124)), but match quality hasn't been rated. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings and `/skip` moves on ([operations](docs/operations.md)). Release qualification is not yet complete.
+`/play` ranks complete recordings from prepared catalog metadata with one validated Gemini call per request. The real catalog holds 167 recordings from the Free Music Archive's research dataset, chosen by a [written rule](docs/decisions/0007-fma-dataset-batch-catalog.md). Jamendo stays parked, and [ccMixter is not an enabled audio source](docs/requirements.md#first-source-evaluation). Matching has run against the live API in one private session ([#124](https://github.com/slackysoba/sobafm/issues/124)), but match quality hasn't been rated. A first, not yet qualified amd64 playback slice can be run with Docker Compose: a `/play` program continues through the ranked recordings, `/skip` moves on and `/settings` keeps each server's volume and change cooldown in SQLite ([operations](docs/operations.md)). The settings have only been tested offline. Release qualification is not yet complete.
 
 The Python development toolchain and Linux CI are available. Listening comparisons are deferred optional evidence.
 
@@ -50,11 +51,11 @@ The first amd64 playback slice runs with Docker Compose. It is not yet qualified
 
 ```sh
 cp .env.example .env   # then replace the placeholder token and Gemini key
-mkdir data
+mkdir catalog
 docker compose up --build -d
 ```
 
-See [Operations](docs/operations.md) for Discord permissions, the catalog and media files, stopping, updates, troubleshooting and the memory scope.
+The catalog and audio go in `./catalog`, mounted read-only. Settings go in a named volume at `/data`, the only writable path. See [Operations](docs/operations.md) for Discord permissions, the catalog and media files, settings, stopping, updates, troubleshooting and the memory scope.
 
 ## Documentation
 

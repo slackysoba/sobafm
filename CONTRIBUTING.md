@@ -63,6 +63,8 @@ The application runtime dependency was reviewed on 2026-11-04. [ADR 0005](docs/d
 
 The native components in that closure are dave.py's statically linked libdave (MIT), mlspp (BSD-2-Clause), nanobind (BSD-3-Clause), nlohmann-json (MIT) and OpenSSL 3.0.7 libcrypto (Apache-2.0); PyNaCl's libsodium; and C extensions in cffi (MIT-0), audioop-lts, aiohttp (Apache-2.0 AND MIT, including llhttp), multidict, yarl, propcache and frozenlist (Apache-2.0). All ship as wheels for amd64 and arm64. libopus is loaded from the system and is not in the lock; the application image must provide and record it. The bundled OpenSSL 3.0.7 is a pin inherited from Discord's libdave that only a dave.py release can update. Recheck it on every dave.py update.
 
+Server settings add no distribution. They use the standard library's `sqlite3`, which links the SQLite (public domain) in the Python base image, so that version moves with the base image's pin and needs 3.37 or later for `STRICT` tables. Volume uses disnake's `PCMVolumeTransformer`, which calls the `audioop-lts` already in the voice extra.
+
 For an update, review upstream maintenance, release notes, licenses and security advisories, change the relevant pins, regenerate with `uv lock`, inspect the lock diff, then run the full required checks. Review the Node binary wheel and its bundled components alongside Pyright. Do not enable Pyright's automatic version override. Use `uv run ruff check --fix` and `uv run ruff format` for intentional Python fixes; CI only checks formatting. Keep dependency-update and application behavior changes separately reviewable.
 
 ## Review and integration

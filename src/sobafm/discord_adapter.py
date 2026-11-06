@@ -38,6 +38,17 @@ deafened, so an unknown member never cuts off a real listener.
 rejects it (for example `10062 Unknown interaction`) or the request does not complete;
 they then send no follow-up and log one WARNING line with the command name and the
 interaction's age, never its token.
+
+`/settings` shows or changes a server's persisted settings. Reading them never waits,
+and a change is written off the event loop before anything takes effect. Volume is a
+linear gain of at most 1.0 that disnake's `PCMVolumeTransformer` applies to each frame
+after the callback's copy, so changing it reaches current audio at the next frame and
+can't clip.
+
+The change cooldown spans `/play` and `/skip` and is checked before interpretation or
+selection. Each accepted request holds its own claim. It gives that claim back when it
+fails or changes nothing, including when its track later fails, and a late report from
+an older request can't free a newer request's claim.
 """
 
 from __future__ import annotations
@@ -45,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 import signal
 import threading
@@ -68,6 +80,7 @@ from sobafm.catalog import (
     parse_catalog,
     parse_reviews,
 )
+from sobafm.cooldown import Claim, Cooldown
 from sobafm.credits import escaped_text
 from sobafm.gemini_match import (
     NO_RECORDINGS,
@@ -87,6 +100,17 @@ from sobafm.pcm import (
     PcmBank,
     PcmBankPool,
     PcmCapacityError,
+)
+from sobafm.settings import (
+    MAX_COOLDOWN_SECONDS,
+    MAX_GENERATED_MINUTES,
+    MAX_VOLUME_PERCENT,
+    MIN_COOLDOWN_SECONDS,
+    MIN_GENERATED_MINUTES,
+    MIN_VOLUME_PERCENT,
+    ServerSettings,
+    SettingsError,
+    SettingsStore,
 )
 from sobafm.station import (
     MAX_REQUEST_CHARACTERS,
@@ -143,6 +167,13 @@ SKIPPING = (
     "Skipping. The next recording becomes audible once enough of it is buffered; "
     "the current one continues until then."
 )
+COOLING = "This server's change cooldown is running, so nothing changed. Try again in {}."
+SETTINGS_INVALID = (
+    f"Volume must be {MIN_VOLUME_PERCENT} to {MAX_VOLUME_PERCENT}, cooldown "
+    f"{MIN_COOLDOWN_SECONDS} to {MAX_COOLDOWN_SECONDS} and duration "
+    f"{MIN_GENERATED_MINUTES} to {MAX_GENERATED_MINUTES}. Nothing was changed."
+)
+SETTINGS_UNAVAILABLE = "The settings could not be saved, so nothing was changed. Try again shortly."
 ENDED = {
     EndReason.EXHAUSTED: "no recording chosen for its request is left to try",
     EndReason.UNAVAILABLE: "the next recording could not be prepared",
@@ -171,6 +202,21 @@ class Matcher(Protocol):
     async def match(self, request: str) -> Matched | Refused: ...
 
     async def close(self) -> None: ...
+
+
+class Settings(Protocol):
+    """Each server's persisted settings: reading never waits; a write waits off the loop."""
+
+    def get(self, guild_id: int) -> ServerSettings: ...
+
+    async def update(
+        self,
+        guild_id: int,
+        *,
+        generated_minutes: int | None = None,
+        volume_percent: int | None = None,
+        cooldown_seconds: int | None = None,
+    ) -> ServerSettings: ...
 
 
 @dataclass(frozen=True)
@@ -250,6 +296,9 @@ class Track:
     # include silence returned while the bank's lock was momentarily held.
     frames: int = 0
     underruns: int = 0
+    # The cooldown claim of the request this track serves, given back if it fails to
+    # start. Only the event loop reads or writes it; the callback ignores it.
+    claim: Claim | None = None
 
 
 class StationSource(disnake.AudioSource):
@@ -318,12 +367,14 @@ class StationSource(disnake.AudioSource):
             idle, self._idle = self._idle, False
             return idle
 
-    def cut_pending(self) -> bool:
-        """Make a pending track switch as soon as it is ready; report whether one exists."""
+    def cut_pending(self, claim: Claim) -> bool:
+        """Make a pending track switch as soon as it is ready, for the request holding
+        ``claim``; report whether one exists."""
         with self._lock:
             if self._pending is None:
                 return False
             self._pending.cut = True
+            self._pending.claim = claim
             return True
 
     def take_pending(self) -> Track | None:
@@ -353,8 +404,11 @@ class Grace:
 
 @dataclass(eq=False)
 class GuildPlayer:
+    guild_id: int
     voice: disnake.VoiceClient
     source: StationSource
+    # What the voice player reads: the source's frames at this server's volume.
+    output: disnake.PCMVolumeTransformer[StationSource]
     station: Station = field(default_factory=Station)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # One request is matched at a time per server. A stop during the wait must win, so
@@ -370,6 +424,9 @@ class GuildPlayer:
     skip_requested: bool = False
     # At most one listener grace period per server.
     grace: Grace | None = None
+    cooldown: Cooldown = field(default_factory=Cooldown)
+    # The claim of a request whose track has not been offered to the callback yet.
+    waiting_claim: Claim | None = None
 
 
 class Adapter:
@@ -379,14 +436,18 @@ class Adapter:
         self,
         matcher: Matcher | None,
         producer: Producer,
+        settings: Settings,
         *,
         pool: PcmBankPool = GLOBAL_PCM_BANKS,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.matcher = matcher
         self._producer = producer
+        self._settings = settings
         self._pool = pool
         self._sleep = sleep  # the grace timer's clock; tests inject a controlled one
+        self._clock = clock  # the cooldown's clock, injected the same way
         self.players: dict[int, GuildPlayer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
         self.retirements: set[asyncio.Task[None]] = set()
@@ -470,8 +531,10 @@ class Adapter:
                     SHUTTING_DOWN, ephemeral=True, allowed_mentions=NO_MENTIONS
                 )
             log.info("voice connected")
-            report = self._reporter(inter.guild.id)
-            self.players[inter.guild.id] = GuildPlayer(voice, StationSource(report))
+            source = StationSource(self._reporter(inter.guild.id))
+            gain = self._settings.get(inter.guild.id).volume_percent / 100
+            output = disnake.PCMVolumeTransformer(source, gain)
+            self.players[inter.guild.id] = GuildPlayer(inter.guild.id, voice, source, output)
         await inter.followup.send(
             f"Joined {channel.mention}.", ephemeral=True, allowed_mentions=NO_MENTIONS
         )
@@ -500,49 +563,79 @@ class Adapter:
             return f"Requests must be 1 to {MAX_REQUEST_CHARACTERS} printable characters."
         if player.matching:
             return MATCH_BUSY
+        claim = self._claim(player)
+        if isinstance(claim, str):
+            return claim
+        accepted = False
         player.matching = True
         silenced = player.silenced
         try:
-            plan = await self.matcher.match(text)
-        except MatchFailed as exc:
-            return NOTHING_ADMITTED if exc.kind == NO_RECORDINGS else MATCH_UNAVAILABLE
-        finally:
-            player.matching = False
-        if isinstance(plan, Refused):
-            return NOT_A_MUSIC_REQUEST
-        async with player.lock:
-            if self.stopping.is_set():
-                return SHUTTING_DOWN
-            if player.silenced != silenced:
-                return STOPPED_WHILE_MATCHING
-            station = player.station
-            # The request is interpreted once: later tracks come from this ranked plan.
-            program = station.request(request, tuple(c.recording for c in plan.ranked)).program
-            player.attempts = 0
-            player.skip_requested = False
-            chosen = next(
-                (
-                    choice
-                    for choice in plan.ranked
-                    if station.prepared(program, choice.recording) is Outcome.ACCEPTED
-                ),
-                None,
-            )
-            if chosen is None:
-                station.preparation_failed(program)
-                return "The matching recordings' credits are incomplete; nothing was substituted."
-            if not await self._start(player):
-                return (
-                    "Playback could not start (capacity is busy or voice is unavailable); "
-                    "current audio continues. Try again shortly."
+            try:
+                plan = await self.matcher.match(text)
+            except MatchFailed as exc:
+                return NOTHING_ADMITTED if exc.kind == NO_RECORDINGS else MATCH_UNAVAILABLE
+            finally:
+                player.matching = False
+            if isinstance(plan, Refused):
+                return NOT_A_MUSIC_REQUEST
+            async with player.lock:
+                if self.stopping.is_set():
+                    return SHUTTING_DOWN
+                if player.silenced != silenced:
+                    return STOPPED_WHILE_MATCHING
+                station = player.station
+                # The request is interpreted once: later tracks come from this ranked plan.
+                program = station.request(request, tuple(c.recording for c in plan.ranked)).program
+                player.attempts = 0
+                player.skip_requested = False
+                player.waiting_claim = claim
+                chosen = next(
+                    (
+                        choice
+                        for choice in plan.ranked
+                        if station.prepared(program, choice.recording) is Outcome.ACCEPTED
+                    ),
+                    None,
                 )
-        return _accepted(chosen)
+                if chosen is None:
+                    station.preparation_failed(program)
+                    return (
+                        "The matching recordings' credits are incomplete; nothing was substituted."
+                    )
+                if not await self._start(player):
+                    return (
+                        "Playback could not start (capacity is busy or voice is unavailable); "
+                        "current audio continues. Try again shortly."
+                    )
+                accepted = True
+            return _accepted(chosen)
+        finally:
+            if not accepted:
+                self._give_back(player, claim)
+
+    def _claim(self, player: GuildPlayer) -> Claim | str:
+        """Take the server's cooldown for one request, or return the reply refusing it."""
+        seconds = self._settings.get(player.guild_id).cooldown_seconds
+        now = self._clock()
+        claim = player.cooldown.claim(now, seconds)
+        if claim is not None:
+            return claim
+        wait = math.ceil(player.cooldown.remaining(now, seconds))
+        return COOLING.format(f"{wait} second{'' if wait == 1 else 's'}")
+
+    @staticmethod
+    def _give_back(player: GuildPlayer, claim: Claim | None) -> None:
+        """A failed or no-op request releases its own claim, and only that."""
+        player.cooldown.release(claim)
+        if player.waiting_claim is claim:
+            player.waiting_claim = None
 
     async def _start(self, player: GuildPlayer, *, cut: bool = True) -> bool:
         """Claim ready audio, displacing an unheard pending track, and hand it to the player.
 
         ``cut`` audio switches as soon as it is ready; otherwise it follows the
-        current track's last frame.
+        current track's last frame. The track takes over ``player.waiting_claim`` once
+        it is offered; after a failure that claim stays for the caller to settle.
         """
         station = player.station
         if self.stopping.is_set():
@@ -562,18 +655,19 @@ class Adapter:
             station.switch_failed(audio)
             return False
         task = asyncio.create_task(self._produce(audio.recording, bank))
-        track = Track(audio, bank, task, cut=cut)
+        track = Track(audio, bank, task, cut=cut, claim=player.waiting_claim)
         idle = player.source.offer(track)
         if idle or not player.voice.is_playing():  # also restarts after a player error
             try:
                 player.voice.stop()
-                player.voice.play(player.source)
+                player.voice.play(player.output)
             except Exception as exc:  # e.g. the voice connection dropped meanwhile
                 log.warning("voice player could not start: %s", type(exc).__name__)
                 if player.source.take_pending() is track:
                     station.switch_failed(audio)
                     self._retire(track)
                 return False
+        player.waiting_claim = None
         return True
 
     async def _produce(self, recording: Recording, bank: PcmBank) -> None:
@@ -660,6 +754,10 @@ class Adapter:
                 if waiter is not None:
                     await self._await_capacity(waiter, timeout)
         finally:
+            # A claim still waiting belongs to a `/skip` of this program that got no track.
+            # A newer `/play`'s claim is left alone: that program is then the desired one.
+            if player.station.desired in (program, None):
+                self._give_back(player, player.waiting_claim)
             self._capacity_changed()  # a bank this program yielded may now go elsewhere
             self._review_listeners(player)  # exhaustion can end the program
 
@@ -721,6 +819,19 @@ class Adapter:
         )
 
     async def _skip(self, player: GuildPlayer) -> str:
+        """Check the cooldown, then skip; only a skip under way keeps holding it."""
+        claim = self._claim(player)
+        if isinstance(claim, str):
+            return claim
+        reply = None
+        try:
+            reply = await self._skip_track(player, claim)
+            return reply
+        finally:
+            if reply != SKIPPING:
+                self._give_back(player, claim)
+
+    async def _skip_track(self, player: GuildPlayer, claim: Claim) -> str:
         """Switch to the program's next track once it is ready; current audio continues."""
         async with player.lock:
             station = player.station
@@ -729,13 +840,14 @@ class Adapter:
             heard = station.heard
             if heard is None or station.desired != heard.program:
                 return "Nothing from the current program is audible to skip."
-            if player.source.cut_pending():
+            if player.source.cut_pending(claim):
                 return SKIPPING  # the prepared or still-preparing next track
             if (reason := station.ending) is not None:
                 return f"Nothing follows: {ENDED[reason]}. The current recording continues."
             if not station.needs_next:  # the next track's switch report is in flight
                 return "The next recording is already starting."
             player.skip_requested = True
+            player.waiting_claim = claim
             task = self._schedule_continue(player)
         # Bounded wait for the preparation; it stays owned by the adapter afterwards.
         await asyncio.wait({task}, timeout=SETTLE_SECONDS)
@@ -781,6 +893,7 @@ class Adapter:
         player.silenced += 1
         player.station.stop(ended)
         player.skip_requested = False
+        player.waiting_claim = None  # its cooldown runs on; the stop is not its failure
         tracks = player.source.take_all()
         if player.station.switching is not None:
             player.station.switch_failed(player.station.switching)
@@ -801,6 +914,48 @@ class Adapter:
         if tracks:
             await asyncio.wait(tracks, timeout=SETTLE_SECONDS)
         await inter.followup.send("Stopped and left.", ephemeral=True, allowed_mentions=NO_MENTIONS)
+
+    async def settings(
+        self,
+        inter: Inter,
+        duration: int | None = None,
+        volume: int | None = None,
+        cooldown: int | None = None,
+    ) -> None:
+        """Privately show the server's settings or change the supplied values."""
+        if inter.guild is None:
+            return await self._refuse(inter, SERVER_ONLY)
+        guild_id = inter.guild.id
+        if duration is None and volume is None and cooldown is None:
+            return await self._refuse(inter, _describe(self._settings.get(guild_id)))
+        if self.stopping.is_set():
+            return await self._refuse(inter, SHUTTING_DOWN)
+        await inter.response.defer(ephemeral=True)
+        try:
+            updated = await self._settings.update(
+                guild_id,
+                generated_minutes=duration,
+                volume_percent=volume,
+                cooldown_seconds=cooldown,
+            )
+        except ValueError:
+            reply = SETTINGS_INVALID
+        except SettingsError as exc:
+            log.warning("settings write failed: kind=%s", exc)
+            reply = SETTINGS_UNAVAILABLE
+        else:
+            log.info(
+                "settings saved: generated_minutes=%d volume_percent=%d cooldown_seconds=%d",
+                updated.generated_minutes,
+                updated.volume_percent,
+                updated.cooldown_seconds,
+            )
+            if (player := self.players.get(guild_id)) is not None:
+                # Current audio changes at its next frame. Reading the store rather than
+                # this write's result keeps the latest value if two writes finish together.
+                player.output.volume = self._settings.get(guild_id).volume_percent / 100
+            reply = f"Saved.\n{_describe(updated)}"
+        await inter.followup.send(reply, ephemeral=True, allowed_mentions=NO_MENTIONS)
 
     async def _disconnect(self, guild_id: int, player: GuildPlayer) -> set[asyncio.Task[None]]:
         """Silence and disconnect at once; return the retirements still owning audio."""
@@ -964,6 +1119,8 @@ class Adapter:
                     player.attempts = 0
         elif station is not None and kind == "failed":
             station.switch_failed(track.audio)
+            assert player is not None
+            player.cooldown.release(track.claim)  # no effect once a newer request holds it
         elif (
             station is not None
             and kind == "drained"
@@ -986,7 +1143,8 @@ class Adapter:
 
     async def _start_locked(self, player: GuildPlayer) -> None:
         async with player.lock:
-            await self._start(player)
+            if not await self._start(player):
+                self._give_back(player, player.waiting_claim)
             self._review_listeners(player)  # a failed start can revert the desired program
 
     # Ownership.
@@ -1088,6 +1246,18 @@ def _accepted(choice: Ranked) -> str:
     )
 
 
+def _describe(settings: ServerSettings) -> str:
+    """The settings with their ranges, as `/settings` shows them."""
+    wait = "second" if settings.cooldown_seconds == 1 else "seconds"
+    return (
+        f"Volume: {settings.volume_percent}% ({MIN_VOLUME_PERCENT} to {MAX_VOLUME_PERCENT}).\n"
+        f"Change cooldown: {settings.cooldown_seconds} {wait} "
+        f"({MIN_COOLDOWN_SECONDS} to {MAX_COOLDOWN_SECONDS}), across `/play` and `/skip`.\n"
+        f"Generated duration: {settings.generated_minutes} minutes "
+        f"({MIN_GENERATED_MINUTES} to {MAX_GENERATED_MINUTES}), for generated music only."
+    )
+
+
 def create_bot(adapter: Adapter) -> commands.InteractionBot:
     """Register the slash commands; `/play` and `/skip` are omitted without a catalog."""
     bot = commands.InteractionBot(intents=intents())
@@ -1113,6 +1283,23 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
     async def now(inter: Inter) -> None:
         """Privately show what is actually heard, with full credits."""
         await adapter.now(inter)
+
+    @bot.slash_command(name="settings", contexts=servers, default_member_permissions=manager)
+    async def settings(
+        inter: Inter,
+        duration: commands.Range[int, MIN_GENERATED_MINUTES, MAX_GENERATED_MINUTES] | None = None,
+        volume: commands.Range[int, MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT] | None = None,
+        cooldown: commands.Range[int, MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS] | None = None,
+    ) -> None:
+        """Privately show this server's settings, or change the values you supply.
+
+        Parameters
+        ----------
+        duration: Minutes generated music lasts.
+        volume: Playback volume in percent.
+        cooldown: Seconds between changes of music, across /play and /skip.
+        """
+        await adapter.settings(inter, duration, volume, cooldown)
 
     @bot.listen("on_voice_state_update")
     async def voice_state_update(
@@ -1145,9 +1332,9 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
     return bot
 
 
-async def run(config: Config, producer: Producer) -> int:
+async def run(config: Config, producer: Producer, settings: SettingsStore) -> int:
     """Run until SIGTERM or SIGINT, then disconnect and exit once owners are released."""
-    adapter = Adapter(config.matcher, producer)
+    adapter = Adapter(config.matcher, producer, settings)
     bot = create_bot(adapter)
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT):
@@ -1158,6 +1345,7 @@ async def run(config: Config, producer: Producer) -> int:
     released = await adapter.shutdown()
     if config.matcher is not None:
         await config.matcher.close()  # also ends any request still being matched
+    settings_closed = await settings.close()  # joins any write still queued
     await bot.close()
     stopping.cancel()
     await asyncio.wait({client})
@@ -1165,4 +1353,4 @@ async def run(config: Config, producer: Producer) -> int:
     if error is not None:
         # Only the type: client errors must not carry the token or interaction data out.
         log.error("Discord client stopped: %s", type(error).__name__)
-    return 0 if released and error is None else 1
+    return 0 if released and settings_closed and error is None else 1

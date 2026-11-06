@@ -29,22 +29,24 @@ from sobafm.catalog import (
     Strength,
 )
 from sobafm.discord_adapter import GEMINI_KEY_VARIABLE, MAX_REVIEWS_BYTES
-from sobafm.gemini_match import (
+from sobafm.gemini_interactions import (
     API_REVISION,
     ENDPOINT,
     MAX_CONCURRENT_CALLS,
-    MAX_RANKED,
     MAX_RESPONSE_BYTES,
     MODEL,
-    NO_RECORDINGS,
     AiohttpTransport,
+    output_text,
+)
+from sobafm.gemini_match import (
+    MAX_RANKED,
+    NO_RECORDINGS,
     Fit,
     GeminiMatcher,
     Matched,
     MatchFailed,
     Refused,
     checked_request,
-    output_text,
     parse_plan,
     render_songs,
     valid_api_key,
@@ -286,6 +288,35 @@ def test_failures_make_one_call_and_log_only_a_safe_kind(
     assert error.value.kind == kind and len(transport.calls) == 1
     assert f"kind={kind}" in caplog.text
     for private in (request, KEY, "provider text"):
+        assert private not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("transport", "kind"),
+    [
+        (
+            FakeTransport(
+                b'{"error":{"code":"safety","message":"Input blocked: provider text"}}', status=400
+            ),
+            "http_400",
+        ),
+        (
+            FakeTransport(
+                b'{"status":"failed","errors":[{"code":"safety","message":"provider text"}]}'
+            ),
+            "interaction_not_completed",
+        ),
+    ],
+)
+def test_a_provider_block_is_an_ordinary_failure_for_play(
+    transport: FakeTransport, kind: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    request = "my private request text"
+    with caplog.at_level(logging.INFO), pytest.raises(MatchFailed) as error:
+        asyncio.run(matcher(transport).match(request))
+    assert error.value.kind == kind and len(transport.calls) == 1
+    assert f"request matching failed: kind={kind} " in caplog.text
+    for private in (request, KEY, "provider text", "safety"):
         assert private not in caplog.text
 
 
