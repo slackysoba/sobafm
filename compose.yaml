@@ -1,5 +1,6 @@
 # SobaFM first amd64 slice. The limits are ADR 0004's and the app refuses to
 # start under any others. Copy .env.example to .env and fill in real values.
+# ADR 0009 records the volume layout.
 services:
   sobafm:
     build: .
@@ -16,9 +17,17 @@ services:
     restart: on-failure:5
     env_file: .env
     volumes:
-      - ./data:/data:ro
+      # Catalog, reviews, media manifest and audio: read-only.
+      - ./catalog:/catalog:ro
+      # The settings database. A new named volume takes the ownership of the
+      # image's /data, UID 1000, so it needs no host setup.
+      - data:/data
     logging:
       driver: json-file
       options:
         max-size: 1m
         max-file: "2"
+
+volumes:
+  data:
+    name: sobafm-data
