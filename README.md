@@ -46,7 +46,7 @@ This included ccMixter observation retains a missing requested ID and incomplete
 
 ## Run
 
-The first amd64 playback slice runs with Docker Compose. It is not yet qualified: the image ran in one private Discord session on Docker Desktop under WSL2 ([#97](https://github.com/slackysoba/sobafm/issues/97)), but neither the image, its limits nor the release is qualified.
+The first amd64 playback slice runs with Docker Compose. It is not yet qualified: it has run in two private Discord sessions on Docker Desktop under WSL2 ([#97](https://github.com/slackysoba/sobafm/issues/97) and [#124](https://github.com/slackysoba/sobafm/issues/124), the second with the real catalog and Gemini), but neither the image, its limits nor the release is qualified.
 
 ```sh
 cp .env.example .env   # then replace the placeholder token and Gemini key
