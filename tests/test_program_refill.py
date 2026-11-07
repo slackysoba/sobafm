@@ -9,7 +9,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -47,6 +47,7 @@ from tests.test_discord_adapter import (
     FakeInteraction,
     FakeMatcher,
     FakeSettings,
+    FakeVoice,
     Harness,
     Tagged,
     current,
@@ -956,3 +957,89 @@ async def test_a_retry_falling_due_while_a_connection_ends_makes_no_further_call
     player.lock.release()
     await until(lambda: 1 not in h.adapter.players and h.adapter.tasks == set())
     assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_silent_reconnecting_server_does_not_reserve_a_healthy_servers_next_bank() -> None:
+    h, _ = program_harness("a", "b")
+    await h.join()
+    second = inter(FakeChannel("second", guild=FakeGuild(2)), manager=True)
+    second.guild = FakeGuild(2)
+    await run(h.adapter.join, second)
+    one, two = h.adapter.players[1], h.adapter.players[2]
+    for player in (one, two):
+        station = player.station
+        program = station.request("piano", (recording("a"), recording("b"))).program
+        station.prepared(program, recording("a"))
+        audio = station.claim_ready()
+        assert audio is not None
+        station.switched(audio)
+        if player is one:
+            station.drained(audio)
+    bank_free = h.adapter._bank_free  # pyright: ignore[reportPrivateUsage]
+    assert not bank_free(two)  # a connected silent server still gets priority
+    cast(FakeVoice, one.voice).connected = False
+    assert one.station.needs_next and not one.closing
+    assert bank_free(two)  # this server cannot play until it reconnects
+    continuation = h.adapter._schedule_continue(two)  # pyright: ignore[reportPrivateUsage]
+    await asyncio.wait_for(continuation, 1)
+    assert two.station.switching is not None and h.pool.leased == 1
+    cast(FakeVoice, one.voice).connected = True
+    assert not bank_free(two)  # priority returns when the server can use it
+    assert await h.adapter.shutdown() is True
+
+
+@offline
+async def test_a_refill_result_queued_before_voice_loss_is_discarded_under_the_lock() -> None:
+    h, tagged, fake = one_at_a_time("a", "b")
+    fake.gate = asyncio.Event()
+    await h.join()
+    fake.gate.set()
+    await h.play()
+    fake.gate.clear()
+    await settle()
+    player = player_of(h)
+    assert player.source.read() == tag("a")
+    await calls_reach(fake, 2)
+    refill = player.refill
+    assert refill is not None
+    program = desired_of(h)
+    old_plan = player.station.plan(program)
+
+    class ObservedLock(asyncio.Lock):
+        def __init__(self) -> None:
+            super().__init__()
+            self.queued: asyncio.Queue[None] = asyncio.Queue()
+
+        async def acquire(self) -> Literal[True]:
+            if self.locked():
+                self.queued.put_nowait(None)
+            return await super().acquire()
+
+    lock = player.lock = ObservedLock()
+    await lock.acquire()
+    fake.gate.set()
+    await asyncio.wait_for(lock.queued.get(), 1)  # the result is first in line for the lock
+    observed = asyncio.Event()
+    release_observer = asyncio.Event()
+
+    async def observe_before_silence() -> None:
+        async with lock:
+            observed.set()
+            await release_observer.wait()
+
+    observer = asyncio.create_task(observe_before_silence())
+    await asyncio.wait_for(lock.queued.get(), 1)  # observer is second; cleanup follows it
+    h.adapter._voice_gone(1, player.voice)  # pyright: ignore[reportPrivateUsage]
+    assert player.closing and player.station.desired == program
+    lock.release()
+    try:
+        await asyncio.wait_for(observed.wait(), 1)
+        await asyncio.wait_for(refill.task, 1)
+        # `_silence` has not run. Only the post-await closing guard can discard this result.
+        assert player.station.desired == program and player.station.plan(program) == old_plan
+        assert player.station.ending is None and tagged.started == ["a"]
+    finally:
+        release_observer.set()
+        await observer
+        assert await h.adapter.shutdown() is True
