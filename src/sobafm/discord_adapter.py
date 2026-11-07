@@ -475,6 +475,17 @@ class Refill:
 
 
 @dataclass(eq=False)
+class RefillBudget:
+    """One program's allowance until it receives its next usable list."""
+
+    program: Program
+    used: int = 0
+    retry_at: float = 0.0
+    # A cancelled call can still be settling when its program becomes desired again.
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+@dataclass(eq=False)
 class GuildPlayer:
     guild_id: int
     voice: disnake.VoiceClient
@@ -498,6 +509,7 @@ class GuildPlayer:
     grace: Grace | None = None
     # At most one refill per server, for its desired program.
     refill: Refill | None = None
+    refill_budget: RefillBudget | None = None
     cooldown: Cooldown = field(default_factory=Cooldown)
     # The claim of a request whose track has not been offered to the callback yet.
     waiting_claim: Claim | None = None
@@ -705,7 +717,7 @@ class Adapter:
         self._settings = settings
         self._pool = pool
         self._sleep = sleep  # the grace and refill timers' clock; tests inject one
-        self._clock = clock  # the cooldown's clock, injected the same way
+        self._clock = clock  # monotonic time for cooldowns and refill retry deadlines
         self.players: dict[int, GuildPlayer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
         self.retirements: set[asyncio.Task[None]] = set()
@@ -1159,39 +1171,66 @@ class Adapter:
         """
         assert self.matcher is not None
         station = player.station
+        task = asyncio.current_task()
+
+        def current() -> bool:
+            # The same program can become desired again while its cancelled call settles.
+            return (
+                not self.stopping.is_set()
+                and not player.closing
+                and station.desired == program
+                and player.refill is not None
+                and player.refill.task is task
+            )
+
+        if not current():
+            return
+        budget = player.refill_budget
+        if budget is None or budget.program != program:
+            budget = player.refill_budget = RefillBudget(program)
         try:
-            for attempt in range(1, MAX_REFILL_ATTEMPTS + 1):
-                if self.stopping.is_set() or player.closing or station.desired != program:
-                    return
-                recordings: tuple[Recording, ...] = ()
-                nothing_left = False
-                try:
-                    plan = await self.matcher.match(program.request, station.history(program))
-                except MatchFailed as exc:
-                    nothing_left = exc.kind == NO_RECORDINGS
-                else:
-                    if isinstance(plan, Matched):
-                        recordings = tuple(c.recording for c in plan.ranked)
+            async with budget.lock:
+                for attempt in range(budget.used + 1, MAX_REFILL_ATTEMPTS + 1):
+                    wait = budget.retry_at - self._clock()
+                    if wait > 0:
+                        await self._sleep(wait)
+                    if not current():
+                        return
+                    budget.used = attempt  # a dispatched call counts even if it is cancelled
+                    recordings: tuple[Recording, ...] = ()
+                    nothing_left = False
+                    try:
+                        plan = await self.matcher.match(program.request, station.history(program))
+                    except MatchFailed as exc:
+                        nothing_left = exc.kind == NO_RECORDINGS
+                    else:
+                        if isinstance(plan, Matched):
+                            recordings = tuple(c.recording for c in plan.ranked)
+                    finally:
+                        if attempt < MAX_REFILL_ATTEMPTS:
+                            seconds_left = self._seconds_left(player, program)
+                            budget.retry_at = self._clock() + refill_wait(attempt, seconds_left)
+                    async with player.lock:
+                        if not current():
+                            return
+                        if nothing_left:
+                            log.info("program has no recording left in the catalog")
+                            self._end_after_heard(player, program, EndReason.EXHAUSTED)
+                            return
+                        if station.refilled(program, recordings) is Outcome.ACCEPTED:
+                            player.refill_budget = None
+                            log.info(
+                                "program refilled: recordings=%d attempt=%d",
+                                len(station.plan(program)),
+                                attempt,
+                            )
+                            self._schedule_continue(player)
+                            return
+                        log.warning("program refill failed: attempt=%d", attempt)
+                # This also settles a resumed refill whose last permitted call was interrupted.
                 async with player.lock:
-                    if self.stopping.is_set() or player.closing or station.desired != program:
-                        return  # replaced or stopped meanwhile: the result changes nothing
-                    if nothing_left:
-                        log.info("program has no recording left in the catalog")
-                        self._end_after_heard(player, program, EndReason.EXHAUSTED)
-                        return
-                    if station.refilled(program, recordings) is Outcome.ACCEPTED:
-                        log.info(
-                            "program refilled: recordings=%d attempt=%d",
-                            len(station.plan(program)),
-                            attempt,
-                        )
-                        self._schedule_continue(player)
-                        return
-                    log.warning("program refill failed: attempt=%d", attempt)
-                    if attempt == MAX_REFILL_ATTEMPTS:
+                    if current():
                         self._end_after_heard(player, program, EndReason.REFILL_FAILED)
-                        return
-                await self._sleep(refill_wait(attempt, self._seconds_left(player, program)))
         finally:
             self._capacity_changed()  # a bank this program yielded may now go elsewhere
             self._review_listeners(player)  # the program may have ended
@@ -1210,6 +1249,7 @@ class Adapter:
 
     @staticmethod
     def _end_after_heard(player: GuildPlayer, program: Program, reason: EndReason) -> None:
+        player.refill_budget = None
         player.station.exhausted(program, reason)
         if player.station.desired is None:  # nothing was heard, so no drain will report it
             log.info("program ended: reason=%s", reason.value)
@@ -1348,6 +1388,7 @@ class Adapter:
         """End the program, remove all audio from the callback and start retirements."""
         self._cancel_grace(player)
         self._cancel_refill(player)
+        player.refill_budget = None
         player.silenced += 1
         player.station.stop(ended)
         player.skip_requested = False
