@@ -78,6 +78,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 import disnake
+import disnake.gateway
 from disnake.ext import commands
 
 from sobafm.catalog import (
@@ -531,8 +532,10 @@ class WatchedVoiceClient(disnake.VoiceClient):
     A connection that's down also ends in one of two ways, within a bound, because a next
     track waits for it. Left alone it might never do either: UDP discovery has no timeout
     (`gateway.py` 1166), and after five failed websockets `connect` returns as if it had
-    worked (376-392), so the loop would try again for ever. So `connect` and
-    `potential_reconnect` are bounded, and a `connect` that didn't connect gives up for good.
+    worked (376-392), so the loop would try again for ever. So `connect`,
+    `potential_reconnect` and the direct 4015 websocket resume are bounded, and a `connect`
+    that didn't connect gives up for good. The library's backoff precedes each reconnect
+    attempt and can reach 1,024 seconds on a connection that keeps dropping.
 
     Lines are in disnake 2.12.2's `voice_client.py`:
     https://github.com/DisnakeDev/disnake/blob/v2.12.2/disnake/voice_client.py
@@ -550,6 +553,7 @@ class WatchedVoiceClient(disnake.VoiceClient):
         self._report_gone = gone
         self._ended = False
         self._disconnecting: asyncio.Event | None = None
+        self._resume_settled: asyncio.Future[None] | None = None
 
     def is_connected(self) -> bool:
         # `cleanup` sets the event the player thread waits on, so it can't answer this alone.
@@ -590,8 +594,49 @@ class WatchedVoiceClient(disnake.VoiceClient):
             return False  # `poll_voice_ws` then ends, and that closes this client
 
     async def connect_websocket(self, *, resume: bool = False) -> None:
-        await super().connect_websocket(resume=resume)
+        # A 4015 resumes directly, outside `connect` and `potential_reconnect`.
+        previous = self.ws
+        if resume:
+            self._resume_settled = self.loop.create_future()
+        try:
+            async with asyncio.timeout(CONNECT_ATTEMPT_SECONDS):
+                await super().connect_websocket(resume=resume)
+        except Exception, asyncio.CancelledError:
+            if resume and self.ws is not previous:
+                # Disnake installed this socket before waiting for RESUMED. Transfer it
+                # out of the shared slot before a disconnect or the fallback can use it.
+                failed, self.ws = self.ws, disnake.utils.MISSING
+                await self._join_cleanup(asyncio.create_task(self._close_failed_resume(failed)))
+            raise
+        finally:
+            if resume and self._resume_settled is not None:
+                self._resume_settled.set_result(None)
+                self._resume_settled = None
         self._report_ready(self)
+
+    @staticmethod
+    async def _close_failed_resume(ws: disnake.gateway.DiscordVoiceWebSocket) -> None:
+        heartbeat = ws._keep_alive  # pyright: ignore[reportPrivateUsage]
+        try:
+            await ws.close()  # stops the HELLO heartbeat and closes the transport
+        finally:
+            # Its last send may need the event loop. Check for thread exit without
+            # blocking that loop or requiring a spare thread under the 64-task cap.
+            while heartbeat is not None and heartbeat.is_alive():
+                await asyncio.sleep(0.05)
+
+    @staticmethod
+    async def _join_cleanup(work: asyncio.Future[None]) -> None:
+        """Propagate cancellation only after the original voice cleanup has settled."""
+        interrupted = False
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError:
+                interrupted = True
+        work.result()
+        if interrupted:
+            raise asyncio.CancelledError
 
     async def poll_voice_ws(self, reconnect: bool) -> None:
         try:
@@ -618,7 +663,13 @@ class WatchedVoiceClient(disnake.VoiceClient):
         try:
             await super().disconnect(force=force)
         finally:
-            self._disconnecting.set()
+            try:
+                # `cleanup` cancels the poller. A /leave or replacement /join must also
+                # wait for the socket and heartbeat of any interrupted resume it owns.
+                if self._resume_settled is not None:
+                    await self._join_cleanup(self._resume_settled)
+            finally:
+                self._disconnecting.set()
 
     def cleanup(self) -> None:
         if self._ended:
@@ -1033,9 +1084,9 @@ class Adapter:
                         return
                     if not player.voice.is_connected():
                         # A reconnect the library is handling, which ends within a bound in
-                        # `_voice_ready` or `_lose_voice`, and either wakes this. Nothing can
-                        # start, so this uses up no attempt or recording, and the wait for a
-                        # bank starts again afterwards.
+                        # `_voice_ready` or `_lose_voice`; an explicit `_disconnect` also
+                        # wakes this. Nothing can start, so this uses up no attempt or
+                        # recording, and the wait for a bank starts again afterwards.
                         deadline = None
                         waiter = self._capacity_waiter()
                     elif not self._bank_free(player):
@@ -1181,6 +1232,7 @@ class Adapter:
         return not self._audible(player) or not any(
             other is not player
             and not other.closing  # a connection that's ending has no claim on a bank
+            and other.voice.is_connected()  # a reconnect can't use the bank yet
             and other.station.needs_next
             and not self._audible(other)
             for other in self.players.values()
@@ -1396,6 +1448,7 @@ class Adapter:
         because `cleanup` removes by server. For the same reason this runs once per player.
         """
         player.closing = True
+        self._capacity_changed()  # `/join` and `/leave` also end a wait for this connection
         async with player.lock:
             if player.disconnected:
                 return set()
