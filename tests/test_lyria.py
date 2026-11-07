@@ -1677,24 +1677,26 @@ def test_a_filtered_renewal_keeps_the_healthy_session_playing() -> None:
 
 
 @pytest.mark.parametrize("crossfading", [False, True])
-def test_a_refusal_during_an_in_flight_replacement_survives_its_handoff(crossfading: bool) -> None:
+def test_a_refusal_during_an_in_flight_replacement_survives_its_handoff(
+    crossfading: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         refuse = asyncio.Event()
         prepare = asyncio.Event()
-        end = asyncio.Event()
 
         async def old(peer: Peer) -> None:
             await peer.handshake()
             await peer.pre_roll(1_000)
             await refuse.wait()
-            await peer.websocket.close(code=1008)
+            # Send the policy close without shutting the server reader. Its
+            # disconnected event then observes the client's actual socket drop.
+            peer.write_raw(frame_header(2, opcode=8) + struct.pack("!H", 1008))
 
         async def replacement(peer: Peer) -> None:
             await peer.handshake()
             await prepare.wait()
             await peer.pre_roll(3_000)
-            await end.wait()
-            await peer.websocket.close(code=1000)
+            # FakeLyria keeps this connection open for the client to end.
 
         async with FakeLyria(old, replacement, serves(5_000)) as fake:
             harness = StreamHarness(fake)
@@ -1710,24 +1712,49 @@ def test_a_refusal_during_an_in_flight_replacement_survives_its_handoff(crossfad
             refuse.set()
             await fake.peers[0].disconnected.wait()
             prepare.set()
-            end.set()
-            # A fade already in progress plays out. A still-preparing replacement
-            # is discarded when it returns, leaving all the old frames to drain.
-            frames = harness.read_frames(PRE_ROLL_FRAMES)
             if crossfading:
-                assert_faded(
-                    [sample_of(f) for f in frames[:CROSSFADE_FRAMES]],
-                    1_000,
-                    3_000,
-                    CROSSFADE_FRAMES,
-                )
-                assert sample_of(frames[-1]) == 3_000
+                # Hold actual socket closure so the peer can send again after the
+                # handoff. The producer must stop independently of close settlement.
+                async with StuckClose(monkeypatch) as stuck:
+                    fade = harness.read_frames(CROSSFADE_FRAMES)
+                    assert_faded([sample_of(f) for f in fade], 1_000, 3_000, CROSSFADE_FRAMES)
+                    await until(lambda: harness.pool.leased == 1)  # outgoing owner retired
+                    tail = harness.read_frames(PRE_ROLL_FRAMES - CROSSFADE_FRAMES)
+                    assert {sample_of(f) for f in tail} == {3_000}
+                    first_eof = stream.read_frame()
+                    assert not fake.peers[1].disconnected.is_set()
+                    await fake.peers[1].websocket.send_str(audio_message(7_000))
+                    late: list[int] = []
+                    while len(late) < MESSAGE_PCM // FRAME_BYTES:
+                        frame = stream.read_frame()
+                        if frame == b"":
+                            break
+                        if frame is None:
+                            await asyncio.sleep(0)
+                        else:
+                            late.append(sample_of(frame))
+                    # Finishing later still joins the close on its original clock.
+                    harness.time.advance(0.5)
+                    finishing = asyncio.create_task(stream.finish())
+                    await until(
+                        lambda: 1.5 in harness.time.delays() or 2.0 in harness.time.delays()
+                    )
+                    remaining = harness.time.delays()
+                    assert not finishing.done()
+                    assert harness.pool.leased == 1
+                    await stuck.entered.wait()
+                    stuck.release.set()
+                    report = await finishing
+                    assert not late, f"played {len(late)} frames after terminal refusal"
+                    assert first_eof == b""
+                    assert 1.5 in remaining  # two-second interrupt measured from the handoff
             else:
+                frames = harness.read_frames(PRE_ROLL_FRAMES)
                 assert {sample_of(f) for f in frames} == {1_000}
-            while (last := stream.read_frame()) is None:
-                await asyncio.sleep(0)
-            report = await stream.finish()
-            assert last == b""
+                while (last := stream.read_frame()) is None:
+                    await asyncio.sleep(0)
+                assert last == b""
+                report = await stream.finish()
             assert report.failure == "rejected"
             assert report.sessions_started == len(fake.requests) == 2
             assert report.failed_cleanups == report.retained_banks == harness.pool.leased == 0

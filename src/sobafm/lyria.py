@@ -414,9 +414,11 @@ class _MusicSocket:
     async def receive(self) -> aiohttp.WSMessage:
         """One message; the transport stays paused until the next call."""
         self._protocol.resume_reading()
-        message = cast(aiohttp.WSMessage, await self._websocket.receive())
-        self._protocol.pause_reading()
-        return message
+        try:
+            return cast(aiohttp.WSMessage, await self._websocket.receive())
+        finally:
+            # A stopped producer can still own a pending close after this await is cancelled.
+            self._protocol.pause_reading()
 
     async def close(self) -> None:
         """Drop the connection without resuming reads or draining more audio.
@@ -566,6 +568,13 @@ class LyriaSession:
         self._pump_task = asyncio.create_task(self._pump())
         self._pump_task.add_done_callback(self._pump_done)
         self._watch_task = asyncio.create_task(self._watch())
+
+    def end_production(self) -> None:
+        """Stop the pump now and let its bank play out the PCM already admitted."""
+        if not self.stopped:
+            self._stop(None)
+            if self._pump_task is not None:
+                self._pump_task.cancel()
 
     def cancel(self) -> None:
         """Stop the stream, keeping the first stop time and every owner. Idempotent."""
@@ -1087,6 +1096,7 @@ class GeneratedStream:
                     retiring = replacement  # it died mid-fade; the old audio plays on
                 self._retire(retiring)
                 if self._record_refusal(retiring):
+                    feed.session.end_production()
                     self._exhaust()
                     return
         except asyncio.CancelledError:
