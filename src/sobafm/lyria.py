@@ -1000,9 +1000,11 @@ class GeneratedStream:
 
     # Owner operations.
 
-    def start(self) -> None:
+    def start(self, first_bank: PcmBank | None = None) -> None:
+        """Take ownership of an admitted first lease when the player supplies one."""
         self._loop = asyncio.get_running_loop()
-        self._supervisor = asyncio.create_task(self._supervise())
+        initial = self._start_feed(first_bank) if first_bank is not None else None
+        self._supervisor = asyncio.create_task(self._supervise(initial))
 
     async def wait_ready(self) -> bool:
         """Wait for the first audio; False means the stream could not start."""
@@ -1071,9 +1073,9 @@ class GeneratedStream:
                     return
             await self._changed.wait()
 
-    async def _supervise(self) -> None:
+    async def _supervise(self, initial: _Feed | None) -> None:
         try:
-            feed = await self._prepare()
+            feed = await self._prepare(initial=initial)
             if feed is None:
                 self._exhaust()
                 return
@@ -1163,7 +1165,25 @@ class GeneratedStream:
             return True
         return False
 
-    async def _prepare(self, replacing: _Feed | None = None) -> _Feed | None:
+    def _start_feed(self, bank: PcmBank) -> _Feed:
+        session = LyriaSession(
+            self._request,
+            bank,
+            api_key=self._api_key,
+            endpoint=self._endpoint,
+            ssl_context=self._ssl_context,
+            clock=self._clock,
+            sleep=self._sleep,
+        )
+        feed = _Feed(bank, session, asyncio.create_task(self._observe_cleanup(session)))
+        self._feeds.add(feed)
+        self._sessions_started += 1
+        session.start()
+        return feed
+
+    async def _prepare(
+        self, replacing: _Feed | None = None, *, initial: _Feed | None = None
+    ) -> _Feed | None:
         for attempt in range(MAX_SESSION_ATTEMPTS):
             if attempt:
                 await self._sleep(RETRY_DELAY_SECONDS * attempt)
@@ -1171,24 +1191,15 @@ class GeneratedStream:
             # renewal is in backoff. Check before acquiring a lease or opening a socket.
             if self._record_refusal(replacing):
                 return None
-            try:
-                bank = self._pool.acquire()
-            except PcmCapacityError:
-                self._failure = "capacity"
-                continue
-            session = LyriaSession(
-                self._request,
-                bank,
-                api_key=self._api_key,
-                endpoint=self._endpoint,
-                ssl_context=self._ssl_context,
-                clock=self._clock,
-                sleep=self._sleep,
-            )
-            feed = _Feed(bank, session, asyncio.create_task(self._observe_cleanup(session)))
-            self._feeds.add(feed)
-            self._sessions_started += 1
-            session.start()
+            if initial is not None:
+                feed, initial = initial, None
+            else:
+                try:
+                    feed = self._start_feed(self._pool.acquire())
+                except PcmCapacityError:
+                    self._failure = "capacity"
+                    continue
+            session = feed.session
             await session.wait_prepared()
             # A refusal can also arrive while the replacement is already preparing.
             # Keep the admitted audio playing and retire the unused candidate.

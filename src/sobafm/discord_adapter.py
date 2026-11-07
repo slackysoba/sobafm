@@ -1178,7 +1178,10 @@ class Adapter:
                 player.waiting_claim = claim
                 station.generated(program, plan)
                 if not await self._start(player):
-                    return "Generated playback could not start. Check voice and try again."
+                    return (
+                        "Generated playback could not start. Check voice or try again "
+                        "when capacity is free."
+                    )
                 accepted = True
                 fallback = (
                     " Interpretation failed. Using your request as written, without prior context."
@@ -1282,21 +1285,20 @@ class Adapter:
         if self.stopping.is_set() or player.closing:
             station.switch_failed(audio)
             return False
+        deadline = audio.program.deadline
+        if deadline is not None and self._clock() >= deadline:
+            self._end_generated(player, audio.program, EndReason.DURATION)
+            return False
+        try:
+            bank = self._pool.acquire()
+        except PcmCapacityError:
+            station.switch_failed(audio)
+            return False
         if isinstance(audio, GeneratedAudio):
-            deadline = audio.program.deadline
-            assert deadline is not None
-            if self._clock() >= deadline:
-                self._end_generated(player, audio.program, EndReason.DURATION)
-                return False
             stream = self._generated_stream(audio.plan)
-            stream.start()
+            stream.start(bank)
             track: PlayingTrack = GeneratedTrack(audio, stream, claim=player.waiting_claim)
         else:
-            try:
-                bank = self._pool.acquire()
-            except PcmCapacityError:
-                station.switch_failed(audio)
-                return False
             task = asyncio.create_task(self._produce(audio.recording, bank))
             track = Track(audio, bank, task, cut=cut, claim=player.waiting_claim)
         idle = player.source.offer(track)
@@ -2024,10 +2026,10 @@ class Adapter:
     def _review_listeners(self, player: GuildPlayer) -> None:
         """Arm the grace period for the desired program when no listener remains, or
         cancel it when a listener is present, the program ended or voice is gone."""
-        program = player.interpreting or player.station.desired
+        program = player.station.desired or player.interpreting
         for timed, timer in list(player.durations.items()):
             if (
-                timed is not program
+                timed is not player.interpreting
                 and timed is not player.station.desired
                 and not player.source.owns(timed)
             ):
@@ -2069,7 +2071,7 @@ class Adapter:
                 or not player.voice.is_connected()
             ):
                 return
-            if (player.interpreting or player.station.desired) is not program or self._has_listener(
+            if (player.station.desired or player.interpreting) is not program or self._has_listener(
                 player
             ):
                 # A stale timer never ends a newer program, but the desired program

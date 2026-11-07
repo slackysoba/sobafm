@@ -210,12 +210,16 @@ def test_refused_generation_keeps_catalog_prefetch_and_releases_own_claim(code: 
         station = h.adapter.players[1].station
         heard, switching = station.heard, station.switching
         assert heard is not None and switching is not None
+        h.voice_update(LISTENER_ID, None)
+        grace = h.adapter.players[1].grace
+        assert grace is not None
         settings_of(h).current = settings_of(h).current.changed(cooldown_seconds=30)
         assert "cooldown" in await generate(h)
         assert not transport.calls
         h.clock.now += 31
         assert "declined" in await generate(h)
         assert station.heard is heard and station.switching is switching
+        assert h.adapter.players[1].grace is grace
         assert "Skipping" in ((await command(h.adapter.skip, inter(h.room))).texts()[0] or "")
         assert await h.adapter.shutdown()
 
@@ -462,5 +466,25 @@ def test_terminal_access_refusal_is_visible_without_retry(monkeypatch: pytest.Mo
             status = (await command(h.adapter.now, inter(None))).texts()[0] or ""
             assert "declined access" in status and "`/freestyle`" in status
             assert len(peer.requests) == 1 and await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def test_full_pool_refuses_before_starting_voice(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        async with FakeLyria() as peer:
+            connect_loopback(monkeypatch, peer)
+            h = harness()
+            h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+            source = await h.join()
+            held = [h.pool.acquire(), h.pool.acquire()]
+            reply = await generate(h)
+            player = h.adapter.players[1]
+            playing = player.voice.is_playing()
+            await settle()
+            assert all(bank.release() for bank in held)
+            assert await h.adapter.shutdown()
+            assert not playing and "capacity" in reply
+            assert source.read() == b"" and not peer.requests
 
     run(scenario())
