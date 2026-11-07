@@ -78,9 +78,9 @@ ENDPOINT = (
 )
 
 # The copy budget in ADR 0008. aiohttp holds a frame's reads and their join together, so
-# a message may be half the 1,048,576-byte network slot. Fragment assembly's transient
-# third copy uses the existing shared 524,288-byte drain reservation: it exists only
-# inside a synchronous reader call, so sessions cannot hold it concurrently. Closing
+# a message may be half the 1,048,576-byte network slot. Joining fragments or folding
+# more than 2,048 reads of one frame can briefly need a third copy. Both operations use
+# the shared 524,288-byte drain reservation synchronously on the event loop. Closing
 # drops the connection without reading and uses no message drain. Two seconds of PCM
 # is 512,000 base64 bytes, which leaves 12,288 for the JSON around them.
 MAX_MESSAGE_BYTES = 524_288
@@ -461,6 +461,9 @@ async def _connect(
             max_msg_size=MAX_MESSAGE_BYTES,
             decode_text=False,
             compress=0,
+            # Even an empty peer close must reach the pump directly. aiohttp's automatic
+            # close would drain more audio while waiting for another close with a code.
+            autoclose=False,
             # aiohttp builds this dataclass in a way Pyright can't see through.
             timeout=aiohttp.ClientWSTimeout(ws_close=CLOSE_HANDSHAKE_SECONDS),  # pyright: ignore[reportCallIssue]
             ssl=True if ssl_context is None else ssl_context,
@@ -1079,10 +1082,13 @@ class GeneratedStream:
                 self._switch(feed, replacement)
                 await self._wait_until(lambda: self._voice.crossfade is None)
                 if self._voice.audible is replacement:
-                    self._retire(feed)
-                    feed = replacement
+                    feed, retiring = replacement, feed
                 else:
-                    self._retire(replacement)  # it died mid-fade; the old audio plays on
+                    retiring = replacement  # it died mid-fade; the old audio plays on
+                self._retire(retiring)
+                if self._record_refusal(retiring):
+                    self._exhaust()
+                    return
         except asyncio.CancelledError:
             pass  # `cancel` already stopped every session this owns
         except Exception as exc:
@@ -1113,14 +1119,14 @@ class GeneratedStream:
 
     async def _replacement(self, feed: _Feed) -> _Feed | None:
         """A ready replacement, or None once this renewal's attempts are spent."""
-        replacement = await self._prepare()
+        replacement = await self._prepare(feed)
         if replacement is not None or self._failure in PERMANENT_FAILURES:
             return replacement
         if not feed.session.stopped:
             # A planned renewal failed while audio is healthy. Keep playing and spend one
             # more set of attempts when this session really ends, then stop trying.
             await feed.session.wait_stopped()
-            replacement = await self._prepare()
+            replacement = await self._prepare(feed)
             if replacement is not None or self._failure in PERMANENT_FAILURES:
                 return replacement
         if self._failure != "capacity":
@@ -1132,12 +1138,22 @@ class GeneratedStream:
         retirement = feed.retirement
         assert retirement is not None
         await asyncio.wait({retirement})
-        return await self._prepare()
+        return await self._prepare(feed)
 
-    async def _prepare(self) -> _Feed | None:
+    def _record_refusal(self, feed: _Feed | None) -> bool:
+        if feed is not None and (failure := feed.session.failure) in PERMANENT_FAILURES:
+            self._failure = failure
+            return True
+        return False
+
+    async def _prepare(self, replacing: _Feed | None = None) -> _Feed | None:
         for attempt in range(MAX_SESSION_ATTEMPTS):
             if attempt:
                 await self._sleep(RETRY_DELAY_SECONDS * attempt)
+            # The audible feed can refuse the request after readiness, even while a
+            # renewal is in backoff. Check before acquiring a lease or opening a socket.
+            if self._record_refusal(replacing):
+                return None
             try:
                 bank = self._pool.acquire()
             except PcmCapacityError:
@@ -1157,6 +1173,13 @@ class GeneratedStream:
             self._sessions_started += 1
             session.start()
             await session.wait_prepared()
+            # A refusal can also arrive while the replacement is already preparing.
+            # Keep the admitted audio playing and retire the unused candidate.
+            if self._record_refusal(replacing) or (
+                replacing is not None and self._record_refusal(feed)
+            ):
+                self._retire(feed)
+                return None
             if session.ready:
                 self._failure = None
                 return feed

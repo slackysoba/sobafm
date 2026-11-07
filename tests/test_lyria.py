@@ -32,6 +32,7 @@ from typing import Any, Self, cast
 import aiohttp
 import pytest
 from aiohttp import web
+from aiohttp.client_proto import ResponseHandler
 
 from sobafm.lyria import (
     CROSSFADE_FRAMES,
@@ -1602,6 +1603,54 @@ def test_a_renewal_with_the_other_bank_taken_plays_out_then_follows_after_a_gap(
     run(scenario())
 
 
+@pytest.mark.parametrize("failure", ["rejected", "filtered"])
+@pytest.mark.parametrize("in_backoff", [False, True])
+def test_a_permanent_refusal_from_the_audible_session_ends_recovery(
+    failure: str, in_backoff: bool
+) -> None:
+    async def scenario() -> None:
+        refuse = asyncio.Event()
+
+        async def audible(peer: Peer) -> None:
+            await peer.handshake()
+            await peer.pre_roll(1_000)
+            await refuse.wait()
+            if failure == "rejected":
+                await peer.websocket.close(code=1008)
+            else:
+                await peer.websocket.send_str('{"filteredPrompt":{}}')
+
+        # A retry would succeed, so it would be observable both on the wire and in audio.
+        scripts: list[Script | Refuse] = [audible]
+        if in_backoff:
+            scripts.append(Refuse(429))
+        scripts.append(serves(3_000))
+        async with FakeLyria(*scripts) as fake:
+            harness = StreamHarness(fake)
+            stream = harness.stream
+            stream.start()
+            assert await stream.wait_ready()
+            if in_backoff:
+                await harness.renewal_due()
+                await until(lambda: 1.0 in harness.time.delays() and harness.pool.leased == 1)
+            refuse.set()
+            await fake.peers[0].disconnected.wait()
+            if in_backoff:
+                harness.time.advance(1.0)
+            heard = [sample_of(f) for f in harness.read_frames(PRE_ROLL_FRAMES)]
+            while (next_frame := stream.read_frame()) is None:
+                await asyncio.sleep(0)
+            report = await stream.finish()
+            assert len(fake.requests) == (2 if in_backoff else 1)
+            assert set(heard) == {1_000}
+            assert next_frame == b""
+            assert report.failure == failure
+            assert report.crossfades == report.failed_cleanups == report.retained_banks == 0
+            assert harness.pool.leased == 0
+
+    run(scenario())
+
+
 def test_a_filtered_renewal_keeps_the_healthy_session_playing() -> None:
     async def filtered(peer: Peer) -> None:
         await peer.handshake()
@@ -1623,6 +1672,65 @@ def test_a_filtered_renewal_keeps_the_healthy_session_playing() -> None:
             assert report.failure == "filtered"
             assert report.sessions_started == 2
             assert harness.pool.leased == 0
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("crossfading", [False, True])
+def test_a_refusal_during_an_in_flight_replacement_survives_its_handoff(crossfading: bool) -> None:
+    async def scenario() -> None:
+        refuse = asyncio.Event()
+        prepare = asyncio.Event()
+        end = asyncio.Event()
+
+        async def old(peer: Peer) -> None:
+            await peer.handshake()
+            await peer.pre_roll(1_000)
+            await refuse.wait()
+            await peer.websocket.close(code=1008)
+
+        async def replacement(peer: Peer) -> None:
+            await peer.handshake()
+            await prepare.wait()
+            await peer.pre_roll(3_000)
+            await end.wait()
+            await peer.websocket.close(code=1000)
+
+        async with FakeLyria(old, replacement, serves(5_000)) as fake:
+            harness = StreamHarness(fake)
+            stream = harness.stream
+            stream.start()
+            assert await stream.wait_ready()
+            await harness.renewal_due()
+            await until(lambda: len(fake.peers) == 2)
+            await fake.peers[1].played.wait()
+            if crossfading:
+                prepare.set()
+                await until(lambda: stream.crossfading)
+            refuse.set()
+            await fake.peers[0].disconnected.wait()
+            prepare.set()
+            end.set()
+            # A fade already in progress plays out. A still-preparing replacement
+            # is discarded when it returns, leaving all the old frames to drain.
+            frames = harness.read_frames(PRE_ROLL_FRAMES)
+            if crossfading:
+                assert_faded(
+                    [sample_of(f) for f in frames[:CROSSFADE_FRAMES]],
+                    1_000,
+                    3_000,
+                    CROSSFADE_FRAMES,
+                )
+                assert sample_of(frames[-1]) == 3_000
+            else:
+                assert {sample_of(f) for f in frames} == {1_000}
+            while (last := stream.read_frame()) is None:
+                await asyncio.sleep(0)
+            report = await stream.finish()
+            assert last == b""
+            assert report.failure == "rejected"
+            assert report.sessions_started == len(fake.requests) == 2
+            assert report.failed_cleanups == report.retained_banks == harness.pool.leased == 0
 
     run(scenario())
 
@@ -1887,8 +1995,8 @@ class RawSender:
 
 # The network slot, plus the plain-socket part of the read slot, plus decoded slices.
 PLAIN_SOCKET_PEAK_LIMIT = 1_048_576 + 2 * 65_536 + 49_152 + 65_536
-# Fragment assembly's third copy is synchronous and shared across the two sessions.
-FRAGMENT_DRAIN_BYTES = 524_288
+# Fragment assembly and a many-read fold each use this one synchronous reservation.
+SHARED_DRAIN_BYTES = 524_288
 
 
 @pytest.mark.parametrize("fragmented", [False, True])
@@ -1945,15 +2053,75 @@ def test_a_full_bank_holds_one_message_and_copies_stay_inside_the_budget(
             assert bank.release()
             sender.close()
             assert not sender.thread.is_alive()
-        limit = PLAIN_SOCKET_PEAK_LIMIT + (FRAGMENT_DRAIN_BYTES if fragmented else 0)
+        limit = PLAIN_SOCKET_PEAK_LIMIT + (SHARED_DRAIN_BYTES if fragmented else 0)
         assert peak - baseline <= limit
 
     run(scenario())
 
 
-@pytest.mark.parametrize("malformed", [False, True])
+def test_one_frame_in_many_socket_reads_fits_the_shared_assembly_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        encoded = audio_message(11).encode()
+        frame = frame_header(len(encoded)) + encoded
+        begin = asyncio.Event()
+        received = asyncio.Event()
+        reads = 0
+        received_bytes = 0
+        original = ResponseHandler.data_received
+
+        def observe(protocol: ResponseHandler, data: bytes) -> None:
+            nonlocal reads, received_bytes
+            original(protocol, data)
+            if begin.is_set():
+                reads += 1
+                received_bytes += len(data)
+                received.set()
+
+        monkeypatch.setattr(ResponseHandler, "data_received", observe)
+
+        async def script(peer: Peer) -> None:
+            await peer.handshake()
+            await begin.wait()
+            # Force aiohttp to fold >2,048 pieces of one frame. Write only after
+            # the client has processed every byte of the preceding piece.
+            for offset in range(0, len(frame), 248):
+                piece = frame[offset : offset + 248]
+                peer.write_raw(piece)
+                while received_bytes < offset + len(piece):
+                    received.clear()
+                    await received.wait()
+
+        async with FakeLyria(script) as fake:
+            harness = Harness(fake)
+            harness.session.start()
+            await until(lambda: bool(fake.peers))
+            await fake.peers[0].played.wait()
+            tracemalloc.start()
+            try:
+                baseline, _ = tracemalloc.get_traced_memory()
+                tracemalloc.reset_peak()
+                begin.set()
+                await until(lambda: harness.session.pcm_bytes == MESSAGE_PCM)
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+                harness.session.cancel()
+                assert (await harness.finished()).cleanup == "clean"
+                assert harness.released()
+            assert reads > 2_048
+            assert peak - baseline <= PLAIN_SOCKET_PEAK_LIMIT + SHARED_DRAIN_BYTES
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("stop", "failure"), [("cancel", None), ("malformed", "malformed"), ("empty_close", "closed")]
+)
 def test_stopping_drops_the_socket_without_reading_more_audio(
-    malformed: bool,
+    stop: str,
+    failure: str | None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cancel a full bank, or fail validation, while a real peer keeps sending."""
@@ -1963,8 +2131,10 @@ def test_stopping_drops_the_socket_without_reading_more_audio(
         encoded = audio_message(11).encode()
         frame = frame_header(len(encoded)) + encoded
         frames = [frame] * 14
-        if malformed:
+        if stop == "malformed":
             frames.insert(0, frame_header(1) + b"!")
+        elif stop == "empty_close":
+            frames.insert(0, frame_header(0, opcode=8))
         sender = RawSender(frames)
         time = ManualTime()
         pool = PcmBankPool(clock=time.clock)
@@ -1977,7 +2147,7 @@ def test_stopping_drops_the_socket_without_reading_more_audio(
             baseline, _ = tracemalloc.get_traced_memory()
             tracemalloc.reset_peak()
             session.start()
-            if malformed:
+            if stop != "cancel":
                 await session.wait_stopped()
             else:
                 await until(lambda: 0.0 < min(time.delays(), default=9.0) < 3.0)
@@ -1987,7 +2157,7 @@ def test_stopping_drops_the_socket_without_reading_more_audio(
             _, peak = tracemalloc.get_traced_memory()
             assert peak - baseline <= PLAIN_SOCKET_PEAK_LIMIT
             assert (await session.finish()).cleanup == "clean"
-            assert session.failure == ("malformed" if malformed else None)
+            assert session.failure == failure
         finally:
             tracemalloc.stop()
             session.cancel()
