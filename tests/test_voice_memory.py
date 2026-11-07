@@ -837,7 +837,7 @@ async def test_a_retained_bank_after_a_loss_stays_debt_until_released() -> None:
     await h.play()
     await settle()
     pending = player_of(h).source._pending  # pyright: ignore[reportPrivateUsage]
-    assert pending is not None
+    assert isinstance(pending, discord_adapter.Track)
     view = pending.bank.reserve_write(1)  # a borrowed region blocks actual release
     assert view is not None
     lost(h)

@@ -1,7 +1,7 @@
 """Lyria RealTime audio into PCM banks, over one bounded WebSocket per bank.
 
-ADR 0008 records the choices here and the copy budget they implement. No
-Discord code calls this module yet.
+ADR 0008 records the transport choices and the copy budget. The station owns
+each generated stream through settlement and release.
 
 ``LyriaSession`` owns one WebSocket feeding one leased ``pcm.py`` bank. It uses the
 ``aiohttp`` already in the lock rather than the Google SDK, whose import alone nearly
@@ -842,6 +842,7 @@ class _Feed:
 
     bank: PcmBank
     session: LyriaSession
+    cleanup: asyncio.Task[None]
     retirement: asyncio.Task[None] | None = None
 
 
@@ -897,6 +898,7 @@ class GeneratedStream:
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
         renew_after: float = RENEW_AFTER_SECONDS,
+        on_cleanup_expired: Callable[[], None] | None = None,
     ) -> None:
         self._request = request
         self._api_key = api_key
@@ -906,6 +908,7 @@ class GeneratedStream:
         self._clock = clock
         self._sleep = sleep
         self._renew_after = renew_after
+        self._on_cleanup_expired = on_cleanup_expired
         self._lock = threading.Lock()
         self._voice = _Voice()
         self._feeds: set[_Feed] = set()
@@ -920,6 +923,10 @@ class GeneratedStream:
         self._failed_cleanups = 0
 
     # The voice callback's side. These never wait.
+
+    @property
+    def failure(self) -> LyriaFailure | None:
+        return self._failure
 
     def ready_now(self) -> bool:
         """Whether frames have become readable. Only ever changes from False to True."""
@@ -1178,7 +1185,7 @@ class GeneratedStream:
                 clock=self._clock,
                 sleep=self._sleep,
             )
-            feed = _Feed(bank, session)
+            feed = _Feed(bank, session, asyncio.create_task(self._observe_cleanup(session)))
             self._feeds.add(feed)
             self._sessions_started += 1
             session.start()
@@ -1220,12 +1227,19 @@ class GeneratedStream:
             self._retirements.add(feed.retirement)
             feed.retirement.add_done_callback(self._retirements.discard)
 
-    async def _settle_feed(self, feed: _Feed) -> None:
-        feed.session.cancel()
-        report = await feed.session.finish()
+    async def _observe_cleanup(self, session: LyriaSession) -> None:
+        # A session may stop itself with playable PCM. Its cleanup clock starts
+        # then, even if the player keeps draining and retirement is still far away.
+        report = await session.finish()
         if report.cleanup == "expired":
             self._failed_cleanups += 1  # a failed verdict, whatever happens later
+            if self._on_cleanup_expired is not None:
+                self._on_cleanup_expired()
             log.error("lyria session missed its cleanup deadline; its bank stays leased")
+
+    async def _settle_feed(self, feed: _Feed) -> None:
+        feed.session.cancel()
+        await feed.cleanup
         await feed.session.settle()
         self._feeds.discard(feed)
         if not feed.bank.release():

@@ -129,6 +129,9 @@ class ManualTime:
     def delays(self) -> list[float]:
         return [delay for _, delay, _ in self._sleepers]
 
+    def remaining(self) -> list[float]:
+        return [when - self.now for when, _, _ in self._sleepers]
+
     def advance(self, seconds: float) -> None:
         self.now += seconds
         for when, _, waiter in self._sleepers:
@@ -1737,9 +1740,9 @@ def test_a_refusal_during_an_in_flight_replacement_survives_its_handoff(
                     harness.time.advance(0.5)
                     finishing = asyncio.create_task(stream.finish())
                     await until(
-                        lambda: 1.5 in harness.time.delays() or 2.0 in harness.time.delays()
+                        lambda: 1.5 in harness.time.remaining() or 2.0 in harness.time.remaining()
                     )
-                    remaining = harness.time.delays()
+                    remaining = harness.time.remaining()
                     assert not finishing.done()
                     assert harness.pool.leased == 1
                     await stuck.entered.wait()

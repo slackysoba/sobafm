@@ -2,17 +2,18 @@
 
 **Status: amd64 first slice, not yet qualified.** This guide describes the first playback slice for Linux amd64 with Docker Compose. The image at commit `ab10a71` ran in one private Discord session on Docker Desktop under WSL2 with the real catalog and Gemini ([#124](https://github.com/slackysoba/sobafm/issues/124)), after an earlier session at `d6923c8` ([#97](https://github.com/slackysoba/sobafm/issues/97)); that is not qualification of the image, its limits or the release. Settings, volume, the volume layout, the song-list refill and the remembered voice channel below came after those sessions and have only been tested offline. Treat it as a preview of the operator path, not a release. Native arm64 is on hold until after the first amd64 release ([#60](https://github.com/slackysoba/sobafm/issues/60)).
 
-The slice joins a voice channel and plays a catalog program per `/play` request: the admitted local recordings Gemini ranks for the request, 8 at a time, one after another, until it is stopped, replaced, runs out of recordings or plays for a minute with no listener. `/skip` moves on to the next one, `/now` shows the heard recording's full credits, `/settings` keeps each server's volume and change cooldown, it rejoins its voice channel after a restart, and it stops and shuts down cleanly. It has no `/freestyle`.
+The slice joins a voice channel and plays a catalog program per `/play` request: the admitted local recordings Gemini ranks for the request, 8 at a time, one after another, until it is stopped, replaced, runs out of recordings or plays for a minute with no listener. `/skip` moves on to the next one, `/now` shows the heard recording's full credits, `/settings` keeps each server's volume and change cooldown, it rejoins its voice channel after a restart, and it stops and shuts down cleanly. With generated playback configured, `/freestyle` starts a timed Lyria program on the same station.
 
 ## Requirements
 
 - Linux amd64 with Docker Engine and the Compose plugin, using cgroup v2 (the default on current distributions). No compiler is needed.
 - A Discord application with a bot user and its token.
-- Optionally, a prepared catalog snapshot, its admission reviews, a media manifest, the admitted MP3 files and a Gemini API key. Without them the bot runs with `/join`, `/now`, `/stop`, `/leave` and `/settings` only; `/play` and `/skip` are not registered.
+- Optionally, a prepared catalog snapshot, its admission reviews, a media manifest, the admitted MP3 files and a Gemini API key. These enable `/play` and `/skip`.
+- For generated playback, Gemini interpretation credentials and free-tier Lyria credentials. Generated-only operation needs no prepared catalog.
 
 ### Provider access
 
-Read [provider access, privacy and free-tier limits](provider-access.md) before configuring Gemini or offering the bot to listeners. It covers the data sent by `/play` and automatic refill, Google's unpaid data use and human review, age and regional audience restrictions, and the maintainer's no-spend choice for Lyria. Catalog matching is implemented; free-tier Lyria access is unconfirmed, its transport library is under review, and `/freestyle` is not yet available. The guide lists the facts still needing an explicitly authorized live check.
+Read [provider access, privacy and free-tier limits](provider-access.md) before configuring Gemini or offering the bot to listeners. It covers the data sent by `/play` and automatic refill, Google's unpaid data use and human review, age and regional audience restrictions, and the maintainer's no-spend choice for Lyria. The generated command is implemented and tested offline. Free-tier access to the experimental Lyria model is still unconfirmed. The guide lists the facts still needing an explicitly authorized live check.
 
 ## Discord setup
 
@@ -25,9 +26,9 @@ Command access:
 | Command | Who can use it |
 | --- | --- |
 | `/join`, `/leave`, `/settings` | Members with Manage Server by default. Server admins can change this under Server Settings, Integrations. |
-| `/play request:<text>`, `/skip` | Members in the bot's voice channel. |
+| `/play request:<text>`, `/freestyle request:<text>`, `/skip` | Members in the bot's voice channel. |
 | `/stop` | Members in the bot's voice channel, or anyone with Manage Server. |
-| `/now` | Anyone in the server. It privately shows what is actually heard, with full credits. |
+| `/now` | Anyone in the server. It privately shows the heard recording’s full credits or the heard generated title and time remaining. |
 
 ## Install and configure
 
@@ -44,12 +45,13 @@ Edit `.env` and replace the placeholders. Never commit `.env`. The variables are
 | --- | --- | --- |
 | `SOBAFM_DISCORD_TOKEN` | Yes | The bot token. SobaFM removes it from its own environment at startup, so the decoder never inherits it, and never logs it. |
 | `SOBAFM_DATABASE` | Yes | The settings database. Keep the example's `/data/sobafm.db`, on the writable volume. |
-| `SOBAFM_CATALOG` | With the next three | Prepared catalog snapshot (`sobafm-catalog-1`). |
+| `SOBAFM_CATALOG` | With the catalog | Prepared catalog snapshot (`sobafm-catalog-1`). |
 | `SOBAFM_REVIEWS` | With the catalog | Trusted admission reviews (`sobafm-admission-1`). |
 | `SOBAFM_MEDIA` | With the catalog | Media manifest locating each admitted recording's file. |
-| `SOBAFM_GEMINI_API_KEY` | With the catalog | The key for matching requests. It is removed from the environment at startup, sent only as a request header and never logged. |
+| `SOBAFM_GEMINI_API_KEY` | With either music mode | The key for interpreting requests. It is removed from the environment at startup, sent only as a request header and never logged. |
+| `SOBAFM_LYRIA_API_KEY` | With generated playback | Key for the operator’s free-tier Lyria project. Removed from the environment at startup. Omit it for catalog-only operation. |
 
-The catalog, reviews and media manifest must be set together, or none of them, and the Gemini key is required with them. Without them `/play` and `/skip` are not registered, and a key on its own is ignored.
+The catalog, reviews and media manifest must be set together, or none of them, and the Gemini key is required with them. Without them `/play` and `/skip` are not registered, and the two provider keys together enable `/freestyle` alone. With neither capability configured, the connection, status and settings commands remain available.
 
 **Where things live** ([ADR 0009](decisions/0009-writable-data-volume.md)):
 
@@ -94,6 +96,8 @@ Before reading any configuration or connecting to Discord, SobaFM reads its own 
 
 Then, in Discord: a manager uses `/join` from a voice channel, a listener uses `/play` with any request, such as `a haunted carnival on the moon`, and `/now` shows the heard recording and its credits. The reply says how close the match is: the recording asked for, the closest match or just the nearest thing in the catalog. Audio becomes audible after six seconds of buffered PCM, or at the verified end of a shorter recording.
 
+A listener in the same voice channel can use `/freestyle` with up to 200 characters. A relative direction such as “faster” uses the current generated plan. Switching from catalog music starts a fresh interpretation. A refusal leaves current music playing. An interpretation failure uses the request as written, even for a relative direction, and the reply discloses that fallback. The reply and `/now` distinguish preparation from the first frame handed to voice. Two generated programs crossfade. A switch involving a catalog recording has no overlap. `/skip` applies only to catalog music, and `/stop` fades generated music for up to two seconds.
+
 While a recording plays, the next one on the program's list is prepared in the second audio bank and follows the last frame directly, with no fade or overlap. `/skip` switches to the next recording as soon as it is buffered; the current recording keeps playing until then, and keeps playing if the next one cannot be prepared. `/play`, `/stop`, `/leave` and shutdown discard a prepared next recording.
 
 **Song lists refill as the program plays** ([ADR 0011](decisions/0011-program-refill.md)). Gemini is asked for 8 recordings at a time, best first, so later ones may fit the request less well; the reply's description of the fit is about the first recording only. When the last recording on the list starts, the bot asks for 8 more in the background, leaving out what the program has played. Music keeps playing while it waits. A `/skip` then doesn't wait for the answer: if nothing is ready, it says the next recording could not be prepared, the current one continues, and the skip holds no cooldown. `/play` for a new program, `/stop`, `/leave`, the end of the listener grace period, losing voice and shutdown cancel the call, and an answer that still arrives changes nothing.
@@ -134,9 +138,9 @@ Settings are saved before they take effect, and each server keeps its own. If sa
 
 **Volume** applies to current audio from its next 20 ms frame, with no restart. It can only lower the level, so it can't clip, and 100% leaves the recording's samples unchanged. It defaults to 50%, so a recording plays at half the level it would without this setting.
 
-**Change cooldown** is one wait per server across `/play` and `/skip`, whoever asked. A request during it is refused with the time left, before Gemini is called or a recording is chosen, and current audio continues. It counts from when the last accepted request arrived, and refused requests don't extend it. A request that fails or changes nothing doesn't hold it: an invalid request, one Gemini refuses or fails on, a `/skip` with nothing to skip, or a recording that can't start. A `/stop` doesn't clear it, unless the request it interrupts hasn't been answered yet: a `/play` still being matched, or a `/skip` still waiting up to five seconds for its next track. A changed `cooldown` applies at once, including to a wait already running, and 0 turns it off. The wait itself isn't saved, so it starts afresh after a restart or when the bot leaves voice.
+**Change cooldown** is one wait per server across `/play`, `/freestyle` and `/skip`, whoever asked. A request during it is refused with the time left, before Gemini is called or a recording is chosen, and current audio continues. It counts from when the last accepted request arrived, and refused requests don't extend it. A request that fails or changes nothing doesn't hold it: an invalid request, one Gemini refuses or fails on, a `/skip` with nothing to skip, or a recording that can't start. A `/stop` doesn't clear it, unless the request it interrupts hasn't been answered yet: a `/play` still being matched, or a `/skip` still waiting up to five seconds for its next track. A changed `cooldown` applies at once, including to a wait already running, and 0 turns it off. The wait itself isn't saved, so it starts afresh after a restart or when the bot leaves voice.
 
-**Generated duration** is stored and validated, but nothing uses it until `/freestyle` exists.
+**Generated duration** counts from request acceptance, including interpretation and pre-roll. Each new generated request uses the setting then in effect. A failed replacement leaves the previous program on its original clock.
 
 The database keeps a row only for servers that changed a setting, up to 1,000. Beyond that, a further server keeps the defaults and its change is refused. To back it up, stop the service first, so no write is in progress:
 
@@ -239,6 +243,7 @@ During playback:
 - `settings write failed: kind=<kind>` (WARNING): a change couldn't be saved, so nothing changed and the reply says so; playback continues. The kinds are those for exit 4, plus `busy`, when too many changes are waiting, and `too_many_servers`, at the limit of 1,000. If it continues, the volume may be full or no longer writable, and the next start may exit 4.
 - `voice connection ended: reason=disconnected`: the bot was kicked or removed, or its connection couldn't be recovered. The program ended and the channel is forgotten; use `/join` again.
 - `voice connection failed: <type>`: a `/join` couldn't connect, or a move couldn't be sent, and the reply says so. Nothing is left behind, so it can be tried again at once.
+- Missing `/freestyle`: check that both provider keys are configured, then restart and allow command synchronization. For a filtered direction, try a different musical description. If generation ends after bounded retries, check the safe failure kind in the log. Free-tier refusal has no paid fallback. See [provider access](provider-access.md).
 - Discord shows "The application did not respond": Discord rejected the bot's acknowledgement, usually because it arrived after the three-second window. `/stop` and `/leave` still take effect (check with `/now`) and log `interaction acknowledgement failed: command=<name> age_seconds=<seconds> status=<http> code=<discord>`, where `code=10062` is Unknown interaction. If the acknowledgement request itself fails, for example on a network error or timeout, the line ends with `error=<exception type>` instead of the status and code, and the commands still take effect. The age counts from the interaction's creation, so it includes network and Discord delay as well as any delay in the bot. A rejected `/join` or `/play` starts nothing; repeat it.
 
 ### Crash dumps

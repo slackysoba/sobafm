@@ -18,9 +18,13 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from sobafm.catalog import MAX_RECORDS_PER_SOURCE, Recording, RecordingKey, Source
 from sobafm.credits import CreditRejected, RenderedCredits, render_credits
+
+if TYPE_CHECKING:
+    from sobafm.freestyle_plan import GeneratedPlan
 
 MAX_REQUEST_CHARACTERS = 200
 # Every recording a valid snapshot can hold, so a program's history never forgets one
@@ -40,15 +44,21 @@ class EndReason(StrEnum):
     EXHAUSTED = "exhausted"  # every admitted recording was played or tried
     REFILL_FAILED = "refill_failed"  # its plan ran out and no more arrived within the bound
     UNAVAILABLE = "unavailable"  # the next track could not be prepared within its bounds
+    DURATION = "duration"
+    FILTERED = "filtered"
+    GENERATION_REJECTED = "generation_rejected"
+    CAPACITY = "capacity"
+    GENERATION_FAILED = "generation_failed"
     NO_LISTENERS = "no_listeners"  # the listener grace period expired
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Program:
     """An accepted request; its generation is unique and increasing per station."""
 
     generation: int
     request: str
+    deadline: float | None = None  # generated duration, counted from acceptance
 
 
 @dataclass(frozen=True)
@@ -58,6 +68,15 @@ class Audio:
     program: Program
     recording: Recording
     credits: RenderedCredits
+
+
+@dataclass(frozen=True)
+class GeneratedAudio:
+    program: Program
+    plan: GeneratedPlan
+
+
+type StationAudio = Audio | GeneratedAudio
 
 
 @dataclass(frozen=True)
@@ -91,9 +110,9 @@ class Station:
         self._generation = 0
         self._desired: Program | None = None
         self._preparing = False
-        self._ready: Audio | None = None
-        self._switching: Audio | None = None
-        self._heard: Audio | None = None
+        self._ready: StationAudio | None = None
+        self._switching: StationAudio | None = None
+        self._heard: StationAudio | None = None
         self._progress: dict[int, _Progress] = {}
         self._ended: EndReason | None = None
 
@@ -107,17 +126,17 @@ class Station:
         return self._preparing
 
     @property
-    def ready(self) -> Audio | None:
+    def ready(self) -> StationAudio | None:
         """Prepared audio for the desired program not yet claimed by the player."""
         return self._ready
 
     @property
-    def switching(self) -> Audio | None:
+    def switching(self) -> StationAudio | None:
         """Audio the player has claimed but not yet reported as heard."""
         return self._switching
 
     @property
-    def heard(self) -> Audio | None:
+    def heard(self) -> StationAudio | None:
         """The source the connected player actually plays, with its credits."""
         return self._heard
 
@@ -143,7 +162,9 @@ class Station:
     def needs_next(self) -> bool:
         """Whether the desired, already heard program has no next track in progress."""
         return (
-            self.continuing
+            self._desired is not None
+            and self._desired.deadline is None
+            and self.continuing
             and self.ending is None
             and not self._preparing
             and self._ready is None
@@ -190,19 +211,26 @@ class Station:
         self._ended = reason
         self._prune()
 
-    def request(self, request: str, plan: tuple[Recording, ...] = ()) -> Replacement:
-        """Accept a new desired program; heard audio continues until a switch."""
+    def intent(self, request: str, *, deadline: float | None = None) -> Program:
+        """Identify a request while interpretation still may decline it."""
         if type(request) is not str or not 1 <= len(request) <= MAX_REQUEST_CHARACTERS:
             raise ValueError("request must be 1 to 200 characters")
-        superseded = self._pending()
         self._generation += 1
-        self._desired = Program(self._generation, request)
-        self._state(self._desired).plan = plan
+        return Program(self._generation, request, deadline)
+
+    def request(self, request: str, plan: tuple[Recording, ...] = ()) -> Replacement:
+        return self.accept(self.intent(request), plan)
+
+    def accept(self, program: Program, plan: tuple[Recording, ...] = ()) -> Replacement:
+        """Accept a validated intent. Heard audio continues until a switch."""
+        superseded = self._pending()
+        self._desired = program
+        self._state(program).plan = plan
         self._preparing = True
         self._ready = None
         self._ended = None
         self._prune()
-        return Replacement(self._desired, superseded)
+        return Replacement(program, superseded)
 
     def refilled(self, program: Program, recordings: tuple[Recording, ...]) -> Outcome:
         """Replace the plan of the desired, already heard program that awaits a next track.
@@ -244,6 +272,27 @@ class Station:
         self._ready = Audio(program, recording, credits)
         return Outcome.ACCEPTED
 
+    def generated(self, program: Program, plan: GeneratedPlan) -> Outcome:
+        """Offer the validated plan. Only the callback can report its first audio."""
+        if program is not self._desired or not self._preparing or program.deadline is None:
+            return Outcome.STALE
+        self._ready = GeneratedAudio(program, plan)
+        self._preparing = False
+        return Outcome.ACCEPTED
+
+    def end_generated(self, program: Program, reason: EndReason) -> None:
+        """The caller removed this program's audio. Preserve any other live program."""
+        if self._switching is not None and self._switching.program is program:
+            self._switching = None
+        if self._heard is not None and self._heard.program is program:
+            self._heard = None
+        if self._desired is program:
+            self._preparing = False
+            self._ready = None
+            self._desired = self._heard.program if self._heard is not None else None
+            self._ended = reason
+        self._prune()
+
     def preparation_failed(self, program: Program) -> Outcome:
         """Abandon a failed or cancelled preparation; heard audio and credits remain."""
         if not self._preparing or program != self._desired:
@@ -265,14 +314,14 @@ class Station:
             self._end(reason)
         return Outcome.ACCEPTED
 
-    def claim_ready(self) -> Audio | None:
+    def claim_ready(self) -> StationAudio | None:
         """Hand the ready audio to the player, which then reports switch or failure."""
         if self._ready is None or self._switching is not None:
             return None
         self._switching, self._ready = self._ready, None
         return self._switching
 
-    def switched(self, source: Audio) -> Outcome:
+    def switched(self, source: StationAudio) -> Outcome:
         """The player actually switched to claimed audio; it becomes the heard source.
 
         A newer desired program that arrived during the switch is left unchanged.
@@ -285,7 +334,7 @@ class Station:
         self._prune()
         return Outcome.ACCEPTED
 
-    def switch_failed(self, source: Audio) -> Outcome:
+    def switch_failed(self, source: StationAudio) -> Outcome:
         """The player could not switch to claimed audio; heard audio is unchanged."""
         if source != self._switching:
             return Outcome.STALE
@@ -295,7 +344,7 @@ class Station:
         self._prune()
         return Outcome.ACCEPTED
 
-    def drained(self, source: Audio) -> Outcome:
+    def drained(self, source: StationAudio) -> Outcome:
         """The heard track played to its verified end and the player emits nothing of it.
 
         Its program continues with a next track, or ends if none will follow.
