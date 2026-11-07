@@ -176,7 +176,7 @@ def garbage(path: Path) -> None:
 
 def newer_schema(path: Path) -> None:
     connection = sqlite3.connect(path, autocommit=True)
-    connection.execute("PRAGMA user_version = 2")
+    connection.execute(f"PRAGMA user_version = {settings_module.SCHEMA_VERSION + 1}")
     connection.close()
 
 
@@ -306,6 +306,247 @@ def test_a_further_server_keeps_the_defaults_at_the_limit(
 
     asyncio.run(scenario())
     assert rows(path) == [(GUILD, 60, 30, 30)]
+
+
+# The remembered voice channel.
+
+CHANNEL = 9_001
+OTHER_CHANNEL = 9_002
+# The schema version 1 wrote, exactly as #126 shipped it.
+VERSION_1_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS server_settings (
+        guild_id INTEGER PRIMARY KEY CHECK (guild_id > 0),
+        generated_minutes INTEGER NOT NULL
+            CHECK (generated_minutes BETWEEN 5 AND 240),
+        volume_percent INTEGER NOT NULL
+            CHECK (volume_percent BETWEEN 1 AND 100),
+        cooldown_seconds INTEGER NOT NULL
+            CHECK (cooldown_seconds BETWEEN 0 AND 600)
+    ) STRICT
+"""
+
+
+def channel_rows(path: Path) -> list[tuple[int, int]]:
+    reader = sqlite3.connect(path, autocommit=True)
+    try:
+        return reader.execute(
+            "SELECT guild_id, channel_id FROM voice_channels ORDER BY guild_id"
+        ).fetchall()
+    finally:
+        reader.close()
+
+
+def schema_version(path: Path) -> int:
+    reader = sqlite3.connect(path, autocommit=True)
+    try:
+        return reader.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        reader.close()
+
+
+def table_names(path: Path) -> set[str]:
+    reader = sqlite3.connect(path, autocommit=True)
+    try:
+        rows = reader.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        return {name for (name,) in rows}
+    finally:
+        reader.close()
+
+
+def version_1_database(path: Path) -> None:
+    connection = sqlite3.connect(path, autocommit=True)
+    connection.execute(VERSION_1_SCHEMA)
+    connection.execute("INSERT INTO server_settings VALUES (?, 90, 20, 5)", (GUILD,))
+    connection.execute("PRAGMA user_version = 1")
+    connection.close()
+
+
+def test_a_channel_survives_a_reopen_and_forgetting_it_does_too(path: Path) -> None:
+    async def remember() -> None:
+        store = SettingsStore.open(path)
+        assert store.channel(GUILD) is None and store.channels() == {}
+        await store.remember_channel(GUILD, CHANNEL)
+        await store.remember_channel(OTHER, OTHER_CHANNEL)
+        await store.remember_channel(GUILD, OTHER_CHANNEL)  # the latest channel replaces it
+        assert store.channel(GUILD) == OTHER_CHANNEL
+        assert await store.close() is True
+
+    async def forget() -> None:
+        store = SettingsStore.open(path)
+        assert store.channels() == {GUILD: OTHER_CHANNEL, OTHER: OTHER_CHANNEL}
+        await store.forget_channel(GUILD)
+        await store.forget_channel(GUILD)  # forgetting nothing changes nothing
+        assert store.channel(GUILD) is None
+        assert await store.close() is True
+
+    asyncio.run(remember())
+    assert channel_rows(path) == sorted([(GUILD, OTHER_CHANNEL), (OTHER, OTHER_CHANNEL)])
+    asyncio.run(forget())
+    assert channel_rows(path) == [(OTHER, OTHER_CHANNEL)]
+
+    async def reopened() -> None:
+        store = SettingsStore.open(path)
+        assert store.channels() == {OTHER: OTHER_CHANNEL}
+        assert await store.close() is True
+
+    asyncio.run(reopened())
+
+
+def test_a_channel_and_settings_are_independent(path: Path) -> None:
+    """Remembering a channel makes no settings row, so it can't use up that limit."""
+
+    async def scenario() -> None:
+        store = SettingsStore.open(path)
+        await store.remember_channel(GUILD, CHANNEL)
+        assert store.get(GUILD) == DEFAULTS
+        await store.update(GUILD, volume_percent=20)
+        await store.forget_channel(GUILD)
+        assert store.get(GUILD).volume_percent == 20
+        assert await store.close() is True
+
+    asyncio.run(scenario())
+    assert rows(path) == [(GUILD, 60, 20, 30)] and channel_rows(path) == []
+
+
+def test_a_version_1_database_upgrades_in_place_and_keeps_its_settings(path: Path) -> None:
+    version_1_database(path)
+    assert schema_version(path) == 1 and table_names(path) == {"server_settings"}
+
+    async def upgraded() -> None:
+        store = SettingsStore.open(path)
+        assert store.get(GUILD) == ServerSettings(90, 20, 5)
+        assert store.channels() == {}
+        await store.remember_channel(GUILD, CHANNEL)
+        assert await store.close() is True
+
+    asyncio.run(upgraded())
+    assert schema_version(path) == settings_module.SCHEMA_VERSION == 2
+    assert rows(path) == [(GUILD, 90, 20, 5)] and channel_rows(path) == [(GUILD, CHANNEL)]
+
+    async def again() -> None:  # an upgraded file opens like any other
+        store = SettingsStore.open(path)
+        assert store.channel(GUILD) == CHANNEL and store.get(GUILD).cooldown_seconds == 5
+        assert await store.close() is True
+
+    asyncio.run(again())
+
+
+def test_a_refused_upgrade_leaves_the_version_1_file_as_it_was(path: Path) -> None:
+    tampered(GUILD, 60, 101, 30)(path)
+    before = path.read_bytes()
+    with pytest.raises(SettingsError, match="invalid_row"):
+        SettingsStore.open(path)
+    assert path.read_bytes() == before
+    assert schema_version(path) == 1 and "voice_channels" not in table_names(path)
+
+
+def tampered_channel(guild_id: object, channel_id: object) -> Callable[[Path], None]:
+    def prepare(path: Path) -> None:
+        asyncio.run(SettingsStore.open(path).close())
+        connection = sqlite3.connect(path, autocommit=True)
+        connection.execute("DROP TABLE voice_channels")
+        connection.execute("CREATE TABLE voice_channels (guild_id, channel_id)")
+        connection.execute("INSERT INTO voice_channels VALUES (?, ?)", (guild_id, channel_id))
+        connection.close()
+
+    return prepare
+
+
+@pytest.mark.parametrize(
+    "prepare",
+    [
+        tampered_channel(GUILD, 0),
+        tampered_channel(GUILD, -5),
+        tampered_channel(GUILD, "x"),
+        tampered_channel(GUILD, None),
+        tampered_channel(-1, CHANNEL),
+        tampered_channel("x", CHANNEL),
+    ],
+)
+def test_an_invalid_channel_row_is_refused_at_startup(
+    path: Path, prepare: Callable[[Path], None]
+) -> None:
+    prepare(path)
+    before = path.read_bytes()
+    with pytest.raises(SettingsError, match="invalid_row"):
+        SettingsStore.open(path)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "1"])
+def test_an_invalid_channel_id_changes_nothing(path: Path, value: object) -> None:
+    async def scenario() -> None:
+        store = SettingsStore.open(path)
+        with pytest.raises(ValueError, match="channel_id"):
+            await store.remember_channel(GUILD, value)  # pyright: ignore[reportArgumentType]
+        assert store.channel(GUILD) is None
+        assert await store.close() is True
+
+    asyncio.run(scenario())
+    assert channel_rows(path) == []
+
+
+def test_a_failed_channel_write_leaves_what_was_remembered(path: Path) -> None:
+    async def scenario() -> None:
+        store = SettingsStore.open(path)
+        await store.remember_channel(GUILD, CHANNEL)
+        vandal = sqlite3.connect(path, autocommit=True)
+        vandal.execute("DROP TABLE voice_channels")
+        vandal.close()
+        with pytest.raises(SettingsError, match="SQLITE_ERROR"):
+            await store.remember_channel(GUILD, OTHER_CHANNEL)
+        with pytest.raises(SettingsError, match="SQLITE_ERROR"):
+            await store.forget_channel(GUILD)
+        assert store.channel(GUILD) == CHANNEL
+        assert await store.close() is True
+
+    asyncio.run(scenario())
+
+
+def test_channel_writes_wait_off_the_event_loop(path: Path) -> None:
+    async def scenario() -> None:
+        store = SettingsStore.open(path)
+        with lock_held(path) as blocker:
+            write = asyncio.create_task(store.remember_channel(GUILD, CHANNEL))
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert not write.done() and store.channel(GUILD) is None
+            blocker.execute("COMMIT")
+            await write
+        assert store.channel(GUILD) == CHANNEL
+        assert await store.close() is True
+
+    asyncio.run(scenario())
+
+
+def test_the_server_limit_applies_to_channels(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings_module, "MAX_SERVERS", 1)
+
+    async def scenario() -> None:
+        store = SettingsStore.open(path)
+        await store.remember_channel(GUILD, CHANNEL)
+        with pytest.raises(SettingsError, match="too_many_servers"):
+            await store.remember_channel(OTHER, CHANNEL)
+        await store.remember_channel(GUILD, OTHER_CHANNEL)  # a known server can still change
+        assert store.channels() == {GUILD: OTHER_CHANNEL}
+        assert await store.close() is True
+
+    asyncio.run(scenario())
+    monkeypatch.setattr(settings_module, "MAX_SERVERS", 0)
+    with pytest.raises(SettingsError, match="too_many_servers"):
+        SettingsStore.open(path)
+
+
+def test_a_write_after_close_is_refused_for_channels_too(path: Path) -> None:
+    async def scenario() -> None:
+        store = SettingsStore.open(path)
+        assert await store.close() is True
+        with pytest.raises(SettingsError, match="closed"):
+            await store.remember_channel(GUILD, CHANNEL)
+        with pytest.raises(SettingsError, match="closed"):
+            await store.forget_channel(GUILD)
+
+    asyncio.run(scenario())
 
 
 # The event loop and the worker thread.
