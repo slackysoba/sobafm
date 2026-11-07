@@ -56,13 +56,13 @@ For catalog matching, the [Gemini 3.5 Flash-Lite pricing table](https://aistudio
 Catalog programs make further calls without a fresh listener command. The [refill decision](decisions/0011-program-refill.md) describes when SobaFM asks for more recordings.
 
 - Ask for eight recordings initially and when the last recording on the current list starts. Accept a shorter valid answer; leave out all recordings already played or tried. Make no call once none remain.
-- Each uninterrupted refill makes at most three calls, with a 15-second wait and then up to 60 seconds. The second wait shortens using the heard track's remaining duration to leave 16 seconds for the final call and pre-roll, but never falls below 15 seconds. A refusal, error or answer with nothing new consumes an attempt.
+- Each refill makes at most three calls, with a 15-second wait and then up to 60 seconds. The second wait shortens using the heard track's remaining duration to leave 16 seconds for the final call and pre-roll, but never falls below 15 seconds. A refusal, error or answer with nothing new consumes an attempt, as does an interrupted call already started.
 - Each call has a 10-second timeout, a 64,000-byte response limit and a 2,048-output-token cap. There is at most one refill in flight per program and four model calls across the service. The catalog description is capped at 512,000 characters.
 - If the third attempt fails, the current recording finishes and the program ends, or it ends immediately if already silent.
 
-ADR 0011 intends a limit of three calls per admitted recording over a program's lifetime. A failed replacement can take the original program over that limit. For example, a new `/play` can match and cancel a refill during its retry wait, then fail to start because both audio banks are busy. The old program resumes with a fresh refill at attempt one. Each such restart sends the original request and the remaining catalog metadata again, in addition to the replacement's own matching call.
+Over its lifetime, a catalog program makes at most three calls per admitted recording, including its initial match. If a new `/play` matches but fails to start, the heard program keeps its used refill attempts and waits only until its existing retry deadline. Each replacement request has its own initial matching call, and a replacement that starts has its own refill allowance.
 
-When budgeting project quota and explaining unpaid data use to listeners, include the calls made after a failed replacement. Refills take no member change cooldown. Stopping, leaving, listener-grace expiry, voice loss and shutdown also cancel refill work, and stale results are discarded.
+When budgeting project quota and explaining unpaid data use to listeners, count replacement requests as well as refills. Refills take no member change cooldown. Stopping, leaving, listener-grace expiry, voice loss and shutdown also cancel refill work, and stale results are discarded.
 
 ## Facts still needing an authorized live check
 

@@ -642,7 +642,9 @@ async def test_a_failed_replacement_hands_the_refill_back_to_the_program() -> No
     assert "capacity is busy" in reply and desired_of(h) == old and heard_id(h) == "a"
     assert first.task.cancelling() or first.task.cancelled()
 
-    # The heard program stays desired and asks again, rather than waiting for its track's end.
+    # Its interrupted call used an attempt. The next one follows the first retry wait.
+    await retry_waiting(h)
+    h.clock.expire()
     await until(lambda: station_of(h).plan(old) == (recording("c"),))
     assert first.task.cancelled() and station_of(h).ending is None
     assert blocker.release()
@@ -650,6 +652,62 @@ async def test_a_failed_replacement_hands_the_refill_back_to_the_program() -> No
     await prepared_next(h, "c")
     assert tagged.started == ["a", "c"]
     assert await h.adapter.shutdown() is True
+
+
+@pytest.mark.parametrize("replacement_starts", [False, True], ids=["busy", "started"])
+def test_a_replacement_interrupting_the_last_refill_call(replacement_starts: bool) -> None:
+    async def scenario() -> None:
+        h, tagged, _ = one_at_a_time("a", "b")
+        fake = LateMatcher(recording("a"), recording("b"))
+        fake.batch = 1
+        h.adapter.matcher = fake
+        await first_heard(h, fake, MatchFailed("http_429"))
+        await retry_waiting(h)
+        h.clock.expire()
+        await retry_waiting(h, 60)
+        fake.gate = asyncio.Event()
+        h.clock.expire()
+        await calls_reach(fake, 4)  # initial match and three refill calls
+        old = desired_of(h)
+        credits = await now_texts(h)
+        last = player_of(h).refill
+        assert last is not None
+
+        replacement = FakeMatcher(recording("c"), recording("d"))
+        replacement.batch = 1
+        h.adapter.matcher = replacement
+        blocker = None if replacement_starts else h.pool.acquire()
+        (reply,) = await h.play("other")
+        assert last.task.cancelling()
+        source = player_of(h).source
+        if replacement_starts:
+            assert "Request accepted" in reply
+            await prepared_next(h, "c")
+            replacement.outcome = MatchFailed("http_429")
+            assert source.read() == tag("c")
+            await retry_waiting(h)
+            assert desired_of(h) != old
+        else:
+            assert "capacity is busy" in reply and desired_of(h) == old
+            assert source.read() == tag("a") and await now_texts(h) == credits
+
+        # The interrupted last call returns a usable "b" even after cancellation.
+        fake.late.set()
+        await asyncio.wait_for(last.task, 1)
+        if replacement_starts:
+            h.clock.expire()
+            await retry_waiting(h, 60)
+            h.clock.expire()
+            await until(lambda: station_of(h).ending is EndReason.REFILL_FAILED)
+            assert replacement.requests == ["other"] * 4 and tagged.started == ["a", "c"]
+        else:
+            await until(lambda: station_of(h).ending is EndReason.REFILL_FAILED)
+            assert replacement.requests == ["other"] and tagged.started == ["a"]
+            assert station_of(h).plan(old) == (recording("a"),)
+            assert blocker is not None and blocker.release()
+        assert await h.adapter.shutdown() is True
+
+    asyncio.run(scenario())
 
 
 @offline
@@ -783,8 +841,10 @@ async def test_every_song_played_ends_the_program_with_no_extra_call_or_repeat()
 class ChoosingTransport:
     """Answers each call by choosing the first songs it was sent, as Gemini's list would."""
 
-    def __init__(self) -> None:
+    def __init__(self, batch: int = MAX_RANKED, *, reject_last: bool = False) -> None:
         self.sent: list[list[str]] = []
+        self.batch = batch
+        self.reject_last = reject_last
 
     async def post(self, url: str, headers: Mapping[str, str], body: bytes) -> tuple[int, bytes]:
         sent = cast(dict[str, object], json.loads(body))
@@ -793,7 +853,9 @@ class ChoosingTransport:
         songs = text.removeprefix("SONGS:\n").split("\n\nREQUEST:\n")[0]
         titles = [cast(str, song["title"]) for song in json.loads(songs)]
         self.sent.append(titles)
-        chosen = [{"song": n, "fit": "loose"} for n in range(min(MAX_RANKED, len(titles)))]
+        if self.reject_last and len(titles) == 1:
+            return 429, b""
+        chosen = [{"song": n, "fit": "loose"} for n in range(min(self.batch, len(titles)))]
         output = json.dumps({"outcome": "match", "ranked": chosen})
         reply = {
             "status": "completed",
@@ -803,6 +865,48 @@ class ChoosingTransport:
 
     async def close(self) -> None:
         pass
+
+
+@offline
+async def test_failed_replacements_preserve_the_refills_attempts_and_retry_times() -> None:
+    h, tagged, _ = one_at_a_time("a", "b")
+    transport = ChoosingTransport(batch=1, reject_last=True)
+    h.adapter.matcher = GeminiMatcher(
+        (recording("a"), recording("b")), "placeholder-gemini-value", transport=transport
+    )
+    source = await start_program(h)
+    await retry_waiting(h)
+    original = desired_of(h)
+    status = await now_texts(h)
+    blocker = h.pool.acquire()
+
+    # Five matched replacements interrupt the waits after 429s. The heard program keeps
+    # its credits, and its calls are distinguishable on the wire by the one song left.
+    async def interrupt_wait(elapsed: int, remaining: int) -> None:
+        h.clock.now += elapsed
+        (reply,) = await h.play("another request")
+        assert "capacity is busy" in reply and desired_of(h) == original
+        assert source.read() == tag("a") and await now_texts(h) == status
+        await retry_waiting(h, remaining)
+
+    await interrupt_wait(3, 12)
+    await interrupt_wait(4, 8)
+    await interrupt_wait(5, 3)
+    assert transport.sent.count(["Song b"]) == 1
+    h.clock.now += 3
+    h.clock.expire()
+    await retry_waiting(h, 60)
+    await interrupt_wait(10, 50)
+    await interrupt_wait(35, 15)
+    assert transport.sent.count(["Song b"]) == 2
+    h.clock.now += 15
+    h.clock.expire()
+    await until(lambda: station_of(h).ending is EndReason.REFILL_FAILED)
+    assert transport.sent.count(["Song b"]) == 3
+    assert transport.sent.count(["Song a", "Song b"]) == 1 + 5
+    assert tagged.started == ["a"] and heard_id(h) == "a"
+    assert blocker.release()
+    assert await h.adapter.shutdown() is True
 
 
 @offline
