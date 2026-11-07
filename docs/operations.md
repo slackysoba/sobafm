@@ -10,6 +10,10 @@ The slice joins a voice channel and plays a catalog program per `/play` request:
 - A Discord application with a bot user and its token.
 - Optionally, a prepared catalog snapshot, its admission reviews, a media manifest, the admitted MP3 files and a Gemini API key. Without them the bot runs with `/join`, `/now`, `/stop`, `/leave` and `/settings` only; `/play` and `/skip` are not registered.
 
+### Provider access
+
+Read [provider access, privacy and free-tier limits](provider-access.md) before configuring Gemini or offering the bot to listeners. It covers the data sent by `/play` and automatic refill, Google's unpaid data use and human review, age and regional audience restrictions, and the maintainer's no-spend choice for Lyria. Catalog matching is implemented; free-tier Lyria access is unconfirmed, its transport library is under review, and `/freestyle` is not yet available. The guide lists the facts still needing an explicitly authorized live check.
+
 ## Discord setup
 
 1. In the Discord Developer Portal, create an application and add a bot. Copy its token; it goes only into `.env`.
