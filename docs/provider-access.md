@@ -53,14 +53,16 @@ The maintainer's [generation decision](https://github.com/slackysoba/sobafm/issu
 
 For catalog matching, the [Gemini 3.5 Flash-Lite pricing table](https://aistudio.google.com/docs/pricing#gemini-3.5-flash-lite) lists input and output as free of charge on the free tier. Free does not mean unlimited. Google's [rate-limit documentation](https://aistudio.google.com/docs/rate-limits) says limits depend on model and project tier, apply per project rather than per key, and can constrain requests and tokens separately. It directs operators to AI Studio for their active limits. No account quota was inspected for this guide; another key in the same project is not a separate allowance.
 
-Catalog programs make further calls without a fresh listener command. [ADR 0011](decisions/0011-program-refill.md) sets the bounds:
+Catalog programs make further calls without a fresh listener command. The [refill decision](decisions/0011-program-refill.md) describes when SobaFM asks for more recordings.
 
 - Ask for eight recordings initially and when the last recording on the current list starts. Accept a shorter valid answer; leave out all recordings already played or tried. Make no call once none remain.
-- At most three calls per refill, with a 15-second wait and then up to 60 seconds. The second wait shortens using the heard track's remaining duration to leave 16 seconds for the final call and pre-roll, but never falls below 15 seconds. A refusal, error or answer with nothing new consumes an attempt.
+- Each uninterrupted refill makes at most three calls, with a 15-second wait and then up to 60 seconds. The second wait shortens using the heard track's remaining duration to leave 16 seconds for the final call and pre-roll, but never falls below 15 seconds. A refusal, error or answer with nothing new consumes an attempt.
 - Each call has a 10-second timeout, a 64,000-byte response limit and a 2,048-output-token cap. There is at most one refill in flight per program and four model calls across the service. The catalog description is capped at 512,000 characters.
-- The accepted bound is no more than three calls per admitted recording per program. A shorter answer or retry increases calls; eight songs per answer is a request to the model, not a measured guarantee. After the final failed refill attempt, the current recording finishes and the program ends, or it ends immediately if already silent. It does not repeat the catalog automatically.
+- If the third attempt fails, the current recording finishes and the program ends, or it ends immediately if already silent.
 
-These are application bounds, not a reservation of provider quota. Refills resend request and catalog text and consume quota without taking the member change cooldown. An initial matching failure preserves current music; refill exhaustion ends that program. Stopping, leaving, replacement by a new program, listener-grace expiry, voice loss and shutdown cancel refill work, and stale results are discarded. The same free-tier data-use disclosure applies throughout.
+ADR 0011 intends a limit of three calls per admitted recording over a program's lifetime. A failed replacement can take the original program over that limit. For example, a new `/play` can match and cancel a refill during its retry wait, then fail to start because both audio banks are busy. The old program resumes with a fresh refill at attempt one. Each such restart sends the original request and the remaining catalog metadata again, in addition to the replacement's own matching call.
+
+When budgeting project quota and explaining unpaid data use to listeners, include the calls made after a failed replacement. Refills take no member change cooldown. Stopping, leaving, listener-grace expiry, voice loss and shutdown also cancel refill work, and stale results are discarded.
 
 ## Facts still needing an authorized live check
 
