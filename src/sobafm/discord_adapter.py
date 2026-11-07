@@ -78,6 +78,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 import disnake
+import disnake.gateway
 from disnake.ext import commands
 
 from sobafm.catalog import (
@@ -552,6 +553,7 @@ class WatchedVoiceClient(disnake.VoiceClient):
         self._report_gone = gone
         self._ended = False
         self._disconnecting: asyncio.Event | None = None
+        self._resume_settled: asyncio.Future[None] | None = None
 
     def is_connected(self) -> bool:
         # `cleanup` sets the event the player thread waits on, so it can't answer this alone.
@@ -593,9 +595,48 @@ class WatchedVoiceClient(disnake.VoiceClient):
 
     async def connect_websocket(self, *, resume: bool = False) -> None:
         # A 4015 resumes directly, outside `connect` and `potential_reconnect`.
-        async with asyncio.timeout(CONNECT_ATTEMPT_SECONDS):
-            await super().connect_websocket(resume=resume)
+        previous = self.ws
+        if resume:
+            self._resume_settled = self.loop.create_future()
+        try:
+            async with asyncio.timeout(CONNECT_ATTEMPT_SECONDS):
+                await super().connect_websocket(resume=resume)
+        except Exception, asyncio.CancelledError:
+            if resume and self.ws is not previous:
+                # Disnake installed this socket before waiting for RESUMED. Transfer it
+                # out of the shared slot before a disconnect or the fallback can use it.
+                failed, self.ws = self.ws, disnake.utils.MISSING
+                await self._join_cleanup(asyncio.create_task(self._close_failed_resume(failed)))
+            raise
+        finally:
+            if resume and self._resume_settled is not None:
+                self._resume_settled.set_result(None)
+                self._resume_settled = None
         self._report_ready(self)
+
+    @staticmethod
+    async def _close_failed_resume(ws: disnake.gateway.DiscordVoiceWebSocket) -> None:
+        heartbeat = ws._keep_alive  # pyright: ignore[reportPrivateUsage]
+        try:
+            await ws.close()  # stops the HELLO heartbeat and closes the transport
+        finally:
+            # Its last send may need the event loop. Check for thread exit without
+            # blocking that loop or requiring a spare thread under the 64-task cap.
+            while heartbeat is not None and heartbeat.is_alive():
+                await asyncio.sleep(0.05)
+
+    @staticmethod
+    async def _join_cleanup(work: asyncio.Future[None]) -> None:
+        """Propagate cancellation only after the original voice cleanup has settled."""
+        interrupted = False
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError:
+                interrupted = True
+        work.result()
+        if interrupted:
+            raise asyncio.CancelledError
 
     async def poll_voice_ws(self, reconnect: bool) -> None:
         try:
@@ -622,7 +663,13 @@ class WatchedVoiceClient(disnake.VoiceClient):
         try:
             await super().disconnect(force=force)
         finally:
-            self._disconnecting.set()
+            try:
+                # `cleanup` cancels the poller. A /leave or replacement /join must also
+                # wait for the socket and heartbeat of any interrupted resume it owns.
+                if self._resume_settled is not None:
+                    await self._join_cleanup(self._resume_settled)
+            finally:
+                self._disconnecting.set()
 
     def cleanup(self) -> None:
         if self._ended:
