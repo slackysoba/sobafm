@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from functools import partial
 from types import SimpleNamespace
 from typing import cast
@@ -23,6 +24,7 @@ from sobafm.lyria import (
     GeneratedStream,
     LyriaSession,
 )
+from sobafm.pcm import PcmBankPool
 from sobafm.station import EndReason
 from tests.test_discord_adapter import (
     LISTENER_ID,
@@ -98,6 +100,16 @@ def connect_loopback(monkeypatch: pytest.MonkeyPatch, peer: FakeLyria) -> None:
     monkeypatch.setattr(
         discord_adapter, "GeneratedStream", partial(GeneratedStream, endpoint=peer.url)
     )
+
+
+def timed_harness(monkeypatch: pytest.MonkeyPatch, peer: FakeLyria, clock: ManualTime) -> Harness:
+    # Session and bank cancellation timestamps are compared against the same deadline.
+    monkeypatch.setattr(
+        discord_adapter,
+        "GeneratedStream",
+        partial(GeneratedStream, endpoint=peer.url, clock=clock.clock, sleep=clock.sleep),
+    )
+    return harness(pool=PcmBankPool(clock=clock.clock))
 
 
 def test_command_modes_context_crossfade_and_stop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -393,12 +405,7 @@ def test_filtered_audible_session_reports_expiry_before_drain(
             await peer.websocket.send_str('{"filteredPrompt":{}}')
 
         async with StuckClose(monkeypatch) as stuck, FakeLyria(filtered) as peer:
-            monkeypatch.setattr(
-                discord_adapter,
-                "GeneratedStream",
-                partial(GeneratedStream, endpoint=peer.url, clock=clock.clock, sleep=clock.sleep),
-            )
-            h = harness()
+            h = timed_harness(monkeypatch, peer, clock)
             h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
             source = await h.join()
             await generate(h)
@@ -741,16 +748,13 @@ def test_three_real_voice_readers_in_startup_backoff_share_silence(
 ) -> None:
     async def scenario() -> None:
         clock = ManualTime()
+        # Distinct origins expose an accidental comparison with raw host uptime.
+        clock.now = time.monotonic() + 3600
         release = threading.Event()
         outputs: list[bytes] = []
         threads: list[disnake.player.AudioPlayer] = []
         async with FakeLyria(Refuse(429), Refuse(429), Refuse(429)) as peer:
-            monkeypatch.setattr(
-                discord_adapter,
-                "GeneratedStream",
-                partial(GeneratedStream, endpoint=peer.url, clock=clock.clock, sleep=clock.sleep),
-            )
-            h = harness()
+            h = timed_harness(monkeypatch, peer, clock)
             h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
 
             # Replace the outbound speaking and packet edges only. The pinned disnake

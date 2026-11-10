@@ -462,8 +462,10 @@ def harness(
     recordings: tuple[Recording, ...] | None = None,
     *,
     settings: discord_adapter.Settings | None = None,
+    pool: PcmBankPool | None = None,
 ) -> Harness:
-    pool = PcmBankPool()
+    if pool is None:
+        pool = PcmBankPool()
     producer = producer or Producer()
     records = recordings if recordings is not None else (recording("a"),)
     clock = FakeClock()
