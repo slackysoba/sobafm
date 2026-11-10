@@ -20,7 +20,8 @@ Both images predate the [notices file](#notices-file). The newer build reused th
 Image inspection used formatted, non-environment fields from `docker image inspect` and `docker run --rm --network none --entrypoint <command>`, with no environment file, no mounts and no bot start. Run these against a new image to refresh the tables:
 
 ```sh
-image=sobafm-live:ab10a71
+# Set image to the full local image ID of the new build.
+: "${image:?set the new local image ID}"
 docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}} {{.Size}} {{json .RootFS.Layers}}' "$image"
 # Debian packages, their sources and what they embed.
 docker run --rm --network none --entrypoint dpkg-query "$image" -W -f \
@@ -64,7 +65,7 @@ disnake finds and loads libopus0 itself for voice encoding, so that's the one li
 
 ## Locked Python packages
 
-`tests/test_supply_chain.py` follows the runtime dependencies and requested extras in `uv.lock` and compares their names and versions with this table. Both inspected application environments contain these 17 distributions, including SobaFM. The base image supplies pip separately.
+`tests/test_supply_chain.py` compares this table with the pinned uv's offline dependency tree for CPython 3.14.7 on linux/amd64. It follows the base project's runtime dependencies and the extras they request for that target. Both inspected application environments contain these 17 distributions, including SobaFM. The base image supplies pip separately.
 
 Licenses are from each wheel's metadata, and the texts are in its `.dist-info/licenses/` folder. Each name links to the PyPI release, which offers the source distribution that `uv.lock` names. SobaFM's own source is this repository.
 
@@ -363,7 +364,7 @@ This extends the Python process in [Contributing](../CONTRIBUTING.md#tool-choice
 | `uv.lock` | A release, an advisory or a new need | Follow Contributing. Update the [Python table](#locked-python-packages). For dave-py, pynacl, aiohttp or cffi, recheck the compiled library in the [wheel table](#libraries-compiled-into-those-wheels) | The drift test fails until the table matches. Rerun the service fit under [ADR 0004](decisions/0004-amd64-whole-service-adoption.md), because native libraries count towards the limit |
 | Debian trixie pins | A security advisory, or a point release that replaces a pinned version | Find the version on its package page and change the exact pin. Keep `--no-remove --no-upgrade`, which stop removals and protect the named packages but not base packages | The build fails if a version is gone. A pin's dependency can still move a base package, so read `/var/log/apt/history.log` and the listing after the rebuild. If a pin needs a newer base package, update the base digest in the same PR |
 | Debian forky pins | mpg123 moves on in forky, or an advisory | Change all four pins together, plus the `mpg123 --version` line in the `Dockerfile` and the pins in `tests/test_app.py`. Read upstream's release notes and Debian's changelog | A decode fit with an owned fixture, because this replaces the decoder. Forky versions leave the archive quickly, so the build fails rather than installing something else |
-| Base digest | A security advisory for a base package, a CPython release or a new uv | Read the new digest without pulling it: `docker buildx imagetools inspect ghcr.io/astral-sh/uv:python3.14-trixie-slim`. Change `ARG BASE`. All 87 base versions may move together. Refresh this record's base, CPython and uv facts, and the notices file | Trixie pins may need to move with it, because a new base usually means a later point release. Read the rebuild's `history.log` and listing for any base package a pin moved. A decode and service fit, because libc and CPython change |
+| Base digest | A security advisory for a base package, a CPython release or a new uv | Read the new digest without pulling it: `docker buildx imagetools inspect ghcr.io/astral-sh/uv:python3.14-trixie-slim`. Change `ARG BASE`. All 87 base versions may move together. Refresh the base, CPython and uv inventory and notices. If CPython changes, update the target version in the inventory test | Trixie pins may need to move with it, because a new base usually means a later point release. Read the rebuild's `history.log` and listing for any base package a pin moved. A decode and service fit, because libc and CPython change |
 | Build-stage uv | `required-version` in `pyproject.toml` changes | Change `ARG UV` to the new tag and digest in the same PR | `uv sync --locked` in the build. It doesn't reach the final image |
 
 ## Watching for vulnerabilities
