@@ -723,7 +723,9 @@ async def test_a_replacement_failing_in_its_deferred_start_hands_the_refill_back
     blocker = h.pool.acquire()  # the settled report's start finds no capacity
 
     # a is still playing, so nothing else would act until it ended. Its program asks for more.
-    await calls_reach(fake, 3)
+    with pytest.MonkeyPatch.context() as bounds:
+        bounds.setattr("sobafm.discord_adapter.CAPACITY_WAIT_SECONDS", 0.0)
+        await calls_reach(fake, 3)
     assert fake.requests == ["piano", "second", "piano"] and fake.played[-1] == keys("a")
     assert heard_id(h) == "a" and station_of(h).ready is None
     heard = station_of(h).heard

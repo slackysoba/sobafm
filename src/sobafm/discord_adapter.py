@@ -1160,6 +1160,8 @@ class Adapter:
                     return STOPPED_WHILE_MATCHING
                 station = player.station
                 # Later tracks come from this list, and from more of the same when it runs out.
+                if station.ready is not None:
+                    self._capacity_changed()  # the replacement supersedes this deferred start
                 program = station.request(text, tuple(c.recording for c in plan.ranked)).program
                 self._cancel_refill(player)  # the replaced program's; `_resume` covers a failure
                 player.attempts = 0
@@ -1235,6 +1237,8 @@ class Adapter:
                     return "The interpreter declined this request."
                 plan = interpretation.plan
                 player.interpreting = None
+                if station.ready is not None:
+                    self._capacity_changed()
                 station.accept(program)
                 self._cancel_refill(player)
                 player.skip_requested = False
@@ -1277,16 +1281,26 @@ class Adapter:
         if player.interpreting is program:
             player.interpreting = None
         removed = player.source.remove_program(program)
-        duration = player.durations.get(program)
-        if duration is not None and (track := duration.track) is not None and not track.frames:
-            if track.stream.startup_failure is not None:
-                reason = self._generated_end(track)
-            self._give_back(player, track.claim)
-        for detached in removed:
-            self._retire(detached)
         station = player.station
         switching = station.switching
+        duration = player.durations.get(program)
+        if duration is not None and (track := duration.track) is not None:
+            if not track.frames:
+                if track.stream.startup_failure is not None:
+                    reason = self._generated_end(track)
+                self._give_back(player, track.claim)
+            elif switching is track.audio:
+                # Detachment fixes the frame count. This switch already displaced
+                # the old heard audio even when its voice report is still queued.
+                station.switched(track.audio)
+                log.info("heard source changed: generated")
+        elif station.ready is not None and station.ready.program is program:
+            # The accepted plan reached its cutoff before a bank could be leased.
+            self._give_back(player, player.waiting_claim)
+        for detached in removed:
+            self._retire(detached)
         station.end_generated(program, reason)
+        self._capacity_changed()
         # Expiry can settle the switch before its queued voice report. In that
         # order the timer owns the handoff to the replacement waiting on it.
         if (
@@ -1294,7 +1308,7 @@ class Adapter:
             and switching.program is program
             and (ready := station.ready) is not None
         ):
-            self._own(asyncio.create_task(self._start_locked(player, ready)))
+            self._defer_start(player, ready)
 
     def _displace(self, player: GuildPlayer) -> asyncio.Task[None] | None:
         displaced = player.source.take_pending()
@@ -1663,7 +1677,7 @@ class Adapter:
             waiter.cancel()  # no effect once it is done
 
     def _capacity_changed(self) -> None:
-        """Wake every waiting continuation to check capacity and its program again."""
+        """Wake waiting starts and continuations to check capacity and their program again."""
         waiters, self._capacity_waiters = self._capacity_waiters, set()
         for waiter in waiters:
             if not waiter.done():
@@ -1768,6 +1782,7 @@ class Adapter:
             retirements.add(self._retire(pending))
         if stream is not None:
             player.station.stop(ended)
+            self._capacity_changed()
             try:
                 async with asyncio.timeout(FADE_OUT_FRAMES * FRAME_MILLISECONDS / 1000):
                     await stream.wait_silent()
@@ -1799,6 +1814,7 @@ class Adapter:
         if player.station.heard is not None:
             log.info("heard source cleared")
         player.station.silenced()  # the callback can no longer emit any removed frame
+        self._capacity_changed()  # a deferred start can now exit without waiting for a lease
         return {self._retire(t) for t in tracks}
 
     async def leave(self, inter: Inter) -> None:
@@ -2290,7 +2306,7 @@ class Adapter:
         # A failed switch can revert the desired program and a drain can end it.
         self._review_listeners(player)
         if kind in ("switched", "failed") and (ready := player.station.ready) is not None:
-            self._own(asyncio.create_task(self._start_locked(player, ready)))
+            self._defer_start(player, ready)
         else:
             self._resume(player)
 
@@ -2315,14 +2331,32 @@ class Adapter:
             return EndReason.FILTERED
         return EndReason.GENERATION_FAILED
 
-    async def _start_locked(self, player: GuildPlayer, expected: StationAudio) -> None:
-        async with player.lock:
-            if player.station.ready is not expected:
-                return
-            if not await self._start(player):
-                self._give_back(player, player.waiting_claim)
-                self._resume(player)  # a failed replacement hands the place back to the program
-            self._review_listeners(player)  # a failed start can revert the desired program
+    def _defer_start(self, player: GuildPlayer, ready: StationAudio) -> None:
+        self._own(asyncio.create_task(self._start_when_free(player, ready, player.waiting_claim)))
+
+    async def _start_when_free(
+        self, player: GuildPlayer, expected: StationAudio, claim: Claim | None
+    ) -> None:
+        """Keep this accepted replacement ready while earlier tracks return their banks."""
+        deadline = time.monotonic() + CAPACITY_WAIT_SECONDS
+        while True:
+            async with player.lock:
+                if (
+                    self.stopping.is_set()
+                    or player.closing
+                    or player.station.ready is not expected
+                    or player.waiting_claim is not claim
+                ):
+                    return
+                remaining = deadline - time.monotonic()
+                if self._pool.leased < BANK_COUNT or remaining <= 0:
+                    if not await self._start(player):
+                        self._give_back(player, claim)
+                        self._resume(player)
+                    self._review_listeners(player)
+                    return
+                waiter = self._capacity_waiter()
+            await self._await_capacity(waiter, remaining)
 
     # Ownership.
 

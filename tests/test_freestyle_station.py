@@ -40,9 +40,11 @@ from tests.test_discord_adapter import (
     harness,
     inter,
     matcher_of,
+    program_harness,
     recording,
     settings_of,
     settle,
+    tag,
 )
 from tests.test_discord_adapter import (
     run as command,
@@ -320,34 +322,216 @@ def test_generated_cutoff_starts_the_waiting_catalog_track(
             h.clock.now += 299
             voice.connected = True
 
-            # Hold delivery of the actual first-frame report across the catalog match.
-            reports: list[Callable[[], None]] = []
-            report = source._report  # pyright: ignore[reportPrivateUsage]
-
-            def hold_report(kind: str, track: PlayingTrack) -> None:
-                assert kind == "switched"
-                reports.append(partial(report, kind, track))
-
             player = h.adapter.players[1]
-            with monkeypatch.context() as callback:
-                callback.setattr(source, "_report", hold_report)
-                assert sample_of(player.output.read()) == 500
-            (report_switch,) = reports
+            report_switch = await hold_generated_switch(h, source, monkeypatch)
             assert "accepted" in (await h.play())[0]
             expected = player.station.ready
             assert expected is not None and player.station.heard is None
 
-            h.clock.now += 1
-            if timer_first:
-                h.clock.expire()
-            report_switch()
-            if not timer_first:
-                h.clock.expire()
+            expire_around_report(h, report_switch, timer_first)
             await settle()
             assert player.output.read() not in (b"", discord_adapter.SILENCE)
             await settle()
             assert player.station.heard is expected and player.station.desired is expected.program
             assert "Song b" in ((await command(h.adapter.now, inter(None))).texts()[1] or "")
+            assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+async def prepare_over_heard_catalog(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, peer: FakeLyria
+) -> StationSource:
+    connect_loopback(monkeypatch, peer)
+    settings_of(h).current = settings_of(h).current.changed(generated_minutes=5)
+    h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+    source = await h.join()
+    assert "accepted" in (await h.play())[0]
+    await settle()
+    assert sample_of(h.adapter.players[1].output.read()) == sample_of(tag("a")) // 2
+    await settle()
+    assert "Song a" in ((await command(h.adapter.now, inter(None))).texts()[1] or "")
+    await generate(h)
+    voice = h.room.voice
+    assert voice is not None
+    voice.connected = False
+    assert await pending_stream(source).wait_ready()
+    h.clock.now += 299
+    voice.connected = True
+    return source
+
+
+async def hold_generated_switch(
+    h: Harness, source: StationSource, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[], None]:
+    """Run the real player for one frame. Only its first-frame report is held."""
+    report = source._report  # pyright: ignore[reportPrivateUsage]
+    switches: list[Callable[[], None]] = []
+    samples: list[int] = []
+
+    def hold_switch(kind: str, track: PlayingTrack) -> None:
+        if kind == "switched":
+            switches.append(partial(report, kind, track))
+        else:
+            report(kind, track)
+
+    def receive(data: bytes, *, encode: bool) -> None:
+        assert encode
+        samples.append(sample_of(data))
+        thread.stop()
+
+    with monkeypatch.context() as callback:
+        callback.setattr(source, "_report", hold_switch)
+        sink = local_voice_sink(callback, receive)
+        thread = disnake.player.AudioPlayer(h.adapter.players[1].output, sink)
+        thread.start()
+        await asyncio.to_thread(thread.join, 2)
+        assert not thread.is_alive()
+    assert samples == [500]
+    (deliver,) = switches
+    return deliver
+
+
+def expire_around_report(h: Harness, report: Callable[[], None], timer_first: bool) -> None:
+    h.clock.now += 1
+    if timer_first:
+        h.clock.expire()
+    report()
+    if not timer_first:
+        h.clock.expire()
+
+
+@pytest.mark.parametrize("order", ["zero-frames", "timer-first", "report-first"])
+def test_generated_expiry_settles_what_displaced_the_heard_catalog(
+    monkeypatch: pytest.MonkeyPatch, order: str
+) -> None:
+    async def scenario() -> None:
+        async with FakeLyria(music(1000)) as peer:
+            h, _ = program_harness("a")
+            source = await prepare_over_heard_catalog(h, monkeypatch, peer)
+            if order == "zero-frames":
+                h.clock.now += 1
+                h.clock.expire()
+            else:
+                report = await hold_generated_switch(h, source, monkeypatch)
+                expire_around_report(h, report, order == "timer-first")
+            await until(lambda: h.pool.leased == int(order == "zero-frames"))
+            player = h.adapter.players[1]
+            now = (await command(h.adapter.now, inter(None))).texts()
+            if order == "zero-frames":
+                assert "Song a" in (now[1] or "")
+                assert sample_of(player.output.read()) == sample_of(tag("a")) // 2
+            else:
+                assert len(now) == 1 and player.station.heard is None
+                assert player.output.read() == b""
+            assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("timer_first", "action"), [(True, "play"), (False, "play"), (True, "stop"), (False, "replace")]
+)
+def test_accepted_catalog_waits_for_two_retiring_banks(
+    monkeypatch: pytest.MonkeyPatch, timer_first: bool, action: str
+) -> None:
+    async def scenario() -> None:
+        async with FakeLyria(music(1000)) as peer, StuckClose(monkeypatch) as close:
+            h, decoder = program_harness("a")
+            source = await prepare_over_heard_catalog(h, monkeypatch, peer)
+            player = h.adapter.players[1]
+            release_a = decoder.holding["a"] = asyncio.Event()
+            late = action == "play" and timer_first
+            try:
+                report = await hold_generated_switch(h, source, monkeypatch)
+                h.adapter.matcher = FakeMatcher(recording("b"))
+                settings_of(h).current = settings_of(h).current.changed(cooldown_seconds=60)
+                assert "accepted" in (await h.play())[0]
+                expected = player.station.ready
+                claim = player.waiting_claim
+                assert expected is not None and claim is not None
+                expire_around_report(h, report, timer_first)
+                await close.entered.wait()
+                await settle()
+                assert h.pool.leased == 2 and player.station.ready is expected
+                assert player.waiting_claim is claim and "cooldown" in (await h.play())[0].lower()
+                assert player.station.heard is None
+                if late:
+                    await asyncio.sleep(3.12)
+                    assert h.adapter.cleanup_failures == 2 and h.pool.leased == 2
+                if action == "stop":
+                    await command(h.adapter.stop, inter(h.room))
+                elif action == "replace":
+                    # Queue the genuine replacement under the lock before A's release
+                    # wakes B. The stale waiter must not start or refund C.
+                    async with player.lock:
+                        h.clock.now += 60
+                        matcher = FakeMatcher(recording("c"))
+                        h.adapter.matcher = matcher
+                        replacing = asyncio.create_task(h.play("newer"))
+                        await until(lambda: bool(matcher.requests))
+                        release_a.set()
+                        await until(lambda: h.pool.leased == 1)
+                    assert "accepted" in (await replacing)[0]
+                release_a.set()
+                if action == "stop":
+                    await until(lambda: h.pool.leased == 1)
+                    assert player.output.read() == b"" and player.station.desired is None
+                    assert decoder.started == ["a"]
+                else:
+                    song = "c" if action == "replace" else "b"
+                    await until(lambda: song in decoder.started)
+                    assert h.pool.leased == 2  # generation still owns its closing socket
+                    assert sample_of(player.output.read()) == sample_of(tag(song)) // 2
+                    await settle()
+                    assert f"Song {song}" in (
+                        (await command(h.adapter.now, inter(None))).texts()[1] or ""
+                    )
+                    assert "cooldown" in (await h.play())[0].lower()
+                    assert decoder.started == ["a", song]
+                    if action == "play":
+                        assert player.station.heard is expected
+            finally:
+                release_a.set()
+                close.release.set()
+            assert await h.adapter.shutdown() is (not late)
+            assert h.pool.leased == 0 and h.adapter.cleanup_failures == (2 if late else 0)
+
+    run(scenario())
+
+
+def test_waiting_generated_successor_keeps_its_original_cutoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        async with FakeLyria(music(1000)) as peer, StuckClose(monkeypatch) as close:
+            h, decoder = program_harness("a")
+            source = await prepare_over_heard_catalog(h, monkeypatch, peer)
+            player = h.adapter.players[1]
+            ((_, old_timer),) = [entry for entry in h.clock.sleeps if not entry[1].done()]
+            release_a = decoder.holding["a"] = asyncio.Event()
+            try:
+                report = await hold_generated_switch(h, source, monkeypatch)
+                assert "Preparing" in await generate(h)
+                settings_of(h).current = settings_of(h).current.changed(cooldown_seconds=600)
+                waiting = player.station.ready
+                assert waiting is not None and player.waiting_claim is not None
+                h.clock.now += 1
+                old_timer.set_result(None)
+                report()
+                await close.entered.wait()
+                await settle()
+                assert player.station.ready is waiting and h.pool.leased == 2
+                h.clock.now += 299
+                h.clock.expire()
+                await settle()
+                assert player.station.ended is EndReason.DURATION and player.waiting_claim is None
+                assert len(peer.requests) == 1
+            finally:
+                release_a.set()
+                close.release.set()
+            await until(lambda: h.pool.leased == 0)
+            assert "accepted" in (await h.play())[0]
             assert await h.adapter.shutdown()
 
     run(scenario())

@@ -523,7 +523,7 @@ async def test_a_track_that_fails_to_start_gives_back_its_requests_claim() -> No
 
 @offline
 async def test_a_failed_start_after_a_deferred_claim_gives_it_back() -> None:
-    """A `/play` accepted while a switch report is in flight starts when it settles."""
+    """A deferred replacement returns its own claim when the capacity wait expires."""
     h, _ = program_harness("a", producer=Tagged(frames=50))
     cooling(h, 0)
     source = await h.join()
@@ -538,9 +538,10 @@ async def test_a_failed_start_after_a_deferred_claim_gives_it_back() -> None:
     banks: list[PcmBank] = []
     while h.pool.leased < 2:
         banks.append(h.pool.acquire())  # the settled report's start finds no capacity
-    await settle()
-    await settle()
-    assert player.station.ready is None and player.waiting_claim is None
+    with pytest.MonkeyPatch.context() as bounds:
+        bounds.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 0.05)
+        await until_settled(lambda: player.station.ready is None)
+    assert player.waiting_claim is None
     for bank in banks:
         assert bank.release()
     assert "Request accepted" in (await h.play("third"))[0]
