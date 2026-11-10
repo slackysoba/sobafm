@@ -2,25 +2,26 @@
 
 What the SobaFM image contains, what its licenses owe and how to keep it current. The requirements' [Deployment, privacy and supply chain](requirements.md#deployment-privacy-and-supply-chain) section asks for this record. **It is a project record, not legal advice.**
 
-The image isn't published, and nothing here publishes it. Whether a release should publish one is [an open question for the maintainer](#publishing-is-not-settled).
+SobaFM ships source only. Operators build the image locally from the release commit. The maintainer [accepted this distribution model on November 6](https://github.com/slackysoba/sobafm/issues/132#issuecomment-6703342446).
 
 ## Where this comes from
 
-Everything below was read from one actual image:
+The detailed inventory comes from the first image below. The second checks what changed after Lyria became part of the application.
 
-| Fact | Value |
+| Local linux/amd64 image | Evidence |
 | --- | --- |
-| Image | Local tag `sobafm-live:ab10a71`, ID `sha256:4a91d588f7d49389e0caa01aafabcdb9d86e4b009e96092fb1115472cdfb1355`, linux/amd64, 336,429,161 bytes |
-| Bound to | Commit `ab10a71`. All 13 `.py` files of the installed `sobafm` package match it by SHA-256. `Dockerfile`, `.dockerignore`, `pyproject.toml` and `uv.lock` didn't change from that commit to `b5ef66e`, the latest `main` this record was checked against, so the inventory still applies. `src/` has changed since, for settings and `/freestyle` plans, adding no dependency |
-| Read on | 2026-11-05, US Pacific time |
+| `sobafm-live:ab10a71`, ID `sha256:4a91d588f7d49389e0caa01aafabcdb9d86e4b009e96092fb1115472cdfb1355`, 336,429,161 bytes | Inspected November 5. All 13 installed SobaFM Python files matched commit `ab10a71` by SHA-256. This image supplied the Debian and Python listings, file and license inventory, and apt history. The tables also identify details taken from upstream source records. |
+| [Build from `9285df824ad9fd08731f1198855785956564efbf`](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6703071068), ID `sha256:53a30f7ae46614f553e555cc9496548dff4f4fda93f1d457050ce60c8db52754`, 336,926,799 bytes | The revision label matches the build commit. The first six filesystem layers, through the Debian install, match the first image exactly. The application virtual environment layer changed. Its `.dist-info` directory names and versions match all 17 entries in the Python table. |
 
-That image predates the [notices file](#notices-file), which is the only change this record makes to what an image contains. No image was built for it.
+Between these commits, `audioop-lts==0.2.2` became a direct dependency for [Lyria mixing](decisions/0008-lyria-realtime-path.md). The disnake voice extra already installed that wheel. The lock diff adds only the direct edge and its requirement metadata. The base digest, Debian pins and locked versions stayed the same. From `9285df8` through `main` at `eb93df9`, the Dockerfile, build-context rules, project dependencies and lock are unchanged.
 
-Reading it took only `docker image inspect` and `docker run --rm --network none --entrypoint <command>`, with no environment file, no mounts and no bot start. Run these against a new image to refresh the tables:
+Both images predate the [notices file](#notices-file). The newer build reused the Debian layer and ran both locked Python install steps. Fresh archive availability and the notices copy still need separate build evidence.
+
+Image inspection used formatted, non-environment fields from `docker image inspect` and `docker run --rm --network none --entrypoint <command>`, with no environment file, no mounts and no bot start. Run these against a new image to refresh the tables:
 
 ```sh
 image=sobafm-live:ab10a71
-docker image inspect "$image"
+docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}} {{.Size}} {{json .RootFS.Layers}}' "$image"
 # Debian packages, their sources and what they embed.
 docker run --rm --network none --entrypoint dpkg-query "$image" -W -f \
   '${Package}\t${Version}\t${source:Package}\t${source:Version}\t${Built-Using}\t${Static-Built-Using}\n'
@@ -63,7 +64,7 @@ disnake finds and loads libopus0 itself for voice encoding, so that's the one li
 
 ## Locked Python packages
 
-`tests/test_supply_chain.py` fails if this table differs from the runtime packages in `uv.lock`. The image above contains exactly these 17 at these versions. Development tools aren't in the image.
+`tests/test_supply_chain.py` follows the runtime dependencies and requested extras in `uv.lock` and compares their names and versions with this table. Both inspected application environments contain these 17 distributions, including SobaFM. The base image supplies pip separately.
 
 Licenses are from each wheel's metadata, and the texts are in its `.dist-info/licenses/` folder. Each name links to the PyPI release, which offers the source distribution that `uv.lock` names. SobaFM's own source is this repository.
 
@@ -110,7 +111,7 @@ These come with the base image and aren't Debian packages. Comparing every file 
 
 | Component | Version | Location | License | Source |
 | --- | --- | --- | --- | --- |
-| CPython | 3.14.7 | `/usr/local` | PSF-2.0, in `/usr/local/lib/python3.14/LICENSE.txt`, plus the incorporated code below | [Release](https://www.python.org/downloads/release/python-3147/), with `PYTHON_SHA256=3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81` set in the image. [Build recipe](https://github.com/docker-library/python) |
+| CPython | 3.14.7 | `/usr/local` | PSF-2.0, in `/usr/local/lib/python3.14/LICENSE.txt`, plus the incorporated code below | [Release](https://www.python.org/downloads/release/python-3147/). [Build recipe](https://github.com/docker-library/python) |
 | pip | 26.2.1 | `site-packages`, and a bundled wheel in `ensurepip` | MIT, with its vendored packages' licenses in its `.dist-info/licenses/` | [PyPI](https://pypi.org/project/pip/26.2.1/) |
 | uv, uvx | 0.12.21, static musl binaries | `/usr/local/bin` | MIT or Apache-2.0, plus the crates they link | [Tag](https://github.com/astral-sh/uv/tree/0.12.21) |
 
@@ -120,7 +121,7 @@ SobaFM runs CPython from the virtual environment. It doesn't use pip or the base
 
 **Linked from Debian.** OpenSSL, libffi, zlib, sqlite, bzip2, xz, zstd, readline, ncurses, gdbm, Berkeley DB and libuuid. CPython's `readline` and `_gdbm` modules link GPL-3+ libraries and `_dbm` links Sleepycat Berkeley DB. Neither SobaFM nor anything in its virtual environment imports them.
 
-**uv's crates.** uv's [`Cargo.lock`](https://github.com/astral-sh/uv/blob/0.12.21/Cargo.lock) at that tag has 737 entries, 664 of them from outside its workspace. They include [astral-pubgrub and astral-version-ranges](https://github.com/astral-sh/pubgrub) and option-ext under MPL-2.0, and priority-queue under LGPL-3.0-or-later or MPL-2.0. This record doesn't list each crate's license. The image has no file carrying their notices, and uv's repository has none at its top level. See [Publishing is not settled](#publishing-is-not-settled).
+**uv's crates.** uv's [`Cargo.lock`](https://github.com/astral-sh/uv/blob/0.12.21/Cargo.lock) at that tag has 737 entries, 664 of them from outside its workspace. They include [astral-pubgrub and astral-version-ranges](https://github.com/astral-sh/pubgrub) and option-ext under MPL-2.0, and priority-queue under LGPL-3.0-or-later or MPL-2.0. This record doesn't list each crate's license. The image has no file carrying their notices, and uv's repository has none at its top level. See [Source-only distribution](#source-only-distribution).
 
 ## Debian packages
 
@@ -272,21 +273,13 @@ The copyleft duties cover those components, not SobaFM's own code. SobaFM is MIT
 
 No term found in what was read here conflicts with publishing. That covers what comes from Debian `main` and the licenses above. It doesn't cover uv's crates or `sqv`'s, whose terms weren't read one by one. The gaps found so far are in meeting the duties, not in being allowed to.
 
-## Publishing is not settled
+## Source-only distribution
 
-The maintainer hasn't decided whether a release publishes an image. The options and a recommendation are [on issue #132](https://github.com/slackysoba/sobafm/issues/132). Until they answer, the image stays local-only, as [Operations](operations.md#image-contents) says. Each route has its own cost.
+The maintainer selected option A in [the distribution decision](https://github.com/slackysoba/sobafm/issues/132#issuecomment-6703342446). Operators follow the [local build instructions](operations.md#image-contents). Publishing an image, hosting corresponding sources, and experimenting with a fixed Debian snapshot would each need a separate decision.
 
-### If the project publishes
+### Building from source
 
-A published image keeps working when Debian's archive moves on, which is the main practical gain. It isn't ready to publish as it stands:
-
-1. **Source.** A publisher needs the exact source of the copyleft components. All 80 Debian source packages is the simple upper bound: by the table above, 26 are permissive-only and 2 more (libcap2, libzstd) offer a permissive choice. On top of those come the 65 behind `sqv`, and CPython 3.14.7 with its build recipe, all kept available for as long as the duties last. None of them is FFmpeg, so collecting them doesn't touch the [source-access constraints](requirements.md#deployment-privacy-and-supply-chain). The total size isn't known.
-2. **Rust crates.** uv statically links crates from that list of 664, and `sqv` statically links 64 Debian Rust crates. Neither the image nor this repository has their notices. A generated list from uv's tag, or a base image without uv, would close uv's part. Deleting the binary in a later layer wouldn't, because the layer below would still be distributed. Neither closes `sqv`'s part, because `apt` has a hard dependency on `sqv`. A base without uv should still have it, which is inferred from that dependency and uv's build recipe, because `python:3.14-slim-trixie` wasn't inspected.
-3. **Labels.** The image inherits `org.opencontainers.image.title=uv`, `licenses=Apache-2.0` and the rest from its base. That's harmless locally and wrong for a published SobaFM image, which should set its own.
-
-### If operators keep building it
-
-No license duty arises, but every install depends on Debian's archive. Each pin is an exact version, `deb.debian.org` is the only source and the `RUN` step stops at the first failure. So when a pinned version leaves the archive, **every clean build fails** until a [reviewed update](#updates) lands. Existing images, and builds served from Docker's cache, keep working. A release tag whose pins have gone never builds again.
+Operators who build and run the image privately take on no image redistribution duties. Clean installs depend on Debian's archive. Each pin is an exact version, `deb.debian.org` is the only source and the `RUN` step stops at the first failure. So when a pinned version leaves the archive, **every clean build fails** until a [reviewed update](#updates) lands. Existing images, and builds served from Docker's cache, keep working. A clean build from an affected release tag fails for as long as the configured archive lacks those versions.
 
 | Pins | What replaces them | How often |
 | --- | --- | --- |
@@ -295,16 +288,24 @@ No license duty arises, but every install depends on Debian's archive. Each pin 
 
 All 27 pins were still in the archive when checked on 2026-11-05, and none had a newer stable version waiting. A later forky build could also come to need a newer C library than trixie has, and then no pin update would work on this base.
 
-Two project statements read differently on this route:
+This choice affects two acceptance criteria.
 
 - [Outcome 4](https://github.com/slackysoba/sobafm/issues/4) says "Installation must be reproducible". That holds only while every pin is in the archive.
-- [Outcome 5](https://github.com/slackysoba/sobafm/issues/5) and the [engineering notes](engineering-notes.md#evidence) qualify "the actual release image", which no operator would receive, because each build gets its own image ID. That term would have to mean an image built from the release commit, matched to operators' builds by its package listing.
+- [Outcome 5](https://github.com/slackysoba/sobafm/issues/5) and the [engineering notes](engineering-notes.md#evidence) qualify "the actual release image". Record the release commit, the ID of the locally built image used in qualification, its target and its package listing. Operators can compare their build from that commit against the listing. Matching packages alone do not qualify another image or host.
+
+### What publishing would require
+
+A published image keeps working when Debian's archive moves on, which is the main practical gain. It isn't ready to publish as it stands:
+
+1. **Source.** A publisher needs the exact source of the copyleft components. All 80 Debian source packages is the simple upper bound: by the table above, 26 are permissive-only and 2 more (libcap2, libzstd) offer a permissive choice. On top of those come the 65 behind `sqv`, and CPython 3.14.7 with its build recipe, all kept available for as long as the duties last. None of them is FFmpeg, so collecting them doesn't touch the [source-access constraints](requirements.md#deployment-privacy-and-supply-chain). The total size isn't known.
+2. **Rust crates.** uv statically links crates from that list of 664, and `sqv` statically links 64 Debian Rust crates. Neither the image nor this repository has their notices. A generated list from uv's tag, or a base image without uv, would close uv's part. Deleting the binary in a later layer wouldn't, because the layer below would still be distributed. Neither closes `sqv`'s part, because `apt` has a hard dependency on `sqv`. A base without uv should still have it, which is inferred from that dependency and uv's build recipe, because `python:3.14-slim-trixie` wasn't inspected.
+3. **Labels.** The image inherits `org.opencontainers.image.title=uv`, `licenses=Apache-2.0` and the rest from its base. That's harmless locally and wrong for a published SobaFM image, which should set its own.
 
 ### Possible follow-up: a fixed snapshot
 
-**Untested.** Debian's [snapshot archive](https://snapshot.debian.org/) keeps past packages and works as an apt source at a fixed date. Pointing the forky source at one could stop those pins expiring and keep old release tags building, with no license duty. Nothing here has tried it. These costs come from public documentation:
+**Untested and outside the source-only decision.** Debian's [snapshot archive](https://snapshot.debian.org/) keeps past packages and works as an apt source at a fixed date. A fixed forky snapshot could keep the four mpg123 pins available. Later release tags would also need their stable pins covered to survive stable archive changes. Tags cut before a snapshot change keep their original sources. Nothing here has tried it. These costs come from public documentation:
 
-- **Dependence on one service.** Its home page states no availability commitment, and it says rate limiting is to return on the HTTP layer, with no figure. [A July 2026 report](https://lists.debian.org/debian-snapshot/2026/07/msg00000.html) had both its hosts returning 503, and [an October 2026 commit](https://lists.debian.org/debian-snapshot/2026/10/msg00000.html) deals with database pool exhaustion. On 2026-11-05 its package pages returned 504 and its home page 503 on separate requests, while `snapshot-cloudflare.debian.org` returned 200. The home page doesn't mention that host. A failed build could be retried rather than waiting for a reviewed update, but it's still a failed install.
+- **Dependence on one service.** At the November 5 check, its home page made no availability commitment. A 2024 news item mentioned HTTP rate limiting without giving a limit. [A July 2026 report](https://lists.debian.org/debian-snapshot/2026/07/msg00000.html) had both its hosts returning 503, and [an October 2026 commit](https://lists.debian.org/debian-snapshot/2026/10/msg00000.html) deals with database pool exhaustion. On 2026-11-05 its package pages returned 504 and its home page 503 on separate requests, while `snapshot-cloudflare.debian.org` returned 200. The home page doesn't mention that host. A failed build could be retried rather than waiting for a reviewed update, but it's still a failed install.
 - **A weaker apt check.** Snapshot's instructions say to ignore `Valid-Until` for snapshots older than about a dozen days, and [sources.list(5)](https://manpages.debian.org/trixie/apt/sources.list.5.en.html) describes that check as detecting replay attacks. Signature and hash checks stay. [The reviewed route](../evaluations/linux_resource/mpg123-proposal.md) kept validity checks on, so this is a security change to approve.
 - **Partial cover.** Forky alone handles the frequent moves. Covering the 23 trixie pins as well means replacing the base image's own apt sources.
 - **The same update work.** Security fixes still need a deliberate change, as pins do today.
@@ -312,7 +313,7 @@ Two project statements read differently on this route:
 
 ## Notices file
 
-`THIRD-PARTY-NOTICES.txt` carries what the image would otherwise lack: uv's notice, the known gaps for uv's and `sqv`'s crates, a pointer for libffi in cffi, and CPython's notices for incorporated code. It also says where the other notices are in the image. The licenses need this only when publishing, but carrying it costs one small layer and keeps a local image and a published one the same.
+`THIRD-PARTY-NOTICES.txt` carries what the image would otherwise lack: uv's notice, the known gaps for uv's and `sqv`'s crates, a pointer for libffi in cffi, and CPython's notices for incorporated code. It also says where the other notices are in the image. The licenses need this only when publishing, but carrying it costs one small layer and gives operators the texts with their local builds.
 
 The `Dockerfile` copies it to `/app/THIRD-PARTY-NOTICES.txt`, and `.dockerignore` admits it to the build context. `tests/test_supply_chain.py` checks both, because a mistake there would otherwise only show in a build. The CPython sections are copied from `Doc/license.rst` and `Modules/_hacl` at `v3.14.7`, leaving out code this Linux image doesn't contain, such as tests and Windows or BSD-only code. Refresh them whenever the CPython version changes.
 
@@ -322,7 +323,7 @@ The `Dockerfile` copies it to `/app/THIRD-PARTY-NOTICES.txt`, and `.dockerignore
 - the file is in the image at that path, readable by UID 1000 under the read-only root;
 - the 114 Debian and 17 Python entries are unchanged.
 
-That rebuild also gets a new image ID, so re-run the listing above and update [Where this comes from](#where-this-comes-from).
+Record that build's image ID, repeat the package listing and update [Where this comes from](#where-this-comes-from).
 
 ## SBOM
 
@@ -336,14 +337,16 @@ curl -fsSLO "$base/syft_${version}_checksums.txt"
 sha256sum --check --ignore-missing "syft_${version}_checksums.txt"
 tar -xzf "syft_${version}_linux_amd64.tar.gz" syft
 
-docker image save sobafm:<commit> -o sobafm-<commit>.tar
-SYFT_CHECK_FOR_APP_UPDATE=false ./syft scan docker-archive:sobafm-<commit>.tar \
-  --output spdx-json=sobafm-<commit>.spdx.json
+# Set release_image to the local image ID for this release commit.
+commit=$(git rev-parse HEAD)
+docker image save "${release_image:?set the release image ID}" -o "sobafm-${commit}.tar"
+SYFT_CHECK_FOR_APP_UPDATE=false ./syft scan "docker-archive:sobafm-${commit}.tar" \
+  --output "spdx-json=sobafm-${commit}.spdx.json"
 ```
 
 Check that the result has the 114 Debian packages above and at least 18 Python packages: the 17 in the table plus the base image's pip. That's inferred, since Syft hasn't been run. It isn't expected to see inside compiled files, so the [wheel libraries](#libraries-compiled-into-those-wheels) and [CPython's incorporated code](#cpython-pip-and-uv) tables and `sqv`'s `Static-Built-Using` list travel with it.
 
-An SBOM describes one image, so what it names depends on [the open question](#publishing-is-not-settled). For a published image, it names that image's ID, not just a tag. If operators build their own, it describes a build from the release commit, and an operator's build matches it by package listing, not by image ID.
+For a source-only release, generate the SBOM from the local image built for qualification. Record its ID and release commit with the SBOM so operators building that commit can compare their own package listings.
 
 | Tool | Maintenance and license | Fit |
 | --- | --- | --- |

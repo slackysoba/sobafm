@@ -9,7 +9,7 @@ import logging
 import os
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -41,6 +41,7 @@ from sobafm.gemini_interactions import (
 from sobafm.gemini_match import (
     MAX_RANKED,
     NO_RECORDINGS,
+    SYSTEM_INSTRUCTION,
     Fit,
     GeminiMatcher,
     Matched,
@@ -140,6 +141,50 @@ def test_a_match_makes_one_call_with_the_documented_request_shape() -> None:
     items = cast(dict[str, dict[str, dict[str, object]]], ranked["items"])
     assert items["properties"]["song"]["maximum"] == len(SONGS) - 1
     assert items["properties"]["fit"]["enum"] == ["exact", "close", "loose"]
+
+
+def test_each_call_asks_for_eight_songs_and_fewer_only_when_fewer_are_listed() -> None:
+    assert MAX_RANKED == 8
+    assert 'outcome "match" with 8 different songs, best first' in SYSTEM_INSTRUCTION
+    assert "Return fewer only when fewer are listed." in SYSTEM_INSTRUCTION
+
+
+def test_a_short_list_is_accepted_because_a_refill_follows_it() -> None:
+    result = parse_plan(plan((1, "close")), SONGS)
+    assert isinstance(result, Matched) and len(result.ranked) == 1
+
+
+def test_a_refill_leaves_played_songs_out_and_numbers_what_it_sends() -> None:
+    transport = FakeTransport(interaction(plan((1, "loose"), (0, "close"))))
+    played = frozenset({SONGS[0].key})
+    result = asyncio.run(matcher(transport).match("a request", played))
+    assert isinstance(result, Matched)
+    assert [(r.recording, r.fit) for r in result.ranked] == [
+        (SONGS[2], Fit.LOOSE),
+        (SONGS[1], Fit.CLOSE),
+    ]
+    body = sent_body(transport)
+    text = cast(str, body["input"])
+    assert text.startswith("SONGS:\n" + render_songs(SONGS[1:]))
+    assert "Song a" not in text and text.endswith('REQUEST:\n"a request"')
+    response_format = cast(dict[str, object], body["response_format"])
+    schema = cast(dict[str, dict[str, dict[str, object]]], response_format["schema"])
+    items = cast(dict[str, dict[str, dict[str, object]]], schema["properties"]["ranked"]["items"])
+    assert items["properties"]["song"]["maximum"] == 1
+
+
+def test_a_refill_rejects_a_song_outside_the_shorter_list() -> None:
+    transport = FakeTransport(interaction(plan((2, "close"))))
+    with pytest.raises(MatchFailed) as error:
+        asyncio.run(matcher(transport).match("a request", frozenset({SONGS[0].key})))
+    assert error.value.kind == "output_song"
+
+
+def test_no_call_is_made_when_every_recording_has_been_played() -> None:
+    transport = FakeTransport()
+    with pytest.raises(MatchFailed) as error:
+        asyncio.run(matcher(transport).match("a request", frozenset(s.key for s in SONGS)))
+    assert error.value.kind == NO_RECORDINGS and transport.calls == []
 
 
 def test_a_refusal_returns_no_recordings() -> None:
@@ -354,9 +399,9 @@ def test_requests_beyond_the_limit_build_no_body_until_a_slot_frees(
         built: list[str] = []
         original = limited.request_body
 
-        def counted(request: str) -> bytes:
+        def counted(request: str, recordings: Sequence[Recording] | None = None) -> bytes:
             built.append(request)
-            return original(request)
+            return original(request, recordings)
 
         monkeypatch.setattr(limited, "request_body", counted)
         calls = [

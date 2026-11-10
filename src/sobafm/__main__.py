@@ -1,19 +1,51 @@
-"""Run SobaFM: check the container limits, read configuration, open the database, then play.
+"""Run SobaFM: block crash dumps, check limits, read configuration, open the database, play.
 
-Startup order is fixed. The limit gate runs first and fails closed, so no
-catalog, media, Discord or audio input is read unless the service runs under
-the ADR 0004 whole-service limits. Configuration then comes from environment
-variables only. The settings database must then open and accept a write, so a
-server's settings are never silently lost; this also fails closed, before any
-Discord connection. Finally the decode-backed producer is connected to the adapter.
+Startup order is fixed. The crash-dump controls come first, when this file runs as
+the program and before its native dependencies are even imported, because the
+credentials are in this process's environment from the moment it starts and a
+crash at import would copy them. Importing this module, as the tests do, changes
+nothing. The limit gate then fails closed, so no catalog, media, Discord or audio
+input is read unless the service runs under the ADR 0004 whole-service limits.
+Configuration then comes from environment variables only. The settings database
+must then open and accept a write, so a server's settings are never silently lost;
+this also fails closed, before any Discord connection. Finally the decode-backed
+producer is connected to the adapter.
 """
+
+# The imports after the crash-dump controls must stay after them.
+# ruff: noqa: E402
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import sys
+
+from sobafm.crash_dumps import CrashDumpError, disable_crash_dumps
+
+log = logging.getLogger("sobafm")
+
+EXIT_CONFIG = 2
+EXIT_LIMITS = 3
+EXIT_DATABASE = 4
+EXIT_CRASH_DUMPS = 5
+
+
+def configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(name)s %(message)s"
+    )
+
+
+if __name__ == "__main__":
+    configure_logging()
+    try:
+        disable_crash_dumps()
+    except CrashDumpError as exc:
+        log.error("crash dump controls refused: %s", exc)
+        sys.exit(EXIT_CRASH_DUMPS)
+
+import asyncio
+import os
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,18 +55,12 @@ from sobafm.discord_adapter import CATALOG_VARIABLE, Config, ConfigError, Produc
 from sobafm.media import Media, MediaInputError, MediaProducer, load_media
 from sobafm.settings import SettingsError, SettingsStore
 
-log = logging.getLogger("sobafm")
-
 MEDIA_VARIABLE = "SOBAFM_MEDIA"
 DATABASE_VARIABLE = "SOBAFM_DATABASE"
 CGROUP_ROOT = Path("/sys/fs/cgroup")
 # ADR 0004: the whole-service group memory, no swap and 64 tasks.
 REQUIRED_LIMITS = (("memory.max", "90177536"), ("memory.swap.max", "0"), ("pids.max", "64"))
 MAX_LIMIT_FILE_BYTES = 64
-
-EXIT_CONFIG = 2
-EXIT_LIMITS = 3
-EXIT_DATABASE = 4
 
 
 class LimitError(Exception):
@@ -89,9 +115,7 @@ type Runner = Callable[[Config, Producer, SettingsStore], Coroutine[Any, Any, in
 
 def main(*, root: Path = CGROUP_ROOT, runner: Runner = run) -> int:
     """Gate, configure and run; return the process exit status."""
-    logging.basicConfig(
-        level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(name)s %(message)s"
-    )
+    configure_logging()
     try:
         check_limits(root)
     except LimitError as exc:

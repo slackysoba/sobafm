@@ -7,10 +7,10 @@ stale and change nothing. Only the player's report of an actual switch changes
 the heard source, so a pending, failed or cancelled replacement never alters the
 heard title or credits.
 
-A catalog program continues until stopped or replaced. Its ranked plan is fixed
-when `/play` interprets the request, and every later track comes from `select_next`
-with that plan and the program's bounded no-repeat history; the request is never
-interpreted again.
+A catalog program continues until stopped, replaced or out of recordings. Its plan
+starts as the list `/play` obtained, and `refilled` replaces it once every recording
+on it has been played or tried. Every later track comes from `select_next` with the
+current plan and the program's bounded no-repeat history (ADR 0011).
 """
 
 from __future__ import annotations
@@ -37,7 +37,8 @@ class Outcome(StrEnum):
 class EndReason(StrEnum):
     """Why a program has no further track."""
 
-    EXHAUSTED = "exhausted"  # every recording in its plan was played or tried
+    EXHAUSTED = "exhausted"  # every admitted recording was played or tried
+    REFILL_FAILED = "refill_failed"  # its plan ran out and no more arrived within the bound
     UNAVAILABLE = "unavailable"  # the next track could not be prepared within its bounds
     NO_LISTENERS = "no_listeners"  # the listener grace period expired
 
@@ -48,8 +49,6 @@ class Program:
 
     generation: int
     request: str
-    # Validated recordings for this request, best first. Later tracks come from here.
-    plan: tuple[Recording, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -73,6 +72,8 @@ class Replacement:
 class _Progress:
     """Per-program continuation facts, kept while the program is desired or heard."""
 
+    # Validated recordings for its request, best first. Later tracks come from here.
+    plan: tuple[Recording, ...] = ()
     history: deque[RecordingKey] = field(default_factory=lambda: deque(maxlen=HISTORY_LIMIT))
     started: bool = False  # some of its audio has been heard
     ending: EndReason | None = None  # no track follows the one heard
@@ -149,6 +150,10 @@ class Station:
             and self._switching is None
         )
 
+    def plan(self, program: Program) -> tuple[Recording, ...]:
+        """The recordings ``program`` currently chooses from, best first."""
+        return self._state(program).plan
+
     def history(self, program: Program) -> frozenset[RecordingKey]:
         """Recordings ``program`` has prepared, played or tried."""
         return frozenset(self._state(program).history)
@@ -191,12 +196,28 @@ class Station:
             raise ValueError("request must be 1 to 200 characters")
         superseded = self._pending()
         self._generation += 1
-        self._desired = Program(self._generation, request, plan)
+        self._desired = Program(self._generation, request)
+        self._state(self._desired).plan = plan
         self._preparing = True
         self._ready = None
         self._ended = None
         self._prune()
         return Replacement(self._desired, superseded)
+
+    def refilled(self, program: Program, recordings: tuple[Recording, ...]) -> Outcome:
+        """Replace the plan of the desired, already heard program that awaits a next track.
+
+        A recording its history holds doesn't count, so the program never repeats one.
+        With nothing new left, the plan is unchanged and the result is `REJECTED`.
+        """
+        if program != self._desired or not self.needs_next:
+            return Outcome.STALE
+        state = self._state(program)
+        fresh = tuple(r for r in recordings if r.key not in state.history)
+        if not fresh:
+            return Outcome.REJECTED
+        state.plan = fresh
+        return Outcome.ACCEPTED
 
     def continue_program(self, program: Program) -> Outcome:
         """Begin preparing the next track of the desired, already heard program."""
