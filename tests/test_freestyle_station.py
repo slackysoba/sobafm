@@ -16,7 +16,7 @@ import pytest
 
 from sobafm import discord_adapter
 from sobafm.credits import escaped_text
-from sobafm.discord_adapter import GeneratedTrack, StationSource, create_bot
+from sobafm.discord_adapter import GeneratedTrack, PlayingTrack, StationSource, create_bot
 from sobafm.gemini_match import GeminiMatcher
 from sobafm.lyria import (
     CROSSFADE_FRAMES,
@@ -296,6 +296,58 @@ def test_cutoff_uses_acceptance_time_and_preserves_a_newer_program(
             assert "duration elapsed" in (
                 (await command(h.adapter.now, inter(None))).texts()[0] or ""
             )
+            assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("timer_first", [True, False], ids=["timer-first", "report-first"])
+def test_generated_cutoff_starts_the_waiting_catalog_track(
+    monkeypatch: pytest.MonkeyPatch, timer_first: bool
+) -> None:
+    async def scenario() -> None:
+        async with FakeLyria(music(1000)) as peer:
+            connect_loopback(monkeypatch, peer)
+            h = harness(recordings=(recording("b"),))
+            settings_of(h).current = settings_of(h).current.changed(generated_minutes=5)
+            h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+            source = await h.join()
+            await generate(h)
+            voice = h.room.voice
+            assert voice is not None
+            voice.connected = False
+            assert await pending_stream(source).wait_ready()
+            h.clock.now += 299
+            voice.connected = True
+
+            # Hold delivery of the actual first-frame report across the catalog match.
+            reports: list[Callable[[], None]] = []
+            report = source._report  # pyright: ignore[reportPrivateUsage]
+
+            def hold_report(kind: str, track: PlayingTrack) -> None:
+                assert kind == "switched"
+                reports.append(partial(report, kind, track))
+
+            player = h.adapter.players[1]
+            with monkeypatch.context() as callback:
+                callback.setattr(source, "_report", hold_report)
+                assert sample_of(player.output.read()) == 500
+            (report_switch,) = reports
+            assert "accepted" in (await h.play())[0]
+            expected = player.station.ready
+            assert expected is not None and player.station.heard is None
+
+            h.clock.now += 1
+            if timer_first:
+                h.clock.expire()
+            report_switch()
+            if not timer_first:
+                h.clock.expire()
+            await settle()
+            assert player.output.read() not in (b"", discord_adapter.SILENCE)
+            await settle()
+            assert player.station.heard is expected and player.station.desired is expected.program
+            assert "Song b" in ((await command(h.adapter.now, inter(None))).texts()[1] or "")
             assert await h.adapter.shutdown()
 
     run(scenario())

@@ -1284,7 +1284,17 @@ class Adapter:
             self._give_back(player, track.claim)
         for detached in removed:
             self._retire(detached)
-        player.station.end_generated(program, reason)
+        station = player.station
+        switching = station.switching
+        station.end_generated(program, reason)
+        # Expiry can settle the switch before its queued voice report. In that
+        # order the timer owns the handoff to the replacement waiting on it.
+        if (
+            switching is not None
+            and switching.program is program
+            and (ready := station.ready) is not None
+        ):
+            self._own(asyncio.create_task(self._start_locked(player, ready)))
 
     def _displace(self, player: GuildPlayer) -> asyncio.Task[None] | None:
         displaced = player.source.take_pending()
