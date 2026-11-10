@@ -28,7 +28,7 @@ Command access:
 | `/join`, `/leave`, `/settings` | Members with Manage Server by default. Server admins can change this under Server Settings, Integrations. |
 | `/play request:<text>`, `/freestyle request:<text>`, `/skip` | Members in the bot's voice channel. |
 | `/stop` | Members in the bot's voice channel, or anyone with Manage Server. |
-| `/now` | Anyone in the server. It privately shows the heard recording’s credits or the heard generated title and time remaining. For longer credits, use **Choose a credit page** to read any page of that recording, even after the music changes. The menu expires after ten minutes and may close sooner when many listeners open credits. Use `/now` again for the current recording. |
+| `/now` | Anyone in the server. It privately shows the heard recording’s credits or the heard generated title and time remaining. For longer credits, use **Choose a credit page** to read any page of that recording, even after the music changes. The menu expires after ten minutes and may close sooner when many listeners open credits. Use `/now` again for the current recording. If all 256 menu slots are sending, the bot asks you privately to retry shortly. |
 
 ## Install and configure
 
