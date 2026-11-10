@@ -241,7 +241,8 @@ def test_views_are_caller_bound_bounded_and_expiring() -> None:
     credits = render_credits(recording(notices=notices))
     total = len(credits.pages)
     views = CreditViews(max_views=2, lifetime_seconds=60)
-    view, first = views.open(credits, caller_id=111, now=10.0)
+    view = 10
+    first = views.open(view, credits, caller_id=111, now=10.0)
     assert first == credits.page(1)
     assert views.page(view, 222, 1, now=11.0) is PageRefusal.WRONG_CALLER
     assert views.page(view, 111, 0, now=11.0) is PageRefusal.OUT_OF_RANGE
@@ -250,9 +251,10 @@ def test_views_are_caller_bound_bounded_and_expiring() -> None:
     assert views.page(view, 111, 1, now=70.0) is PageRefusal.UNAVAILABLE
     assert len(views) == 0
 
-    first_view, _ = views.open(credits, 1, now=80.0)
-    second_view, _ = views.open(credits, 2, now=81.0)
-    third_view, _ = views.open(credits, 3, now=82.0)
+    first_view, second_view, third_view = 11, 12, 13
+    views.open(first_view, credits, 1, now=80.0)
+    views.open(second_view, credits, 2, now=81.0)
+    views.open(third_view, credits, 3, now=82.0)
     assert len(views) == 2
     assert views.page(first_view, 1, 1, now=83.0) is PageRefusal.UNAVAILABLE
     assert views.page(second_view, 2, 1, now=83.0) == credits.page(1)
@@ -263,13 +265,13 @@ def test_views_are_caller_bound_bounded_and_expiring() -> None:
 def test_views_validate_injected_time_and_callers() -> None:
     credits = render_credits(recording())
     views = CreditViews()
-    views.open(credits, 1, now=5.0)
+    views.open(1, credits, 1, now=5.0)
     with pytest.raises(ValueError):
-        views.open(credits, 1, now=4.0)
+        views.open(2, credits, 1, now=4.0)
     with pytest.raises(ValueError):
         views.page(1, 1, 1, now=float("nan"))
     with pytest.raises(ValueError):
-        views.open(credits, 0, now=6.0)
+        views.open(2, credits, 0, now=6.0)
     with pytest.raises(ValueError):
         CreditViews(max_views=0)
     with pytest.raises(ValueError):

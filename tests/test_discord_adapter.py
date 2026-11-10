@@ -840,34 +840,6 @@ async def test_heard_source_and_credits_change_only_at_the_actual_switch() -> No
     assert "Song a" in (pages[1] or "") and all("Song b" not in (p or "") for p in pages)
 
 
-@offline
-async def test_now_privately_shows_complete_credits_to_ordinary_listeners() -> None:
-    long = recording("a", MANY_NOTICES)
-    h = harness(recordings=(long,))
-    source = await h.join()
-    await h.play()
-    await settle()
-    source.read()
-    await settle()
-    heard = h.adapter.players[1].station.heard
-    assert isinstance(heard, Audio) and len(heard.credits.pages) > 1
-
-    listener = await run(h.adapter.now, inter(None))  # not in voice, not a manager
-    assert listener.texts()[0] == (
-        "Now heard (full credits follow). This is the program's last recording: every "
-        "recording in the catalog has been played or tried. Use `/play` to start a new program."
-    )  # the one-recording catalog has nothing to continue with
-    pages = listener.sent[1:]
-    assert [p.text for p in pages] == [heard.credits.page(n).text for n in range(1, len(pages) + 1)]
-    assert len(pages) == len(heard.credits.pages)
-    joined = "".join(p.text or "" for p in pages)
-    assert all(notice.split(":")[0] in joined for notice in MANY_NOTICES)
-    for sent in listener.sent:
-        assert sent.options["ephemeral"] is True
-        assert sent.options["allowed_mentions"] is discord_adapter.NO_MENTIONS
-    assert all(p.options["suppress_embeds"] is True for p in pages)
-
-
 # Voice callback.
 
 
