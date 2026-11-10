@@ -229,9 +229,10 @@ def test_rate_limit_scope_across_admin_move(scope: str, monkeypatch: pytest.Monk
         limited_at = 0.0
         gateway_at = 0.0
         moved_at = 0.0
+        cleared_at = 0.0
 
         async def write(request: web.Request) -> web.Response:
-            nonlocal limited_at, moved_at
+            nonlocal limited_at, moved_at, cleared_at
             channel = request.match_info["channel"]
             text = (await request.json())["status"]
             calls.append((channel, text))
@@ -247,6 +248,8 @@ def test_rate_limit_scope_across_admin_move(scope: str, monkeypatch: pytest.Monk
                 )
             if channel == "1002" and text:
                 moved_at = time.monotonic()
+            if channel == "1001" and text is None:
+                cleared_at = time.monotonic()
             return web.Response(status=204)
 
         async def gateway(_: web.Request) -> web.Response:
@@ -275,6 +278,7 @@ def test_rate_limit_scope_across_admin_move(scope: str, monkeypatch: pytest.Monk
                 while ("1001", None) not in calls or not moved_at:
                     await asyncio.sleep(0.005)
             assert (moved_at >= limited_at + 0.25) == (scope == "global")
+            assert cleared_at >= limited_at + 0.25
             assert calls.count(("1001", "Song b · jamendo")) == 1
             assert await h.adapter.shutdown()
 
