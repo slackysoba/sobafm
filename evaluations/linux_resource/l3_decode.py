@@ -5,17 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import select
+import signal
 import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from sobafm.decode import DecodeInput, DecodeProducer, DecoderCommand
-from sobafm.pcm import BANK_BYTES, FRAME_BYTES, GLOBAL_PCM_BANKS
+from sobafm.pcm import BANK_BYTES, FRAME_BYTES, GLOBAL_PCM_BANKS, PcmBank
 
 CASES = ("truncated", "corrupt", "oversized", "feed", "reader", "stderr")
+STIMULUS_SECONDS = 15
 # The owned CBR fixture in the 2026-10-28 Q3 confirmation. Verify before mounting it.
 # pragma: allowlist nextline secret - published synthetic fixture identity
 CBR_SHA256 = "1a431c03098d8be79a522a3b1f64a8182445a8bf6c009f54c1b3bb1f6dad044d"
@@ -30,7 +33,55 @@ FLOOD = (
 )
 
 
-def observe(case: str, workdir: Path) -> None:
+def _in_fifo_read(decode: DecodeProducer, writer: int) -> bool:
+    """On the approved amd64 target, witness read(2) on this FIFO in the owned feeder."""
+    if os.uname().machine != "x86_64":
+        return False
+    for thread in decode._threads:  # pyright: ignore[reportPrivateUsage]
+        if thread.name == "decode-feed" and thread.native_id is not None:
+            try:
+                fields = Path(f"/proc/self/task/{thread.native_id}/syscall").read_text().split()
+                # __NR_read is 0 on x86_64. A running thread has no syscall arguments.
+                return (
+                    len(fields) > 1
+                    and fields[0] == "0"
+                    and os.path.samestat(os.fstat(int(fields[1], 0)), os.fstat(writer))
+                )
+            except OSError:
+                return False  # an inaccessible or finished read supplies no witness
+    return False
+
+
+def _live_leader(decode: DecodeProducer) -> bool:
+    pidfd = decode._pidfd  # pyright: ignore[reportPrivateUsage]
+    if pidfd is None:
+        return False
+    poller = select.poll()
+    poller.register(pidfd, select.POLLIN)
+    return not poller.poll(0)  # an exited leader is readable even before reaping
+
+
+@dataclass
+class CaseOwners:
+    decode: DecodeProducer
+    candidate: PcmBank
+    current: PcmBank
+    released_at: float | None = None
+
+    def release_by(self, deadline: float) -> bool:
+        """Try once even after expiry. Keep every outstanding owner for late recovery."""
+        while True:
+            if self.released_at is None and self.decode.release() and self.candidate.release():
+                self.released_at = time.monotonic()
+            if self.current.release() and self.released_at is not None:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.01, remaining))
+
+
+def observe(case: str, workdir: Path) -> CaseOwners | None:
     path = workdir / "input"
     payload = bytes(32)
     source = DecodeInput(path, len(payload), hashlib.sha256(payload).hexdigest(), FRAME_BYTES)
@@ -61,32 +112,40 @@ def observe(case: str, workdir: Path) -> None:
     decode = DecodeProducer(source, command=command, bank=bank)
     with ThreadPoolExecutor(1) as owner:
         started = time.monotonic()
-        until = started + 15
+        until = started + STIMULUS_SECONDS
         decode.start()
         finished = owner.submit(decode.finish)
         witness = None
         witness_seconds = None
         while not finished.done():
             report = decode.report()
-            if case == "feed" and report.input_bytes == 1:
-                witness = "one_byte_waiting_for_more"
-            if case == "reader" and bank.facts().buffered_bytes == BANK_BYTES:
-                witness = "full_unread_bank"
+            full = case == "reader" and bank.facts().buffered_bytes == BANK_BYTES
+            if feed_fd is not None and report.input_bytes == 1 and _in_fifo_read(decode, feed_fd):
+                witness = "second_read_on_input_fifo"
+            if full and _live_leader(decode):
+                witness = "live_decoder_full_unread_bank"
             if witness:
                 witness_seconds = time.monotonic() - started
-            if witness or time.monotonic() >= until:
+            if witness or full or time.monotonic() >= until:
                 decode.cancel()
                 break
             time.sleep(0.001)
         if feed_fd is not None:
             os.close(feed_fd)  # let the original read reach EOF after cancellation
         report = finished.result()
+        cancel_exit_expected = None
+        if witness is not None:
+            sent = decode._signalled  # pyright: ignore[reportPrivateUsage]
+            cancel_exit_expected = report.returncode in (0, -signal.SIGTERM) or (
+                sent == signal.SIGKILL and report.returncode == -signal.SIGKILL
+            )
         print(
             json.dumps(
                 {
                     "case": case,
                     "witness": witness,
                     "witness_seconds": witness_seconds,
+                    "cancel_exit_expected": cancel_exit_expected,
                     "started_at": started,
                     "finish_observed_at": time.monotonic(),
                     **asdict(report),
@@ -102,26 +161,26 @@ def observe(case: str, workdir: Path) -> None:
         del frame
         drained = bank.facts().audible_drain
         after = current.read_frame() == marker and current.facts().audible_drain
-        while not decode.release(0.05):
-            pass  # the bounded outer run owns a stuck case; never issue another decode
-        while not bank.release():
-            time.sleep(0.01)
-        released_at = time.monotonic()
+        owners = CaseOwners(decode, bank, current)
+        assert report.cleanup_deadline is not None
+        released = owners.release_by(report.cleanup_deadline)
         print(
             json.dumps(
                 {
                     "settled": decode.report().settled,
-                    "released_at": released_at,
+                    "released_at": owners.released_at,
+                    "release_outstanding": not released,
                     "old_frames_preserved": before and after,
                     "diagnostic_frame": diagnostic_frame,
                     "end_of_stream": end,
                     "audible_drain": drained,
-                    "old_refunded": current.release(),
+                    "old_refunded": current.facts().released,
                     "leases_left": pool.leased,
                 }
             ),
             flush=True,
         )
+        return None if released else owners
 
 
 if __name__ == "__main__":
@@ -139,7 +198,16 @@ if __name__ == "__main__":
         sys.exit("two CPUs required")
     print(json.dumps({"initial_tasks": int((cgroup / "pids.current").read_text())}), flush=True)
     with tempfile.TemporaryDirectory() as directory:
-        observe(sys.argv[1], Path(directory))
+        debt = observe(sys.argv[1], Path(directory))
+        if debt is not None:
+            # The failed row is already flushed. The target supervisor owns this container.
+            while not debt.release_by(time.monotonic() + 0.1):
+                pass
+            print(
+                json.dumps(
+                    {"all_released_at": time.monotonic(), "leases_left": GLOBAL_PCM_BANKS.leased}
+                )
+            )
     counters = (
         "memory.peak",
         "memory.events",
@@ -150,3 +218,5 @@ if __name__ == "__main__":
     if (cgroup / "pids.peak").exists():
         counters += ("pids.peak",)
     print(json.dumps({key: (cgroup / key).read_text().strip() for key in counters}), flush=True)
+    if debt is not None:
+        sys.exit(1)

@@ -22,14 +22,18 @@ also checks that the current frame and heard identity survive a failed preparati
 | `truncated` | 31 bytes reach stdin. EOF on the local file yields `input_truncated`, 31 input bytes, incomplete transfer and invalid PCM. Bad input never earns stdin EOF. | `test_truncated_input_fails` |
 | `corrupt` | 32 zeros match the declared identity but contain no MPEG frame. Require complete transfer, 32 input bytes and zero output. A normal mpg123 error exit yields `decoder_exit`. Exit zero yields decoder completion followed by `empty_pcm`. Record the observed outcome. A signal, launch error or unaccounted exit fails the case. | `test_hash_mismatch_never_gives_the_decoder_eof` separately covers same-size damage **after** admission. `test_nonzero_exit_after_full_output_fails` and `test_output_under_one_frame_fails` cover output judgment. |
 | `oversized` | The first read returns 33 bytes, one over the declared size. The producer rejects the entire chunk before writing any of it. Require `input_oversized`, zero input bytes, incomplete transfer and invalid PCM. | `test_oversized_input_fails`; `test_output_overrun_fails` covers the separate PCM ceiling. |
-| `feed` | A local FIFO withholds EOF after one byte. Wait until the real feeder reports that byte written. Cancel, then close the evaluation writer to let the original read settle. Require the one-byte witness, incomplete transfer and an owner cancellation. | `test_owner_cancelling_the_bank_first_keeps_its_clock_and_is_no_failure` covers blocked stdin writes. `test_held_close_keeps_owner_and_lease_and_expiry_stays_failed` covers late I/O release. The FIFO injects a blocked source read. A stalled disk or a network service has different recovery behavior. |
-| `reader` | Withhold bank reads while the real decoder consumes the approved owned CBR fixture. Wait for exactly 2,304,000 buffered bytes, then cancel. Require the full unread bank witness, readiness, 2,304,000 written bytes, no emitted frame and an owner cancellation. Record the actual transfer state. | `test_full_bank_waits_for_the_consumer` resumes a consumer. `test_cancel_unblocks_a_writer_that_defers_term_and_exit_zero_is_not_complete` covers cancellation. A full bank witnesses application backpressure; a syscall-level blocked decoder write was observed separately in Q4. |
+| `feed` | A local FIFO withholds EOF after one byte. After that byte reaches stdin, observe the owned feeder inside its second Linux `read` on this FIFO, then cancel and close the writer. Require `second_read_on_input_fifo`, one input byte and incomplete transfer. | `test_owner_cancelling_the_bank_first_keeps_its_clock_and_is_no_failure` covers blocked stdin writes. `test_held_close_keeps_owner_and_lease_and_expiry_stays_failed` covers late I/O release. The FIFO injects a blocked source read. A stalled disk or network service has different recovery behavior. |
+| `reader` | Withhold bank reads while the decoder consumes the approved owned CBR fixture. At exactly 2,304,000 buffered bytes check the production leader's pidfd before cancelling. Require `live_decoder_full_unread_bank`, readiness, 2,304,000 written bytes and no emitted frame. A readable pidfd identifies an already-exited child and fails the case, including exit zero. Record the actual transfer state. | `test_full_bank_waits_for_the_consumer` resumes a consumer. `test_cancel_unblocks_a_writer_that_defers_term_and_exit_zero_is_not_complete` covers cancellation. The witness establishes a live leader with application backpressure. Q4 separately observed a blocked decoder write. |
 | `stderr` | Playback supplies `DEVNULL`, so there is no diagnostic reader or queue to flood. A shell stand-in verifies its fd 2 is the null device, writes 64 × 4,096 diagnostic bytes, then emits one recognizable frame on stdout. Require the frame, verified short readiness, complete transfer, decoder completion, valid PCM and audible drain. | `test_complete_decode_reports_every_fact` covers ordinary completion. The shell tests the actual launcher's redirection under the default limits. Stock mpg123's diagnostic content and volume remain unmeasured. |
 
 For the two size errors the feeder can terminate the child during launch. Record its
 actual return code and decoder-complete flag independently of transfer. Require zero PCM
-for these tiny inputs. In both cancellation cases expect `failure=null`, a reaped child,
-`decoder_complete=false` even for exit zero, and invalid PCM. All five rejected or
+for these tiny inputs. The feed witness samples the feeder TID's `syscall` entry on native
+x86_64 and matches the read descriptor's device and inode to the open writer's FIFO.
+An inaccessible observation leaves the witness missing. In both stall cases require
+`cancel_exit_expected=true`: exit zero, termination by TERM, or KILL when the producer
+escalated. An unexpected status fails even if cancellation suppressed a decode failure.
+Expect `failure=null`, a reaped child, `decoder_complete=false` and invalid PCM. All five rejected or
 cancelled streams must end without audible drain. An unexpected outcome, including
 usable PCM from the corrupt fixture, is a failure to investigate.
 
@@ -42,7 +46,8 @@ Start the one `finish()` owner immediately, as the service does. The ordinary lo
 also covers caller-owned lease release in [test_app.py](../../tests/test_app.py).
 To exercise the six probe schedules in the locked Linux development checkout, run
 `uv run pytest -q evaluations/linux_resource/test_l3_decode.py`. These checks use isolated
-no-media children and verify the witnesses, original deadline, terminal frames and refunds.
+no-media children. Controls withhold the second FIFO read, exit before the full-bank
+observation, crash by signal after a live witness, and retain a bank view past the deadline.
 
 ## One separately authorized target run
 
@@ -99,8 +104,11 @@ owners. The aggregate native PCM bound remains 33,850,880 bytes under the review
   `cleanup_deadline = cleanup_started_at + 3.0`. For the stalls it starts at the first
   cancellation. The final monotonic `released_at` must fall within that same deadline.
   `decode.release()` observes reaping, joined I/O and closed descriptors. The caller then
-  refunds its bank. Require the old-bank refund and zero leases. A later release never
-  changes an expired verdict. Missing release evidence leaves debt outstanding.
+  refunds its bank. Require `release_outstanding=false`, the old-bank refund and zero leases.
+  At the original deadline the offline observer reports any unrefunded lease and returns
+  its owners to its caller. The target probe flushes the failure row, keeps those owners
+  and waits for actual refund under the outer watchdog. A late refund is recorded separately
+  and exits nonzero. Preserve the original cleanup verdict and failed release deadline.
 - Retain the group peak and events, swap, task counts, command exit status and exact-container
   exit/OOM state. Require no limit event, OOM or swap, the group peak inside its cap,
   tasks back to the initial level, complete rows and exit zero. Compare the case
