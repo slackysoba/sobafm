@@ -6,6 +6,7 @@ import asyncio
 import json
 import threading
 import time
+from collections.abc import Callable
 from functools import partial
 from types import SimpleNamespace
 from typing import cast
@@ -33,9 +34,12 @@ from tests.test_discord_adapter import (
     SERVER_ONLY,
     FakeChannel,
     FakeGuild,
+    FakeMatcher,
+    FakeVoice,
     Harness,
     harness,
     inter,
+    matcher_of,
     recording,
     settings_of,
     settle,
@@ -723,24 +727,44 @@ def test_volume_output_reserves_through_frame_handoff() -> None:
     run(scenario())
 
 
+@pytest.mark.parametrize("return_before_observer", [True, False])
 def test_shutdown_reports_voice_output_held_after_bank_release(
     monkeypatch: pytest.MonkeyPatch,
+    return_before_observer: bool,
 ) -> None:
     async def scenario() -> None:
         h = harness()
         await h.join()
         await h.play()
         await settle()
-        frame = h.adapter.players[1].output.read()
+        frames = [h.adapter.players[1].output.read()]
         await command(h.adapter.leave, inter(h.room, manager=True))
         assert h.pool.leased == 0 and h.pool.voice_readers == 1
         # All producers have settled. Advance only the wait for a retained voice frame.
         monkeypatch.setattr(discord_adapter, "CLEANUP_SECONDS", 0)
-        assert not await h.adapter.shutdown()
-        del frame
-        assert await h.adapter.shutdown()
+        ending = asyncio.create_task(h.adapter.shutdown())
+        await asyncio.sleep(0)  # deadline set, observer queued on the loop
+        if return_before_observer:
+            frames.clear()
+        assert not await ending
+        frames.clear()
+        assert h.pool.voice_readers == 0 and not await h.adapter.shutdown()
+        assert h.adapter.cleanup_failures == 1
 
     run(scenario())
+
+
+def local_voice_sink(
+    monkeypatch: pytest.MonkeyPatch, send: Callable[..., None]
+) -> disnake.VoiceClient:
+    # The pinned player reads the real StationOutput. Only the two outbound edges are fake.
+    def mute_speaking(*args: object) -> None:
+        pass
+
+    monkeypatch.setattr(disnake.player.AudioPlayer, "_speak", mute_speaking)
+    connected = threading.Event()
+    connected.set()
+    return cast(disnake.VoiceClient, SimpleNamespace(_connected=connected, send_audio_packet=send))
 
 
 def test_three_real_voice_readers_in_startup_backoff_share_silence(
@@ -757,24 +781,12 @@ def test_three_real_voice_readers_in_startup_backoff_share_silence(
             h = timed_harness(monkeypatch, peer, clock)
             h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
 
-            # Replace the outbound speaking and packet edges only. The pinned disnake
-            # AudioPlayer reads the production volume output and holds it through send.
-            def mute_speaking(*args: object) -> None:
-                pass
-
-            monkeypatch.setattr(disnake.player.AudioPlayer, "_speak", mute_speaking)
-
             def hold_packet(data: bytes, *, encode: bool) -> None:
                 assert encode
                 outputs.append(data)
                 release.wait()
 
-            connected = threading.Event()
-            connected.set()
-            sink = cast(
-                disnake.VoiceClient,
-                SimpleNamespace(_connected=connected, send_audio_packet=hold_packet),
-            )
+            sink = local_voice_sink(monkeypatch, hold_packet)
             try:
                 for guild in range(1, 4):
                     room = FakeChannel(str(guild))
@@ -798,5 +810,130 @@ def test_three_real_voice_readers_in_startup_backoff_share_silence(
                 for thread in threads:
                     await asyncio.to_thread(thread.join)
                 assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def test_duplicate_preroll_refusal_preserves_accepted_catalog_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        failed = asyncio.Event()
+        watch = asyncio.Event()
+        wait_ready = GeneratedStream.wait_ready
+
+        async def held_watcher(stream: GeneratedStream) -> bool:
+            ready = await wait_ready(stream)
+            assert not ready
+            failed.set()
+            await watch.wait()
+            return ready
+
+        monkeypatch.setattr(GeneratedStream, "wait_ready", held_watcher)
+        async with FakeLyria(Refuse(403)) as peer:
+            connect_loopback(monkeypatch, peer)
+            h = harness()
+            h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+            source = await h.join()
+            await generate(h)
+            await failed.wait()
+            matcher = matcher_of(h)
+            matcher.gate = asyncio.Event()
+            catalog = asyncio.create_task(h.play())
+            await until(lambda: bool(matcher.requests))
+            # Queue the catalog match, then the watcher, then the real callback report.
+            # The callback detached the refused track before the catalog command resumes.
+            matcher.gate.set()
+            watch.set()
+            assert source.read() == b""
+            assert "accepted" in (await catalog)[0]
+            await settle()
+            station = h.adapter.players[1].station
+            assert source.read() not in (b"", discord_adapter.SILENCE)
+            await settle()
+            assert station.heard is not None and station.heard.program is station.desired
+            assert "Song a" in ((await command(h.adapter.now, inter(None))).texts()[1] or "")
+            settings_of(h).current = settings_of(h).current.changed(cooldown_seconds=600)
+            assert "cooldown" in (await h.play())[0].lower()
+            assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def test_deferred_catalog_start_cannot_displace_a_newer_ready_track() -> None:
+    async def scenario() -> None:
+        h = harness()
+        source = await h.join()
+        await h.play()
+        await settle()
+        assert source.read() not in (b"", discord_adapter.SILENCE)
+        h.adapter.matcher = FakeMatcher(recording("b"))
+        assert "accepted" in (await h.play("second"))[0]
+        station = h.adapter.players[1].station
+        assert station.ready is not None  # B waits for A's queued switch report
+        # The A report schedules B after this third command is already runnable.
+        h.adapter.matcher = FakeMatcher(recording("c"))
+        latest = asyncio.create_task(h.play("third"))
+        assert "accepted" in (await latest)[0]
+        await settle()
+        assert source.read() not in (b"", discord_adapter.SILENCE)
+        await settle()
+        assert "Song c" in ((await command(h.adapter.now, inter(None))).texts()[1] or "")
+        assert station.heard is not None and station.heard.program is station.desired
+        assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("held_past_deadline", [True, False])
+def test_real_voice_frame_deadline_runs_during_disconnect(
+    monkeypatch: pytest.MonkeyPatch, held_past_deadline: bool
+) -> None:
+    async def scenario() -> None:
+        h = harness()
+        await h.join()
+        await h.play()
+        await settle()
+        sending = threading.Event()
+        return_frame = threading.Event()
+        disconnecting = asyncio.Event()
+        finish_disconnect = asyncio.Event()
+
+        def hold_packet(data: bytes, *, encode: bool) -> None:
+            assert encode and data != discord_adapter.SILENCE
+            sending.set()
+            return_frame.wait()
+
+        async def held_disconnect(voice: FakeVoice, *, force: bool) -> None:
+            assert force
+            disconnecting.set()
+            await finish_disconnect.wait()
+            voice.connected = False
+
+        monkeypatch.setattr(FakeVoice, "disconnect", held_disconnect)
+        sink = local_voice_sink(monkeypatch, hold_packet)
+        thread = disnake.player.AudioPlayer(h.adapter.players[1].output, sink)
+        thread.start()
+        await until(sending.is_set)
+        thread.stop()  # the real player still owns the frame until send returns
+        ending = asyncio.create_task(h.adapter.shutdown())
+        try:
+            await disconnecting.wait()
+            await until(lambda: h.pool.leased == 0)
+            if not held_past_deadline:
+                return_frame.set()
+                await asyncio.to_thread(thread.join)
+            await asyncio.sleep(3.12)
+            assert not ending.done() and h.pool.voice_readers == int(held_past_deadline)
+            failures_at_deadline = h.adapter.cleanup_failures
+        finally:
+            return_frame.set()
+            await asyncio.to_thread(thread.join)
+            finish_disconnect.set()
+        assert await ending is (not held_past_deadline)
+        assert failures_at_deadline == int(held_past_deadline)
+        assert h.pool.voice_readers == 0
+        assert await h.adapter.shutdown() is (not held_past_deadline)
+        assert h.adapter.cleanup_failures == failures_at_deadline
 
     run(scenario())

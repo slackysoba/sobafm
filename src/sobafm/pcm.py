@@ -134,7 +134,7 @@ class PcmBankPool:
         self._leased = 0
         # Independent of the bank leases: a retry can return a bank while
         # disnake still holds the frame passed to its previous send.
-        self._voice_slots = deque([None] * BANK_COUNT)
+        self._voice_slots = deque([float("-inf")] * BANK_COUNT)
 
     @property
     def voice_readers(self) -> int:
@@ -152,7 +152,13 @@ class PcmBankPool:
             raise
 
     def _return_voice_reader(self) -> None:
-        self._voice_slots.append(None)
+        self._voice_slots.append(time.monotonic())
+
+    def voice_returned_by(self, deadline: float) -> bool:
+        # The last actual return can arrive after the cutoff but before the
+        # event loop gets to observe it. Snapshot both free slots together.
+        returns = tuple(self._voice_slots)
+        return len(returns) == BANK_COUNT and max(returns) <= deadline
 
     @property
     def leased(self) -> int:
