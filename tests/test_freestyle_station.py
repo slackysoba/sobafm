@@ -892,11 +892,11 @@ def test_unread_refusal_settles_before_cutoff(monkeypatch: pytest.MonkeyPatch) -
             stream = pending_stream(source)
             assert not await stream.wait_ready()
             station = h.adapter.players[1].station
-            await until(lambda: station.ended is EndReason.GENERATION_REJECTED)
+            await until(lambda: station.ended is EndReason.GENERATION_ACCESS_DENIED)
             h.clock.now += 300
             h.clock.expire()
             await settle()
-            assert station.ended is EndReason.GENERATION_REJECTED
+            assert station.ended is EndReason.GENERATION_ACCESS_DENIED
             assert source.read() == b"" and station.desired is None
             assert "accepted" in (await h.play())[0]
             assert await h.adapter.shutdown()
@@ -915,7 +915,7 @@ def test_refusal_at_cutoff_preserves_reason_and_own_claim(
 
         async def hold_observation(session: LyriaSession) -> None:
             await wait_prepared(session)
-            assert session.failure == "rejected"
+            assert session.failure == "access_denied"
             failed.set()
             await release.wait()
 
@@ -939,7 +939,7 @@ def test_refusal_at_cutoff_preserves_reason_and_own_claim(
             if order == "report_after_timer":
                 assert source.read() == b""  # detached before the timer, report queued behind it
             await until(lambda: station.ended is not None)
-            assert station.ended is EndReason.GENERATION_REJECTED
+            assert station.ended is EndReason.GENERATION_ACCESS_DENIED
             assert "accepted" in (await h.play())[0]
             release.set()
             await settle()

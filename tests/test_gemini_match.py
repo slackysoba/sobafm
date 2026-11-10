@@ -621,6 +621,22 @@ def test_the_real_transport_bounds_the_response() -> None:
     asyncio.run(scenario())
 
 
+def test_quota_status_survives_oversized_error_body() -> None:
+    async def scenario() -> None:
+        async def handler(_: web.Request) -> web.Response:
+            return web.Response(status=429, body=b"x" * (MAX_RESPONSE_BYTES + 1))
+
+        runner, url = await _served(handler)
+        transport = AiohttpTransport()
+        try:
+            assert await transport.post(url, {}, b"") == (429, b"")
+        finally:
+            await transport.close()
+            await runner.cleanup()
+
+    asyncio.run(scenario())
+
+
 def test_the_real_transport_accepts_a_response_at_the_limit() -> None:
     async def scenario() -> None:
         async def handler(_: web.Request) -> web.Response:

@@ -832,12 +832,12 @@ def test_a_corrupt_message_commits_none_of_its_audio() -> None:
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        (401, "rejected"),
-        (403, "rejected"),
+        (401, "access_denied"),
+        (403, "access_denied"),
         (404, "rejected"),
         (408, "connect"),
-        (429, "connect"),
-        (503, "connect"),
+        (429, "rate_limited"),
+        (503, "service_error"),
     ],
 )
 def test_a_refused_handshake_is_classified(status: int, expected: str) -> None:
@@ -1492,7 +1492,7 @@ def test_recovery_attempts_are_finite_and_the_buffered_audio_still_plays() -> No
                 await asyncio.sleep(0)
             assert frame == b""
             report = await stream.finish()
-            assert report.failure == "connect"
+            assert report.failure == "service_error"
             assert report.sessions_started == 4
             assert harness.pool.leased == 0
 
@@ -1508,7 +1508,7 @@ def test_a_rejected_start_makes_one_attempt_and_nothing_becomes_ready() -> None:
             assert not harness.stream.ready_now()
             assert harness.stream.read_frame() == b""
             report = await harness.stream.finish()
-            assert report.failure == "rejected"
+            assert report.failure == "access_denied"
             assert report.sessions_started == 1
             assert len(fake.requests) == 1
             assert harness.pool.leased == 0
@@ -1516,8 +1516,10 @@ def test_a_rejected_start_makes_one_attempt_and_nothing_becomes_ready() -> None:
     run(scenario())
 
 
-@pytest.mark.parametrize("status", [408, 429, 503])
-def test_a_failing_start_uses_every_attempt_then_reports_why(status: int) -> None:
+@pytest.mark.parametrize(
+    ("status", "expected"), [(408, "connect"), (429, "rate_limited"), (503, "service_error")]
+)
+def test_a_failing_start_uses_every_attempt_then_reports_why(status: int, expected: str) -> None:
     async def scenario() -> None:
         async with FakeLyria(*(Refuse(status) for _ in range(4))) as fake:
             harness = StreamHarness(fake)
@@ -1526,7 +1528,7 @@ def test_a_failing_start_uses_every_attempt_then_reports_why(status: int) -> Non
             await advancing_until(harness.time, ready.done)
             assert not await ready
             report = await harness.stream.finish()
-            assert report.failure == "connect"
+            assert report.failure == expected
             assert len(fake.requests) == 3
             assert harness.pool.leased == 0
 

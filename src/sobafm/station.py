@@ -44,9 +44,13 @@ class EndReason(StrEnum):
     EXHAUSTED = "exhausted"  # every admitted recording was played or tried
     REFILL_FAILED = "refill_failed"  # its plan ran out and no more arrived within the bound
     UNAVAILABLE = "unavailable"  # the next track could not be prepared within its bounds
+    CAPACITY_WAIT = "capacity_wait"  # the silent catalog program waited its full bank timeout
     DURATION = "duration"
     FILTERED = "filtered"
     GENERATION_REJECTED = "generation_rejected"
+    GENERATION_ACCESS_DENIED = "generation_access_denied"
+    GENERATION_RATE_LIMITED = "generation_rate_limited"
+    GENERATION_SERVICE_ERROR = "generation_service_error"
     CAPACITY = "capacity"
     GENERATION_FAILED = "generation_failed"
     NO_LISTENERS = "no_listeners"  # the listener grace period expired

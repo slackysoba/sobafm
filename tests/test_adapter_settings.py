@@ -17,7 +17,6 @@ from sobafm import discord_adapter
 from sobafm.catalog import Recording
 from sobafm.discord_adapter import (
     MATCH_BUSY,
-    MATCH_UNAVAILABLE,
     NOT_A_MUSIC_REQUEST,
     NOTHING_ADMITTED,
     SETTINGS_INVALID,
@@ -441,7 +440,11 @@ async def test_a_request_without_a_plan_gives_back_its_claim() -> None:
     fake = matcher_of(h)
     for outcome, reply in (
         (Refused(), NOT_A_MUSIC_REQUEST),
-        (MatchFailed("timeout"), MATCH_UNAVAILABLE),
+        (
+            MatchFailed("timeout"),
+            "The interpretation request timed out. "
+            "This request did not change playback. Try again shortly.",
+        ),
         (MatchFailed(NO_RECORDINGS), NOTHING_ADMITTED),
     ):
         fake.outcome = outcome
@@ -694,7 +697,10 @@ async def test_a_stale_match_failure_cannot_release_a_newer_requests_claim() -> 
     h.clock.now += 30  # the older request's time passes while it is still matching
     assert await skip(h) == SKIPPING  # a newer request holds the cooldown now
     fake.gate.set()
-    assert await older == [MATCH_UNAVAILABLE]  # its failure gives back only its own claim
+    assert await older == [
+        "The interpretation request timed out. "
+        "This request did not change playback. Try again shortly."
+    ]  # its failure gives back only its own claim
     assert (await skip(h)).startswith("This server's change cooldown")
     assert (await h.play("newest"))[0].startswith("This server's change cooldown")
     assert await h.adapter.shutdown() is True
