@@ -7,8 +7,8 @@ Checked on **2026-11-06** against the official documentation linked below. Reche
 | Capability | Current state | Provider path |
 | --- | --- | --- |
 | Catalog `/play` and automatic refill | Implemented. Gemini ranks admitted local recordings; it does not supply their audio or search music services. | `gemini-3.5-flash-lite` through the Gemini Interactions API, `v1beta`, with SobaFM's pinned `Api-Revision: 2026-05-20` and `store=false`. See [ADR 0006](decisions/0006-gemini-play-matching.md) and [ADR 0011](decisions/0011-program-refill.md). |
-| Generated-plan interpretation | Implemented as a library, with no Discord caller. | The same Gemini client interprets a musical request and optional current generated plan. See [architecture](architecture.md#generated-plan-interpretation-not-yet-wired-in). |
-| Generated music | The Lyria transport library is under review in [#128 / PR #136](https://github.com/slackysoba/sobafm/pull/136). Generated command integration is not present: there is no available `/freestyle` command. | The maintainer selected free-tier `lyria-realtime-exp`. Free-tier access has not been confirmed. |
+| Generated-plan interpretation | Used by `/freestyle`. | The same Gemini client interprets a musical request and optional current generated plan. See [architecture](architecture.md#generated-plan-interpretation). |
+| Generated music | Configured `/freestyle` programs stream through Lyria into the shared player. Integration checks use loopback. | The maintainer selected free-tier `lyria-realtime-exp`. Free-tier access has not been confirmed. |
 
 Google lists `gemini-3.5-flash-lite` as a stable model and supports it on [Interactions](https://aistudio.google.com/docs/interactions#supported-models-agents). The [model list](https://aistudio.google.com/docs/models) and API documentation establish published support, not the access or quota of a particular project. SobaFM's revision pin is an implementation choice, not a claim that every future API revision works.
 
@@ -16,7 +16,7 @@ Google documents Lyria RealTime as an instrumental streaming model, using a pers
 
 ## Account access and audience eligibility
 
-Gemini requires authentication with an API key associated with a project; Google's [key guide](https://aistudio.google.com/docs/api-key) describes the current key types and access rules. For the implemented catalog path, the operator supplies `SOBAFM_GEMINI_API_KEY` as described in [operations](operations.md#install-and-configure). Keep it out of prompts, chat, logs and shared diagnostics. This guide adds no generated-mode configuration or account changes.
+Gemini requires authentication with an API key associated with a project; Google's [key guide](https://aistudio.google.com/docs/api-key) describes the current key types and access rules. For interpretation the operator supplies `SOBAFM_GEMINI_API_KEY`. Generated playback also requires `SOBAFM_LYRIA_API_KEY` as described in [operations](operations.md#install-and-configure). Keep it out of prompts, chat, logs and shared diagnostics.
 
 An account that can open AI Studio or make a request does not establish that a deployment's audience is permitted. The [Gemini API Additional Terms](https://aistudio.google.com/docs/terms), effective March 23, 2026, require all of the following:
 
@@ -30,7 +30,7 @@ Provider access is also separate from permission to play a recording. The catalo
 
 For catalog matching, SobaFM sends the listener's request, a fixed instruction and descriptive metadata for admitted recordings: titles, creators, composition/composer where present, durations, labels and source details such as tags, tempo, album and notes. Refills send the same request with only the remaining recordings. The model returns positions in that list and a fit assessment; SobaFM validates the output before it changes the program. It sends no catalog audio, Discord identities, credit snapshots or credentials in the prompt. The API key authenticates the request in a header. See [ADR 0006](decisions/0006-gemini-play-matching.md), as amended by [ADR 0011](decisions/0011-program-refill.md).
 
-The generated-plan library sends the request, a fixed instruction and, when supplied, the current generated plan as musical context through the same client. It accepts no Discord identity. The selected Lyria path would send weighted musical directions, generation settings and playback controls, and receive generated audio, as described in the [Live Music protocol](https://aistudio.google.com/api-reference/live-music/bidi-generate-music). Neither path calls for listener voice input. This describes the intended generation data flow, not an integrated command. The plan library's failure fallback can use the request as written, so operators must not assume interpretation removes sensitive text.
+The generated-plan library sends the request, a fixed instruction and, when supplied, the current generated plan as musical context through the same client. It accepts no Discord identity. The Lyria path sends weighted musical directions, generation settings and playback controls, and receives generated audio, as described in the [Live Music protocol](https://aistudio.google.com/api-reference/live-music/bidi-generate-music). Neither path calls for listener voice input. The plan library's failure fallback can use the request as written, so operators must not assume interpretation removes sensitive text.
 
 Omitting identity fields does not anonymize arbitrary request text or catalog notes. Tell listeners that their requests go to Google, including again during refill, and keep personal, sensitive and confidential information out of requests and supplied metadata. Google's [unpaid data terms](https://aistudio.google.com/docs/terms#data-use-unpaid) expressly say not to submit such information.
 
@@ -66,7 +66,7 @@ When budgeting project quota and explaining unpaid data use to listeners, count 
 
 ## Facts still needing an authorized live check
 
-This documentation change made no model, music-source, Discord or voice request. Before any live check, obtain the maintainer's explicit go-ahead on its issue. For Lyria, #128's fixes, record update, review and merge come first. The remaining facts include:
+This documentation change made no model, music-source, Discord or voice request. Before any live check, obtain the maintainer's explicit go-ahead on its issue. The bounded Lyria transport has merged. Free-tier access still needs a separate check. The remaining facts include:
 
 - Whether the chosen account's free tier actually serves `lyria-realtime-exp`, and its effective limits and availability.
 - Whether the pinned API requests and response handling work at the current head; whether Gemini returns eight suitable recordings across refills, and the actual token usage, latency and rate-limit behavior.

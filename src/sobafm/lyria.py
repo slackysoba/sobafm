@@ -1,7 +1,7 @@
 """Lyria RealTime audio into PCM banks, over one bounded WebSocket per bank.
 
-ADR 0008 records the choices here and the copy budget they implement. No
-Discord code calls this module yet.
+ADR 0008 records the transport choices and the copy budget. The station owns
+each generated stream through settlement and release.
 
 ``LyriaSession`` owns one WebSocket feeding one leased ``pcm.py`` bank. It uses the
 ``aiohttp`` already in the lock rather than the Google SDK, whose import alone nearly
@@ -842,6 +842,7 @@ class _Feed:
 
     bank: PcmBank
     session: LyriaSession
+    cleanup: asyncio.Task[None]
     retirement: asyncio.Task[None] | None = None
 
 
@@ -875,6 +876,7 @@ class _Voice:
     silent: bool = False
     exhausted: bool = False
     ever_ready: bool = False
+    recovering: bool = False
 
 
 class GeneratedStream:
@@ -897,6 +899,8 @@ class GeneratedStream:
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
         renew_after: float = RENEW_AFTER_SECONDS,
+        on_cleanup_expired: Callable[[], None] | None = None,
+        on_bank_released: Callable[[], None] | None = None,
     ) -> None:
         self._request = request
         self._api_key = api_key
@@ -906,6 +910,8 @@ class GeneratedStream:
         self._clock = clock
         self._sleep = sleep
         self._renew_after = renew_after
+        self._on_cleanup_expired = on_cleanup_expired
+        self._on_bank_released = on_bank_released
         self._lock = threading.Lock()
         self._voice = _Voice()
         self._feeds: set[_Feed] = set()
@@ -921,6 +927,27 @@ class GeneratedStream:
 
     # The voice callback's side. These never wait.
 
+    @property
+    def failure(self) -> LyriaFailure | None:
+        return self._failure
+
+    @property
+    def recovering(self) -> bool:
+        """A confirmed drain with no replacement frame handed to voice yet."""
+        return self._voice.recovering
+
+    @property
+    def startup_failure(self) -> LyriaFailure | None:
+        """Terminal failure before pre-roll, as observed on the owner loop."""
+        if self._voice.ever_ready:
+            return None
+        if self._voice.exhausted:
+            return self._failure
+        for feed in self._feeds:
+            if not feed.session.ready and (failure := feed.session.failure) in PERMANENT_FAILURES:
+                return failure
+        return None
+
     def ready_now(self) -> bool:
         """Whether frames have become readable. Only ever changes from False to True."""
         return self._voice.ever_ready
@@ -934,6 +961,10 @@ class GeneratedStream:
             if voice.silent:
                 return b""
             frame = self._next_frame(voice)
+            if frame:
+                voice.recovering = False
+            elif voice.audible is None and voice.ever_ready and not voice.exhausted:
+                voice.recovering = True
             if not frame or voice.fade_out_left is None:
                 return frame
             voice.fade_out_left -= 1
@@ -993,9 +1024,11 @@ class GeneratedStream:
 
     # Owner operations.
 
-    def start(self) -> None:
+    def start(self, first_bank: PcmBank | None = None) -> None:
+        """Take ownership of an admitted first lease when the player supplies one."""
         self._loop = asyncio.get_running_loop()
-        self._supervisor = asyncio.create_task(self._supervise())
+        initial = self._start_feed(first_bank) if first_bank is not None else None
+        self._supervisor = asyncio.create_task(self._supervise(initial))
 
     async def wait_ready(self) -> bool:
         """Wait for the first audio; False means the stream could not start."""
@@ -1051,8 +1084,15 @@ class GeneratedStream:
 
     def release_debt(self) -> bool:
         """Retry any bank that could not be released; True once none is retained."""
-        self._debt = [bank for bank in self._debt if not bank.release()]
+        self._debt = [bank for bank in self._debt if not self._release_bank(bank)]
         return not self._debt
+
+    def _release_bank(self, bank: PcmBank) -> bool:
+        if not bank.release():
+            return False
+        if self._on_bank_released is not None:
+            self._on_bank_released()
+        return True
 
     # The supervisor.
 
@@ -1064,9 +1104,9 @@ class GeneratedStream:
                     return
             await self._changed.wait()
 
-    async def _supervise(self) -> None:
+    async def _supervise(self, initial: _Feed | None) -> None:
         try:
-            feed = await self._prepare()
+            feed = await self._prepare(initial=initial)
             if feed is None:
                 self._exhaust()
                 return
@@ -1156,7 +1196,25 @@ class GeneratedStream:
             return True
         return False
 
-    async def _prepare(self, replacing: _Feed | None = None) -> _Feed | None:
+    def _start_feed(self, bank: PcmBank) -> _Feed:
+        session = LyriaSession(
+            self._request,
+            bank,
+            api_key=self._api_key,
+            endpoint=self._endpoint,
+            ssl_context=self._ssl_context,
+            clock=self._clock,
+            sleep=self._sleep,
+        )
+        feed = _Feed(bank, session, asyncio.create_task(self._observe_cleanup(session)))
+        self._feeds.add(feed)
+        self._sessions_started += 1
+        session.start()
+        return feed
+
+    async def _prepare(
+        self, replacing: _Feed | None = None, *, initial: _Feed | None = None
+    ) -> _Feed | None:
         for attempt in range(MAX_SESSION_ATTEMPTS):
             if attempt:
                 await self._sleep(RETRY_DELAY_SECONDS * attempt)
@@ -1164,24 +1222,15 @@ class GeneratedStream:
             # renewal is in backoff. Check before acquiring a lease or opening a socket.
             if self._record_refusal(replacing):
                 return None
-            try:
-                bank = self._pool.acquire()
-            except PcmCapacityError:
-                self._failure = "capacity"
-                continue
-            session = LyriaSession(
-                self._request,
-                bank,
-                api_key=self._api_key,
-                endpoint=self._endpoint,
-                ssl_context=self._ssl_context,
-                clock=self._clock,
-                sleep=self._sleep,
-            )
-            feed = _Feed(bank, session)
-            self._feeds.add(feed)
-            self._sessions_started += 1
-            session.start()
+            if initial is not None:
+                feed, initial = initial, None
+            else:
+                try:
+                    feed = self._start_feed(self._pool.acquire())
+                except PcmCapacityError:
+                    self._failure = "capacity"
+                    continue
+            session = feed.session
             await session.wait_prepared()
             # A refusal can also arrive while the replacement is already preparing.
             # Keep the admitted audio playing and retire the unused candidate.
@@ -1220,14 +1269,21 @@ class GeneratedStream:
             self._retirements.add(feed.retirement)
             feed.retirement.add_done_callback(self._retirements.discard)
 
-    async def _settle_feed(self, feed: _Feed) -> None:
-        feed.session.cancel()
-        report = await feed.session.finish()
+    async def _observe_cleanup(self, session: LyriaSession) -> None:
+        # A session may stop itself with playable PCM. Its cleanup clock starts
+        # then, even if the player keeps draining and retirement is still far away.
+        report = await session.finish()
         if report.cleanup == "expired":
             self._failed_cleanups += 1  # a failed verdict, whatever happens later
+            if self._on_cleanup_expired is not None:
+                self._on_cleanup_expired()
             log.error("lyria session missed its cleanup deadline; its bank stays leased")
+
+    async def _settle_feed(self, feed: _Feed) -> None:
+        feed.session.cancel()
+        await feed.cleanup
         await feed.session.settle()
         self._feeds.discard(feed)
-        if not feed.bank.release():
+        if not self._release_bank(feed.bank):
             self._debt.append(feed.bank)
         self._changed.set()

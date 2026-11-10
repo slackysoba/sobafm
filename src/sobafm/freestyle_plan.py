@@ -1,6 +1,6 @@
 """Turn a `/freestyle` request into a validated generated plan with one Gemini call.
 
-Not wired in yet: nothing calls this from Discord. A call has three outcomes, each its own
+The Discord command receives one of three outcomes, each its own
 type. `Planned` holds a plan that passed validation. `PlanRefused` means the model declined
 the text or Gemini blocked the call, so current music must not change. `PlanFallback` means
 the call failed with no verdict on the text, so the checked request itself becomes the
@@ -352,11 +352,14 @@ def fallback_plan(request: str) -> GeneratedPlan:
 class PlanInterpreter:
     """Plans `/freestyle` requests through a client shared with the catalog matcher.
 
-    The client's owner closes it.
+    Close the shared client once when both modes have stopped.
     """
 
     def __init__(self, client: GeminiClient) -> None:
         self._client = client
+
+    async def close(self) -> None:
+        await self._client.close()
 
     async def interpret(self, request: str, current: GeneratedPlan | None = None) -> Interpretation:
         """Make one call, with no retries. Only a generated program may supply ``current``.

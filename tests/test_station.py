@@ -13,7 +13,7 @@ from sobafm.catalog import (
     Source,
 )
 from sobafm.credits import render_credits
-from sobafm.station import HISTORY_LIMIT, EndReason, Outcome, Station, select_next
+from sobafm.station import HISTORY_LIMIT, Audio, EndReason, Outcome, Station, select_next
 
 LINK = "https://example.invalid/synthetic/track"
 
@@ -49,7 +49,7 @@ def playing(identifier: str = "a") -> Station:
 def test_heard_source_changes_only_on_actual_switch() -> None:
     station = playing("a")
     heard = station.heard
-    assert heard is not None and heard.recording.key.recording_id == "a"
+    assert isinstance(heard, Audio) and heard.recording.key.recording_id == "a"
     assert heard.credits == render_credits(recording("a"))
 
     replacement = station.request("upbeat jazz")
@@ -82,7 +82,7 @@ def test_stale_callbacks_are_ignored() -> None:
     assert station.prepared(second.program, recording("b")) is Outcome.ACCEPTED
     assert station.prepared(second.program, recording("c")) is Outcome.STALE
     ready = station.ready
-    assert ready is not None and ready.recording.key.recording_id == "b"
+    assert isinstance(ready, Audio) and ready.recording.key.recording_id == "b"
     assert station.preparation_failed(second.program) is Outcome.STALE
     assert station.heard is heard
 
@@ -111,7 +111,7 @@ def test_newer_request_during_switch_keeps_both_facts_honest() -> None:
 def test_failed_or_cancelled_replacement_preserves_heard_source(failure: str) -> None:
     station = playing("a")
     heard = station.heard
-    assert heard is not None
+    assert isinstance(heard, Audio)
     program = station.request("replacement").program
     match failure:
         case "preparation":
@@ -190,7 +190,9 @@ def test_a_program_continues_and_keeps_its_history() -> None:
     assert program is not None and station.continuing and station.needs_next
     advance(station, "b")
     heard = station.heard
-    assert heard is not None and heard.program == program and heard.recording == recording("b")
+    assert (
+        isinstance(heard, Audio) and heard.program == program and heard.recording == recording("b")
+    )
     assert station.history(program) == {recording(i).key for i in "ab"}
     assert station.continue_program(program) is Outcome.ACCEPTED
     assert station.continue_program(program) is Outcome.STALE  # one prepared next track
