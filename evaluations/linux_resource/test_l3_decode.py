@@ -5,18 +5,23 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import select
 import signal
+import subprocess
 import sys
+import tempfile
 from collections.abc import Buffer
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 
 from evaluations.linux_resource import l3_decode
+from sobafm.crash_dumps import disable_crash_dumps
 from sobafm.decode import DecodeInput, DecodeProducer, DecoderCommand
 from sobafm.pcm import BANK_BYTES, FRAME_BYTES, GLOBAL_PCM_BANKS, PcmBank
 
@@ -77,9 +82,16 @@ def test_case_observes_the_stimulus_and_refunds_both_leases(
     assert release["old_refunded"] and release["leases_left"] == 0
 
 
-def test_pause_before_second_fifo_read_is_not_a_stalled_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def unprivileged_feed_control(paused: bool) -> None:
+    """Invoked only in an isolated subprocess. Use the candidate's UID and crash controls."""
+    assert os.geteuid() == os.getegid() == 1000
+    capabilities = next(
+        row
+        for row in Path("/proc/self/status").read_text().splitlines()
+        if row.startswith("CapEff:")
+    )
+    assert int(capabilities.split()[1], 16) == 0
+    disable_crash_dumps()
     pre_read = Event()
 
     class WaitForClose:
@@ -106,19 +118,47 @@ def test_pause_before_second_fifo_read_is_not_a_stalled_read(
             assert pre_read.wait(3)
 
     def feeder(source: DecodeInput, *, command: None, bank: PcmBank) -> DecodeProducer:
-        return PausedBeforeRead(
-            source,
-            command=python_child("import sys; sys.stdin.buffer.read()"),
-            bank=bank,
-            open_input=WaitForClose,
-        )
+        child = DecoderCommand(argv=("/bin/sh", "-c", "while read -r line; do :; done"), env={})
+        if not paused:
+            return DecodeProducer(source, command=child, bank=bank)
+        return PausedBeforeRead(source, command=child, bank=bank, open_input=WaitForClose)
 
-    monkeypatch.setattr(l3_decode, "DecodeProducer", feeder)
-    monkeypatch.setattr(l3_decode, "STIMULUS_SECONDS", 0.5)
-    l3_decode.observe("feed", tmp_path)
-    report, release = (json.loads(line) for line in capsys.readouterr().out.splitlines())
+    with pytest.MonkeyPatch.context() as patch, tempfile.TemporaryDirectory(dir="/tmp") as work:
+        patch.setattr(l3_decode, "DecodeProducer", feeder)
+        patch.setattr(l3_decode, "STIMULUS_SECONDS", 1)
+        assert l3_decode.observe("feed", Path(work)) is None
+
+
+@pytest.mark.parametrize("paused", [False, True])
+@pytest.mark.skipif(
+    os.geteuid() != 0 and (os.geteuid(), os.getegid()) != (1000, 1000),
+    reason="needs UID/GID 1000 or a subprocess that can drop to them",
+)
+def test_feed_witness_under_target_identity(paused: bool) -> None:
+    script = (
+        "import sys; sys.path[:0] = ['/proc/self/cwd', '/proc/self/cwd/src']; "
+        "from evaluations.linux_resource.test_l3_decode import unprivileged_feed_control; "
+        f"unprivileged_feed_control({paused})"
+    )
+    # Exec as UID 1000, as the container does. The checkout's own files and environment
+    # remain reachable from its inherited cwd even under a root-only parent directory.
+    executable = Path(sys.executable)
+    if executable.is_relative_to(Path.cwd()):
+        executable = Path("/proc/self/cwd") / executable.relative_to(Path.cwd())
+    result = subprocess.run(
+        [executable, "-I", "-c", script],
+        user=1000,
+        group=1000,
+        extra_groups=[] if os.geteuid() == 0 else None,
+        env={},
+        capture_output=True,
+        check=True,
+        timeout=8,
+    )
+    report, release = (json.loads(line) for line in result.stdout.splitlines())
     assert report["input_bytes"] == 1
-    assert report["witness"] is None and report["cancelled_at"] is not None
+    assert report["witness"] == (None if paused else "second_read_on_input_fifo")
+    assert report["cancelled_at"] is not None
     assert release["leases_left"] == 0
 
 
@@ -203,4 +243,43 @@ def test_surviving_view_returns_debt_until_actual_refund(
                 view.release()
         assert debt.release_by(report["cleanup_deadline"])
         assert debt.released_at is not None and debt.released_at > report["cleanup_deadline"]
+        assert debt.deadline_missed
         assert GLOBAL_PCM_BANKS.leased == 0
+
+
+@pytest.mark.parametrize("held", ["candidate", "current"])
+def test_last_refund_between_polls_exits_failed_even_when_settled(
+    held: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    release_by = l3_decode.CaseOwners.release_by
+
+    def cross_deadline(owners: l3_decode.CaseOwners, deadline: float) -> bool:
+        bank = owners.candidate if held == "candidate" else owners.current
+        backing = bank._backing  # pyright: ignore[reportPrivateUsage]
+        assert backing is not None
+        view = memoryview(backing)
+        now = deadline - 0.001
+
+        def wake_late(_delay: float) -> None:
+            nonlocal now
+            # The view goes away between polls. The bank is still charged until refund.
+            assert GLOBAL_PCM_BANKS.leased == 1
+            view.release()
+            now = deadline + 0.031
+
+        with view, pytest.MonkeyPatch.context() as patch:
+            patch.setattr(
+                l3_decode, "time", SimpleNamespace(monotonic=lambda: now, sleep=wake_late)
+            )
+            assert release_by(owners, deadline)
+            assert release_by(owners, deadline + 1)  # a recovery check cannot erase the miss
+        return True
+
+    monkeypatch.setattr(l3_decode.CaseOwners, "release_by", cross_deadline)
+    # The stderr case always uses the no-media fd-2 shell witness.
+    assert l3_decode.run_case("stderr", tmp_path) == 1
+    report, release = (json.loads(line) for line in capsys.readouterr().out.splitlines())
+    assert report["cleanup"] == "clean" and report["settled"]
+    assert release["released_at"] == report["cleanup_deadline"] + 0.031
+    assert release["release_deadline_missed"] and not release["release_outstanding"]
+    assert release["old_refunded"] and release["leases_left"] == 0

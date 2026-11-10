@@ -28,9 +28,12 @@ also checks that the current frame and heard identity survive a failed preparati
 
 For the two size errors the feeder can terminate the child during launch. Record its
 actual return code and decoder-complete flag independently of transfer. Require zero PCM
-for these tiny inputs. The feed witness samples the feeder TID's `syscall` entry on native
-x86_64 and matches the read descriptor's device and inode to the open writer's FIFO.
-An inaccessible observation leaves the witness missing. In both stall cases require
+for these tiny inputs. For the feed witness, the owned thread must be in the production
+feeder's Python frame, its unbuffered input file must match the writer's FIFO by device
+and inode, and its kernel wait channel must be `anon_pipe_read` or `pipe_read`. This is
+the only pipe read in the feeder after the first byte. A hidden or unrecognized wait
+channel leaves `witness=null` at the watchdog. Record **not observed** and keep the
+target's ordinary permissions and crash controls. In both stall cases require
 `cancel_exit_expected=true`: exit zero, termination by TERM, or KILL when the producer
 escalated. An unexpected status fails even if cancellation suppressed a decode failure.
 Expect `failure=null`, a reaped child, `decoder_complete=false` and invalid PCM. All five rejected or
@@ -46,8 +49,11 @@ Start the one `finish()` owner immediately, as the service does. The ordinary lo
 also covers caller-owned lease release in [test_app.py](../../tests/test_app.py).
 To exercise the six probe schedules in the locked Linux development checkout, run
 `uv run pytest -q evaluations/linux_resource/test_l3_decode.py`. These checks use isolated
-no-media children. Controls withhold the second FIFO read, exit before the full-bank
-observation, crash by signal after a live witness, and retain a bank view past the deadline.
+no-media children. The positive FIFO read and pre-read pause controls exec at UID/GID 1000
+with the production crash controls active. Run them from the repository root with its
+locked environment as UID/GID 1000 or as root able to drop to that identity. Other
+controls exit before the full-bank observation, signal after a live witness and hold
+an exported view of either bank across the last release observation.
 
 ## One separately authorized target run
 
@@ -102,13 +108,16 @@ owners. The aggregate native PCM bound remains 33,850,880 bytes under the review
   `old_frames_preserved` and `end_of_stream`. Only the stderr case returns the diagnostic frame.
 - Require `cleanup=clean`, `settled=true`, a non-null original cleanup start and
   `cleanup_deadline = cleanup_started_at + 3.0`. For the stalls it starts at the first
-  cancellation. The final monotonic `released_at` must fall within that same deadline.
+  cancellation. The monotonic `released_at` records the observation of the **last**
+  required refund, after decoder settlement and both bank refunds. It must fall within
+  that same deadline. Require `release_deadline_missed=false`.
   `decode.release()` observes reaping, joined I/O and closed descriptors. The caller then
   refunds its bank. Require `release_outstanding=false`, the old-bank refund and zero leases.
   At the original deadline the offline observer reports any unrefunded lease and returns
   its owners to its caller. The target probe flushes the failure row, keeps those owners
-  and waits for actual refund under the outer watchdog. A late refund is recorded separately
-  and exits nonzero. Preserve the original cleanup verdict and failed release deadline.
+  and waits for actual refund under the outer watchdog. A deadline miss exits nonzero
+  even when the last refund has already happened and outstanding debt is zero.
+  Preserve the original decoder cleanup verdict and the separate release-deadline verdict.
 - Retain the group peak and events, swap, task counts, command exit status and exact-container
   exit/OOM state. Require no limit event, OOM or swap, the group peak inside its cap,
   tasks back to the initial level, complete rows and exit zero. Compare the case

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import select
@@ -34,20 +35,28 @@ FLOOD = (
 
 
 def _in_fifo_read(decode: DecodeProducer, writer: int) -> bool:
-    """On the approved amd64 target, witness read(2) on this FIFO in the owned feeder."""
-    if os.uname().machine != "x86_64":
+    """The production feeder has one input read, on this unbuffered FileIO."""
+    raw = decode._input  # pyright: ignore[reportPrivateUsage]
+    if type(raw) is not io.FileIO:
         return False
     for thread in decode._threads:  # pyright: ignore[reportPrivateUsage]
-        if thread.name == "decode-feed" and thread.native_id is not None:
+        if (
+            thread.name == "decode-feed"
+            and thread.native_id is not None
+            and thread.ident is not None
+        ):
             try:
-                fields = Path(f"/proc/self/task/{thread.native_id}/syscall").read_text().split()
-                # __NR_read is 0 on x86_64. A running thread has no syscall arguments.
+                frame = sys._current_frames().get(thread.ident)  # pyright: ignore[reportPrivateUsage]
+                # Require the direct call in _feed. A Python wrapper paused before FileIO
+                # enters read (even one waiting on a different pipe) is a different frame.
+                waiting = Path(f"/proc/self/task/{thread.native_id}/wchan").read_text().strip()
                 return (
-                    len(fields) > 1
-                    and fields[0] == "0"
-                    and os.path.samestat(os.fstat(int(fields[1], 0)), os.fstat(writer))
+                    frame is not None
+                    and frame.f_code is type(decode)._feed.__code__  # pyright: ignore[reportPrivateUsage]
+                    and waiting in {"anon_pipe_read", "pipe_read"}
+                    and os.path.samestat(os.fstat(raw.fileno()), os.fstat(writer))
                 )
-            except OSError:
+            except OSError, ValueError:
                 return False  # an inaccessible or finished read supplies no witness
     return False
 
@@ -66,19 +75,26 @@ class CaseOwners:
     decode: DecodeProducer
     candidate: PcmBank
     current: PcmBank
+    original_deadline: float
     released_at: float | None = None
+    deadline_missed: bool = False
 
-    def release_by(self, deadline: float) -> bool:
+    def release_by(self, until: float) -> bool:
         """Try once even after expiry. Keep every outstanding owner for late recovery."""
-        while True:
-            if self.released_at is None and self.decode.release() and self.candidate.release():
-                self.released_at = time.monotonic()
-            if self.current.release() and self.released_at is not None:
-                return True
-            remaining = deadline - time.monotonic()
+        while self.released_at is None:
+            candidate_refunded = self.decode.release() and self.candidate.release()
+            current_refunded = self.current.release()
+            now = time.monotonic()
+            if candidate_refunded and current_refunded:
+                self.released_at = now
+                self.deadline_missed |= now > self.original_deadline
+                break
+            self.deadline_missed |= now >= self.original_deadline
+            remaining = until - now
             if remaining <= 0:
                 return False
             time.sleep(min(0.01, remaining))
+        return True
 
 
 def observe(case: str, workdir: Path) -> CaseOwners | None:
@@ -161,8 +177,8 @@ def observe(case: str, workdir: Path) -> CaseOwners | None:
         del frame
         drained = bank.facts().audible_drain
         after = current.read_frame() == marker and current.facts().audible_drain
-        owners = CaseOwners(decode, bank, current)
         assert report.cleanup_deadline is not None
+        owners = CaseOwners(decode, bank, current, report.cleanup_deadline)
         released = owners.release_by(report.cleanup_deadline)
         print(
             json.dumps(
@@ -170,6 +186,7 @@ def observe(case: str, workdir: Path) -> CaseOwners | None:
                     "settled": decode.report().settled,
                     "released_at": owners.released_at,
                     "release_outstanding": not released,
+                    "release_deadline_missed": owners.deadline_missed,
                     "old_frames_preserved": before and after,
                     "diagnostic_frame": diagnostic_frame,
                     "end_of_stream": end,
@@ -180,7 +197,23 @@ def observe(case: str, workdir: Path) -> CaseOwners | None:
             ),
             flush=True,
         )
-        return None if released else owners
+        return owners if owners.deadline_missed else None
+
+
+def run_case(case: str, directory: Path) -> int:
+    missed = observe(case, directory)
+    if missed is None:
+        return 0
+    if missed.released_at is None:
+        # The failure row is flushed. The target supervisor owns the container during recovery.
+        while not missed.release_by(time.monotonic() + 0.1):
+            pass
+        print(
+            json.dumps(
+                {"all_released_at": missed.released_at, "leases_left": GLOBAL_PCM_BANKS.leased}
+            )
+        )
+    return 1
 
 
 if __name__ == "__main__":
@@ -198,16 +231,7 @@ if __name__ == "__main__":
         sys.exit("two CPUs required")
     print(json.dumps({"initial_tasks": int((cgroup / "pids.current").read_text())}), flush=True)
     with tempfile.TemporaryDirectory() as directory:
-        debt = observe(sys.argv[1], Path(directory))
-        if debt is not None:
-            # The failed row is already flushed. The target supervisor owns this container.
-            while not debt.release_by(time.monotonic() + 0.1):
-                pass
-            print(
-                json.dumps(
-                    {"all_released_at": time.monotonic(), "leases_left": GLOBAL_PCM_BANKS.leased}
-                )
-            )
+        status = run_case(sys.argv[1], Path(directory))
     counters = (
         "memory.peak",
         "memory.events",
@@ -218,5 +242,4 @@ if __name__ == "__main__":
     if (cgroup / "pids.peak").exists():
         counters += ("pids.peak",)
     print(json.dumps({key: (cgroup / key).read_text().strip() for key in counters}), flush=True)
-    if debt is not None:
-        sys.exit(1)
+    sys.exit(status)
