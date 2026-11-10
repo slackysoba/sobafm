@@ -65,7 +65,7 @@ def test_discord_delivery_failure_never_exposes_the_error_or_retries(
         (429, "safety", "rate or quota limit", "http_429"),
         (503, "", "server error", "http_503"),
         (408, "", "timed out", "http_408"),
-        (400, "language", "interpreter declined", "blocked"),
+        (400, "language", "interpreter declined", "http_400"),
         (400, "unknown", "usable interpretation", "http_400"),
         (200, "", "usable interpretation", "interaction_not_completed"),
     ],
@@ -95,6 +95,7 @@ def test_catalog_match_failure_preserves_heard_audio(
             "allowed_mentions": NO_MENTIONS,
         }
         assert f"request matching failed: kind={kind} " in caplog.text
+        assert f"blocked={code == 'language'}" in caplog.text
         for private in (KEY, REQUEST, DETAIL, reply.token):
             assert private not in (sent.text or "") + caplog.text
         assert len(transport.calls) == 1

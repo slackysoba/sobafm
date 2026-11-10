@@ -239,9 +239,10 @@ class GeminiMatcher:
         except MatchFailed as exc:
             # Provider errors can quote their input, so only the kind is logged.
             log.warning(
-                "request matching failed: kind=%s seconds=%.3f",
-                "blocked" if exc.blocked else exc.kind,
+                "request matching failed: kind=%s seconds=%.3f blocked=%s",
+                exc.kind,
                 time.monotonic() - started,
+                exc.blocked,
             )
             raise
         log.info(
