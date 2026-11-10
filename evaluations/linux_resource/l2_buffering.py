@@ -15,10 +15,14 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from sobafm.crash_dumps import disable_crash_dumps
+from sobafm.crash_dumps import CrashDumpError, disable_crash_dumps
 
 if __name__ == "__main__":
-    disable_crash_dumps()
+    try:
+        disable_crash_dumps()
+    except CrashDumpError:
+        print('{"client":"failed","reason":"crash_controls"}', flush=True)
+        sys.exit(1)
 
 from sobafm.lyria import (  # noqa: E402
     CLEANUP_SECONDS,
@@ -45,18 +49,23 @@ class Bound(Exception):
 class Pair:
     pair: int
     failure: str | None = None
+    cancelled: bool = False
     sessions: int = 0
     crossfades: int = 0
     mixed_frames: int = 0
     ready_ms: float | None = None
     buffered_bytes: list[int] = field(default_factory=list[int])
     # Raw traced peaks include both PCM and Python object overhead.
-    traced_peaks: list[int] = field(default_factory=lambda: [0, 0])
+    traced_peaks: list[int] = field(default_factory=lambda: [0, 0, 0])
     traced_after_join: int | None = None
-    cleanup_ms: list[float] = field(default_factory=list[float])
+    cleanup_ms: list[float | None] = field(default_factory=list[float | None])
     failed_cleanups: int | None = None
     retained_banks: int | None = None
     leased_after_finish: int | None = None
+
+    def fail(self, reason: str) -> None:
+        if self.failure is None:
+            self.failure = reason
 
 
 def check_peak(raw: int, banks: int) -> None:
@@ -75,23 +84,43 @@ class ObservedPool(PcmBankPool):
         self.result = result
 
     def measure(self) -> None:
-        count = len(self.banks)
-        if count:
-            _, peak = tracemalloc.get_traced_memory()
-            self.result.traced_peaks[count - 1] = max(self.result.traced_peaks[count - 1], peak)
+        count = self.leased
+        _, peak = tracemalloc.get_traced_memory()
+        self.result.traced_peaks[count] = max(self.result.traced_peaks[count], peak)
+        try:
             check_peak(peak, count)
+        except Bound as exc:
+            self.result.fail(str(exc))
 
     def acquire(self) -> PcmBank:
-        try:
-            self.measure()  # seal the single-bank peak before allocating the second
-            if len(self.banks) == 2:
-                raise Bound("extra_attempt")
-        except Bound as exc:
-            self.result.failure = str(exc)
-            raise
+        self.measure()
+        if len(self.banks) == 2:
+            self.result.fail("extra_attempt")
+        if self.result.failure:
+            raise Bound(self.result.failure)
+        tracemalloc.reset_peak()  # the next synchronous allocation belongs to the new lease
         bank = super().acquire()
         self.banks.append(bank)
+        self.result.cleanup_ms.append(None)
         return bank
+
+    def _refund(self) -> None:
+        # PcmBank calls this synchronously AFTER it clears its backing and releases
+        # its lock. Seal the prior owner interval, then start the smaller one.
+        self.measure()
+        super()._refund()
+        tracemalloc.reset_peak()
+        now = time.monotonic()
+        for index, bank in enumerate(self.banks):
+            if self.result.cleanup_ms[index] is not None:
+                continue
+            facts = bank.facts()
+            if facts.released and facts.cancelled_at is not None:
+                elapsed = now - facts.cancelled_at
+                self.result.cleanup_ms[index] = round(1000 * elapsed, 2)
+                if elapsed > CLEANUP_SECONDS:
+                    self.result.fail("late_release")
+        self.measure()
 
 
 async def run_pair(
@@ -120,11 +149,14 @@ async def run_pair(
         sleep=sleep,
     )
 
-    def check() -> None:
-        if result.failure:
-            raise Bound(result.failure)
+    def measure() -> None:
+        try:
+            resources()
+        except Bound as exc:
+            result.fail(str(exc))
+        except OSError, ValueError, KeyError:
+            result.fail("measurement")
         pool.measure()
-        resources()
         for bank in pool.banks:
             facts = bank.facts()
             if (
@@ -132,7 +164,12 @@ async def run_pair(
                 and facts.cancelled_at is not None
                 and time.monotonic() - facts.cancelled_at > CLEANUP_SECONDS
             ):
-                raise Bound("late_release")
+                result.fail("late_release")
+
+    def check() -> None:
+        measure()
+        if result.failure:
+            raise Bound(result.failure)
 
     async def until(predicate: Callable[[], bool]) -> None:
         while not predicate():
@@ -152,15 +189,6 @@ async def run_pair(
         if frame is None or len(frame) != FRAME_BYTES:
             raise Bound("missing_frame")
         return int.from_bytes(frame[:2], "little", signed=True)
-
-    def observe_release(bank: PcmBank) -> None:
-        facts = bank.facts()
-        if not facts.released or facts.cancelled_at is None:
-            raise Bound("unreleased_bank")
-        elapsed = time.monotonic() - facts.cancelled_at
-        result.cleanup_ms.append(round(1000 * elapsed, 2))
-        if elapsed > CLEANUP_SECONDS:
-            raise Bound("late_release")
 
     start = time.monotonic()
     own_trace = not tracemalloc.is_tracing()
@@ -194,10 +222,11 @@ async def run_pair(
             if stream.crossfading or sample() != 2000:
                 raise Bound("missing_handoff")
             await until(lambda: pool.banks[0].facts().released)
-            observe_release(pool.banks[0])
-            check_peak(tracemalloc.get_traced_memory()[0], 1)
     except (Bound, TimeoutError) as exc:
-        result.failure = result.failure or (str(exc) if isinstance(exc, Bound) else "pair_timeout")
+        result.fail(str(exc) if isinstance(exc, Bound) else "pair_timeout")
+    except asyncio.CancelledError:
+        result.cancelled = True
+        result.fail("cancelled")
     finally:
         # finish joins the original retirements, even after a failed verdict.
         # Never infer release from elapsed time. The host deadline bounds a hang.
@@ -217,32 +246,32 @@ async def run_pair(
                         flush=True,
                     )
                     announced = True
-                await asyncio.wait({finish}, timeout=0.05)
-                if not finish.done() and not result.failure:
-                    try:
-                        check()
-                    except (Bound, OSError, ValueError) as exc:
-                        result.failure = str(exc) if isinstance(exc, Bound) else "measurement"
+                try:
+                    await asyncio.wait({finish}, timeout=0.05)
+                except asyncio.CancelledError:
+                    # The wait was interrupted. finish still owns these same retirements.
+                    result.cancelled = True
+                    result.fail("cancelled")
+                measure()
             report = finish.result()
             result.sessions = report.sessions_started
             result.crossfades = report.crossfades
             result.failed_cleanups = report.failed_cleanups
             result.retained_banks = report.retained_banks
+            if report.failure or report.failed_cleanups or report.retained_banks or pool.leased:
+                result.fail("stream_or_cleanup_failure")
+            if None in result.cleanup_ms:
+                result.fail("unreleased_bank")
+            if (report.sessions_started, report.crossfades) != (2, 1):
+                result.fail("session_count")
+        finally:
             result.leased_after_finish = pool.leased
             result.traced_after_join = tracemalloc.get_traced_memory()[0]
-            if report.failure or report.failed_cleanups or report.retained_banks or pool.leased:
-                raise Bound("stream_or_cleanup_failure")
-            for bank in pool.banks[len(result.cleanup_ms) :]:
-                observe_release(bank)
-            if (report.sessions_started, report.crossfades) != (2, 1):
-                raise Bound("session_count")
-            check_peak(result.traced_after_join, 0)
-            check()
-        except Bound as exc:
-            result.failure = result.failure or str(exc)
-        finally:
+            measure()
             if own_trace:
                 tracemalloc.stop()
+    if result.cancelled:
+        raise asyncio.CancelledError
 
 
 @dataclass
@@ -281,6 +310,9 @@ async def target() -> int:
     if platform.machine() != "x86_64" or os.getuid() == 0:
         raise Bound("target")
     check_limits()
+    quota, period = map(int, (CGROUP / "cpu.max").read_text().split())
+    if period <= 0 or quota != 2 * period:
+        raise Bound("cpu_limit")
     resources = Resources()
     print(
         json.dumps(
@@ -292,6 +324,7 @@ async def target() -> int:
                 "memory_max": GROUP,
                 "swap_max": 0,
                 "pids_max": 64,
+                "cpus": 2,
                 "pcm": 2 * BANK_BYTES,
                 "copies": 2 * PRODUCER_COPIES + SHARED_COPIES,
             }
@@ -306,9 +339,9 @@ async def target() -> int:
             resources.check()
             await run_pair(result, tls, 8765, resources.check, frame_interval=0.02)
         except Bound as exc:
-            result.failure = str(exc)
+            result.fail(str(exc))
         except Exception as exc:
-            result.failure = type(exc).__name__
+            result.fail(type(exc).__name__)
         finally:
             print(json.dumps({**asdict(result), **asdict(resources)}), flush=True)
         if result.failure:

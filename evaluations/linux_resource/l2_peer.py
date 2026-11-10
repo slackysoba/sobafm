@@ -52,14 +52,14 @@ async def serve(cert: Path, key: Path, port: int) -> None:
     app.router.add_get(r"/{pair:[1-5]}", handle)
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=1)
     await runner.setup()
-    try:
-        with socket.socket() as sock:
+    with socket.socket() as sock:
+        try:
             sock.bind(("127.0.0.1", port))
             await web.SockSite(runner, sock, ssl_context=tls).start()
             print(f"ready {sock.getsockname()[1]}", flush=True)
             await asyncio.sleep(120)
-    finally:
-        await runner.cleanup()
+        finally:
+            await runner.cleanup()
 
 
 if __name__ == "__main__":
