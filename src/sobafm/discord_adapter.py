@@ -75,6 +75,7 @@ import weakref
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -95,7 +96,14 @@ from sobafm.catalog import (
     parse_reviews,
 )
 from sobafm.cooldown import Claim, Cooldown
-from sobafm.credits import escaped_text
+from sobafm.credits import (
+    MAX_PAGES,
+    VIEW_LIFETIME_SECONDS,
+    CreditPage,
+    CreditViews,
+    RenderedCredits,
+    escaped_text,
+)
 from sobafm.freestyle_plan import GeneratedPlan, PlanFallback, PlanInterpreter, PlanRefused
 from sobafm.gemini_interactions import TIMEOUT_SECONDS, GeminiClient
 from sobafm.gemini_match import (
@@ -195,6 +203,8 @@ VOCAL_CHANNEL_TYPES = (disnake.ChannelType.voice, disnake.ChannelType.stage_voic
 LOCAL_FAILURE = "local_failure"
 SILENCE = bytes(FRAME_BYTES)
 NO_MENTIONS = disnake.AllowedMentions.none()
+CREDIT_MENU = "sobafm:credit-page"
+CREDIT_PAGE_NUMBERS = {str(n): n for n in range(1, MAX_PAGES + 1)}
 Inter = disnake.ApplicationCommandInteraction[commands.InteractionBot]
 
 NOT_JOINED = "SobaFM is not in a voice channel. A manager must use `/join` first."
@@ -919,6 +929,11 @@ class Adapter:
         self._pool = pool
         self._sleep = sleep  # the grace and refill timers' clock; tests inject one
         self._clock = clock  # monotonic time for cooldowns and refill retry deadlines
+        self._credit_views = CreditViews()
+        self._credit_expiry: asyncio.TimerHandle | None = None
+        self._credit_sends: dict[int, asyncio.Task[bool]] = {}
+        self._credit_cleanup: asyncio.Task[None] | None = None
+        self._last_credit_release = -math.inf
         self.players: dict[int, GuildPlayer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
         self.retirements: set[asyncio.Task[None]] = set()
@@ -2231,15 +2246,160 @@ class Adapter:
             and station.ended in GENERATED_ENDINGS
         ):
             status += f" The generated request ended: {ENDED[station.ended]}."
-        await inter.response.send_message(
-            status, ephemeral=True, suppress_embeds=True, allowed_mentions=NO_MENTIONS
-        )
         if isinstance(heard, Audio):
-            for number in range(1, len(heard.credits.pages) + 1):
-                page = heard.credits.page(number)
-                await inter.followup.send(
-                    page.text, ephemeral=True, suppress_embeds=True, allowed_mentions=NO_MENTIONS
+            await self._catalog_credits(inter, status, heard.credits)
+        else:
+            await inter.response.send_message(
+                status, ephemeral=True, suppress_embeds=True, allowed_mentions=NO_MENTIONS
+            )
+
+    @staticmethod
+    async def _deliver_credit(operation: str, delivery: Awaitable[object]) -> bool:
+        try:
+            await delivery
+        except Exception as exc:
+            # HTTP errors can contain the interaction token in a URL or the response body.
+            log.warning(
+                "credit delivery failed: operation=%s error=%s", operation, type(exc).__name__
+            )
+            return False
+        return True
+
+    async def _catalog_credits(self, inter: Inter, status: str, credits: RenderedCredits) -> None:
+        page = None
+        if not self.stopping.is_set():
+            if len(credits.pages) == 1:
+                await self._send_credit_page(inter, status, credits.page(1))
+                return
+            page = self._credit_views.open(
+                inter.id, credits, inter.author.id, self._clock(), self._credit_sends.keys()
+            )
+        if page is None:
+            await self._deliver_credit(
+                "retry",
+                inter.response.send_message(
+                    "Credit pages are busy. Please retry `/now` shortly.",
+                    ephemeral=True,
+                    suppress_embeds=True,
+                    allowed_mentions=NO_MENTIONS,
+                ),
+            )
+            return
+        if self._credit_expiry is None:
+            self._credit_expiry = asyncio.get_running_loop().call_later(
+                VIEW_LIFETIME_SECONDS, self._expire_credit_views
+            )
+        send = asyncio.create_task(self._send_credit_page(inter, status, page))
+        self._credit_sends[inter.id] = send
+        send.add_done_callback(partial(self._credit_sent, inter.id))
+        try:
+            await asyncio.shield(send)
+        except asyncio.CancelledError:
+            if not send.cancelling():
+                send.cancel()
+            raise
+
+    async def _send_credit_page(self, inter: Inter, status: str, page: CreditPage) -> bool:
+        acknowledged = await self._deliver_credit(
+            "status",
+            inter.response.send_message(
+                status, ephemeral=True, suppress_embeds=True, allowed_mentions=NO_MENTIONS
+            ),
+        )
+        if not acknowledged or self.stopping.is_set():
+            return False
+        components = (
+            [
+                disnake.ui.StringSelect(
+                    custom_id=CREDIT_MENU,
+                    placeholder="Choose a credit page",
+                    options=[
+                        disnake.SelectOption(label=f"Page {n} of {page.total}", value=str(n))
+                        for n in range(1, page.total + 1)
+                    ],
                 )
+            ]
+            if page.total > 1
+            else []
+        )
+        return await self._deliver_credit(
+            "followup",
+            inter.followup.send(
+                page.text,
+                ephemeral=True,
+                suppress_embeds=True,
+                allowed_mentions=NO_MENTIONS,
+                components=components,
+            ),
+        )
+
+    def _credit_sent(self, view_id: int, send: asyncio.Task[bool]) -> None:
+        del self._credit_sends[view_id]
+        self._last_credit_release = time.monotonic()
+        if send.cancelled() or send.exception() is not None or not send.result():
+            self._credit_views.discard(view_id)
+            if not self._credit_views:
+                self._cancel_credit_expiry()
+
+    def _cancel_credit_expiry(self) -> None:
+        if self._credit_expiry is not None:
+            self._credit_expiry.cancel()
+            self._credit_expiry = None
+
+    def _expire_credit_views(self) -> None:
+        now = self._clock()
+        deadline = self._credit_views.expire(now)
+        self._credit_expiry = (
+            None
+            if deadline is None
+            else asyncio.get_running_loop().call_later(deadline - now, self._expire_credit_views)
+        )
+
+    async def credit_page(self, inter: disnake.MessageInteraction[commands.InteractionBot]) -> None:
+        if inter.data.custom_id != CREDIT_MENU:
+            return
+        # Discord supplies the originating command on the follow-up message. The
+        # listener's menu value selects only a page, never the caller or snapshot.
+        origin = inter.message.interaction_metadata
+        values = inter.values
+        if (
+            inter.message.flags.ephemeral
+            and inter.data.component_type is disnake.ComponentType.string_select
+            and origin is not None
+            and origin.type is disnake.InteractionType.application_command
+            and origin.original_response_message_id is not None
+            and values is not None
+            and len(values) == 1
+            and (number := CREDIT_PAGE_NUMBERS.get(values[0])) is not None
+        ):
+            page = self._credit_views.page(origin.id, inter.author.id, number, self._clock())
+            if isinstance(page, CreditPage):
+                await self._deliver_credit(
+                    "edit",
+                    inter.response.edit_message(
+                        content=page.text,
+                        allowed_mentions=NO_MENTIONS,
+                        flags=disnake.MessageFlags(suppress_embeds=True),
+                    ),
+                )
+                return
+        await self._deliver_credit(
+            "refusal",
+            inter.response.send_message(
+                "This credit page is unavailable. Use `/now` to see what is heard now.",
+                ephemeral=True,
+                suppress_embeds=True,
+                allowed_mentions=NO_MENTIONS,
+            ),
+        )
+
+    async def _join_credit_sends(
+        self, sends: tuple[asyncio.Task[bool], ...], deadline: float
+    ) -> None:
+        _, pending = await asyncio.wait(sends, timeout=max(0.0, deadline - time.monotonic()))
+        if pending or self._last_credit_release > deadline:
+            self.cleanup_failures += 1
+            log.error("credit delivery missed its shutdown deadline")
 
     def _remaining(self, program: Program) -> str:
         assert program.deadline is not None
@@ -2447,6 +2607,13 @@ class Adapter:
         if self._voice_cleanup is None:
             deadline = time.monotonic() + CLEANUP_SECONDS
             self._voice_cleanup = asyncio.create_task(self._observe_voice_cleanup(deadline))
+            if sends := tuple(self._credit_sends.values()):
+                for send in sends:
+                    if not send.cancelling():
+                        send.cancel()
+                self._credit_cleanup = asyncio.create_task(self._join_credit_sends(sends, deadline))
+        self._credit_views.clear()
+        self._cancel_credit_expiry()
         if self._rejoins is not None:
             # A connect still under way leaves its client registered; closing the bot ends it.
             self._rejoins.cancel()
@@ -2466,11 +2633,14 @@ class Adapter:
         if self.debt or self.generated_debt or self._pool.leased:
             log.error("%d PCM bank lease(s) remain at shutdown", self._pool.leased)
         await asyncio.shield(self._voice_cleanup)
+        if self._credit_cleanup is not None:
+            await asyncio.shield(self._credit_cleanup)
         if self.cleanup_failures:
             log.error("%d cleanup deadline(s) were missed", self.cleanup_failures)
         released = (
             not self.debt
             and not self.generated_debt
+            and not self._credit_sends
             and not self._pool.leased
             and not self.cleanup_failures
             and not self._pool.voice_readers
@@ -2549,6 +2719,8 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
     async def now(inter: Inter) -> None:
         """Privately show what is actually heard, with full credits."""
         await adapter.now(inter)
+
+    bot.add_listener(adapter.credit_page, "on_dropdown")
 
     @bot.slash_command(name="settings", contexts=servers, default_member_permissions=manager)
     async def settings(
