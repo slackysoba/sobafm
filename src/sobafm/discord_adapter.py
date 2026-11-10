@@ -161,6 +161,7 @@ from sobafm.station import (
     StationAudio,
     select_next,
 )
+from sobafm.voice_status import VoiceStatuses
 
 log = logging.getLogger(__name__)
 
@@ -945,6 +946,8 @@ class Adapter:
         self.matcher = matcher
         self.interpreter = interpreter
         self._lyria_key = lyria_key
+        self.voice_status: VoiceStatuses | None = None
+        self._status_cleanup: asyncio.Task[None] | None = None
         self.generated_debt: list[GeneratedStream] = []
         self._producer = producer
         self._settings = settings
@@ -1068,6 +1071,7 @@ class Adapter:
                 if player.voice.channel == channel:
                     return f"SobaFM is already in {channel.mention}."
                 await player.voice.move_to(channel)
+                self._update_status(player)
                 self._review_listeners(player)  # the new channel may have no listener
                 return f"Moving to {channel.mention}."
             if await self._connect(guild_id, channel) is None:
@@ -1348,6 +1352,7 @@ class Adapter:
         for detached in removed:
             self._retire(detached)
         station.end_generated(program, reason)
+        self._update_status(player)
         self._capacity_changed()
         # Expiry can settle the switch before its queued voice report. In that
         # order the timer owns the handoff to the replacement waiting on it.
@@ -1875,6 +1880,7 @@ class Adapter:
         if player.station.heard is not None:
             log.info("heard source cleared")
         player.station.silenced()  # the callback can no longer emit any removed frame
+        self._update_status(player)
         self._capacity_changed()  # a deferred start can now exit without waiting for a lease
         return {self._retire(t) for t in tracks}
 
@@ -1985,10 +1991,26 @@ class Adapter:
 
     # The voice connection's own events.
 
+    def _update_status(self, player: GuildPlayer) -> None:
+        if self.voice_status is None or self.players.get(player.guild_id) is not player:
+            return
+        channel = player.voice.channel
+        self.voice_status.update(
+            player.guild_id,
+            channel
+            if isinstance(channel, disnake.VoiceChannel)
+            and not player.closing
+            and not self.stopping.is_set()
+            and player.voice.is_connected()
+            else None,
+            player.station.heard,
+        )
+
     def _voice_ready(self, guild_id: int, voice: disnake.VoiceClient) -> None:
         """A connection or reconnection is up: listeners may differ, or a move may be done."""
         player = self.players.get(guild_id)
         if player is not None and player.voice is voice:
+            self._update_status(player)
             self._capacity_changed()  # a next track may be waiting for this connection
             self._review_listeners(player)
 
@@ -2146,8 +2168,11 @@ class Adapter:
             return
         if user_id == player.voice.user.id:
             if channel is None:
+                if self.voice_status is not None:
+                    self.voice_status.update(guild_id, None, None)
                 self._cancel_grace(player)
                 return
+            self._update_status(player)
             if (
                 channel.id != self._settings.channel(guild_id)
                 and guild_id not in self._voice_busy  # a `/join` or `/leave` decides that itself
@@ -2470,6 +2495,7 @@ class Adapter:
     def _settle(self, guild_id: int, kind: str, track: PlayingTrack) -> None:
         player = self.players.get(guild_id)
         station = None if player is None else player.station
+        previous_heard = None if station is None else station.heard
         if kind in ("switched", "failed") and (
             station is None or station.switching is not track.audio
         ):
@@ -2516,6 +2542,8 @@ class Adapter:
                 log.info("program ended: reason=%s", station.ended.value)
         if kind != "switched":
             self._retire(track)
+        if player is not None and player.station.heard is not previous_heard:
+            self._update_status(player)
         self._capacity_changed()  # e.g. a drained track starts its program's capacity bound
         if player is None or self.stopping.is_set():
             return
@@ -2658,6 +2686,10 @@ class Adapter:
                 "voice output missed its shutdown deadline: readers=%d", self._pool.voice_readers
             )
 
+    async def _observe_status_cleanup(self, status: VoiceStatuses, deadline: float) -> None:
+        if not await status.close(deadline):
+            self.cleanup_failures += 1
+
     async def shutdown(self) -> bool:
         """Stop and disconnect every server, join all owners and report full release.
 
@@ -2668,6 +2700,10 @@ class Adapter:
         if self._voice_cleanup is None:
             deadline = time.monotonic() + CLEANUP_SECONDS
             self._voice_cleanup = asyncio.create_task(self._observe_voice_cleanup(deadline))
+            if self.voice_status is not None:
+                self._status_cleanup = asyncio.create_task(
+                    self._observe_status_cleanup(self.voice_status, deadline)
+                )
             if sends := tuple(self._credit_sends.values()):
                 for send in sends:
                     if not send.cancelling():
@@ -2696,6 +2732,8 @@ class Adapter:
         await asyncio.shield(self._voice_cleanup)
         if self._credit_cleanup is not None:
             await asyncio.shield(self._credit_cleanup)
+        if self._status_cleanup is not None:
+            await asyncio.shield(self._status_cleanup)
         if self.cleanup_failures:
             log.error("%d cleanup deadline(s) were missed", self.cleanup_failures)
         released = (
@@ -2784,6 +2822,7 @@ def _describe(settings: ServerSettings) -> str:
 def create_bot(adapter: Adapter) -> commands.InteractionBot:
     """Register the slash commands; `/play` and `/skip` are omitted without a catalog."""
     bot = commands.InteractionBot(intents=intents())
+    adapter.voice_status = VoiceStatuses(bot.http)
     servers = disnake.InteractionContextTypes(guild=True)
     manager = disnake.Permissions(manage_guild=True)
 

@@ -21,6 +21,8 @@ Read [provider access, privacy and free-tier limits](provider-access.md) before 
 2. No privileged gateway intents are needed. SobaFM requests only the Guilds and Voice States intents.
 3. Invite the bot with the `bot` and `applications.commands` scopes and these permissions: **View Channels**, **Connect** and **Speak**. Replies are private interaction responses, so the bot needs no Send Messages permission.
 
+Optionally grant **Set Voice Channel Status** in the voice channel. Once the player starts a recording, SobaFM shows its catalog title and source, or just the source if the title contains link or mention syntax. Generated playback shows “Generated music”. Use private `/now` for details and full catalog credits. Stage channels keep their own topic. SobaFM tries to clear its status when audio ends or it leaves, and to show the heard source after a move. Discord can refuse a clear after the bot has left unless it already has Manage Channels there. An old status may then need to be cleared by a moderator. Missing permission, a busy or unavailable endpoint, and a rejected update leave playback running. The status route has been exercised only against a local test server. [Discord's status endpoint and permissions](https://github.com/discord/discord-api-docs/blob/da52492ced82d375981c46618cc3e182daada9a2/developers/resources/channel.mdx#set-voice-channel-status)
+
 Command access:
 
 | Command | Who can use it |
