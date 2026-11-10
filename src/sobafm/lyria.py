@@ -876,6 +876,7 @@ class _Voice:
     silent: bool = False
     exhausted: bool = False
     ever_ready: bool = False
+    recovering: bool = False
 
 
 class GeneratedStream:
@@ -928,6 +929,23 @@ class GeneratedStream:
     def failure(self) -> LyriaFailure | None:
         return self._failure
 
+    @property
+    def recovering(self) -> bool:
+        """A confirmed drain with no replacement frame handed to voice yet."""
+        return self._voice.recovering
+
+    @property
+    def startup_failure(self) -> LyriaFailure | None:
+        """Terminal failure before pre-roll, as observed on the owner loop."""
+        if self._voice.ever_ready:
+            return None
+        if self._voice.exhausted:
+            return self._failure
+        for feed in self._feeds:
+            if not feed.session.ready and (failure := feed.session.failure) in PERMANENT_FAILURES:
+                return failure
+        return None
+
     def ready_now(self) -> bool:
         """Whether frames have become readable. Only ever changes from False to True."""
         return self._voice.ever_ready
@@ -941,6 +959,10 @@ class GeneratedStream:
             if voice.silent:
                 return b""
             frame = self._next_frame(voice)
+            if frame:
+                voice.recovering = False
+            elif voice.audible is None and voice.ever_ready and not voice.exhausted:
+                voice.recovering = True
             if not frame or voice.fade_out_left is None:
                 return frame
             voice.fade_out_left -= 1

@@ -45,9 +45,8 @@ interaction's age, never its token.
 
 `/settings` shows or changes a server's persisted settings. Reading them never waits,
 and a change is written off the event loop before anything takes effect. Volume is a
-linear gain of at most 1.0 that disnake's `PCMVolumeTransformer` applies to each frame
-after the callback's copy, so changing it reaches current audio at the next frame and
-can't clip.
+linear gain of at most 1.0. StationOutput applies it as each PCM frame leaves the
+callback and reserves the transformed bytes until the voice reader releases them.
 
 The change cooldown spans `/play`, `/freestyle` and `/skip` and is checked before interpretation or
 selection. Each accepted request holds its own claim. It gives that claim back when it
@@ -72,6 +71,7 @@ import os
 import signal
 import threading
 import time
+import weakref
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -127,6 +127,7 @@ from sobafm.pcm import (
     PcmBank,
     PcmBankPool,
     PcmCapacityError,
+    VoiceFrameCredit,
 )
 from sobafm.settings import (
     MAX_COOLDOWN_SECONDS,
@@ -457,6 +458,18 @@ class StationSource(disnake.AudioSource):
         finally:
             self._lock.release()
 
+    def wait_for_credit(self) -> bytes:
+        """Emit shared silence while waiting, or EOF when this player has gone idle."""
+        if not self._lock.acquire(blocking=False):
+            return SILENCE
+        try:
+            if self._pending is not None or self._current is not None:
+                return SILENCE
+            self._idle = True
+            return b""
+        finally:
+            self._lock.release()
+
     def _switch(self, pending: PlayingTrack) -> bytes | None:
         """Emit the pending track's first frame, making it current; call under the lock."""
         frame = self._read_track(pending)
@@ -506,6 +519,15 @@ class StationSource(disnake.AudioSource):
         if self._outgoing is not None:
             self._report("retired", self._outgoing)
             self._outgoing = None
+
+    def recovering(self, heard: GeneratedAudio) -> bool:
+        with self._lock:
+            current = self._current
+            return (
+                isinstance(current, GeneratedTrack)
+                and current.audio is heard
+                and current.stream.recovering
+            )
 
     def fading_from(self, heard: GeneratedAudio) -> GeneratedAudio | None:
         with self._lock:
@@ -588,6 +610,41 @@ class StationSource(disnake.AudioSource):
         """Ownership stays with the adapter, which releases banks on the event loop."""
 
 
+class _Reader(threading.local):
+    credit: weakref.ReferenceType[VoiceFrameCredit] | None = None
+
+
+class StationOutput(disnake.PCMVolumeTransformer[StationSource]):
+    """Apply gain with bounded scratch, including outputs still held by a voice thread."""
+
+    def __init__(self, source: StationSource, volume: float, pool: PcmBankPool) -> None:
+        super().__init__(source, volume)
+        self._pool = pool
+        self._reader = _Reader()
+
+    def read(self) -> bytes:
+        ref = self._reader.credit
+        credit = None if ref is None else ref()
+        if credit is None:
+            credit = self._pool.claim_voice_reader()
+            if credit is None:
+                return self.original.wait_for_credit()
+            self._reader.credit = weakref.ref(credit)
+        if not credit.available:
+            return self.original.wait_for_credit()
+        frame = self.original.read()
+        if not frame or frame is SILENCE:
+            return frame
+        return credit.handoff(audioop.mul(frame, SAMPLE_BYTES, self.volume))
+
+
+@dataclass(eq=False)
+class GeneratedDuration:
+    timer: asyncio.Task[None]
+    # The callback can already have detached this track while its report is queued.
+    track: GeneratedTrack | None = None
+
+
 @dataclass(eq=False)
 class Grace:
     """A listener grace period armed for ``program``; its timer task is adapter-owned."""
@@ -629,7 +686,7 @@ class GuildPlayer:
     matching: bool = False
     interpreter_busy: bool = False  # a superseded call still owns its slot until it returns
     interpreting: Program | None = None  # not yet validated; current work carries on
-    durations: dict[Program, asyncio.Task[None]] = field(default_factory=lambda: {})
+    durations: dict[Program, GeneratedDuration] = field(default_factory=lambda: {})
     silenced: int = 0
     continuation: asyncio.Task[None] | None = None
     # The program ``continuation`` serves; a newer desired program gets its own task.
@@ -861,6 +918,7 @@ class Adapter:
         self.retirements: set[asyncio.Task[None]] = set()
         self.debt: list[PcmBank] = []
         self.cleanup_failures = 0
+        self._voice_shutdown_deadline: float | None = None
         self.stopping = asyncio.Event()
         # Continuations waiting for a bank; woken when a retirement or report may have
         # changed capacity, or at shutdown.
@@ -1007,7 +1065,7 @@ class Adapter:
         log.info("voice connected")
         source = StationSource(self._reporter(guild_id), self._clock)
         gain = self._settings.get(guild_id).volume_percent / 100
-        output = disnake.PCMVolumeTransformer(source, gain)
+        output = StationOutput(source, gain, self._pool)
         player = GuildPlayer(guild_id, voice, source, output)
         self.players[guild_id] = player
         return player
@@ -1078,7 +1136,6 @@ class Adapter:
         if isinstance(claim, str):
             return claim
         accepted = False
-        player.interpreting = None
         player.matching = True
         silenced = player.silenced
         try:
@@ -1120,6 +1177,7 @@ class Adapter:
                         "Playback could not start (capacity is busy or voice is unavailable); "
                         "current audio continues. Try again shortly."
                     )
+                player.interpreting = None
                 accepted = True
             return _accepted(chosen)
         finally:
@@ -1153,9 +1211,8 @@ class Adapter:
             program = station.intent(text, deadline=deadline)
             player.interpreting = program
             player.interpreter_busy = True
-            player.durations[program] = self._own(
-                asyncio.create_task(self._expire_duration(player, program, deadline))
-            )
+            timer = self._own(asyncio.create_task(self._expire_duration(player, program, deadline)))
+            player.durations[program] = GeneratedDuration(timer)
             self._review_listeners(player)
         accepted = False
         try:
@@ -1213,8 +1270,14 @@ class Adapter:
     def _end_generated(self, player: GuildPlayer, program: Program, reason: EndReason) -> None:
         if player.interpreting is program:
             player.interpreting = None
-        for track in player.source.remove_program(program):
-            self._retire(track)
+        removed = player.source.remove_program(program)
+        duration = player.durations.get(program)
+        if duration is not None and (track := duration.track) is not None and not track.frames:
+            if track.stream.startup_failure is not None:
+                reason = self._generated_end(track)
+            self._give_back(player, track.claim)
+        for detached in removed:
+            self._retire(detached)
         player.station.end_generated(program, reason)
 
     def _displace(self, player: GuildPlayer) -> asyncio.Task[None] | None:
@@ -1296,8 +1359,10 @@ class Adapter:
             return False
         if isinstance(audio, GeneratedAudio):
             stream = self._generated_stream(audio.plan)
-            stream.start(bank)
             track: PlayingTrack = GeneratedTrack(audio, stream, claim=player.waiting_claim)
+            player.durations[audio.program].track = track
+            stream.start(bank)
+            self._own(asyncio.create_task(self._watch_preroll(player, track)))
         else:
             task = asyncio.create_task(self._produce(audio.recording, bank))
             track = Track(audio, bank, task, cut=cut, claim=player.waiting_claim)
@@ -1624,9 +1689,7 @@ class Adapter:
             if self.stopping.is_set():
                 return SHUTTING_DOWN
             heard = station.heard
-            if player.interpreting is not None or (
-                station.desired is not None and station.desired.deadline is not None
-            ):
+            if station.desired is not None and station.desired.deadline is not None:
                 return "Skip is available only for a catalog program."
             if heard is None or station.desired != heard.program:
                 return "Nothing from the current program is audible to skip."
@@ -1704,8 +1767,8 @@ class Adapter:
     ) -> set[asyncio.Task[None]]:
         """End the program, remove all audio from the callback and start retirements."""
         self._cancel_grace(player)
-        for timer in player.durations.values():
-            timer.cancel()
+        for duration in player.durations.values():
+            duration.timer.cancel()
         player.durations.clear()
         self._cancel_refill(player)
         player.refill_budget = None
@@ -2027,15 +2090,15 @@ class Adapter:
         """Arm the grace period for the desired program when no listener remains, or
         cancel it when a listener is present, the program ended or voice is gone."""
         program = player.station.desired or player.interpreting
-        for timed, timer in list(player.durations.items()):
+        for timed, duration in list(player.durations.items()):
             if (
                 timed is not player.interpreting
                 and timed is not player.station.desired
                 and not player.source.owns(timed)
             ):
                 del player.durations[timed]
-                if timer is not asyncio.current_task():
-                    timer.cancel()
+                if duration.timer is not asyncio.current_task():
+                    duration.timer.cancel()
         if (
             program is None
             or self.stopping.is_set()
@@ -2102,7 +2165,10 @@ class Adapter:
                 status += " The program's next recording is preparing and is not audible yet."
         elif isinstance(heard, GeneratedAudio):
             title = escaped_text(heard.plan.title)
-            status = f"Now heard: {title} (generated). {self._remaining(heard.program)}"
+            if player is not None and player.source.recovering(heard):
+                status = f"Generated music is recovering: {title}. {self._remaining(heard.program)}"
+            else:
+                status = f"Now heard: {title} (generated). {self._remaining(heard.program)}"
             if player is not None and (outgoing := player.source.fading_from(heard)) is not None:
                 status += f" Fading from {escaped_text(outgoing.plan.title)}."
         else:
@@ -2177,7 +2243,8 @@ class Adapter:
                     player.attempts = 0
         elif station is not None and kind == "failed":
             if isinstance(track, GeneratedTrack):
-                station.end_generated(track.audio.program, self._generated_end(track))
+                if station.switching is track.audio:
+                    station.end_generated(track.audio.program, self._generated_end(track))
             else:
                 station.switch_failed(track.audio)
             assert player is not None
@@ -2204,15 +2271,23 @@ class Adapter:
         else:
             self._resume(player)
 
+    async def _watch_preroll(self, player: GuildPlayer, track: GeneratedTrack) -> None:
+        if await track.stream.wait_ready() or player.station.switching is not track.audio:
+            return
+        player.source.remove_program(track.audio.program)
+        self._settle(player.guild_id, "failed", track)
+
     def _generated_end(self, track: GeneratedTrack) -> EndReason:
         deadline = track.audio.program.deadline
-        if deadline is not None and self._clock() >= deadline:
+        failure = track.stream.startup_failure
+        if failure is None and deadline is not None and self._clock() >= deadline:
             return EndReason.DURATION
-        if track.stream.failure == "capacity":
+        failure = failure or track.stream.failure
+        if failure == "capacity":
             return EndReason.CAPACITY
-        if track.stream.failure == "rejected":
+        if failure == "rejected":
             return EndReason.GENERATION_REJECTED
-        if track.stream.failure == "filtered":
+        if failure == "filtered":
             return EndReason.FILTERED
         return EndReason.GENERATION_FAILED
 
@@ -2290,10 +2365,12 @@ class Adapter:
     async def shutdown(self) -> bool:
         """Stop and disconnect every server, join all owners and report full release.
 
-        Success requires no retained bank, no lease still charged to the pool and no
-        failed cleanup verdict. The remembered channels stay, so the next start rejoins them.
+        Success requires all banks and voice output credits released and no missed
+        producer cleanup deadline. The remembered channels stay, so the next start rejoins them.
         """
         self.stopping.set()
+        if self._voice_shutdown_deadline is None:
+            self._voice_shutdown_deadline = time.monotonic() + CLEANUP_SECONDS
         if self._rejoins is not None:
             # A connect still under way leaves its client registered; closing the bot ends it.
             self._rejoins.cancel()
@@ -2314,11 +2391,20 @@ class Adapter:
             log.error("%d PCM bank lease(s) remain at shutdown", self._pool.leased)
         if self.cleanup_failures:
             log.error("%d cleanup deadline(s) were missed", self.cleanup_failures)
+        while self._pool.voice_readers:
+            remaining = self._voice_shutdown_deadline - time.monotonic()
+            if remaining <= 0:
+                log.error(
+                    "voice output still held at shutdown: readers=%d", self._pool.voice_readers
+                )
+                break
+            await asyncio.sleep(min(FRAME_MILLISECONDS / 1000, remaining))
         released = (
             not self.debt
             and not self.generated_debt
             and not self._pool.leased
             and not self.cleanup_failures
+            and not self._pool.voice_readers
         )
         log.info(
             "shutdown: released=%s leases_held=%d cleanup_failures=%d",

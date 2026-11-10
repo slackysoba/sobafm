@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from functools import partial
+from types import SimpleNamespace
+from typing import cast
 
+import disnake
 import pytest
 
 from sobafm import discord_adapter
 from sobafm.credits import escaped_text
 from sobafm.discord_adapter import GeneratedTrack, StationSource, create_bot
+from sobafm.gemini_match import GeminiMatcher
 from sobafm.lyria import (
     CROSSFADE_FRAMES,
     FADE_OUT_FRAMES,
     PLAY_MESSAGE,
     GeneratedStream,
+    LyriaSession,
 )
 from sobafm.station import EndReason
 from tests.test_discord_adapter import (
@@ -23,6 +29,8 @@ from tests.test_discord_adapter import (
     NOT_JOINED,
     NOT_LISTENING,
     SERVER_ONLY,
+    FakeChannel,
+    FakeGuild,
     Harness,
     harness,
     inter,
@@ -34,6 +42,7 @@ from tests.test_discord_adapter import (
     run as command,
 )
 from tests.test_freestyle_plan import (
+    KEY,
     FakeTransport,
     HeldTransport,
     error_body,
@@ -41,7 +50,9 @@ from tests.test_freestyle_plan import (
     interpreter,
     output,
 )
+from tests.test_gemini_match import plan as catalog_plan
 from tests.test_lyria import (
+    PRE_ROLL_FRAMES,
     FakeLyria,
     ManualTime,
     Peer,
@@ -486,5 +497,302 @@ def test_full_pool_refuses_before_starting_voice(monkeypatch: pytest.MonkeyPatch
             assert await h.adapter.shutdown()
             assert not playing and "capacity" in reply
             assert source.read() == b"" and not peer.requests
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["refused", "failed", "capacity"])
+def test_unsuccessful_catalog_match_preserves_generation(
+    outcome: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        async with FakeLyria(music(1000)) as peer:
+            connect_loopback(monkeypatch, peer)
+            h = harness()
+            held = HeldTransport(interaction(output()))
+            h.adapter.interpreter = interpreter(held)
+            source = await h.join()
+            pending = asyncio.create_task(generate(h))
+            await until(lambda: bool(held.calls))
+            catalog = FakeTransport(
+                interaction(
+                    catalog_plan(outcome="refuse")
+                    if outcome == "refused"
+                    else catalog_plan((0, "close"))
+                ),
+                status=503 if outcome == "failed" else 200,
+            )
+            h.adapter.matcher = GeminiMatcher((recording("a"),), KEY, transport=catalog)
+            banks = []
+            if outcome == "capacity":
+                banks = [h.pool.acquire(), h.pool.acquire()]
+            assert "accepted" not in (await h.play())[0]
+            assert len(catalog.calls) == 1
+            for bank in banks:
+                assert bank.release()
+            held.release.set()
+            assert "Preparing" in await pending
+            assert await pending_stream(source).wait_ready()
+            assert sample_of(source.read()) == 1000
+            assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def test_pending_direction_preserves_catalog_skip() -> None:
+    async def scenario() -> None:
+        h = harness(recordings=(recording("a"), recording("b")))
+        held = HeldTransport(interaction('{"outcome":"refuse"}'))
+        h.adapter.interpreter = interpreter(held)
+        source = await h.join()
+        await h.play()
+        await settle()
+        source.read()
+        await settle()
+        pending = asyncio.create_task(generate(h))
+        await until(lambda: bool(held.calls))
+        reply = (await command(h.adapter.skip, inter(h.room))).texts()[0] or ""
+        held.release.set()
+        assert "declined" in await pending
+        assert reply.startswith("Skipping")
+        source.read()
+        await settle()
+        assert "Song b" in ((await command(h.adapter.now, inter(None))).texts()[1] or "")
+        assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def test_unread_refusal_settles_before_cutoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        async with FakeLyria(Refuse(403)) as peer:
+            connect_loopback(monkeypatch, peer)
+            h = harness()
+            settings_of(h).current = settings_of(h).current.changed(
+                cooldown_seconds=600, generated_minutes=5
+            )
+            h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+            source = await h.join()
+            await generate(h)
+            stream = pending_stream(source)
+            assert not await stream.wait_ready()
+            station = h.adapter.players[1].station
+            await until(lambda: station.ended is EndReason.GENERATION_REJECTED)
+            h.clock.now += 300
+            h.clock.expire()
+            await settle()
+            assert station.ended is EndReason.GENERATION_REJECTED
+            assert source.read() == b"" and station.desired is None
+            assert "accepted" in (await h.play())[0]
+            assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("order", ["timer_only", "callback_first", "report_after_timer"])
+def test_refusal_at_cutoff_preserves_reason_and_own_claim(
+    monkeypatch: pytest.MonkeyPatch, order: str
+) -> None:
+    async def scenario() -> None:
+        failed = asyncio.Event()
+        release = asyncio.Event()
+        wait_prepared = LyriaSession.wait_prepared
+
+        async def hold_observation(session: LyriaSession) -> None:
+            await wait_prepared(session)
+            assert session.failure == "rejected"
+            failed.set()
+            await release.wait()
+
+        monkeypatch.setattr(LyriaSession, "wait_prepared", hold_observation)
+        async with FakeLyria(Refuse(403)) as peer:
+            connect_loopback(monkeypatch, peer)
+            h = harness()
+            settings_of(h).current = settings_of(h).current.changed(
+                cooldown_seconds=600, generated_minutes=5
+            )
+            h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+            source = await h.join()
+            await generate(h)
+            await failed.wait()
+            station = h.adapter.players[1].station
+            assert station.switching is not None and h.clock.pending == [300]
+            h.clock.now += 300
+            if order == "callback_first":
+                assert source.read() == b""
+            h.clock.expire()
+            if order == "report_after_timer":
+                assert source.read() == b""  # detached before the timer, report queued behind it
+            await until(lambda: station.ended is not None)
+            assert station.ended is EndReason.GENERATION_REJECTED
+            assert "accepted" in (await h.play())[0]
+            release.set()
+            await settle()
+            assert "cooldown" in (await h.play())[0].lower()
+            assert len(peer.requests) == 1
+            assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def test_now_recovers_only_on_emitted_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        allow_pcm = asyncio.Event()
+
+        async def first(peer: Peer) -> None:
+            await music(1000)(peer)
+            await peer.websocket.close(code=1000)
+
+        async def next_feed(peer: Peer) -> None:
+            await allow_pcm.wait()
+            await music(2000)(peer)
+
+        async with FakeLyria(first, next_feed) as peer:
+            connect_loopback(monkeypatch, peer)
+            h = harness()
+            h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+            source = await h.join()
+            await generate(h)
+            stream = pending_stream(source)
+            voice_output = h.adapter.players[1].output
+            assert await stream.wait_ready()
+            for _ in range(PRE_ROLL_FRAMES):
+                assert sample_of(voice_output.read()) == 500
+            await until(lambda: len(peer.requests) == 2)
+            for _ in range(52):
+                assert voice_output.read() is discord_adapter.SILENCE
+            assert h.pool.voice_readers == 0
+            await settle()
+
+            async def status() -> str:
+                return (await command(h.adapter.now, inter(None))).texts()[0] or ""
+
+            gap = await status()
+            assert "recovering" in gap and "Now heard" not in gap and "remaining" in gap
+            allow_pcm.set()
+            await until(lambda: not stream.crossfading and pending_recovery_ready(stream))
+            assert "recovering" in await status()
+            assert sample_of(voice_output.read()) == 1000
+            assert "Now heard" in await status()
+            assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def pending_recovery_ready(stream: GeneratedStream) -> bool:
+    voice = stream._voice  # pyright: ignore[reportPrivateUsage]
+    return voice.audible is not None and voice.audible.bank.ready_now()
+
+
+def test_volume_output_reserves_through_frame_handoff() -> None:
+    async def scenario() -> None:
+        h = harness()
+        previous: list[bytes] = []
+        for _ in range(2):
+            await h.join()
+            await h.play()
+            await settle()
+            output = h.adapter.players[1].output
+            previous.append(output.read())
+            in_handoff = output.read()
+            assert in_handoff is not discord_adapter.SILENCE
+            assert output.read() is discord_adapter.SILENCE
+            del in_handoff
+            await command(h.adapter.leave, inter(h.room, manager=True))
+            assert h.pool.leased == 0
+        assert all(frame != discord_adapter.SILENCE for frame in previous)
+        await h.join()
+        await h.play()
+        await settle()
+        player = h.adapter.players[1]
+        assert player.output.read() is discord_adapter.SILENCE
+        await settle()
+        assert player.station.heard is None
+        previous.pop()  # actual release by one sink admits this reader's first frame
+        assert player.output.read() != discord_adapter.SILENCE
+        previous.clear()
+        assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def test_shutdown_reports_voice_output_held_after_bank_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        h = harness()
+        await h.join()
+        await h.play()
+        await settle()
+        frame = h.adapter.players[1].output.read()
+        await command(h.adapter.leave, inter(h.room, manager=True))
+        assert h.pool.leased == 0 and h.pool.voice_readers == 1
+        # All producers have settled. Advance only the wait for a retained voice frame.
+        monkeypatch.setattr(discord_adapter, "CLEANUP_SECONDS", 0)
+        assert not await h.adapter.shutdown()
+        del frame
+        assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+def test_three_real_voice_readers_in_startup_backoff_share_silence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        clock = ManualTime()
+        release = threading.Event()
+        outputs: list[bytes] = []
+        threads: list[disnake.player.AudioPlayer] = []
+        async with FakeLyria(Refuse(429), Refuse(429), Refuse(429)) as peer:
+            monkeypatch.setattr(
+                discord_adapter,
+                "GeneratedStream",
+                partial(GeneratedStream, endpoint=peer.url, clock=clock.clock, sleep=clock.sleep),
+            )
+            h = harness()
+            h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+
+            # Replace the outbound speaking and packet edges only. The pinned disnake
+            # AudioPlayer reads the production volume output and holds it through send.
+            def mute_speaking(*args: object) -> None:
+                pass
+
+            monkeypatch.setattr(disnake.player.AudioPlayer, "_speak", mute_speaking)
+
+            def hold_packet(data: bytes, *, encode: bool) -> None:
+                assert encode
+                outputs.append(data)
+                release.wait()
+
+            connected = threading.Event()
+            connected.set()
+            sink = cast(
+                disnake.VoiceClient,
+                SimpleNamespace(_connected=connected, send_audio_packet=hold_packet),
+            )
+            try:
+                for guild in range(1, 4):
+                    room = FakeChannel(str(guild))
+                    join = inter(room, manager=True)
+                    join.guild = FakeGuild(guild)
+                    await command(h.adapter.join, join)
+                    listener = inter(room)
+                    listener.guild = join.guild
+                    await command(lambda i: h.adapter.freestyle(i, "piano"), listener)
+                    await until(lambda: h.pool.leased == 0)
+                    thread = disnake.player.AudioPlayer(h.adapter.players[guild].output, sink)
+                    threads.append(thread)
+                    thread.start()
+                await until(lambda: len(outputs) == 3)
+                assert h.pool.leased == 0 and len(peer.requests) == 3
+                assert all(frame is discord_adapter.SILENCE for frame in outputs)
+            finally:
+                for thread in threads:
+                    thread.stop()
+                release.set()
+                for thread in threads:
+                    await asyncio.to_thread(thread.join)
+                assert await h.adapter.shutdown()
 
     run(scenario())

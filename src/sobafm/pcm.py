@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import threading
 import time
+import weakref
+from collections import deque
 from collections.abc import Buffer, Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -79,6 +81,40 @@ class PcmFacts:
     buffered_bytes: int
 
 
+class VoiceFrameCredit:
+    """One voice reader's scratch, including the previous frame during handoff."""
+
+    def __init__(self, refund: Callable[[], None]) -> None:
+        self._slots = deque([None, None])
+        weakref.finalize(self, refund)
+
+    @property
+    def available(self) -> bool:
+        return bool(self._slots)
+
+    def handoff(self, frame: bytes) -> bytes:
+        """Keep credit on the bytes actually returned, even after the player stops."""
+        self._slots.pop()
+        try:
+            output = _VoiceFrame(frame)
+            output.credit = self
+        except BaseException:
+            self._slots.append(None)
+            raise
+        return output
+
+    def returned(self) -> None:
+        self._slots.append(None)
+
+
+class _VoiceFrame(bytes):
+    credit: VoiceFrameCredit | None = None
+
+    def __del__(self) -> None:
+        if self.credit is not None:
+            self.credit.returned()
+
+
 class PcmBankPool:
     """The process-wide owner of the two PCM bank leases.
 
@@ -96,6 +132,27 @@ class PcmBankPool:
         self._clock = clock
         self._lock = threading.Lock()
         self._leased = 0
+        # Independent of the bank leases: a retry can return a bank while
+        # disnake still holds the frame passed to its previous send.
+        self._voice_slots = deque([None] * BANK_COUNT)
+
+    @property
+    def voice_readers(self) -> int:
+        return BANK_COUNT - len(self._voice_slots)
+
+    def claim_voice_reader(self) -> VoiceFrameCredit | None:
+        try:
+            self._voice_slots.pop()  # atomic; no blocking lock in the callback
+        except IndexError:
+            return None
+        try:
+            return VoiceFrameCredit(self._return_voice_reader)
+        except BaseException:
+            self._return_voice_reader()
+            raise
+
+    def _return_voice_reader(self) -> None:
+        self._voice_slots.append(None)
 
     @property
     def leased(self) -> int:
