@@ -71,7 +71,7 @@ from tests.test_discord_adapter import (
 
 SNAPSHOT = Path(__file__).resolve().parents[1] / "evaluations/catalog/fma-2026-11"
 NOTHING_READY = "The next recording could not be prepared; the current recording continues."
-GEMINI_ENDED = "Gemini did not supply more recordings"
+GEMINI_ENDED = "Gemini did not supply more recordings within the retry limit"
 
 
 def keys(*identifiers: str) -> frozenset[RecordingKey]:

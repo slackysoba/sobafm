@@ -30,7 +30,17 @@ EXIT_DATABASE = 4
 EXIT_CRASH_DUMPS = 5
 
 
+def _webhook_warning(record: logging.LogRecord) -> bool:
+    # disnake 2.12.2 passes Discord's unvalidated retry_after to %.2f. Even a
+    # formatter error prints its arguments to stderr, including the webhook ID.
+    if record.msg == "Webhook ID %s is rate limited. Retrying in %.2f seconds":
+        record.msg = "Discord rate limited an interaction response."
+        record.args = ()
+    return True
+
+
 def configure_logging() -> None:
+    logging.getLogger("disnake.webhook.async_").addFilter(_webhook_warning)
     logging.basicConfig(
         level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(name)s %(message)s"
     )

@@ -32,7 +32,6 @@ from sobafm.catalog import (
 )
 from sobafm.discord_adapter import (
     MATCH_BUSY,
-    MATCH_UNAVAILABLE,
     NOT_A_MUSIC_REQUEST,
     NOT_JOINED,
     NOT_LISTENING,
@@ -658,7 +657,11 @@ async def test_requests_that_produce_no_plan_change_nothing() -> None:
     fake = matcher_of(h)
     for outcome, reply in (
         (Refused(), NOT_A_MUSIC_REQUEST),
-        (MatchFailed("timeout"), MATCH_UNAVAILABLE),
+        (
+            MatchFailed("timeout"),
+            "The interpretation request timed out. "
+            "This request did not change playback. Try again shortly.",
+        ),
         (MatchFailed(NO_RECORDINGS), NOTHING_ADMITTED),
     ):
         fake.outcome = outcome
@@ -680,7 +683,10 @@ async def test_a_failed_request_keeps_the_audio_being_heard() -> None:
     heard = player.station.heard
     assert heard is not None
     matcher_of(h).outcome = MatchFailed("http_503")
-    assert await h.play("anything") == [MATCH_UNAVAILABLE]
+    assert await h.play("anything") == [
+        "The interpretation service returned a server error. "
+        "This request did not change playback. Try again later."
+    ]
     await settle()
     assert player.station.heard is heard and player.station.desired == heard.program
 
@@ -1900,10 +1906,10 @@ def test_a_stuck_retirement_without_a_free_bank_ends_the_program_at_the_bound(
         ]
         await asyncio.sleep(0.3)  # past the capacity bound
         await until(lambda: station.desired is None)
-        assert station.ended is discord_adapter.EndReason.UNAVAILABLE
+        assert station.ended is discord_adapter.EndReason.CAPACITY_WAIT
         assert await now_texts(h) == [
-            "Nothing is audible. The last program ended: the next recording could not be "
-            "prepared. Use `/play` to start a new one."
+            "Nothing is audible. The last program ended: no audio bank became available in time. "
+            "Try again shortly. Use `/play` to start a new one."
         ]
         assert tagged.started == ["a", "b"] and h.adapter.players[1].attempts == 0
         assert h.pool.leased == 2 and h.adapter.cleanup_failures == 2
@@ -2041,10 +2047,10 @@ def test_capacity_that_never_frees_ends_the_program_without_a_hot_loop(
             await asyncio.sleep(0.01)  # the test's own clock, not the adapter's
         waited = time.monotonic() - started
         assert 0.2 <= waited < 2 and checks[0] < 20  # woken by events and the bound only
-        assert station.ended is discord_adapter.EndReason.UNAVAILABLE
+        assert station.ended is discord_adapter.EndReason.CAPACITY_WAIT
         assert tagged.started == ["a"] and h.adapter.players[1].attempts == 0
         (status,) = await now_texts(h)
-        assert "the next recording could not be prepared" in status
+        assert "no audio bank became available in time" in status
 
         assert blocker.release()
         tagged.holding["a"].set()

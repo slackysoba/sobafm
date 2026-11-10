@@ -122,6 +122,9 @@ FADE_OUT_FRAMES = 100  # two seconds
 type LyriaFailure = Literal[
     "capacity",
     "connect",
+    "rate_limited",
+    "service_error",
+    "access_denied",
     "rejected",
     "prepare_timeout",
     "stalled",
@@ -135,7 +138,7 @@ type LyriaFailure = Literal[
 type CleanupVerdict = Literal["clean", "expired"]
 
 # The same request would be refused again, so these end recovery at once.
-PERMANENT_FAILURES: frozenset[LyriaFailure] = frozenset({"rejected", "filtered"})
+PERMANENT_FAILURES: frozenset[LyriaFailure] = frozenset({"rejected", "filtered", "access_denied"})
 
 type Clock = Callable[[], float]
 type Sleep = Callable[[float], Awaitable[None]]
@@ -482,6 +485,18 @@ async def _connect(
     return _MusicSocket(session, websocket, protocol)
 
 
+def _handshake_failure(status: int) -> LyriaFailure:
+    if status in (401, 403):
+        return "access_denied"
+    if status == 429:
+        return "rate_limited"
+    if 500 <= status < 600:
+        return "service_error"
+    if 300 <= status < 500 and status != 408:
+        return "rejected"
+    return "connect"
+
+
 class _SessionEnded(Exception):
     """The pump should stop; the reason is already recorded."""
 
@@ -716,8 +731,7 @@ class LyriaSession:
         except asyncio.CancelledError:
             pass  # `cancel` or the watchdog recorded why
         except aiohttp.WSServerHandshakeError as exc:
-            permanent = 300 <= exc.status < 500 and exc.status not in (408, 429)
-            self._stop("rejected" if permanent else "connect")
+            self._stop(_handshake_failure(exc.status))
         except aiohttp.ClientError, OSError:
             self._stop("connect" if connection is None else "truncated")
         except Exception as exc:
@@ -801,6 +815,8 @@ class LyriaSession:
         self._close_code = code
         if code == aiohttp.WSCloseCode.POLICY_VIOLATION:
             self._stop("rejected")
+        elif code == aiohttp.WSCloseCode.INTERNAL_ERROR:
+            self._stop("service_error")
         elif code in (aiohttp.WSCloseCode.OK, aiohttp.WSCloseCode.GOING_AWAY) and self.ready:
             self._stop(None, transfer_complete=True)
         else:

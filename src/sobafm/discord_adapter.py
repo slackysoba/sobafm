@@ -68,6 +68,7 @@ import contextlib
 import logging
 import math
 import os
+import re
 import signal
 import threading
 import time
@@ -125,6 +126,7 @@ from sobafm.lyria import (
     Prompt,
     Scale,
 )
+from sobafm.media import MediaMissingError
 from sobafm.pcm import (
     BANK_COUNT,
     FRAME_BYTES,
@@ -212,11 +214,9 @@ NOT_LISTENING = "Join SobaFM's voice channel to use this command."
 SERVER_ONLY = "SobaFM commands work in servers, not direct messages."
 SHUTTING_DOWN = "SobaFM is shutting down."
 MATCH_BUSY = "SobaFM is still matching an earlier request. Try again in a moment."
-MATCH_UNAVAILABLE = (
-    "SobaFM couldn't interpret that request just now; current audio continues. Try again shortly."
-)
-NOT_A_MUSIC_REQUEST = "That doesn't look like a music request, so current audio continues."
-NOTHING_ADMITTED = "The catalog has no recordings ready to play."
+INTERPRETER_DECLINED = "The interpreter declined this request. Try another musical description."
+NOT_A_MUSIC_REQUEST = "Try describing the music you'd like to hear. Nothing changed."
+NOTHING_ADMITTED = "The catalog has no recordings ready to play. Ask the operator to check it."
 STOPPED_WHILE_MATCHING = "Playback stopped while your request was being matched; nothing started."
 FIT_WORDING = {
     Fit.EXACT: "This is the recording you asked for",
@@ -246,19 +246,41 @@ NOT_CONNECTED = "SobaFM is not in a voice channel."
 GENERATED_ENDINGS = (
     EndReason.FILTERED,
     EndReason.GENERATION_REJECTED,
+    EndReason.GENERATION_ACCESS_DENIED,
+    EndReason.GENERATION_RATE_LIMITED,
+    EndReason.GENERATION_SERVICE_ERROR,
     EndReason.CAPACITY,
     EndReason.GENERATION_FAILED,
     EndReason.DURATION,
 )
 ENDED = {
     EndReason.DURATION: "the generated duration elapsed",
-    EndReason.FILTERED: "the music provider filtered the direction",
-    EndReason.GENERATION_REJECTED: "the music provider declined access to generation",
-    EndReason.CAPACITY: "both audio banks were in use",
-    EndReason.GENERATION_FAILED: "the music provider could not continue",
+    EndReason.FILTERED: "the music provider filtered the direction. Try a different description",
+    EndReason.GENERATION_REJECTED: (
+        "the music service declined the session. Ask the operator to check the model and endpoint"
+    ),
+    EndReason.GENERATION_ACCESS_DENIED: (
+        "the music service declined access. Ask the operator to check free-tier model access"
+    ),
+    EndReason.GENERATION_RATE_LIMITED: (
+        "the last generation attempt hit a rate or quota limit. Try again later"
+    ),
+    EndReason.GENERATION_SERVICE_ERROR: (
+        "the music service returned a server error on the last attempt. Try again later"
+    ),
+    EndReason.CAPACITY: "both audio banks were in use. Try again shortly",
+    EndReason.VOICE_START: "the voice player could not start. Check the voice connection",
+    EndReason.MEDIA_MISSING: (
+        "the recording has no media manifest entry. Ask the operator to check the catalog"
+    ),
+    EndReason.RECORDING_START: (
+        "the first recording could not be played. Ask the operator to check the media"
+    ),
+    EndReason.GENERATION_FAILED: "generated audio could not continue. Try again later",
     EndReason.EXHAUSTED: "every recording in the catalog has been played or tried",
-    EndReason.REFILL_FAILED: "Gemini did not supply more recordings",
-    EndReason.UNAVAILABLE: "the next recording could not be prepared",
+    EndReason.REFILL_FAILED: "Gemini did not supply more recordings within the retry limit",
+    EndReason.CAPACITY_WAIT: "no audio bank became available in time. Try again shortly",
+    EndReason.UNAVAILABLE: "the next recording could not be prepared within the retry limit",
     EndReason.NO_LISTENERS: "no listeners remained",
 }
 
@@ -404,7 +426,7 @@ class _Playback:
 class Track(_Playback):
     audio: Audio
     bank: PcmBank
-    task: asyncio.Task[None]
+    task: asyncio.Task[EndReason | None]
 
 
 @dataclass(eq=False)
@@ -957,31 +979,32 @@ class Adapter:
         await inter.response.send_message(text, ephemeral=True, allowed_mentions=NO_MENTIONS)
 
     @staticmethod
-    async def _defer(inter: Inter, command: str) -> bool:
-        """Defer privately; report whether the acknowledgement succeeded.
-
-        Used where the command must take effect even if the acknowledgement fails,
-        whether Discord rejects it or the request does not complete. Cancellation still
-        propagates. A failed interaction gets no follow-up. The log line names the
-        command, the interaction's age from its creation time and Discord's status and
-        code when present, otherwise the exception type; never the token.
-        """
+    async def _deliver(inter: Inter, command: str, stage: str, send: Awaitable[object]) -> bool:
+        """Contain Discord response errors at the send; cancellation still propagates."""
         try:
-            await inter.response.defer(ephemeral=True)
+            await send
         except Exception as exc:
             age = (disnake.utils.utcnow() - inter.created_at).total_seconds()
             if isinstance(exc, disnake.HTTPException):
-                detail = f"status={exc.status} code={exc.code}"
+                # Discord's JSON supplies the code. Render only its documented numeric type.
+                code = exc.code if type(exc.code) is int else 0
+                detail = f"status={exc.status} code={code}"
             else:
                 detail = f"error={type(exc).__name__}"
             log.warning(
-                "interaction acknowledgement failed: command=%s age_seconds=%.3f %s",
+                "interaction %s failed: command=%s age_seconds=%.3f %s",
+                stage,
                 command,
                 age,
                 detail,
             )
             return False
         return True
+
+    async def _defer(self, inter: Inter, command: str) -> bool:
+        return await self._deliver(
+            inter, command, "acknowledgement", inter.response.defer(ephemeral=True)
+        )
 
     def _player(self, inter: Inter) -> GuildPlayer | None:
         player = self.players.get(inter.guild_id or 0)
@@ -1121,19 +1144,25 @@ class Adapter:
         await self._request_command(inter, request, generated=True)
 
     async def _request_command(self, inter: Inter, request: str, *, generated: bool) -> None:
+        command = "freestyle" if generated else "play"
+
+        async def refuse(text: str) -> None:
+            await self._deliver(inter, command, "acknowledgement", self._refuse(inter, text))
+
         if inter.guild is None:
-            return await self._refuse(inter, SERVER_ONLY)
+            return await refuse(SERVER_ONLY)
         if generated and self.interpreter is None:
-            return await self._refuse(inter, "Generated playback is not configured.")
+            return await refuse("Ask the operator to configure generated playback.")
         if not generated and self.matcher is None:
-            return await self._refuse(inter, "Catalog playback is not configured.")
+            return await refuse("Ask the operator to configure catalog playback.")
         if self.stopping.is_set():
-            return await self._refuse(inter, SHUTTING_DOWN)
+            return await refuse(SHUTTING_DOWN)
         if (player := self._player(inter)) is None:
-            return await self._refuse(inter, NOT_JOINED)
+            return await refuse(NOT_JOINED)
         if not self._listening(inter, player):
-            return await self._refuse(inter, NOT_LISTENING)
-        await inter.response.defer(ephemeral=True)
+            return await refuse(NOT_LISTENING)
+        if not await self._defer(inter, command):
+            return
         if player.closing or self.stopping.is_set():
             reply = STOPPED_WHILE_MATCHING
         elif generated:
@@ -1141,8 +1170,13 @@ class Adapter:
         else:
             reply = await self._prepare(player, request)
         self._review_listeners(player)  # e.g. a deafened caller started a program
-        await inter.followup.send(
-            reply, ephemeral=True, suppress_embeds=True, allowed_mentions=NO_MENTIONS
+        await self._deliver(
+            inter,
+            command,
+            "follow-up",
+            inter.followup.send(
+                reply, ephemeral=True, suppress_embeds=True, allowed_mentions=NO_MENTIONS
+            ),
         )
 
     async def _prepare(self, player: GuildPlayer, request: str) -> str:
@@ -1163,7 +1197,12 @@ class Adapter:
             try:
                 plan = await self.matcher.match(text)
             except MatchFailed as exc:
-                return NOTHING_ADMITTED if exc.kind == NO_RECORDINGS else MATCH_UNAVAILABLE
+                if exc.kind == NO_RECORDINGS:
+                    return NOTHING_ADMITTED
+                if exc.blocked:
+                    return INTERPRETER_DECLINED
+                problem, action = _interpretation_failure(exc.kind)
+                return f"{problem} This request did not change playback. {action}"
             finally:
                 player.matching = False
             if isinstance(plan, Refused):
@@ -1193,13 +1232,11 @@ class Adapter:
                 if chosen is None:
                     station.preparation_failed(program)
                     return (
-                        "The matching recordings' credits are incomplete; nothing was substituted."
+                        "The matching recordings' credits are incomplete or cannot be displayed. "
+                        "Ask the operator to check the catalog."
                     )
-                if not await self._start(player):
-                    return (
-                        "Playback could not start (capacity is busy or voice is unavailable); "
-                        "current audio continues. Try again shortly."
-                    )
+                if (failure := await self._start(player)) is not None:
+                    return failure
                 player.interpreting = None
                 accepted = True
             return _accepted(chosen)
@@ -1249,7 +1286,7 @@ class Adapter:
                 if self._clock() >= deadline:
                     return "The generated duration elapsed before the music could start."
                 if isinstance(interpretation, PlanRefused):
-                    return "The interpreter declined this request."
+                    return INTERPRETER_DECLINED
                 plan = interpretation.plan
                 player.interpreting = None
                 if station.ready is not None:
@@ -1259,17 +1296,13 @@ class Adapter:
                 player.skip_requested = False
                 player.waiting_claim = claim
                 station.generated(program, plan)
-                if not await self._start(player):
-                    return (
-                        "Generated playback could not start. Check voice or try again "
-                        "when capacity is free."
-                    )
+                if (failure := await self._start(player)) is not None:
+                    return failure
                 accepted = True
-                fallback = (
-                    " Interpretation failed. Using your request as written, without prior context."
-                    if isinstance(interpretation, PlanFallback)
-                    else ""
-                )
+                fallback = ""
+                if isinstance(interpretation, PlanFallback):
+                    problem, _ = _interpretation_failure(interpretation.failure)
+                    fallback = f" {problem} Using your request as written, without prior context."
                 title = escaped_text(plan.title)
                 return (
                     f"Preparing generated music: {title}.{fallback} Use `/now` to check playback."
@@ -1371,20 +1404,24 @@ class Adapter:
         if player.waiting_claim is claim:
             player.waiting_claim = None
 
-    async def _start(self, player: GuildPlayer, *, cut: bool = True) -> bool:
+    async def _start(
+        self, player: GuildPlayer, *, cut: bool = True, accepted: bool = False
+    ) -> str | None:
         """Claim ready audio, displacing an unheard pending track, and hand it to the player.
 
         ``cut`` audio switches as soon as it is ready; otherwise it follows the
         current track's last frame. The track takes over ``player.waiting_claim`` once
         it is offered; after a failure that claim stays for the caller to settle.
+        Return a listener-safe reason only when the start fails. For a deferred
+        start the command already accepted, also retain that failure for `/now`.
         """
         station = player.station
         if self.stopping.is_set():
-            return False  # shutdown leases nothing new
+            return SHUTTING_DOWN  # shutdown leases nothing new
         retired = self._displace(player) if station.switching is not None else None
         audio = station.claim_ready()
         if audio is None:
-            return True  # a switch report is in flight; it claims ready audio when settled
+            return None  # a switch report is in flight; it claims ready audio when settled
         if retired is not None:
             try:
                 await asyncio.wait({retired}, timeout=SETTLE_SECONDS)
@@ -1393,16 +1430,16 @@ class Adapter:
                 raise
         if self.stopping.is_set() or player.closing:
             station.switch_failed(audio)
-            return False
+            return SHUTTING_DOWN if self.stopping.is_set() else NOT_JOINED
         deadline = audio.program.deadline
         if deadline is not None and self._clock() >= deadline:
             self._end_generated(player, audio.program, EndReason.DURATION)
-            return False
+            return "The generated duration elapsed before the music could start."
         try:
             bank = self._pool.acquire()
         except PcmCapacityError:
-            station.switch_failed(audio)
-            return False
+            station.switch_failed(audio, EndReason.CAPACITY if accepted else None)
+            return "Audio capacity is busy. Any current audio continues. Try again shortly."
         if isinstance(audio, GeneratedAudio):
             stream = self._generated_stream(audio.plan)
             track: PlayingTrack = GeneratedTrack(audio, stream, claim=player.waiting_claim)
@@ -1420,13 +1457,13 @@ class Adapter:
             except Exception as exc:  # e.g. the voice connection dropped meanwhile
                 log.warning("voice player could not start: %s", type(exc).__name__)
                 if player.source.take_pending() is track:
-                    station.switch_failed(audio)
+                    station.switch_failed(audio, EndReason.VOICE_START if accepted else None)
                     self._retire(track)
-                return False
+                return "The voice player could not start. Check the voice connection and try again."
         player.waiting_claim = None
-        return True
+        return None
 
-    async def _produce(self, recording: Recording, bank: PcmBank) -> None:
+    async def _produce(self, recording: Recording, bank: PcmBank) -> EndReason | None:
         try:
             await self._producer.produce(recording, bank)
         except asyncio.CancelledError:
@@ -1434,6 +1471,12 @@ class Adapter:
         except Exception as exc:
             log.warning("audio producer failed: %s", type(exc).__name__)
             bank.cancel()  # the voice callback then reports the failure
+            return (
+                EndReason.MEDIA_MISSING
+                if isinstance(exc, MediaMissingError)
+                else EndReason.RECORDING_START
+            )
+        return None
 
     def _resume(self, player: GuildPlayer) -> None:
         """Keep the desired program going if it has no next track in progress."""
@@ -1502,8 +1545,10 @@ class Adapter:
                             now = time.monotonic()
                             deadline = now + timeout if deadline is None else deadline
                             if now >= deadline:
-                                station.exhausted(program, EndReason.UNAVAILABLE)
-                                log.warning("next track could not be prepared; the program ends")
+                                station.exhausted(program, EndReason.CAPACITY_WAIT)
+                                log.warning(
+                                    "program ended: reason=%s", EndReason.CAPACITY_WAIT.value
+                                )
                                 return
                             timeout = deadline - now
                         waiter = self._capacity_waiter()
@@ -1526,7 +1571,7 @@ class Adapter:
                             station.preparation_failed(program)
                             continue
                         # A `/skip` stays requested until its track is handed to the player.
-                        if await self._start(player, cut=player.skip_requested):
+                        if await self._start(player, cut=player.skip_requested) is None:
                             player.skip_requested = False
                             return
                     # Otherwise the lease or voice failed; the next attempt is bounded above.
@@ -2246,6 +2291,11 @@ class Adapter:
             and station.ended in GENERATED_ENDINGS
         ):
             status += f" The generated request ended: {ENDED[station.ended]}."
+        if station is not None and (failed := station.failed_start) is not None:
+            status += (
+                f" The accepted `{failed.command}` request ended before its first frame: "
+                f"{ENDED[failed.reason]}."
+            )
         if isinstance(heard, Audio):
             await self._catalog_credits(inter, status, heard.credits)
         else:
@@ -2446,7 +2496,12 @@ class Adapter:
             if isinstance(track, GeneratedTrack):
                 station.end_generated(track.audio.program, self._generated_end(track))
             else:
-                station.switch_failed(track.audio)
+                failure = (
+                    track.task.result()
+                    if track.task.done() and not track.task.cancelled()
+                    else None
+                )
+                station.switch_failed(track.audio, failure or EndReason.RECORDING_START)
             assert player is not None
             player.cooldown.release(track.claim)  # no effect once a newer request holds it
         elif (
@@ -2488,6 +2543,12 @@ class Adapter:
             return EndReason.CAPACITY
         if failure == "rejected":
             return EndReason.GENERATION_REJECTED
+        if failure == "access_denied":
+            return EndReason.GENERATION_ACCESS_DENIED
+        if failure == "rate_limited":
+            return EndReason.GENERATION_RATE_LIMITED
+        if failure == "service_error":
+            return EndReason.GENERATION_SERVICE_ERROR
         if failure == "filtered":
             return EndReason.FILTERED
         return EndReason.GENERATION_FAILED
@@ -2512,7 +2573,7 @@ class Adapter:
                 # During a reconnect only a real wakeup can make this start admissible.
                 remaining = deadline - time.monotonic() if player.voice.is_connected() else None
                 if remaining is not None and (self._pool.leased < BANK_COUNT or remaining <= 0):
-                    if not await self._start(player):
+                    if await self._start(player, accepted=True) is not None:
                         self._give_back(player, claim)
                         self._resume(player)
                     self._review_listeners(player)
@@ -2668,6 +2729,32 @@ def refill_wait(attempt: int, seconds_left: float) -> float:
     """
     fits = seconds_left - REFILL_RESERVE_SECONDS
     return max(REFILL_WAIT_SECONDS[0], min(REFILL_WAIT_SECONDS[attempt - 1], fits))
+
+
+def _interpretation_failure(kind: str) -> tuple[str, str]:
+    """Render only observations from the client, never a provider message."""
+    if kind == "http_402":
+        return (
+            "The interpreter requested payment for this call.",
+            "Ask the operator to check the intended free-tier project and keep billing unchanged.",
+        )
+    if kind == "http_404":
+        return (
+            "The interpreter could not find the requested resource.",
+            "Ask the operator to check the configured model and endpoint.",
+        )
+    if kind in ("http_401", "http_403"):
+        return (
+            "The interpreter denied access.",
+            "Ask the operator to check the key and model access.",
+        )
+    if kind == "http_429":
+        return "The interpreter hit a rate or quota limit.", "Try again later."
+    if re.fullmatch(r"http_5[0-9]{2}", kind):
+        return "The interpretation service returned a server error.", "Try again later."
+    if kind in ("timeout", "http_408"):
+        return "The interpretation request timed out.", "Try again shortly."
+    return "SobaFM could not get a usable interpretation.", "Try again shortly."
 
 
 def _accepted(choice: Ranked) -> str:

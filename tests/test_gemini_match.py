@@ -19,6 +19,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 
+from sobafm import gemini_interactions
 from sobafm.catalog import (
     MAX_CATALOG_BYTES,
     MAX_DETAILS,
@@ -36,6 +37,7 @@ from sobafm.gemini_interactions import (
     MAX_RESPONSE_BYTES,
     MODEL,
     AiohttpTransport,
+    GeminiClient,
     output_text,
 )
 from sobafm.gemini_match import (
@@ -616,6 +618,60 @@ def test_the_real_transport_bounds_the_response() -> None:
             assert error.value.kind == "response_too_large"
         finally:
             await transport.close()
+            await runner.cleanup()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", [402, 404, 408, 429])
+def test_known_status_survives_oversized_error_body(status: int) -> None:
+    async def scenario() -> None:
+        async def handler(_: web.Request) -> web.Response:
+            return web.Response(status=status, body=b"x" * (MAX_RESPONSE_BYTES + 1))
+
+        runner, url = await _served(handler)
+        transport = AiohttpTransport()
+        try:
+            assert await transport.post(url, {}, b"") == (status, b"")
+        finally:
+            await transport.close()
+            await runner.cleanup()
+
+    asyncio.run(scenario())
+
+
+def test_408_headers_release_the_slots_while_bodies_stall(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        release = asyncio.Event()
+        all_stalled = asyncio.Event()
+        calls = 0
+
+        async def handler(request: web.Request) -> web.StreamResponse:
+            nonlocal calls
+            calls += 1
+            if calls > MAX_CONCURRENT_CALLS:
+                return web.Response(body=interaction("ok"))
+            response = web.StreamResponse(status=408)
+            await response.prepare(request)
+            if calls == MAX_CONCURRENT_CALLS:
+                all_stalled.set()
+            await release.wait()
+            return response
+
+        runner, url = await _served(handler)
+        monkeypatch.setattr(gemini_interactions, "ENDPOINT", url)
+        client = GeminiClient(KEY)
+        first = [asyncio.create_task(client.interact(bytes)) for _ in range(MAX_CONCURRENT_CALLS)]
+        try:
+            await asyncio.wait_for(all_stalled.wait(), 2)
+            assert await asyncio.wait_for(client.interact(bytes), 2) == "ok"
+            for call in first:
+                with pytest.raises(MatchFailed, match="^http_408$"):
+                    await call
+        finally:
+            release.set()
+            await asyncio.gather(*first, return_exceptions=True)
+            await client.close()
             await runner.cleanup()
 
     asyncio.run(scenario())
