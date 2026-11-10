@@ -105,7 +105,7 @@ def _kind(error: sqlite3.Error) -> str:
 
 @dataclass(frozen=True, slots=True)
 class ServerSettings:
-    """One server's validated settings; generated duration is unused until `/freestyle`."""
+    """One server's validated generated duration, shared volume and change cooldown."""
 
     generated_minutes: int = DEFAULT_GENERATED_MINUTES
     volume_percent: int = DEFAULT_VOLUME_PERCENT

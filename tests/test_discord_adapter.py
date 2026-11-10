@@ -44,6 +44,7 @@ from sobafm.discord_adapter import (
     Config,
     ConfigError,
     Inter,
+    PlayingTrack,
     StationSource,
     Track,
     create_bot,
@@ -60,6 +61,7 @@ from sobafm.gemini_match import (
 )
 from sobafm.pcm import FRAME_BYTES, READY_BYTES, PcmBank, PcmBankPool
 from sobafm.settings import ServerSettings, SettingsError
+from sobafm.station import Audio
 
 LINK = "https://example.invalid/synthetic/track"
 MANY_NOTICES = tuple(f"Synthetic notice {n}: " + "x" * 150 for n in range(30))
@@ -460,8 +462,10 @@ def harness(
     recordings: tuple[Recording, ...] | None = None,
     *,
     settings: discord_adapter.Settings | None = None,
+    pool: PcmBankPool | None = None,
 ) -> Harness:
-    pool = PcmBankPool()
+    if pool is None:
+        pool = PcmBankPool()
     producer = producer or Producer()
     records = recordings if recordings is not None else (recording("a"),)
     clock = FakeClock()
@@ -811,7 +815,7 @@ async def test_heard_source_and_credits_change_only_at_the_actual_switch() -> No
     assert player.station.heard is None  # the report settles on the event loop
     await settle()
     heard = player.station.heard
-    assert heard is not None and heard.recording == first
+    assert isinstance(heard, Audio) and heard.recording == first
 
     # A replacement prepares while the heard source and its credits stay unchanged.
     h.adapter.matcher = FakeMatcher(second)
@@ -840,7 +844,7 @@ async def test_now_privately_shows_complete_credits_to_ordinary_listeners() -> N
     source.read()
     await settle()
     heard = h.adapter.players[1].station.heard
-    assert heard is not None and len(heard.credits.pages) > 1
+    assert isinstance(heard, Audio) and len(heard.credits.pages) > 1
 
     listener = await run(h.adapter.now, inter(None))  # not in voice, not a manager
     assert listener.texts()[0] == (
@@ -863,7 +867,7 @@ async def test_now_privately_shows_complete_credits_to_ordinary_listeners() -> N
 
 @offline
 async def test_audio_source_returns_promptly_when_empty() -> None:
-    reports: list[tuple[str, Track]] = []
+    reports: list[tuple[str, PlayingTrack]] = []
     source = StationSource(lambda kind, track: reports.append((kind, track)))
     started = time.perf_counter()
     assert source.read() == b""  # idle: nothing current or pending
@@ -959,7 +963,7 @@ async def test_a_track_ending_past_a_whole_frame_plays_every_whole_frame_before_
     source = await h.join()
     report = source._report  # pyright: ignore[reportPrivateUsage]
 
-    def spy(kind: str, track: Track) -> None:
+    def spy(kind: str, track: PlayingTrack) -> None:
         reports.append(kind)
         report(kind, track)
 
@@ -1037,7 +1041,7 @@ def test_underruns_and_retained_banks_are_logged(caplog: pytest.LogCaptureFixtur
         await settle()
         player = h.adapter.players[1]
         current = player.source._current  # pyright: ignore[reportPrivateUsage]
-        assert current is not None
+        assert isinstance(current, Track)
         pending = current.bank.reserve_write(1)  # a borrowed region blocks release
         assert pending is not None
         assert await h.adapter.shutdown() is False
@@ -1242,7 +1246,7 @@ async def test_shutdown_reports_a_bank_that_cannot_be_released() -> None:
     await h.play()
     await settle()
     pending = h.adapter.players[1].source._pending  # pyright: ignore[reportPrivateUsage]
-    assert pending is not None
+    assert isinstance(pending, Track)
     view = pending.bank.reserve_write(1)  # a borrowed region blocks actual release
     assert view is not None
     assert await h.adapter.shutdown() is False
@@ -1456,12 +1460,12 @@ async def until(condition: Callable[[], bool]) -> None:
 
 def heard_id(h: Harness) -> str | None:
     heard = h.adapter.players[1].station.heard
-    return None if heard is None else heard.recording.key.recording_id
+    return None if not isinstance(heard, Audio) else heard.recording.key.recording_id
 
 
 def next_id(h: Harness) -> str | None:
     switching = h.adapter.players[1].station.switching
-    return None if switching is None else switching.recording.key.recording_id
+    return None if not isinstance(switching, Audio) else switching.recording.key.recording_id
 
 
 async def prepared_next(h: Harness, identifier: str) -> None:
@@ -1677,7 +1681,7 @@ def test_ending_or_replacing_discards_the_prepared_next_track(ending: str) -> No
         await prepared_next(h, "b")
         player = h.adapter.players[1]
         pending = player.source._pending  # pyright: ignore[reportPrivateUsage]
-        assert pending is not None and pending.audio.recording.key.recording_id == "b"
+        assert isinstance(pending, Track) and pending.audio.recording.key.recording_id == "b"
         bank = pending.bank
 
         match ending:
@@ -1754,7 +1758,7 @@ async def test_stale_completions_after_a_replacement_change_nothing() -> None:
     new = station.desired
     assert new is not None and new != old
     heard = station.heard
-    assert heard is not None and heard.recording.key.recording_id == "a"
+    assert isinstance(heard, Audio) and heard.recording.key.recording_id == "a"
 
     # Late reports for the displaced track, and the old program's continuation, are stale.
     for kind in ("switched", "failed", "drained"):
@@ -1855,7 +1859,7 @@ def flaky_voice(h: Harness, failures: int | None) -> FakeVoice:
 
 def current(h: Harness, guild: int = 1) -> Track:
     track = h.adapter.players[guild].source._current  # pyright: ignore[reportPrivateUsage]
-    assert track is not None
+    assert isinstance(track, Track)
     return track
 
 
@@ -2357,3 +2361,15 @@ async def test_a_program_that_ends_by_itself_cancels_its_grace_period() -> None:
     assert player.station.ended is discord_adapter.EndReason.EXHAUSTED
     await grace_cancelled(h)  # the drain report re-reviews; no timer outlives it
     assert await h.adapter.shutdown() is True
+
+
+def test_generated_credentials_without_a_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(discord_adapter.TOKEN_VARIABLE, "placeholder")
+    monkeypatch.setenv(discord_adapter.GEMINI_KEY_VARIABLE, "placeholder-gemini")
+    monkeypatch.setenv("SOBAFM_LYRIA_API_KEY", "placeholder-lyria")
+    monkeypatch.delenv(discord_adapter.CATALOG_VARIABLE, raising=False)
+    monkeypatch.delenv(discord_adapter.REVIEWS_VARIABLE, raising=False)
+    config = Config.from_environ()
+    assert config.matcher is None and config.interpreter is not None
+    assert "SOBAFM_LYRIA_API_KEY" not in os.environ
+    assert "placeholder" not in repr(config)

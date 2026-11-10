@@ -57,6 +57,7 @@ from tests.test_discord_adapter import (
     Producer,
     Tagged,
     harness,
+    heard_id,
     heard_track,
     inter,
     join_retirements,
@@ -837,7 +838,7 @@ async def test_a_retained_bank_after_a_loss_stays_debt_until_released() -> None:
     await h.play()
     await settle()
     pending = player_of(h).source._pending  # pyright: ignore[reportPrivateUsage]
-    assert pending is not None
+    assert isinstance(pending, discord_adapter.Track)
     view = pending.bank.reserve_write(1)  # a borrowed region blocks actual release
     assert view is not None
     lost(h)
@@ -1072,6 +1073,7 @@ class Wire:
         self.failure: Exception | None = None
         # The next websocket connection never finishes, as with a lost UDP discovery packet.
         self.hangs = False
+        self.open_gate: asyncio.Future[None] | None = None
         # Every websocket connection is closed by the voice server as it opens.
         self.refused = False
         self.playing: set[int] = set()
@@ -1167,6 +1169,8 @@ def wire(monkeypatch: pytest.MonkeyPatch) -> Generator[Wire]:
         self.ws = cast(Any, ws)
         if edges.hangs:
             await asyncio.Event().wait()
+        if edges.open_gate is not None:
+            await edges.open_gate
         self._connected.set()  # pyright: ignore[reportPrivateUsage]
 
     def play(self: disnake.VoiceClient, source: disnake.AudioSource) -> None:
@@ -1809,6 +1813,103 @@ async def heard_track_ended_with_a_refill_out(h: Harness, wire: Wire) -> GuildPl
     wire.player_stopped(player.voice)
     await until_settled(lambda: player.station.heard is None and h.pool.leased == 0)
     return player
+
+
+@pytest.mark.parametrize("order", ["bank-first", "ready-first", "stop", "replace", "loss", "leave"])
+def test_deferred_catalog_start_rechecks_voice_and_its_claim(
+    wire: Wire, order: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if order == "bank-first":
+        monkeypatch.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 0.5)
+
+    async def scenario() -> None:
+        allocations: list[int] = []
+
+        def allocate(size: int) -> bytearray:
+            allocations.append(size)
+            return bytearray(size)
+
+        h, decoder = program_harness(
+            "a", producer=Tagged(frames=1), pool=PcmBankPool(allocate=allocate)
+        )
+        _, guild, room, _ = wire_harness(h)
+        source = await h.join()
+        await h.play()
+        await settle()
+        player = player_of(h)
+        blocker = h.pool.acquire()
+        release_a = decoder.holding["a"] = asyncio.Event()
+        try:
+            assert source.read() == tag("a") and source.read() == b""
+            wire.player_stopped(player.voice)
+            h.adapter.matcher = FakeMatcher(recording("b"))
+            settings_of(h).current = ServerSettings(cooldown_seconds=60)
+            h.clock.now += 60
+            assert "accepted" in (await h.play())[0]
+            expected, claim = player.station.ready, player.waiting_claim
+            assert expected is not None and claim is not None
+            await settle()
+            gate = wire.open_gate = asyncio.get_running_loop().create_future()
+            wire.closes.put_nowait(4006)
+            await until_settled(lambda: len(wire.sockets) == 2 and not player.voice.is_connected())
+            if order in ("bank-first", "loss", "leave"):
+                release_a.set()
+                await until_settled(lambda: decoder.banks["a"].facts().released)
+                if order == "bank-first":
+                    # The original capacity deadline passes before the real ready event.
+                    await asyncio.sleep(discord_adapter.CAPACITY_WAIT_SECONDS)
+                await settle()
+                assert len(allocations) == 2 and player.station.ready is expected
+                assert player.waiting_claim is claim and decoder.started == ["a"]
+            if order == "loss":
+                runner = cast(asyncio.Task[None], player.voice._runner)  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+                gate.set_exception(OSError("synthetic socket loss"))
+                with pytest.raises(OSError, match="synthetic socket loss"):
+                    await runner
+                await until_settled(lambda: GUILD not in h.adapter.players)
+            elif order == "leave":
+                await run(h.adapter.leave, inter(room, manager=True))
+                assert GUILD not in h.adapter.players
+            else:
+                gate.set_result(None)
+                await until_settled(player.voice.is_connected)
+                if order == "stop":
+                    await run(h.adapter.stop, inter(room))
+                elif order == "replace":
+                    # The real C command gets the lock before B's capacity wakeup.
+                    async with player.lock:
+                        h.clock.now += 60
+                        matcher = FakeMatcher(recording("c"))
+                        h.adapter.matcher = matcher
+                        newer = asyncio.create_task(h.play("newer"))
+                        await until_settled(lambda: bool(matcher.requests))
+                        release_a.set()
+                        await until_settled(lambda: h.pool.leased == 1)
+                    assert "accepted" in (await newer)[0]
+                release_a.set()
+                if order != "stop":
+                    song = "c" if order == "replace" else "b"
+                    await until_settled(lambda: song in decoder.started)
+                    assert source.read() == tag(song)
+                    await settle()
+                    assert heard_id(h) == song and decoder.started == ["a", song]
+                    assert len(allocations) == 3 and "cooldown" in (await h.play())[0].lower()
+                    if song == "b":
+                        assert player.station.heard is expected
+            if order in ("stop", "loss", "leave"):
+                await until_settled(lambda: h.pool.leased == 1)
+                assert source.read() == b"" and decoder.started == ["a"] and len(allocations) == 2
+                assert player.station.desired is None
+        finally:
+            release_a.set()
+            assert blocker.release()
+            assert await h.adapter.shutdown()
+            if wire.open_gate is not None and not wire.open_gate.done():
+                wire.open_gate.cancel()
+            await wire_finish(h, wire)
+            assert h.pool.leased == 0 and not guild.state.clients
+
+    asyncio.run(scenario())
 
 
 def test_a_refill_answered_during_a_reconnect_waits_for_the_connection(
