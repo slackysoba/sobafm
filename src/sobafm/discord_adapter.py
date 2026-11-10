@@ -2291,6 +2291,11 @@ class Adapter:
             and station.ended in GENERATED_ENDINGS
         ):
             status += f" The generated request ended: {ENDED[station.ended]}."
+        if station is not None and (failed := station.failed_start) is not None:
+            status += (
+                f" The accepted `{failed.command}` request ended before its first frame: "
+                f"{ENDED[failed.reason]}."
+            )
         if isinstance(heard, Audio):
             await self._catalog_credits(inter, status, heard.credits)
         else:
