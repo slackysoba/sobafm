@@ -1333,6 +1333,7 @@ class Adapter:
             api_key=self._lyria_key,
             pool=self._pool,
             on_cleanup_expired=self._cleanup_expired,
+            on_bank_released=self._capacity_changed,
         )
 
     def _cleanup_expired(self) -> None:
@@ -1669,7 +1670,7 @@ class Adapter:
         self._capacity_waiters.add(waiter)
         return waiter
 
-    async def _await_capacity(self, waiter: asyncio.Future[None], timeout: float) -> None:
+    async def _await_capacity(self, waiter: asyncio.Future[None], timeout: float | None) -> None:
         try:
             await asyncio.wait({waiter}, timeout=timeout)
         finally:
@@ -2348,8 +2349,9 @@ class Adapter:
                     or player.waiting_claim is not claim
                 ):
                     return
-                remaining = deadline - time.monotonic()
-                if self._pool.leased < BANK_COUNT or remaining <= 0:
+                # During a reconnect only a real wakeup can make this start admissible.
+                remaining = deadline - time.monotonic() if player.voice.is_connected() else None
+                if remaining is not None and (self._pool.leased < BANK_COUNT or remaining <= 0):
                     if not await self._start(player):
                         self._give_back(player, claim)
                         self._resume(player)

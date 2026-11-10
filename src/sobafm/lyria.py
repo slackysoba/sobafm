@@ -900,6 +900,7 @@ class GeneratedStream:
         sleep: Sleep = asyncio.sleep,
         renew_after: float = RENEW_AFTER_SECONDS,
         on_cleanup_expired: Callable[[], None] | None = None,
+        on_bank_released: Callable[[], None] | None = None,
     ) -> None:
         self._request = request
         self._api_key = api_key
@@ -910,6 +911,7 @@ class GeneratedStream:
         self._sleep = sleep
         self._renew_after = renew_after
         self._on_cleanup_expired = on_cleanup_expired
+        self._on_bank_released = on_bank_released
         self._lock = threading.Lock()
         self._voice = _Voice()
         self._feeds: set[_Feed] = set()
@@ -1082,8 +1084,15 @@ class GeneratedStream:
 
     def release_debt(self) -> bool:
         """Retry any bank that could not be released; True once none is retained."""
-        self._debt = [bank for bank in self._debt if not bank.release()]
+        self._debt = [bank for bank in self._debt if not self._release_bank(bank)]
         return not self._debt
+
+    def _release_bank(self, bank: PcmBank) -> bool:
+        if not bank.release():
+            return False
+        if self._on_bank_released is not None:
+            self._on_bank_released()
+        return True
 
     # The supervisor.
 
@@ -1275,6 +1284,6 @@ class GeneratedStream:
         await feed.cleanup
         await feed.session.settle()
         self._feeds.discard(feed)
-        if not feed.bank.release():
+        if not self._release_bank(feed.bank):
             self._debt.append(feed.bank)
         self._changed.set()

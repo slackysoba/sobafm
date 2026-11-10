@@ -1324,7 +1324,13 @@ def test_finishing_a_stream_before_its_pump_runs_has_no_failed_cleanup() -> None
 
 
 class StreamHarness:
-    def __init__(self, fake: FakeLyria, *, other_banks: int = 0) -> None:
+    def __init__(
+        self,
+        fake: FakeLyria,
+        *,
+        other_banks: int = 0,
+        on_bank_released: Callable[[], None] | None = None,
+    ) -> None:
         self.time = ManualTime()
         self.allocations = [0]
 
@@ -1342,6 +1348,7 @@ class StreamHarness:
             clock=self.time.clock,
             sleep=self.time.sleep,
             renew_after=RENEW_SECONDS,
+            on_bank_released=on_bank_released,
         )
 
     async def renewal_due(self) -> None:
@@ -1940,7 +1947,10 @@ def test_a_stream_keeps_a_stuck_session_charged_until_it_settles(
 def test_a_bank_that_cannot_release_stays_as_debt_until_it_can() -> None:
     async def scenario() -> None:
         async with FakeLyria(serves(1_000)) as fake:
-            harness = StreamHarness(fake)
+            releases: list[int] = []
+            harness = StreamHarness(
+                fake, on_bank_released=lambda: releases.append(harness.pool.leased)
+            )
             stream = harness.stream
             stream.start()
             assert await stream.wait_ready()
@@ -1951,10 +1961,12 @@ def test_a_bank_that_cannot_release_stays_as_debt_until_it_can() -> None:
             assert report.retained_banks == 1
             assert harness.pool.leased == 1
             assert not stream.release_debt()
+            assert releases == []
             assert borrowed is not None
             bank.commit_write(0)
             assert stream.release_debt()
             assert harness.pool.leased == 0
+            assert stream.release_debt() and releases == [0]
 
     run(scenario())
 

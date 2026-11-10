@@ -22,6 +22,7 @@ from sobafm.lyria import (
     CROSSFADE_FRAMES,
     FADE_OUT_FRAMES,
     PLAY_MESSAGE,
+    RENEW_AFTER_SECONDS,
     GeneratedStream,
     LyriaSession,
 )
@@ -68,6 +69,7 @@ from tests.test_lyria import (
     Script,
     StuckClose,
     assert_faded,
+    feed_bank,
     run,
     sample_of,
     until,
@@ -533,6 +535,72 @@ def test_waiting_generated_successor_keeps_its_original_cutoff(
             await until(lambda: h.pool.leased == 0)
             assert "accepted" in (await h.play())[0]
             assert await h.adapter.shutdown()
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("competing_guild", [False, True])
+def test_internal_renewal_wakes_the_accepted_catalog_track(
+    monkeypatch: pytest.MonkeyPatch, competing_guild: bool
+) -> None:
+    async def scenario() -> None:
+        renewals = asyncio.Queue[None]()
+
+        async def sleep(delay: float) -> None:
+            if delay == RENEW_AFTER_SECONDS:
+                await renewals.get()
+            else:
+                await asyncio.sleep(delay)
+
+        async with FakeLyria(music(1000), music(3000)) as peer:
+            monkeypatch.setattr(
+                discord_adapter,
+                "GeneratedStream",
+                partial(GeneratedStream, endpoint=peer.url, sleep=sleep),
+            )
+            h, decoder = program_harness("b")
+            h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
+            source = await h.join()
+            await generate(h)
+            try:
+                stream = pending_stream(source)
+                assert await stream.wait_ready()
+                old = feed_bank(stream)
+                report = await hold_generated_switch(h, source, monkeypatch)
+                renewals.put_nowait(None)
+                await until(lambda: stream.crossfading)
+                h.clock.now += 60
+                settings_of(h).current = settings_of(h).current.changed(cooldown_seconds=60)
+                assert "accepted" in (await h.play())[0]
+                player = h.adapter.players[1]
+                expected, claim = player.station.ready, player.waiting_claim
+                assert expected is not None and claim is not None
+                report()
+                await settle()
+                assert player.station.ready is expected and h.pool.leased == 2
+                levels = [sample_of(player.output.read()) for _ in range(CROSSFADE_FRAMES)]
+                assert_faded(levels, 500, 1500, CROSSFADE_FRAMES)
+                await until(lambda: old.facts().released)
+                await settle()
+                assert not peer.peers[1].disconnected.is_set()  # renewal's new feed is still live
+                if competing_guild:
+                    await asyncio.sleep(0.2)
+                    other = FakeChannel("other", guild=FakeGuild(2))
+                    join = inter(other, manager=True)
+                    join.guild = other.guild
+                    await command(h.adapter.join, join)
+                    listener = inter(other)
+                    listener.guild = other.guild
+                    reply = await command(lambda i: h.adapter.play(i, "other"), listener)
+                    assert "capacity" in (reply.texts()[0] or "")
+                assert player.station.switching is expected and decoder.started == ["b"]
+                assert sample_of(player.output.read()) == sample_of(tag("b")) // 2
+                await settle()
+                assert (
+                    player.station.heard is expected and "cooldown" in (await h.play())[0].lower()
+                )
+            finally:
+                assert await h.adapter.shutdown()
 
     run(scenario())
 
