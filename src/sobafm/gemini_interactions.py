@@ -94,7 +94,7 @@ class AiohttpTransport:
         ) as response:
             # These statuses already determine the outcome. An oversized or stalled
             # error body must not hide it; only HTTP 400 can carry a documented block.
-            if response.status in (401, 403, 429) or 500 <= response.status < 600:
+            if response.status in (401, 402, 403, 404, 408, 429) or 500 <= response.status < 600:
                 return response.status, b""
             payload = bytearray()
             while chunk := await response.content.read(MAX_RESPONSE_BYTES + 1 - len(payload)):

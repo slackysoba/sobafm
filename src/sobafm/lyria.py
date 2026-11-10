@@ -815,6 +815,8 @@ class LyriaSession:
         self._close_code = code
         if code == aiohttp.WSCloseCode.POLICY_VIOLATION:
             self._stop("rejected")
+        elif code == aiohttp.WSCloseCode.INTERNAL_ERROR:
+            self._stop("service_error")
         elif code in (aiohttp.WSCloseCode.OK, aiohttp.WSCloseCode.GOING_AWAY) and self.ready:
             self._stop(None, transfer_complete=True)
         else:

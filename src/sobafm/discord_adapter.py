@@ -118,6 +118,7 @@ from sobafm.lyria import (
     Prompt,
     Scale,
 )
+from sobafm.media import MediaMissingError
 from sobafm.pcm import (
     BANK_COUNT,
     FRAME_BYTES,
@@ -258,6 +259,13 @@ ENDED = {
         "the music service returned a server error on the last attempt. Try again later"
     ),
     EndReason.CAPACITY: "both audio banks were in use. Try again shortly",
+    EndReason.VOICE_START: "the voice player could not start. Check the voice connection",
+    EndReason.MEDIA_MISSING: (
+        "the recording has no media manifest entry. Ask the operator to check the catalog"
+    ),
+    EndReason.RECORDING_START: (
+        "the first recording could not be played. Ask the operator to check the media"
+    ),
     EndReason.GENERATION_FAILED: "generated audio could not continue. Try again later",
     EndReason.EXHAUSTED: "every recording in the catalog has been played or tried",
     EndReason.REFILL_FAILED: "Gemini did not supply more recordings within the retry limit",
@@ -408,7 +416,7 @@ class _Playback:
 class Track(_Playback):
     audio: Audio
     bank: PcmBank
-    task: asyncio.Task[None]
+    task: asyncio.Task[EndReason | None]
 
 
 @dataclass(eq=False)
@@ -1381,13 +1389,16 @@ class Adapter:
         if player.waiting_claim is claim:
             player.waiting_claim = None
 
-    async def _start(self, player: GuildPlayer, *, cut: bool = True) -> str | None:
+    async def _start(
+        self, player: GuildPlayer, *, cut: bool = True, accepted: bool = False
+    ) -> str | None:
         """Claim ready audio, displacing an unheard pending track, and hand it to the player.
 
         ``cut`` audio switches as soon as it is ready; otherwise it follows the
         current track's last frame. The track takes over ``player.waiting_claim`` once
         it is offered; after a failure that claim stays for the caller to settle.
-        Return a listener-safe reason only when the start fails.
+        Return a listener-safe reason only when the start fails. For a deferred
+        start the command already accepted, also retain that failure for `/now`.
         """
         station = player.station
         if self.stopping.is_set():
@@ -1412,7 +1423,7 @@ class Adapter:
         try:
             bank = self._pool.acquire()
         except PcmCapacityError:
-            station.switch_failed(audio)
+            station.switch_failed(audio, EndReason.CAPACITY if accepted else None)
             return "Audio capacity is busy. Any current audio continues. Try again shortly."
         if isinstance(audio, GeneratedAudio):
             stream = self._generated_stream(audio.plan)
@@ -1431,13 +1442,13 @@ class Adapter:
             except Exception as exc:  # e.g. the voice connection dropped meanwhile
                 log.warning("voice player could not start: %s", type(exc).__name__)
                 if player.source.take_pending() is track:
-                    station.switch_failed(audio)
+                    station.switch_failed(audio, EndReason.VOICE_START if accepted else None)
                     self._retire(track)
                 return "The voice player could not start. Check the voice connection and try again."
         player.waiting_claim = None
         return None
 
-    async def _produce(self, recording: Recording, bank: PcmBank) -> None:
+    async def _produce(self, recording: Recording, bank: PcmBank) -> EndReason | None:
         try:
             await self._producer.produce(recording, bank)
         except asyncio.CancelledError:
@@ -1445,6 +1456,12 @@ class Adapter:
         except Exception as exc:
             log.warning("audio producer failed: %s", type(exc).__name__)
             bank.cancel()  # the voice callback then reports the failure
+            return (
+                EndReason.MEDIA_MISSING
+                if isinstance(exc, MediaMissingError)
+                else EndReason.RECORDING_START
+            )
+        return None
 
     def _resume(self, player: GuildPlayer) -> None:
         """Keep the desired program going if it has no next track in progress."""
@@ -2314,7 +2331,12 @@ class Adapter:
             if isinstance(track, GeneratedTrack):
                 station.end_generated(track.audio.program, self._generated_end(track))
             else:
-                station.switch_failed(track.audio)
+                failure = (
+                    track.task.result()
+                    if track.task.done() and not track.task.cancelled()
+                    else None
+                )
+                station.switch_failed(track.audio, failure or EndReason.RECORDING_START)
             assert player is not None
             player.cooldown.release(track.claim)  # no effect once a newer request holds it
         elif (
@@ -2386,7 +2408,7 @@ class Adapter:
                 # During a reconnect only a real wakeup can make this start admissible.
                 remaining = deadline - time.monotonic() if player.voice.is_connected() else None
                 if remaining is not None and (self._pool.leased < BANK_COUNT or remaining <= 0):
-                    if await self._start(player) is not None:
+                    if await self._start(player, accepted=True) is not None:
                         self._give_back(player, claim)
                         self._resume(player)
                     self._review_listeners(player)
@@ -2536,6 +2558,16 @@ def refill_wait(attempt: int, seconds_left: float) -> float:
 
 def _interpretation_failure(kind: str) -> tuple[str, str]:
     """Render only observations from the client, never a provider message."""
+    if kind == "http_402":
+        return (
+            "The interpreter requested payment for this call.",
+            "Ask the operator to check the intended free-tier project and keep billing unchanged.",
+        )
+    if kind == "http_404":
+        return (
+            "The interpreter could not find the requested resource.",
+            "Ask the operator to check the configured model and endpoint.",
+        )
     if kind in ("http_401", "http_403"):
         return (
             "The interpreter denied access.",

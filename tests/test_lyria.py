@@ -669,7 +669,7 @@ async def setup_only(peer: Peer) -> None:
         ("abort", "truncated"),
         ("abort_mid_frame", "truncated"),
         ("close_1000", "closed"),
-        ("close_1011", "closed"),
+        ("close_1011", "service_error"),
         ("close_1008", "rejected"),
         ("oversized_header", "oversized"),
         ("oversized_fragments", "oversized"),
@@ -745,7 +745,7 @@ def test_failures_before_readiness_stop_the_bank(name: str, expected: str) -> No
     [
         ("close_1000", None, True),
         ("close_1001", None, True),
-        ("close_1011", "closed", False),
+        ("close_1011", "service_error", False),
         ("abort", "truncated", False),
         ("abort_mid_message", "truncated", False),
         ("oversized", "oversized", False),
@@ -1477,10 +1477,17 @@ def test_audio_that_drains_before_the_replacement_is_ready_gets_no_fade() -> Non
     run(scenario())
 
 
-def test_recovery_attempts_are_finite_and_the_buffered_audio_still_plays() -> None:
+@pytest.mark.parametrize(("last_close", "expected"), [(1011, "service_error"), (4001, "closed")])
+def test_recovery_attempts_are_finite_and_the_buffered_audio_still_plays(
+    last_close: int, expected: str, caplog: pytest.LogCaptureFixture
+) -> None:
     async def scenario() -> None:
+        async def last(peer: Peer) -> None:
+            await peer.handshake()
+            await peer.websocket.close(code=last_close, message=b"private close explanation")
+
         async with FakeLyria(
-            serves(1_000, then_close=1000), Refuse(503), Refuse(503), Refuse(503)
+            serves(1_000, then_close=1000), Refuse(503), Refuse(503), last
         ) as fake:
             harness = StreamHarness(fake)
             stream = harness.stream
@@ -1492,9 +1499,10 @@ def test_recovery_attempts_are_finite_and_the_buffered_audio_still_plays() -> No
                 await asyncio.sleep(0)
             assert frame == b""
             report = await stream.finish()
-            assert report.failure == "service_error"
+            assert report.failure == expected
             assert report.sessions_started == 4
             assert harness.pool.leased == 0
+            assert "private close explanation" not in caplog.text
 
     run(scenario())
 

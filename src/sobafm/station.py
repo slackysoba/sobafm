@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from sobafm.catalog import MAX_RECORDS_PER_SOURCE, Recording, RecordingKey, Source
 from sobafm.credits import CreditRejected, RenderedCredits, render_credits
@@ -52,8 +52,17 @@ class EndReason(StrEnum):
     GENERATION_RATE_LIMITED = "generation_rate_limited"
     GENERATION_SERVICE_ERROR = "generation_service_error"
     CAPACITY = "capacity"
+    VOICE_START = "voice_start"
+    MEDIA_MISSING = "media_missing"
+    RECORDING_START = "recording_start"
     GENERATION_FAILED = "generation_failed"
     NO_LISTENERS = "no_listeners"  # the listener grace period expired
+
+
+@dataclass(frozen=True)
+class FailedStart:
+    command: Literal["/play", "/freestyle"]
+    reason: EndReason
 
 
 @dataclass(frozen=True, eq=False)
@@ -119,6 +128,7 @@ class Station:
         self._heard: StationAudio | None = None
         self._progress: dict[int, _Progress] = {}
         self._ended: EndReason | None = None
+        self._failed_start: FailedStart | None = None
 
     @property
     def desired(self) -> Program | None:
@@ -154,6 +164,11 @@ class Station:
     def ended(self) -> EndReason | None:
         """Why the last program ended without a command, until a new request or stop."""
         return self._ended
+
+    @property
+    def failed_start(self) -> FailedStart | None:
+        """An accepted request that failed before its first frame; no request text is kept."""
+        return self._failed_start
 
     @property
     def continuing(self) -> bool:
@@ -233,6 +248,7 @@ class Station:
         self._preparing = True
         self._ready = None
         self._ended = None
+        self._failed_start = None
         self._prune()
         return Replacement(program, superseded)
 
@@ -338,12 +354,16 @@ class Station:
         self._prune()
         return Outcome.ACCEPTED
 
-    def switch_failed(self, source: StationAudio) -> Outcome:
+    def switch_failed(self, source: StationAudio, reason: EndReason | None = None) -> Outcome:
         """The player could not switch to claimed audio; heard audio is unchanged."""
-        if source != self._switching:
+        if source is not self._switching:
             return Outcome.STALE
         self._switching = None
         if source.program == self._desired:
+            if reason is not None and not self.continuing:
+                self._failed_start = FailedStart(
+                    "/freestyle" if isinstance(source, GeneratedAudio) else "/play", reason
+                )
             self._revert()
         self._prune()
         return Outcome.ACCEPTED
@@ -374,6 +394,7 @@ class Station:
         self._preparing = False
         self._ready = None
         self._ended = ended
+        self._failed_start = None
         self._prune()
         return superseded
 
