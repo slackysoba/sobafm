@@ -200,36 +200,47 @@ class CreditViews:
         self._max_views = max_views
         self._lifetime = lifetime_seconds
         self._views: dict[int, _View] = {}
-        self._next_id = 1
         self._now = -math.inf
 
     def __len__(self) -> int:
         return len(self._views)
 
-    def _advance(self, now: float) -> None:
+    def expire(self, now: float) -> float | None:
+        """Release expired snapshots and return the next creation-based deadline."""
         if not math.isfinite(now) or now < self._now:
             raise ValueError("injected monotonic time must be finite and nondecreasing")
         self._now = now
         for view_id in [i for i, v in self._views.items() if v.expires_at <= now]:
             del self._views[view_id]
+        oldest = next(iter(self._views.values()), None)
+        return oldest.expires_at if oldest is not None else None
 
-    def open(self, credits: RenderedCredits, caller_id: int, now: float) -> tuple[int, CreditPage]:
-        """Retain a view for one caller and return its identifier and first page."""
+    def open(
+        self, view_id: int, credits: RenderedCredits, caller_id: int, now: float
+    ) -> CreditPage:
+        """Retain the snapshot under the originating command's unique Discord ID."""
+        if type(view_id) is not int or view_id <= 0 or view_id in self._views:
+            raise ValueError("view_id must be a fresh positive Discord identifier")
         if type(caller_id) is not int or caller_id <= 0:
             raise ValueError("caller_id must be a positive Discord identifier")
-        self._advance(now)
+        self.expire(now)
         if len(self._views) >= self._max_views:
             del self._views[next(iter(self._views))]
-        view_id = self._next_id
-        self._next_id += 1
         self._views[view_id] = _View(credits, caller_id, now + self._lifetime)
-        return view_id, credits.page(1)
+        return credits.page(1)
+
+    def discard(self, view_id: int) -> None:
+        """Release a view whose private message could not be sent."""
+        self._views.pop(view_id, None)
+
+    def clear(self) -> None:
+        self._views.clear()
 
     def page(
         self, view_id: int, caller_id: int, number: int, now: float
     ) -> CreditPage | PageRefusal:
         """Return a page only to the caller that opened the unexpired view."""
-        self._advance(now)
+        self.expire(now)
         view = self._views.get(view_id)
         if view is None:
             return PageRefusal.UNAVAILABLE

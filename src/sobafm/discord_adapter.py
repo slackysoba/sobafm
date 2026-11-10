@@ -95,7 +95,7 @@ from sobafm.catalog import (
     parse_reviews,
 )
 from sobafm.cooldown import Claim, Cooldown
-from sobafm.credits import escaped_text
+from sobafm.credits import MAX_PAGES, VIEW_LIFETIME_SECONDS, CreditPage, CreditViews, escaped_text
 from sobafm.freestyle_plan import GeneratedPlan, PlanFallback, PlanInterpreter, PlanRefused
 from sobafm.gemini_interactions import TIMEOUT_SECONDS, GeminiClient
 from sobafm.gemini_match import (
@@ -195,6 +195,8 @@ VOCAL_CHANNEL_TYPES = (disnake.ChannelType.voice, disnake.ChannelType.stage_voic
 LOCAL_FAILURE = "local_failure"
 SILENCE = bytes(FRAME_BYTES)
 NO_MENTIONS = disnake.AllowedMentions.none()
+CREDIT_MENU = "sobafm:credit-page"
+CREDIT_PAGE_NUMBERS = {str(n): n for n in range(1, MAX_PAGES + 1)}
 Inter = disnake.ApplicationCommandInteraction[commands.InteractionBot]
 
 NOT_JOINED = "SobaFM is not in a voice channel. A manager must use `/join` first."
@@ -919,6 +921,8 @@ class Adapter:
         self._pool = pool
         self._sleep = sleep  # the grace and refill timers' clock; tests inject one
         self._clock = clock  # monotonic time for cooldowns and refill retry deadlines
+        self._credit_views = CreditViews()
+        self._credit_expiry: asyncio.TimerHandle | None = None
         self.players: dict[int, GuildPlayer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
         self.retirements: set[asyncio.Task[None]] = set()
@@ -2234,12 +2238,86 @@ class Adapter:
         await inter.response.send_message(
             status, ephemeral=True, suppress_embeds=True, allowed_mentions=NO_MENTIONS
         )
-        if isinstance(heard, Audio):
-            for number in range(1, len(heard.credits.pages) + 1):
-                page = heard.credits.page(number)
+        if isinstance(heard, Audio) and not self.stopping.is_set():
+            if len(heard.credits.pages) == 1:
                 await inter.followup.send(
-                    page.text, ephemeral=True, suppress_embeds=True, allowed_mentions=NO_MENTIONS
+                    heard.credits.page(1).text,
+                    ephemeral=True,
+                    suppress_embeds=True,
+                    allowed_mentions=NO_MENTIONS,
                 )
+                return
+            page = self._credit_views.open(inter.id, heard.credits, inter.author.id, self._clock())
+            if self._credit_expiry is None:
+                self._credit_expiry = asyncio.get_running_loop().call_later(
+                    VIEW_LIFETIME_SECONDS, self._expire_credit_views
+                )
+            try:
+                await inter.followup.send(
+                    page.text,
+                    ephemeral=True,
+                    suppress_embeds=True,
+                    allowed_mentions=NO_MENTIONS,
+                    components=disnake.ui.StringSelect(
+                        custom_id=CREDIT_MENU,
+                        placeholder="Choose a credit page",
+                        options=[
+                            disnake.SelectOption(label=f"Page {n} of {page.total}", value=str(n))
+                            for n in range(1, page.total + 1)
+                        ],
+                    ),
+                )
+            except BaseException:
+                self._credit_views.discard(inter.id)
+                if not self._credit_views:
+                    self._cancel_credit_expiry()
+                raise
+
+    def _cancel_credit_expiry(self) -> None:
+        if self._credit_expiry is not None:
+            self._credit_expiry.cancel()
+            self._credit_expiry = None
+
+    def _expire_credit_views(self) -> None:
+        now = self._clock()
+        deadline = self._credit_views.expire(now)
+        self._credit_expiry = (
+            None
+            if deadline is None
+            else asyncio.get_running_loop().call_later(deadline - now, self._expire_credit_views)
+        )
+
+    async def credit_page(self, inter: disnake.MessageInteraction[commands.InteractionBot]) -> None:
+        if inter.data.custom_id != CREDIT_MENU:
+            return
+        # Discord supplies the originating command on the follow-up message. The
+        # listener's menu value selects only a page, never the caller or snapshot.
+        origin = inter.message.interaction_metadata
+        values = inter.values
+        if (
+            inter.message.flags.ephemeral
+            and inter.data.component_type is disnake.ComponentType.string_select
+            and origin is not None
+            and origin.type is disnake.InteractionType.application_command
+            and origin.original_response_message_id is not None
+            and values is not None
+            and len(values) == 1
+            and (number := CREDIT_PAGE_NUMBERS.get(values[0])) is not None
+        ):
+            page = self._credit_views.page(origin.id, inter.author.id, number, self._clock())
+            if isinstance(page, CreditPage):
+                await inter.response.edit_message(
+                    content=page.text,
+                    allowed_mentions=NO_MENTIONS,
+                    flags=disnake.MessageFlags(suppress_embeds=True),
+                )
+                return
+        await inter.response.send_message(
+            "This credit page is unavailable. Use `/now` to see what is heard now.",
+            ephemeral=True,
+            suppress_embeds=True,
+            allowed_mentions=NO_MENTIONS,
+        )
 
     def _remaining(self, program: Program) -> str:
         assert program.deadline is not None
@@ -2447,6 +2525,8 @@ class Adapter:
         if self._voice_cleanup is None:
             deadline = time.monotonic() + CLEANUP_SECONDS
             self._voice_cleanup = asyncio.create_task(self._observe_voice_cleanup(deadline))
+        self._credit_views.clear()
+        self._cancel_credit_expiry()
         if self._rejoins is not None:
             # A connect still under way leaves its client registered; closing the bot ends it.
             self._rejoins.cancel()
@@ -2549,6 +2629,8 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
     async def now(inter: Inter) -> None:
         """Privately show what is actually heard, with full credits."""
         await adapter.now(inter)
+
+    bot.add_listener(adapter.credit_page, "on_dropdown")
 
     @bot.slash_command(name="settings", contexts=servers, default_member_permissions=manager)
     async def settings(
