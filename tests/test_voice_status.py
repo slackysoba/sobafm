@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import logging
 import time
@@ -159,6 +160,137 @@ def test_lost_first_ack_leaves_remote_outcome_unknown(monkeypatch: pytest.Monkey
             # The peer received the PUT. The client can neither claim nor clear it,
             # and a persistent-connection retry must not replay the uncertain PUT.
             assert calls == ["Song a · jamendo"]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("dispatched", [True, False], ids=["awaiting-ack", "awaiting-admission"])
+def test_another_rooms_global_hold_only_resumes_an_unsent_request(
+    dispatched: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        first_received = asyncio.Event()
+        finish_original = asyncio.Event()
+        after_hold = asyncio.Event()
+        first_room: list[str | None] = []
+
+        async def first(request: web.Request) -> web.Response:
+            first_room.append((await request.json())["status"])
+            if dispatched and len(first_room) == 1:
+                first_received.set()
+                await finish_original.wait()
+            return web.Response(status=204)
+
+        limited = False
+
+        async def second(_: web.Request) -> web.Response:
+            nonlocal limited
+            if not limited:
+                limited = True
+                return web.json_response({"global": True, "retry_after": 0.4}, status=429)
+            after_hold.set()
+            return web.Response(status=204)
+
+        app = web.Application()
+        app.router.add_put("/channels/1001/voice-status", first)
+        app.router.add_put("/channels/1002/voice-status", second)
+        h, _ = program_harness("a")
+        monkeypatch.setattr(voice_status, "WRITE_SECONDS", 0.2)
+        monkeypatch.setattr(voice_status, "RESPONSE_SECONDS", 0.2)
+        async with loopback(h, app, monkeypatch) as http:
+            source = await h.join()
+            await h.play()
+            room2 = room(1002)
+            join, play = inter(room2, manager=True), inter(room2)
+            join.guild = play.guild = room2.guild = FakeGuild(2)
+            await run(h.adapter.join, join)
+            await run(lambda i: h.adapter.play(i, "piano"), play)
+            await settle()
+            bucket = asyncio.Lock()
+            if not dispatched:
+                await bucket.acquire()
+                route = Route("PUT", "/channels/{channel_id}/voice-status", channel_id=1001)
+                http._locks[route.bucket] = bucket  # pyright: ignore[reportPrivateUsage]
+            try:
+                assert source.read() == tag("a")
+                if dispatched:
+                    await asyncio.wait_for(first_received.wait(), 1)
+                else:
+                    await settle()
+                assert h.adapter.voice_status is not None
+                state = h.adapter.voice_status._channels[1001]  # pyright: ignore[reportPrivateUsage]
+                writer = state.task
+                assert writer is not None
+                assert h.adapter.players[2].source.read() == tag("a")
+                gate = http._global_over  # pyright: ignore[reportPrivateUsage]
+                await until(lambda: not gate.is_set())
+                if not dispatched:
+                    async with asyncio.timeout(1):
+                        while not state.waiting_until:
+                            await asyncio.sleep(0.001)
+                    bucket.release()
+                await asyncio.wait_for(asyncio.shield(writer), 2)
+                await asyncio.wait_for(after_hold.wait(), 2)
+                await run(h.adapter.stop, inter(h.room))
+                assert await h.adapter.shutdown()
+                assert first_room == (
+                    ["Song a · jamendo"] if dispatched else ["Song a · jamendo", None]
+                )
+            finally:
+                finish_original.set()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("header", ["delay", "scope"])
+def test_status_negotiates_a_readable_bounded_rate_limit_body(
+    header: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        encodings: list[str] = []
+        sent = asyncio.Event()
+        limited_at = 0.0
+        gateway_at = 0.0
+
+        async def write(request: web.Request) -> web.Response:
+            nonlocal limited_at
+            encoding = request.headers.get("Accept-Encoding", "")
+            encodings.append(encoding)
+            if len(encodings) != 1:
+                return web.Response(status=204)
+            headers = (
+                {"Retry-After": "0.35"} if header == "delay" else {"X-RateLimit-Scope": "global"}
+            )
+            body = json.dumps({"global": True, "retry_after": 0.35}).encode()
+            if "gzip" in encoding:
+                headers["Content-Encoding"] = "gzip"
+                body = gzip.compress(body)
+            limited_at = time.monotonic()
+            sent.set()
+            return web.Response(
+                status=429, headers=headers, body=body, content_type="application/json"
+            )
+
+        async def gateway(_: web.Request) -> web.Response:
+            nonlocal gateway_at
+            gateway_at = time.monotonic()
+            return web.Response(
+                body=b'{"url":"wss://unopened.invalid"}', content_type="application/json"
+            )
+
+        app = web.Application()
+        app.router.add_put("/channels/1001/voice-status", write)
+        app.router.add_get("/gateway", gateway)
+        h, _ = program_harness("a")
+        async with loopback(h, app, monkeypatch) as http:
+            await start_program(h)
+            await asyncio.wait_for(sent.wait(), 1)
+            await settle()
+            await asyncio.wait_for(http.get_gateway(), 2)
+            assert gateway_at >= limited_at + 0.35
+            assert encodings[0] == "identity"
+            assert await h.adapter.shutdown()
 
     asyncio.run(scenario())
 

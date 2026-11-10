@@ -59,6 +59,8 @@ class _StatusBody(JsonPayload):
 async def _send_once(
     request: aiohttp.ClientRequest, send: aiohttp.ClientHandlerType
 ) -> aiohttp.ClientResponse:
+    # The bounded 429 reader consumes plain JSON with decompression disabled.
+    request.headers[aiohttp.hdrs.ACCEPT_ENCODING] = "identity"
     try:
         return await send(request)
     except aiohttp.ClientError, OSError:
@@ -236,16 +238,24 @@ class VoiceStatuses:
     async def _write(self, state: _Channel, text: str | None) -> None:
         route = Route("PUT", "/channels/{channel_id}/voice-status", channel_id=state.channel.id)
         context = _writing_status.set(True)
+        dispatched = False
         try:
             async with asyncio.timeout(WRITE_SECONDS) as admission:
 
                 async def dispatch() -> None:
+                    nonlocal dispatched
                     # The SDK checked its global gate before the bucket and
                     # connector waits. A fresh global hold may now be in effect.
                     await self._global.wait()
-                    if state.wanted != text or self._expired or not _permitted(state.channel):
+                    if (
+                        dispatched
+                        or state.wanted != text
+                        or self._expired
+                        or not _permitted(state.channel)
+                    ):
                         raise _Refused
                     admission.reschedule(asyncio.get_running_loop().time() + RESPONSE_SECONDS)
+                    dispatched = True
 
                 async def check(response: aiohttp.ClientResponse) -> None:
                     if response.status == 204:
@@ -264,6 +274,13 @@ class VoiceStatuses:
                     middlewares=(_send_once,),
                     raise_for_status=check,
                 )
+        except TimeoutError:
+            if dispatched:
+                # A new global hold can defer an unsent request. Once the body
+                # went to the writer, response expiry leaves the outcome unknown.
+                log.warning("voice status acknowledgement unavailable")
+                raise _Refused from None
+            raise
         finally:
             _writing_status.reset(context)
 
