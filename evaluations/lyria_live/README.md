@@ -1,12 +1,17 @@
 # First free-tier Lyria check
 
-Preparation for [#165](https://github.com/slackysoba/sobafm/issues/165). **No live
-run is authorized or recorded.** Default invocation prints the proposed bounds
-and reads no key. The opt-in evaluator is outside ordinary tests and CI.
+Preparation for [#165](https://github.com/slackysoba/sobafm/issues/165), corrected
+under [#182](https://github.com/slackysoba/sobafm/issues/182). The
+[first authorized attempt failed without an evaluator record](https://github.com/slackysoba/sobafm/issues/3#issuecomment-6794025268).
+Provider contact and key acceptance remain unknown; its exact exception was not
+retained, so the historical cause is unproven. That one-attempt permission is
+consumed. **A fresh one-attempt authorization is required after review and merge
+before any further live invocation.** Default invocation prints the proposed
+bounds and reads no key. The opt-in evaluator is outside ordinary tests and CI.
 
 ```sh
 uv run python evaluations/lyria_live/probe.py
-uv run pytest -q evaluations/lyria_live/test_probe.py
+uv run pytest -q evaluations/lyria_live
 uv run pyright evaluations/lyria_live
 ```
 
@@ -111,8 +116,11 @@ with it in the final evidence comment.
        --send-to-lyria --confirm-free-tier /absolute/private/lyria-key.txt
    ```
 
-   This overrides the entrypoint with the image's Python and runs
-   `python -I /eval/probe.py --send-to-lyria --confirm-free-tier` once. The script
+   This overrides the entrypoint with the installed interpreter and runs
+   `/app/.venv/bin/python -I /eval/probe.py --send-to-lyria --confirm-free-tier`
+   once. The image installs the application into that environment; no
+   `PYTHONPATH`, source-path bootstrap or application mount is needed
+   ([packaging review](https://github.com/slackysoba/sobafm/issues/3#issuecomment-6794098907)). The script
    has no endpoint or bound override. Run it under an external 40-second deadline
    as well as its own 35-second watchdog. Give each Docker setup/inspection command
    a two-second timeout with one further second to kill a stuck CLI. Allow
@@ -151,6 +159,25 @@ leased banks, plus observed container exit without OOM and verified removal.
 Any missing record or failed observation fails the check. Preserve the failure
 even if later cleanup succeeds. Provider refusal or quota ends this attempt and
 returns the decision to the maintainer; it never triggers spending or retries.
+
+Startup reports use only fixed reasons: `startup_import` for application or
+dependency imports, `crash_controls` for applying the process controls, and
+`startup_internal` for module initialization. Crash controls still precede native
+dependency imports and key access. Later preflight failures distinguish `target`,
+`limits` (including unreadable or malformed cgroup values), `credential_file`
+(read, encoding or validation failure), and `internal`. None includes exception
+text, a traceback or provider diagnostics. These reasons locate a failed stage;
+they do not establish provider contact or explain the first attempt retrospectively.
+
+The wrapper distinguishes `log_retrieval` (failed or timed-out Docker log command),
+`log_size` (output over 64 KiB), `evaluator_output_missing` (successful collection
+without a result record, including stderr-only startup output), and `client_result`
+(a collected evaluator refusal or nonzero client exit). Container stderr remains
+discarded, never saved or forwarded, even when collection fails. A partial log
+from a failed collection cannot pass. These failures still run the same owned
+container cleanup and preserve its independent verification and failed-command
+flags. Offline tests use synthetic imports, keys and Docker command doubles plus
+loopback transport peers; they make no live availability or image-execution claim.
 
 This checks availability at that moment on the operator-confirmed free-tier
 project and short production transport behavior. It does not establish ongoing

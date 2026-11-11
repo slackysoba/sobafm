@@ -37,7 +37,15 @@ elif args[0] == "inspect":
     else:
         print("false true" if mode == "oom" else "false false")
 elif args[0] == "logs":
-    print('{}' if mode == "missing_verdict" else '{"result": "pass"}')
+    if mode in {"stderr_only", "log_failure", "partial_log_failure"}:
+        print("Traceback: synthetic-private-provider-error", file=sys.stderr)
+    if mode == "partial_log_failure": print('{"result": "pass"}')
+    if mode in {"log_failure", "partial_log_failure"}: sys.exit(1)
+    if mode == "stderr_only": sys.exit(0)
+    if mode == "startup_failure":
+        print('{"result":"failed","reason":"startup_import"}')
+    elif mode == "oversized_logs": print("x" * 65537)
+    else: print('{}' if mode == "missing_verdict" else '{"result": "pass"}')
 elif args[:2] == ["container", "ls"]:
     if mode == "unknown_cleanup": sys.exit(1)
     if state.exists(): print(json.loads(state.read_text())[0])
@@ -86,6 +94,17 @@ def test_runner_uses_exact_image_and_no_credential_environment(tmp_path: Path) -
     create = next(row for row in calls if row[0] == "create")
     assert IMAGE in create
     assert "--env" not in create and "--env-file" not in create
+    assert create[create.index("--entrypoint") + 1 :] == [
+        "/app/.venv/bin/python",
+        IMAGE,
+        "-I",
+        "/eval/probe.py",
+        "--send-to-lyria",
+        "--confirm-free-tier",
+    ]
+    mounts = [create[i + 1] for i, value in enumerate(create) if value == "--mount"]
+    assert len(mounts) == 2
+    assert all(mount.endswith(",readonly") for mount in mounts)
     assert create[-2:] == ["--send-to-lyria", "--confirm-free-tier"]
     assert len([row for row in calls if row[0] == "create"]) == 1
     assert not (tmp_path / "state").exists()
@@ -127,6 +146,38 @@ def test_wrong_owner_is_never_stopped_or_removed(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert not any(row[0] in {"stop", "rm"} for row in calls)
     assert (tmp_path / "state").exists()
+
+
+@pytest.mark.parametrize(
+    ("mode", "reason"),
+    [
+        ("stderr_only", "evaluator_output_missing"),
+        ("missing_verdict", "evaluator_output_missing"),
+        ("log_failure", "log_retrieval"),
+        ("partial_log_failure", "log_retrieval"),
+        ("oversized_logs", "log_size"),
+        ("startup_failure", "client_result"),
+    ],
+)
+def test_collection_failures_are_distinct_and_redacted(
+    tmp_path: Path, mode: str, reason: str
+) -> None:
+    result, calls = execute(tmp_path, mode)
+    assert result.returncode == 1
+    wrapper = json.loads(result.stdout.splitlines()[-1])
+    assert wrapper["reason"] == reason
+    assert wrapper["cleanup_verified"] and wrapper["cleanup_commands_ok"]
+    assert result.stderr == ""
+    assert "synthetic-private-provider-error" not in result.stdout
+    records = list(tmp_path.glob("sobafm-lyria.*/result.jsonl"))
+    assert len(records) == 1
+    assert "synthetic-private-provider-error" not in records[0].read_text()
+    assert len([row for row in calls if row[0] == "logs"]) == 1
+    assert len([row for row in calls if row[0] == "create"]) == 1
+    if mode == "startup_failure":
+        assert '"reason":"startup_import"' in result.stdout
+    if mode == "partial_log_failure":
+        assert '"result": "pass"' not in result.stdout
 
 
 def test_default_host_path_cannot_call_docker(tmp_path: Path) -> None:
