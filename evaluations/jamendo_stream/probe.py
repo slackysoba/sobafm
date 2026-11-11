@@ -87,8 +87,17 @@ class LicenseTextDetail(StrEnum):
 type Presence = Literal["present", "absent", "not_evaluated"]
 type Match = Literal["match", "mismatch", "not_evaluated"]
 type RouteComponent = Literal[
-    "text_shape", "url_parser", "query_parser", "scheme", "authority", "path",
-    "fragment", "query_keys", "track_id", "format", "application_binding",
+    "text_shape",
+    "url_parser",
+    "query_parser",
+    "scheme",
+    "authority",
+    "path",
+    "fragment",
+    "query_keys",
+    "track_id",
+    "format",
+    "application_binding",
 ]
 
 
@@ -108,9 +117,7 @@ class RouteDiagnostic:
     ] = "not_evaluated"
     path: Literal["root", "empty", "other", "not_evaluated"] = "not_evaluated"
     fragment: Presence = "not_evaluated"
-    query_parser: Literal[
-        "success", "field_limit", "syntax", "not_evaluated"
-    ] = "not_evaluated"
+    query_parser: Literal["success", "field_limit", "syntax", "not_evaluated"] = "not_evaluated"
     query_keys: Literal["exact", "mismatch", "not_evaluated"] = "not_evaluated"
     missing_keys: Presence = "not_evaluated"
     extra_keys: Presence = "not_evaluated"
@@ -544,8 +551,13 @@ def diagnose_route(value: str, application_id: str, track_id: str) -> RouteDiagn
         return diagnostic
     diagnostic.url_parser = "success"
     diagnostic.scheme = (
-        "https" if parts.scheme == "https" else "http" if parts.scheme == "http"
-        else "empty" if not parts.scheme else "other"
+        "https"
+        if parts.scheme == "https"
+        else "http"
+        if parts.scheme == "http"
+        else "empty"
+        if not parts.scheme
+        else "other"
     )
     authority = parts.netloc
     host_port = authority.rsplit("@", 1)[-1]
@@ -553,8 +565,15 @@ def diagnose_route(value: str, application_id: str, track_id: str) -> RouteDiagn
     # A bracketed IPv6 address's internal colons are not a port delimiter.
     port = ":" in (host_port.partition("]")[2] if host_port.startswith("[") else host_port)
     diagnostic.authority = (
-        "exact" if authority == STREAM_HOST else "userinfo_and_port" if userinfo and port
-        else "userinfo" if userinfo else "port" if port else "other"
+        "exact"
+        if authority == STREAM_HOST
+        else "userinfo_and_port"
+        if userinfo and port
+        else "userinfo"
+        if userinfo
+        else "port"
+        if port
+        else "other"
     )
     diagnostic.path = "root" if parts.path == "/" else "empty" if not parts.path else "other"
     # Match parse_qsl's field-limit-before-syntax precedence without inspecting
