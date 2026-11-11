@@ -172,18 +172,19 @@ class _SavedResponse:
     """The standard HTTP parser reads only the already bounded in-memory bytes."""
 
     def __init__(self, data: bytes) -> None:
-        self.data = data
+        self.stream = io.BytesIO(data)
 
     def makefile(self, mode: str) -> io.BytesIO:
         assert mode == "rb"
-        return io.BytesIO(self.data)
+        return self.stream
 
 
 def parse_response(data: bytes, application_id: str, report: Report) -> None:
     if len(data) >= MAX_RESPONSE_BYTES:
         raise Stopped("response_limit")
+    saved = _SavedResponse(data)
     # HTTPResponse accepts this documented socket-like makefile boundary at runtime.
-    with http.client.HTTPResponse(cast(socket.socket, _SavedResponse(data))) as response:
+    with http.client.HTTPResponse(cast(socket.socket, saved)) as response:
         response.begin()
         report.http_status = response.status
         if response.status != 200:
@@ -194,9 +195,22 @@ def parse_response(data: bytes, application_id: str, report: Report) -> None:
             "application/json"
         ):
             raise Stopped("content_type")
-        body = response.read(MAX_RESPONSE_BYTES)
-        if response.length not in (None, 0):
-            raise Stopped("truncated_response")
+        # HTTPResponse is deliberately permissive about duplicate/invalid lengths
+        # and chunk terminators. Fail closed on transfer coding rather than build
+        # another chunk parser; the captured response must have an unambiguous
+        # Content-Length or be delimited by the connection's observed EOF.
+        if response.headers.defects:
+            raise Stopped("invalid_framing")
+        if response.headers.get_all("Transfer-Encoding") is not None:
+            raise Stopped("unsupported_transfer_encoding")
+        lengths = response.headers.get_all("Content-Length")
+        if lengths is not None:
+            if len(lengths) != 1 or not re.fullmatch(r"[0-9]+", lengths[0]):
+                raise Stopped("invalid_framing")
+            if int(lengths[0]) != len(data) - saved.stream.tell():
+                raise Stopped("invalid_framing")
+        # This is already capped in-memory input, never an unbounded socket read.
+        body = response.read()
     payload: object = json.loads(body.decode("utf-8"), object_pairs_hook=_unique_object)
     root = _object(payload)
     headers = _object(root.get("headers"))

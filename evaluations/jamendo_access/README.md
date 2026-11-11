@@ -74,7 +74,7 @@ parameters and separates the stream and download fields.
 | Connections/requests | First DNS address only, at most one TCP/TLS attempt and one GET. No address fallback, HTTP retry, redirect, proxy, cookie, OAuth or authentication retry. An honest fixed tool User-Agent; no browser impersonation or referrer. |
 | Time | Supervisor waits at most 10 seconds for the isolated child, including its startup, credential read, DNS, connect, TLS, send, read and parsing. On timeout or interrupt it kills and reaps that child; no replacement request. A process-local 10-second alarm also bounds the request work. Reaping is observed after stopping, not asserted to have happened at the deadline. |
 | Response | At most 256,000 decrypted HTTP bytes consumed, including status line, headers and transfer framing. No read crosses the remaining budget. Reaching the cap is a failure, even at exact fit; no extra sentinel byte. TLS/network overhead and already received kernel/TLS buffering are not a wire-traffic cap. |
-| Framing | Requests `Connection: close`, waits for EOF within the same deadline, then uses Python's HTTP parser on bounded memory. A peer that leaves the connection open times out even if it has sent a complete body. No decompression; encoded responses fail. |
+| Framing | Requests `Connection: close`, waits for EOF within the same deadline, then uses Python's HTTP parser on bounded memory. Accepts one valid `Content-Length` matching the exact captured body, or no length with observed connection EOF. Rejects duplicate/invalid lengths and every `Transfer-Encoding`, including valid chunked responses; Python's permissive chunk parsing is not used. A peer that leaves the connection open times out even if it has sent a complete body. No decompression; encoded responses fail. |
 | Validation | HTTP 200 and JSON media type required. Application code must be integer zero, status `success` or `succeed`, error and warning fields empty. Any warning stops, including quota/account warnings accompanying success. Results count must match, at most 10; IDs must be distinct decimal strings. Duplicate JSON keys fail. |
 | Output | One ASCII JSON report, at most 100,000 bytes including newline. No title, artist, tag, raw response, query URL, exception text or response header. Numeric identities containing the application ID are omitted. No raw artifact, credentials or audio retained. |
 | Credential | Only the isolated opt-in child opens the supplied newly named file. Regular file, no symlink/FIFO, at most 160 bytes; ASCII application ID, 6–128 letters/digits/underscore/hyphen. No environment-file reader and no ID in arguments. |
@@ -170,7 +170,9 @@ uv run pytest -q evaluations/jamendo_access
 The evaluator checks cover default-off behavior, invalid/suspended IDs, fixed
 request contents, redirects/refusals, a dropped connection without retry,
 address failure without fallback, response bounds including headers, application
-status/code/warning/count validation, redaction, timers, socket closure and
+status/code/warning/count validation, malformed HTTP framing (including the
+independent review's conflicting/negative lengths and incomplete/bad chunk
+terminators), supported framing controls, redaction, timers, socket closure and
 supervisor kill/reap. The loopback transport tests replace TLS with a plain local
 socket; a separate check verifies real TLS context certificate/hostname settings
 and disabled key logging. These tests do not establish actual Jamendo TLS,

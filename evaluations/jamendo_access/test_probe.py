@@ -215,6 +215,64 @@ def test_malformed_response(monkeypatch: pytest.MonkeyPatch, response: bytes) ->
     assert report.records == []
 
 
+@pytest.mark.parametrize(
+    "framing",
+    [
+        "conflicting_lengths",
+        "negative_length",
+        "short_length",
+        "long_length",
+        "duplicate_lengths",
+        "comma_lengths",
+        "bad_chunk_terminator",
+        "unfinished_chunks",
+        "valid_chunks",
+        "length_and_chunks",
+    ],
+)
+def test_invalid_or_unsupported_http_framing_never_reports_metadata(
+    monkeypatch: pytest.MonkeyPatch, framing: str
+) -> None:
+    body = json.dumps(document()).encode()
+    header = b"HTTP/1.1 200 Synthetic\r\nContent-Type: application/json\r\n"
+    length = len(body)
+    length_fields = {
+        "conflicting_lengths": f"Content-Length: {length}\r\nContent-Length: {length + 1}\r\n",
+        "negative_length": "Content-Length: -1\r\n",
+        "short_length": f"Content-Length: {length - 1}\r\n",
+        "long_length": f"Content-Length: {length + 1}\r\n",
+        "duplicate_lengths": f"Content-Length: {length}\r\nContent-Length: {length}\r\n",
+        "comma_lengths": f"Content-Length: {length}, {length}\r\n",
+    }
+    if framing in length_fields:
+        raw = header + length_fields[framing].encode() + b"\r\n" + body
+    else:
+        header += b"Transfer-Encoding: chunked\r\n"
+        if framing == "length_and_chunks":
+            header += f"Content-Length: {length}\r\n".encode()
+        terminator = b"XX" if framing == "bad_chunk_terminator" else b"\r\n"
+        ending = b"0\r\n" if framing == "unfinished_chunks" else b"0\r\n\r\n"
+        raw = header + b"\r\n" + f"{length:x}\r\n".encode() + body + terminator + ending
+    report = evaluate(monkeypatch, raw)
+    assert report.outcome == "failed"
+    assert report.records == [] and report.results_count == 0
+    assert report.reason in ("invalid_framing", "unsupported_transfer_encoding")
+
+
+@pytest.mark.parametrize("with_length", [False, True])
+def test_valid_content_length_and_eof_delimited_controls(
+    monkeypatch: pytest.MonkeyPatch, with_length: bool
+) -> None:
+    body = json.dumps(document()).encode()
+    header = b"HTTP/1.1 200 Synthetic\r\nContent-Type: application/json\r\n"
+    if with_length:
+        header += f"Content-Length: {len(body)}\r\n".encode()
+    report = evaluate(monkeypatch, header + b"\r\n" + body)
+    assert report.outcome == "metadata_received"
+    assert report.results_count == 1
+    assert report.reason is None
+
+
 class PlainTls:
     """Loopback-only TLS stand-in; leaves the real socket/HTTP path in place."""
 
