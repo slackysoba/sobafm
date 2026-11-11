@@ -322,6 +322,194 @@ def test_candidate_controls_are_not_admission(changes: dict[str, object]) -> Non
     assert "Synthetic" not in json.dumps(asdict(report))
 
 
+@pytest.mark.parametrize("album_id_present", [False, True])
+@pytest.mark.parametrize("album_name_present", [False, True])
+@pytest.mark.parametrize("explicit_type", [False, True])
+def test_single_optional_album_omissions_pass_listing_and_refresh(
+    album_id_present: bool, album_name_present: bool, explicit_type: bool
+) -> None:
+    record = row(album_id="", album_name="")
+    if not album_id_present:
+        del record["album_id"]
+    if not album_name_present:
+        del record["album_name"]
+    if explicit_type:
+        record["type"] = "single"
+    report = subject.Report()
+    data = document(record)
+    selected = subject.select_candidate(data, FAKE_ID, report)
+    assert subject.validate_refresh(data, FAKE_ID, selected, report) == selected.target
+    assert report.metadata_validated
+    assert report.candidate_refusals == []
+
+
+@pytest.mark.parametrize(
+    "album",
+    [
+        {"album_id": "8"},
+        {"album_name": "Synthetic album"},
+        {"album_id": "", "album_name": "Synthetic album"},
+        {"album_id": "8", "album_name": ""},
+        {"album_id": "0", "album_name": "Synthetic album"},
+        {"album_id": None},
+        {"album_name": None},
+        {"album_id": 8, "album_name": "Synthetic album"},
+        {"album_id": "8", "album_name": []},
+        {"type": "albumtrack"},
+        {"type": None},
+        {"type": "preview"},
+        {"album_id": "8", "album_name": "Synthetic album", "type": "single"},
+    ],
+)
+def test_optional_album_fields_do_not_accept_conflicting_evidence(
+    album: dict[str, object],
+) -> None:
+    record = row()
+    del record["album_id"], record["album_name"]
+    record.update(album)
+    with pytest.raises(subject.CandidateRefused) as refused:
+        subject.validate_candidate(record, FAKE_ID)
+    assert refused.value.gate == subject.Gate.ALBUM
+
+
+@pytest.mark.parametrize("explicit_type", [False, True])
+def test_coherent_album_track_still_passes(explicit_type: bool) -> None:
+    record = row()
+    if explicit_type:
+        record["type"] = "albumtrack"
+    assert subject.validate_candidate(record, FAKE_ID).track_id == "168"
+
+
+@pytest.mark.parametrize(
+    ("record", "gate", "condition"),
+    [
+        (None, "row", "type"),
+        ([], "row", "type"),
+        ({}, "identity", "missing"),
+        (row(id=168), "identity", "type"),
+        (row(id="0"), "identity", "shape"),
+        (row(id="1" * 21), "identity", "bound"),
+        (row(name=""), "title", "shape"),
+        (row(name=None), "title", "type"),
+        (row(name="x" * 513), "title", "bound"),
+        (row(artist_name="\x00"), "artist", "shape"),
+        (row(artist_id="invalid"), "artist", "shape"),
+        (row(album_id="0"), "album", "shape"),
+        (row(album_name=None), "album", "type"),
+        (row(album_name="x" * 513), "album", "bound"),
+        (row(duration=481), "duration", "bound"),
+        (row(duration=True), "duration", "type"),
+        (row(duration="inf"), "duration", "shape"),
+        (row(license_ccurl="https://invalid.test/"), "license", "shape"),
+        (row(license_ccurl=None), "license", "type"),
+        (row(shareurl="https://invalid.test/"), "backlink", "shape"),
+        (row(shareurl=None), "backlink", "type"),
+        (row(audiodownload_allowed="true"), "download_flag", "type"),
+        (row(audio=None), "stream_route", "type"),
+        (row(audio="https://invalid.test/"), "stream_route", "shape"),
+        (row(audio="x" * 1025), "stream_route", "bound"),
+    ],
+)
+def test_fixed_first_refusal_diagnostics(record: object, gate: str, condition: str) -> None:
+    report = subject.Report()
+    with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
+        subject.select_candidate(listing([record]), FAKE_ID, report)
+    assert json.loads(json.dumps(asdict(report)))["candidate_refusals"] == [
+        {"ordinal": 1, "gate": gate, "condition": condition}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("key", "gate"),
+    [
+        ("id", "identity"),
+        ("name", "title"),
+        ("artist_id", "artist"),
+        ("artist_name", "artist"),
+        ("duration", "duration"),
+        ("license_ccurl", "license"),
+        ("shareurl", "backlink"),
+        ("audiodownload_allowed", "download_flag"),
+        ("audio", "stream_route"),
+    ],
+)
+def test_required_omissions_have_safe_missing_diagnostics(key: str, gate: str) -> None:
+    record = row()
+    del record[key]
+    with pytest.raises(subject.CandidateRefused) as refused:
+        subject.validate_candidate(record, FAKE_ID)
+    assert refused.value.gate == gate
+    assert refused.value.condition == subject.Condition.MISSING
+
+
+def test_ten_first_refusals_only_and_no_refresh_or_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def exchange(_target: str, transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert metadata and calls == 1
+        transfer.requests_attempted = 1
+        return listing([row(name="", duration=0)] * 10)
+
+    monkeypatch.setattr(subject, "exchange", exchange)
+    report = subject.Report()
+    with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
+        subject.probe(FAKE_ID, report)
+    assert report.rejected_candidates == 10
+    assert [item.ordinal for item in report.candidate_refusals] == list(range(1, 11))
+    assert all(item.gate == subject.Gate.TITLE for item in report.candidate_refusals)
+    assert calls == report.search.requests_attempted == 1
+    assert report.metadata == report.stream == subject.Transfer()
+    assert report.selected_track_id is None
+    assert len(json.dumps(asdict(report))) < subject.REPORT_BYTES
+    # An invalid oversized listing never produces an eleventh entry.
+    with pytest.raises(subject.Stopped, match="^declared_count_value$"):
+        subject.select_candidate(listing([row(name="")] * 11), FAKE_ID, report)
+    assert len(report.candidate_refusals) == 10
+
+
+@pytest.mark.parametrize("injected", [False, True])
+def test_refusal_report_never_retains_source_or_exception_text(
+    injected: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hostile = "provider exception https://secret.test/?key=" + FAKE_ID
+    record = row(id="987654321", name=hostile + "\x00", details=hostile)
+
+    def exchange(_target: str, _transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        assert metadata
+        return listing([record] * 10)
+
+    def refuse(_value: object, _key: str) -> subject.Candidate:
+        raise subject.Stopped(hostile)
+
+    def read_id(_path: str) -> str:
+        return FAKE_ID
+
+    monkeypatch.setattr(subject, "read_id", read_id)
+    monkeypatch.setattr(subject, "exchange", exchange)
+    if injected:
+        monkeypatch.setattr(subject, "validate_candidate", refuse)
+    assert subject.run_child("synthetic-path") == 1
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert len(output.out) <= subject.REPORT_BYTES
+    for forbidden in (
+        hostile,
+        FAKE_ID,
+        "https://",
+        "987654321",
+        hashlib.sha256(hostile.encode()).hexdigest(),
+    ):
+        assert forbidden not in output.out
+    report = json.loads(output.out)
+    assert report["reason"] == "no_acceptable_candidate"
+    assert report["candidate_refusals"] == [
+        {"ordinal": ordinal, "gate": "row" if injected else "title", "condition": "shape"}
+        for ordinal in range(1, 11)
+    ]
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -413,6 +601,9 @@ def test_fresh_selection_skips_invalid_rows_in_returned_order(
     subject.probe(FAKE_ID, report)
     assert report.selected_track_id == "702"
     assert report.rejected_candidates == 1
+    assert report.candidate_refusals == [
+        subject.Refusal(1, subject.Gate.DURATION, subject.Condition.BOUND)
+    ]
     assert report.search_results.list_count == 3
     assert parse_qs(urlsplit(calls[1]).query)["id"] == ["702"]
     assert parse_qs(urlsplit(calls[2]).query)["trackid"] == ["702"]
@@ -537,7 +728,7 @@ def test_non_json_numbers_stop_before_selection(literal: bytes) -> None:
             document(row(license_ccurl="https://creativecommons.org/licenses/by/4.0/")),
             "refresh_evidence_changed",
         ),
-        (document(row(audio="https://unexpected.test/")), "stream_url"),
+        (document(row(audio="https://unexpected.test/")), "candidate_stream_route_shape"),
         (listing([]), "refresh_empty"),
         (document(warnings=FAKE_ID), "application_status_or_warning"),
     ],

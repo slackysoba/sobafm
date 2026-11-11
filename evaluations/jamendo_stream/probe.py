@@ -19,6 +19,7 @@ import time
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from types import FrameType
 from typing import cast
@@ -41,6 +42,42 @@ SUSPENDED_ID = "709fa152"  # pragma: allowlist secret
 
 class Stopped(Exception):
     """Only fixed local reasons, never provider or exception text."""
+
+
+class Gate(StrEnum):
+    ROW = "row"
+    IDENTITY = "identity"
+    TITLE = "title"
+    ARTIST = "artist"
+    ALBUM = "album"
+    DURATION = "duration"
+    LICENSE = "license"
+    BACKLINK = "backlink"
+    DOWNLOAD_FLAG = "download_flag"
+    STREAM_ROUTE = "stream_route"
+
+
+class Condition(StrEnum):
+    MISSING = "missing"
+    TYPE = "type"
+    SHAPE = "shape"
+    BOUND = "bound"
+
+
+class CandidateRefused(Stopped):
+    """Typed first gate failure, with no source value or exception text."""
+
+    def __init__(self, gate: Gate, condition: Condition) -> None:
+        self.gate = Gate(gate)
+        self.condition = Condition(condition)
+        super().__init__(f"candidate_{self.gate}_{self.condition}")
+
+
+@dataclass(frozen=True)
+class Refusal:
+    ordinal: int
+    gate: Gate
+    condition: Condition
 
 
 @dataclass
@@ -83,6 +120,7 @@ class Report:
     refresh_results: Results = field(default_factory=Results)
     selected_track_id: str | None = None
     rejected_candidates: int = 0
+    candidate_refusals: list[Refusal] = field(default_factory=list[Refusal])
     metadata_validated: bool = False
 
 
@@ -290,27 +328,66 @@ def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def text_field(value: object) -> str:
-    if not isinstance(value, str) or not 1 <= len(value) <= 512:
-        raise Stopped("credit_fields")
+def required_field(row: dict[str, object], key: str, gate: Gate) -> object:
+    if key not in row:
+        raise CandidateRefused(gate, Condition.MISSING)
+    return row[key]
+
+
+def text_field(value: object, gate: Gate) -> str:
+    if not isinstance(value, str):
+        raise CandidateRefused(gate, Condition.TYPE)
+    if len(value) > 512:
+        raise CandidateRefused(gate, Condition.BOUND)
     if not value.strip() or any(ord(char) < 32 or ord(char) == 127 for char in value):
-        raise Stopped("credit_fields")
+        raise CandidateRefused(gate, Condition.SHAPE)
     return value
+
+
+def numeric_id(value: object, gate: Gate) -> str:
+    value = text_field(value, gate)
+    if len(value) > 20:
+        raise CandidateRefused(gate, Condition.BOUND)
+    if not re.fullmatch(r"[1-9][0-9]{0,19}", value):
+        raise CandidateRefused(gate, Condition.SHAPE)
+    return value
+
+
+def album_shape(row: dict[str, object]) -> None:
+    # Missing and empty optional fields both describe a single. Null or partial
+    # album evidence is not an omission, and an explicit type must still agree.
+    album_id = row.get("album_id", "")
+    album_name = row.get("album_name", "")
+    if not isinstance(album_id, str) or not isinstance(album_name, str):
+        raise CandidateRefused(Gate.ALBUM, Condition.TYPE)
+    if album_id == "" and album_name == "":
+        kind = "single"
+    else:
+        numeric_id(required_field(row, "album_id", Gate.ALBUM), Gate.ALBUM)
+        text_field(required_field(row, "album_name", Gate.ALBUM), Gate.ALBUM)
+        kind = "albumtrack"
+    if "type" in row:
+        if not isinstance(row["type"], str):
+            raise CandidateRefused(Gate.ALBUM, Condition.TYPE)
+        if row["type"] != kind:
+            raise CandidateRefused(Gate.ALBUM, Condition.SHAPE)
 
 
 def stream_target(value: object, application_id: str, track_id: str) -> str:
     """Validate the fresh audio field, then build only that exact allowed request."""
-    if not isinstance(value, str) or not value.isascii() or len(value) > 1024:
-        raise Stopped("stream_url")
-    if any(ord(char) <= 32 or ord(char) == 127 for char in value):
-        raise Stopped("stream_url")
+    if not isinstance(value, str):
+        raise CandidateRefused(Gate.STREAM_ROUTE, Condition.TYPE)
+    if len(value) > 1024:
+        raise CandidateRefused(Gate.STREAM_ROUTE, Condition.BOUND)
+    if not value.isascii() or any(ord(char) <= 32 or ord(char) == 127 for char in value):
+        raise CandidateRefused(Gate.STREAM_ROUTE, Condition.SHAPE)
     try:
         parts = urlsplit(value)
         pairs = parse_qsl(
             parts.query, keep_blank_values=True, strict_parsing=True, max_num_fields=3
         )
     except ValueError:
-        raise Stopped("stream_url") from None
+        raise CandidateRefused(Gate.STREAM_ROUTE, Condition.SHAPE) from None
     if (
         parts.scheme != "https"
         or parts.netloc != STREAM_HOST
@@ -318,10 +395,10 @@ def stream_target(value: object, application_id: str, track_id: str) -> str:
         or parts.fragment
         or "#" in value
     ):
-        raise Stopped("stream_url")
+        raise CandidateRefused(Gate.STREAM_ROUTE, Condition.SHAPE)
     expected = {"trackid": track_id, "format": "mp32", "from": f"app-{application_id}"}
     if len(pairs) != 3 or dict(pairs) != expected:
-        raise Stopped("stream_url")
+        raise CandidateRefused(Gate.STREAM_ROUTE, Condition.SHAPE)
     return "/?" + urlencode(expected)
 
 
@@ -389,45 +466,42 @@ def metadata_rows(data: bytes, diagnostics: Results, limit: int) -> list[object]
 
 
 def validate_candidate(value: object, application_id: str) -> Candidate:
-    row = object_value(value)
-    track_id = row.get("id")
-    if not isinstance(track_id, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", track_id):
-        raise Stopped("candidate_identity")
-    text_field(row.get("name"))
-    text_field(row.get("artist_name"))
-    if not re.fullmatch(r"[1-9][0-9]{0,19}", text_field(row.get("artist_id"))):
-        raise Stopped("credit_fields")
-    # Album shape is the documented distinction; type is not a required returned field.
-    if row.get("album_id") == "" and row.get("album_name") == "":
-        kind = "single"
-    elif re.fullmatch(r"[1-9][0-9]{0,19}", text_field(row.get("album_id"))):
-        text_field(row.get("album_name"))
-        kind = "albumtrack"
-    else:
-        raise Stopped("candidate_type")
-    if "type" in row and row["type"] != kind:
-        raise Stopped("candidate_type")
-    duration = row.get("duration")
+    if not isinstance(value, dict):
+        raise CandidateRefused(Gate.ROW, Condition.TYPE)
+    row = cast(dict[str, object], value)
+    track_id = numeric_id(required_field(row, "id", Gate.IDENTITY), Gate.IDENTITY)
+    text_field(required_field(row, "name", Gate.TITLE), Gate.TITLE)
+    text_field(required_field(row, "artist_name", Gate.ARTIST), Gate.ARTIST)
+    numeric_id(required_field(row, "artist_id", Gate.ARTIST), Gate.ARTIST)
+    album_shape(row)
+    duration = required_field(row, "duration", Gate.DURATION)
+    if not isinstance(duration, (int, str)) or isinstance(duration, bool):
+        raise CandidateRefused(Gate.DURATION, Condition.TYPE)
     if isinstance(duration, str) and re.fullmatch(r"[0-9]{1,3}", duration):
         duration = int(duration)
-    if type(duration) is not int or not 1 <= duration <= 480:
-        raise Stopped("duration_bound")
-    license_url = text_field(row.get("license_ccurl"))
+    if not isinstance(duration, int):
+        raise CandidateRefused(Gate.DURATION, Condition.SHAPE)
+    if not 1 <= duration <= 480:
+        raise CandidateRefused(Gate.DURATION, Condition.BOUND)
+    license_url = text_field(required_field(row, "license_ccurl", Gate.LICENSE), Gate.LICENSE)
     if not re.fullmatch(
         r"https?://creativecommons\.org/licenses/"
         r"(?:by|by-sa|by-nd|by-nc|by-nc-sa|by-nc-nd)/(?:1\.0|2\.0|2\.5|3\.0|4\.0)/",
         license_url,
     ):
-        raise Stopped("license_field")
-    if row.get("shareurl") not in (
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE)
+    backlink = text_field(required_field(row, "shareurl", Gate.BACKLINK), Gate.BACKLINK)
+    if backlink not in (
         f"http://www.jamendo.com/track/{track_id}",
         f"https://www.jamendo.com/track/{track_id}",
     ):
-        raise Stopped("credit_fields")
-    if type(row.get("audiodownload_allowed")) is not bool:
-        raise Stopped("invalid_metadata")
+        raise CandidateRefused(Gate.BACKLINK, Condition.SHAPE)
+    if type(required_field(row, "audiodownload_allowed", Gate.DOWNLOAD_FLAG)) is not bool:
+        raise CandidateRefused(Gate.DOWNLOAD_FLAG, Condition.TYPE)
     # The download flag is not a streaming permission, and no download is made.
-    target = stream_target(row.get("audio"), application_id, track_id)
+    target = stream_target(
+        required_field(row, "audio", Gate.STREAM_ROUTE), application_id, track_id
+    )
     # Conservatively bind every returned field, including optional details and
     # notices. Normalize only the checked stream query and duration. This is
     # transient consistency evidence, never an admission/rights certificate.
@@ -445,11 +519,17 @@ def validate_candidate(value: object, application_id: str) -> Candidate:
 
 def select_candidate(data: bytes, application_id: str, report: Report) -> Candidate:
     entries = metadata_rows(data, report.search_results, SEARCH_RESULTS)
-    for value in entries:
+    for ordinal, value in enumerate(entries, start=1):
         try:
             candidate = validate_candidate(value, application_id)
-        except Stopped:
+        except Stopped as error:
             report.rejected_candidates += 1
+            if len(report.candidate_refusals) < SEARCH_RESULTS:
+                # Never parse exception text, including an unexpected Stopped.
+                gate, condition = Gate.ROW, Condition.SHAPE
+                if isinstance(error, CandidateRefused):
+                    gate, condition = error.gate, error.condition
+                report.candidate_refusals.append(Refusal(ordinal, gate, condition))
             continue
         report.selected_track_id = candidate.track_id
         return candidate
