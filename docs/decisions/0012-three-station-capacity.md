@@ -1,7 +1,9 @@
 # 0012: Reserve capacity for three stations under one bot identity
 
-Status: **Implementation proposal; numeric contract awaiting maintainer acceptance before merge.**
+Status: **Accepted numeric contract; actual-image qualification pending.**
 Issue: [#172](https://github.com/slackysoba/sobafm/issues/172).
+Acceptance: [maintainer decision](https://github.com/slackysoba/sobafm/issues/172#issuecomment-6792895786),
+2026-11-11: **“Accept the reviewed three-server resource proposal.”**
 Route choice: [#166](https://github.com/slackysoba/sobafm/issues/166#issuecomment-6791659984),
 where the maintainer chose **“One bot identity; implement three-server capacity.”**
 
@@ -16,21 +18,19 @@ The selected route is one process and one Discord identity with three station
 reservations. The rejected alternative was three separate bot identities and
 isolated services. No sharding, replica coordination or provider framework is added.
 
-## Proposed explicit contract
+## Accepted explicit contract
 
-This proposal supersedes only the numeric limits and shared two-slot admission
+This decision supersedes only the numeric limits and shared two-slot admission
 parts of ADRs [0001](0001-linux-resource-proposal.md),
 [0004](0004-amd64-whole-service-adoption.md),
 [0008](0008-lyria-realtime-path.md) and
 [0011](0011-program-refill.md). Those accepted records remain historical records.
 The former below-100,000,000 controlled-byte and at-most-34,560,000 PCM guarantees
-do **not** describe this candidate. The implementation is prepared under the
-route choice; adopting these replacement guarantees is the remaining concrete
-maintainer decision. Recommendation: accept these exact bounds for subsequent
-qualification, with no runtime-fit claim. Alternatively retain the old bounds
-and keep this implementation unmerged; that cannot provide the selected capacity.
+do **not** describe this design. The maintainer accepted these exact replacement
+guarantees for subsequent qualification, with no runtime-fit claim. Retaining
+the former bounds would not provide the selected three-station capacity.
 
-| Reservation | Candidate bytes | Ownership |
+| Reservation | Accepted bytes | Ownership |
 | --- | ---: | --- |
 | Docker-owned whole-service group | 268,435,456 | Full group charged to every playing server |
 | Six PCM banks | 13,824,000 | Three stations × two banks × 2,304,000 |
@@ -97,7 +97,7 @@ results retain their original source/image/target bindings. In particular, the
 was five synthetic pairs/ten sessions in 27 seconds on application `01e2226` and
 image `bd7d1aee`, with harness `37e2b8f`; its earlier failed attempt remains.
 The retained five-pair harness still exercises one two-slot reservation and its
-historical limit, not three stations or this candidate's fit.
+historical limit, not three stations or this design's fit.
 
 Separately authorized qualification must cover simultaneous three-station catalog
 boundaries, generated renewals, mixed modes, retained debt, stop/restart, useful
@@ -106,8 +106,8 @@ host. Existing 60-minute continuity and latency criteria remain. No live Lyria
 access or six-session provider concurrency is established. Broad catalog access
 is a separate deployment prerequisite in [#171](https://github.com/slackysoba/sobafm/issues/171).
 
-This proposal authorizes no native/media/Docker/provider/Discord activity, source
+This decision authorizes no native/media/Docker/provider/Discord activity, source
 acquisition, spend or host changes. [#151](https://github.com/slackysoba/sobafm/issues/151)
 remains deferred. Native arm64 stays on hold under
 [#60](https://github.com/slackysoba/sobafm/issues/60), with its CI job and preflight
-tooling unchanged. No historical evidence qualifies this numeric candidate.
+tooling unchanged. No historical evidence qualifies the three-station configuration.
