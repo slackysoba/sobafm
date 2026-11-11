@@ -18,33 +18,38 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
-from sobafm.crash_dumps import disable_crash_dumps
+# Fixed stages only: even the first application import can fail before main.
+logging.disable(logging.CRITICAL)
+startup_reason = "startup_import"
+try:
+    from sobafm.crash_dumps import disable_crash_dumps
 
-# Apply these before importing native dependencies or reading the private key.
-if __name__ == "__main__" and "--send-to-lyria" in sys.argv:
-    try:
+    # Apply these before importing native dependencies or reading the private key.
+    if __name__ == "__main__" and "--send-to-lyria" in sys.argv:
+        startup_reason = "crash_controls"
         disable_crash_dumps()
-    except Exception:
-        print('{"result":"failed","reason":"crash_controls"}')
-        sys.exit(1)
+    startup_reason = "startup_import"
+    from sobafm import lyria
+    from sobafm.lyria import (
+        CLEANUP_SECONDS,
+        ENDPOINT,
+        MAX_MESSAGE_PCM_BYTES,
+        LyriaSession,
+        MusicRequest,
+        Prompt,
+    )
+    from sobafm.pcm import BANK_BYTES, FRAME_BYTES, PcmBankPool
 
-from sobafm import lyria  # noqa: E402
-from sobafm.lyria import (  # noqa: E402
-    CLEANUP_SECONDS,
-    ENDPOINT,
-    MAX_MESSAGE_PCM_BYTES,
-    LyriaSession,
-    MusicRequest,
-    Prompt,
-)
-from sobafm.pcm import BANK_BYTES, FRAME_BYTES, PcmBankPool  # noqa: E402
-
-WORK_SECONDS = 25
-HARD_SECONDS = 35
-FRAMES = 200
-MAX_PCM_BYTES = BANK_BYTES + FRAMES * FRAME_BYTES
-KEY_FILE = Path("/run/lyria-key")
-REQUEST = MusicRequest((Prompt("gentle instrumental jazz, piano and soft drums"),), bpm=90)
+    startup_reason = "startup_internal"
+    WORK_SECONDS = 25
+    HARD_SECONDS = 35
+    FRAMES = 200
+    MAX_PCM_BYTES = BANK_BYTES + FRAMES * FRAME_BYTES
+    KEY_FILE = Path("/run/lyria-key")
+    REQUEST = MusicRequest((Prompt("gentle instrumental jazz, piano and soft drums"),), bpm=90)
+except Exception:
+    print(json.dumps({"result": "failed", "reason": startup_reason}), flush=True)
+    sys.exit(1)
 
 
 class Failed(Exception):
@@ -218,8 +223,11 @@ async def live() -> Result:
         loop.add_signal_handler(sig, task.cancel)
     # Never let asyncio diagnostics serialize a provider exception or its headers.
     loop.set_exception_handler(lambda _loop, _context: None)
-    with KEY_FILE.open("r", encoding="ascii") as handle:
-        key = handle.read(513).strip()
+    try:
+        with KEY_FILE.open("r", encoding="ascii") as handle:
+            key = handle.read(513).strip()
+    except OSError, UnicodeError:
+        raise Failed("credential_file") from None
     if not key or len(key) > 512 or any(c.isspace() for c in key):
         raise Failed("credential_file")
     return await probe(key)
@@ -245,11 +253,14 @@ def main(args: list[str]) -> int:
     if args != ["--send-to-lyria", "--confirm-free-tier"]:
         print('{"result":"failed","reason":"explicit_opt_in_required"}')
         return 2
+    reason = "internal"
     try:
         signal.signal(signal.SIGALRM, hard_stop)
         signal.alarm(HARD_SECONDS)
+        reason = "target"
         if platform.system() != "Linux" or platform.machine() != "x86_64" or os.getuid() == 0:
             raise Failed("target")
+        reason = "limits"
         root = Path("/sys/fs/cgroup")
         for name, expected in (
             ("memory.max", "90177536"),
@@ -261,6 +272,7 @@ def main(args: list[str]) -> int:
         quota, period = map(int, (root / "cpu.max").read_text().split())
         if period <= 0 or quota != 2 * period:
             raise Failed("limits")
+        reason = "internal"
         result = asyncio.run(live())
         print(
             json.dumps(
@@ -273,12 +285,15 @@ def main(args: list[str]) -> int:
             ),
             flush=True,
         )
-        signal.alarm(0)
         return 0 if result.result == "pass" else 1
-    except Exception:
+    except Exception as exc:
         # No traceback, exception text, provider URL, header, key or payload.
-        print('{"result":"failed","reason":"preflight_or_internal"}', flush=True)
+        if isinstance(exc, Failed) and exc.args == ("credential_file",):
+            reason = "credential_file"
+        print(json.dumps({"result": "failed", "reason": reason}), flush=True)
         return 1
+    finally:
+        signal.alarm(0)
 
 
 if __name__ == "__main__":
