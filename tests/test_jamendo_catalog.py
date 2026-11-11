@@ -429,6 +429,57 @@ def test_matching_license_notice_and_full_description_are_preserved() -> None:
     assert "Arranged by a second musician" in credits.notices
 
 
+@pytest.mark.parametrize("scheme", ["https", "HTTPS", "Https"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "creativecommons.org/licenses/by/4.0/",
+        "creativecommons.org/licenses/by-nc-sa/3.0/us/",
+        "www.jamendo.com/track/999",
+    ],
+)
+def test_notice_scheme_case_cannot_bypass_search_or_refresh_conflicts(
+    scheme: str,
+    target: str,
+) -> None:
+    value = row(notices=[f"{scheme}://{target}"])
+    window = SearchWindow(Query(search="piano"), ON)
+    request = window.request()
+    assert isinstance(request, Request)
+    result = window.receive(request, response([value]), NOW)
+    assert not result.candidates
+    assert result.refusals == (Refusal(Reason.RIGHTS),)
+    assert refreshed(value) == Refusal(Reason.RIGHTS)
+
+
+@pytest.mark.parametrize("scheme", ["https", "HTTPS", "Https"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "creativecommons.org/licenses/by-nc-sa/3.0/",
+        "CREATIVECOMMONS.ORG:443/licenses/by-nc-sa/3.0/",
+        "www.jamendo.com/track/123",
+    ],
+)
+def test_matching_notice_url_components_preserve_complete_original_credit(
+    scheme: str,
+    target: str,
+) -> None:
+    notice = f"{scheme}://{target}"
+    value = row(notices=[notice])
+    window = SearchWindow(Query(search="piano"), ON)
+    request = window.request()
+    assert isinstance(request, Request)
+    result = window.receive(request, response([value]), NOW)
+    assert len(result.candidates) == 1
+    assert not result.refusals
+    result_refresh = refreshed(value)
+    assert isinstance(result_refresh, Refreshed)
+    for recording in (result.candidates[0].recording, result_refresh.candidate.recording):
+        assert recording.credits is not None
+        assert notice in recording.credits.notices
+
+
 def test_unknown_evidence_nested_and_credit_count_limits_refuse() -> None:
     for change in (
         {"musicinfo": {"tags": {"copyright": ["New credit"]}}},

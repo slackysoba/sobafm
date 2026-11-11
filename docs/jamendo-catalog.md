@@ -55,6 +55,10 @@ admission. Known previews, excerpts, snippets, stems, loops and sample packs rej
 in title, type, descriptions, details, tags and notices. Explicit warning lists,
 rights-conflict wording and conflicting source/license links reject. Text-only
 license claims need reconciliation to an exact URI rather than guessed equivalence.
+Notice URL validation and conflict screening share token extraction. Scheme/host
+case and an explicit HTTPS port do not bypass screening or change a matching
+notice's meaning; license paths and recording IDs remain exact, and credits retain
+the original supplied spelling.
 This conservative text screening can refuse legitimate titles; it does not prove
 the absence of undisclosed conflicts or recognize every possible natural-language
 rights statement.

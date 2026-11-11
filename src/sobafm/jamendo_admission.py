@@ -31,6 +31,7 @@ from sobafm.credits import CreditRejected, render_credits
 POLICY_VERSION = "jamendo-stream-1"
 MAX_NOTICE_CHARACTERS = 1024
 MAX_NOTICES = 16
+_URL = re.compile(r"\S+://\S+")
 
 
 class Reason(StrEnum):
@@ -173,7 +174,7 @@ def text(value: object, maximum: int = 200, *, links: bool = False) -> str:
     ):
         raise AdmissionInputError(Reason.CREDITS)
     # Retained text must not smuggle a signed URL into credits or a future journal.
-    urls = re.findall(r"\S+://\S+", value)
+    urls = _URL.findall(value)
     if urls and not links:
         raise AdmissionInputError(Reason.CREDITS)
     for url in urls:
@@ -335,9 +336,14 @@ def _notice_conflicts(value: object, license_url: str, backlink: str) -> bool:
         )
     if not isinstance(value, str):
         return False
-    for link in cast(list[str], re.findall(r"https://\S+", value)):
+    # Use exactly the tokens validated by text(), including mixed-case schemes.
+    # Those links already require HTTPS, no credentials/query/fragment and port
+    # 443 or absent. urlsplit normalizes scheme/host, but paths stay case-sensitive.
+    for link in cast(list[str], _URL.findall(value)):
         url = urlsplit(link)
-        if url.hostname == "creativecommons.org" and link.rstrip("/") != license_url.rstrip("/"):
+        if url.hostname == "creativecommons.org" and url.path.rstrip("/") != urlsplit(
+            license_url
+        ).path.rstrip("/"):
             return True
         if url.hostname == "www.jamendo.com":
             expected = re.match(r"/track/([0-9]+)", urlsplit(backlink).path)
@@ -346,7 +352,7 @@ def _notice_conflicts(value: object, license_url: str, backlink: str) -> bool:
                 return True
     # Text-only license assertions are unsupported evidence, not guesses about
     # an omitted version or jurisdiction. A precise compatible URL is supported.
-    without_links = re.sub(r"https://\S+", "", value)
+    without_links = _URL.sub("", value)
     return re.search(r"\b(?:CC[ -]+BY|Creative Commons)\b", without_links, re.I) is not None
 
 
