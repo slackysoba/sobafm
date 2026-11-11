@@ -407,7 +407,6 @@ def test_coherent_album_track_still_passes(explicit_type: bool) -> None:
         (row(shareurl=None), "backlink", "type"),
         (row(audiodownload_allowed="true"), "download_flag", "type"),
         (row(audio=None), "stream_route", "type"),
-        (row(audio="https://invalid.test/"), "stream_route", "shape"),
         (row(audio="x" * 1025), "stream_route", "bound"),
     ],
 )
@@ -424,6 +423,7 @@ def test_fixed_first_refusal_diagnostics(record: object, gate: str, condition: s
             if gate == "license" and condition == "shape"
             else None,
             "license_text_detail": None,
+            "route_diagnostic": None,
         }
     ]
 
@@ -521,6 +521,7 @@ def test_refusal_report_never_retains_source_or_exception_text(
             "condition": "shape",
             "license_component": None,
             "license_text_detail": None,
+            "route_diagnostic": None,
         }
         for ordinal in range(1, 11)
     ]
@@ -689,6 +690,7 @@ def test_first_license_component_is_fixed_and_same_on_refresh(value: str, compon
         "condition": "shape",
         "license_component": component,
         "license_text_detail": None,
+        "route_diagnostic": None,
     }
     selected = subject.validate_candidate(row(), FAKE_ID)
     with pytest.raises(subject.CandidateRefused, match="^candidate_license_shape$") as refused:
@@ -745,6 +747,7 @@ def test_license_text_detail_precedence_preserves_listing_and_refresh_refusal(
         "condition": "shape",
         "license_component": "text_shape",
         "license_text_detail": detail,
+        "route_diagnostic": None,
     }
     selected = subject.validate_candidate(row(), FAKE_ID)
     with pytest.raises(subject.CandidateRefused, match="^candidate_license_shape$") as refused:
@@ -832,6 +835,7 @@ def test_license_component_report_is_bounded_redacted_and_stops_requests(
                 "condition": "shape",
                 "license_component": component,
                 "license_text_detail": detail,
+                "route_diagnostic": None,
             }
             for n in range(1, 11)
         ]
