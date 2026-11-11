@@ -5,9 +5,9 @@ Prepared for [#184](https://github.com/slackysoba/sobafm/issues/184), following
 permission is granted by this code or walkthrough.** Default invocation reads no
 Client ID, starts no child and makes no request. The coordinator owns review,
 merge, the separate go-ahead and any eventual execution. The successful earlier
-metadata check and both inconclusive stream-check invocations consumed their
+metadata check and all three inconclusive stream-check invocations consumed their
 permissions; none grants another request or retry. This offline correction for
-[#189](https://github.com/slackysoba/sobafm/issues/189) needs independent review
+[#194](https://github.com/slackysoba/sobafm/issues/194) needs independent review
 and merge before any fresh explicit authorization for a future request.
 
 This is a transient access/framing experiment using **one fresh listing**, not
@@ -79,8 +79,26 @@ does not matter. Even an incidental changed field stops conservatively. This
 small access probe does not reconcile changes or certify notice completeness.
 The evidence digest and raw rows/URLs are neither reported nor persisted.
 
-The six standard CC families and versions 1.0/2.0/2.5/3.0/4.0 are recognized
-only as metadata evidence for this non-public access check. Missing/unrecognized
+The finite CC formats match the existing [production normalization](../../docs/jamendo-catalog.md#validation-and-evidence):
+BY, BY-SA, BY-ND, BY-NC, BY-NC-SA and BY-NC-ND at 2.0/2.5/3.0/4.0;
+1.0 uses historical BY-ND-NC instead of BY-NC-ND. The only supported ports
+are US 3.0 and France 2.0, for the same six families at those versions.
+The exact lowercase family/version/jurisdiction path must follow `/licenses/`,
+with zero or one trailing slash. No percent-decoding, case folding of paths,
+unknown combinations or public-domain instruments are accepted.
+
+As in production, the authority must be exactly `creativecommons.org`, without
+credentials, an explicit port (even `:443`/`:80`), a trailing dot or host-case
+variation. The known lowercase `http://creativecommons.org/` prefix is accepted;
+HTTPS scheme case follows the standard parser. Uppercase HTTP does not match
+that existing production upgrade. Query/fragment delimiters are refused even
+when empty, preserving the probe's stricter prior boundary. Whitespace, controls
+and backslashes refuse before parsing. These are format checks only; no CC URL
+is fetched, and the raw license field remains in the conservative whole-row
+refresh binding. Even an accepted spelling change between listing and refresh
+stops before streaming.
+
+Licenses are recognized only as metadata evidence for this non-public access check. Missing/unrecognized
 rights or credit fields stop before audio. This does not certify complete
 notices, ownership, provenance, integrity, licensing or admission. No raw fields
 are printed or published. Unexpected host/query/license shapes are inconclusive;
@@ -98,7 +116,7 @@ review them separately without trying another route.
 | Time | One supervisor deadline covers startup, ID-file read, DNS, TLS, all three requests and parsing. Work stops by 117 seconds, leaving three seconds within the proposed 120-second total for cleanup. A child alarm independently covers its work, never reset between requests. On timeout/interrupt the parent kills its one child. |
 | Cleanup debt | Every reap wait is bounded. The original three-second cleanup cutoff is never reset, including repeated interruption. If the OS delays reaping beyond it, the supervisor retains ownership until actual settlement and reports failed cleanup; elapsed time can then exceed 120 seconds. This is failed cleanup, never permission to keep requesting, retry or abandon the child. No claim guarantees kernel release. |
 | Credential | Only the opted-in child opens a dedicated regular file: no symlink/FIFO, at most 160 bytes, ASCII ID of 6–128 allowed characters. Suspended shared test ID rejected. No environment-file loading, client secret/OAuth or ID value in arguments. Minimal child environment; stderr discarded and core-file limit zero. |
-| Report | One sanitized ASCII JSON report, at most 100 KB. Fixed local reasons, at most ten candidate first-refusal entries (ordinal and fixed gate/condition only), safe selected numeric ID/count diagnostics, Boolean refresh-validation flag, numeric request/status/byte facts, framing/EOF and stream-body SHA-256 only. No raw metadata/audio, headers, URL, title, artist, license text, key or exception message. An accidental key substring suppresses the entire child report. Keep all retained evidence for the invocation within 100 KB. |
+| Report | One sanitized ASCII JSON report, at most 100 KB. Fixed local reasons, at most ten candidate first-refusal entries (ordinal, fixed gate/condition and optional fixed license component), safe selected numeric ID/count diagnostics, Boolean refresh-validation flag, numeric request/status/byte facts, framing/EOF and stream-body SHA-256 only. No raw metadata/audio, headers, URL, title, artist, license text, key or exception message. An accidental key substring suppresses the entire child report. Keep all retained evidence for the invocation within 100 KB. |
 
 The HTTP/1.0 choice follows the earlier [#175 review](https://github.com/slackysoba/sobafm/pull/175):
 [RFC 9112 §6.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.1) prohibits
@@ -152,6 +170,17 @@ and response-envelope reasons remain separate. These
 diagnostics contain no source values, IDs, URLs, value hashes, exceptions or
 secrets. They describe a local check, not a provider's reason or policy verdict.
 
+For `license/shape`, `license_component` identifies the first failing check in
+this order: `text_shape`, `scheme`, `authority`, `query_or_fragment`, `path_shape`,
+`family`, `version`, `jurisdiction`, `combination`. It is null for missing/type/bound
+license failures, other gates and unclassified failures. The final combination
+check rejects known parts used together in an unsupported family/version/port.
+Listing refusals carry the component in their ordinal entry; a terminal refresh
+license refusal carries it at report level, with the existing
+`candidate_license_shape` reason and no new listing entry. The report-level
+field is otherwise null. Only enum constants are emitted, never component
+contents, source IDs, value hashes or parser exception text.
+
 The [first stream-check assessment](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6794455477)
 preserves an **inconclusive** single-candidate count gate, zero audio exchange
 and safe cleanup. Its report did not distinguish count type/value from container
@@ -166,6 +195,17 @@ causes. The optional-album omission gap was demonstrated synthetically; it is
 with their consumed permissions. This revision improves only a future separately
 authorized attempt after independent review and merge; it neither reinterprets
 those results nor authorizes a retry.
+
+The [third stream-check assessment and independent compatibility review](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6796833709)
+preserves an **inconclusive** ten-row listing with ten `license/shape` refusals,
+no selection, zero refresh/audio requests and safe cleanup. The actual license
+values were not retained; the exact mismatch remains unknown. HTTP and HTTPS
+already passed the old regex. Offline comparisons established missing US 3.0,
+France 2.0, historical BY-ND-NC 1.0 and no-trailing-slash recognition, plus
+incorrect acceptance of BY-NC-ND 1.0. None is an established a3 cause. This
+revision corrects only those finite formats and safe diagnostics; a1/a2/a3 stay
+unchanged, unsuccessful and permission-consumed. It establishes neither stream
+access nor production admission, media validity or release readiness.
 
 ## Operator walkthrough after review and merge
 
@@ -207,7 +247,7 @@ those results nor authorizes a retry.
 
 ### Proposed next go-ahead — not permission already received
 
-> I authorize one invocation of the reviewed and merged #189 Jamendo stream
+> I authorize one invocation of the reviewed and merged #194 Jamendo stream
 > evaluator at source commit `<exact reviewed commit>`, using my existing
 > dedicated operator-owned Client ID file without showing the ID to the agent.
 > Allow one HTTPS current listing of at most ten singles/album tracks ordered
@@ -241,7 +281,9 @@ uv run pytest -q evaluations/jamendo_stream
 Synthetic bytes/files, fake deadlines/children and loopback peers test request
 order, fixed destinations, no retries/redirects/address fallback, actual header
 parsing and prior framing failures, byte limits, optional single album fields,
-contradictory album evidence, fixed bounded first-refusal diagnostics, invalid
+contradictory album evidence, the supported/unsupported license matrix through
+listing and refresh compared with production semantics, spelling/authority
+boundaries, fixed bounded first-refusal component diagnostics, invalid
 metadata, redaction, timeouts and retained cleanup debt. Loopback transport uses
 a TLS stand-in;
 real TLS-context defaults are checked separately. Nothing here establishes

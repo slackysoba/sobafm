@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from evaluations.jamendo_stream import probe as subject
+from sobafm.jamendo_admission import AdmissionInputError, parse_listing
 
 FAKE_ID = "synthetic-client-id"
 AUDIO = b"synthetic bytes, not an audio file"
@@ -415,7 +416,14 @@ def test_fixed_first_refusal_diagnostics(record: object, gate: str, condition: s
     with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
         subject.select_candidate(listing([record]), FAKE_ID, report)
     assert json.loads(json.dumps(asdict(report)))["candidate_refusals"] == [
-        {"ordinal": 1, "gate": gate, "condition": condition}
+        {
+            "ordinal": 1,
+            "gate": gate,
+            "condition": condition,
+            "license_component": "authority"
+            if gate == "license" and condition == "shape"
+            else None,
+        }
     ]
 
 
@@ -505,7 +513,12 @@ def test_refusal_report_never_retains_source_or_exception_text(
     report = json.loads(output.out)
     assert report["reason"] == "no_acceptable_candidate"
     assert report["candidate_refusals"] == [
-        {"ordinal": ordinal, "gate": "row" if injected else "title", "condition": "shape"}
+        {
+            "ordinal": ordinal,
+            "gate": "row" if injected else "title",
+            "condition": "shape",
+            "license_component": None,
+        }
         for ordinal in range(1, 11)
     ]
 
@@ -533,6 +546,231 @@ def test_refusal_report_never_retains_source_or_exception_text(
 def test_stream_url_is_fixed(url: str) -> None:
     with pytest.raises((subject.Stopped, ValueError)):
         subject.stream_target(url, FAKE_ID, "168")
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("jurisdiction", ["", "us", "fr", "de"])
+@pytest.mark.parametrize(
+    ("version", "families", "port"),
+    [
+        ("1.0", {"by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nd-nc"}, None),
+        ("2.0", {"by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd"}, "fr"),
+        ("2.5", {"by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd"}, None),
+        ("3.0", {"by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd"}, "us"),
+        ("4.0", {"by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd"}, None),
+        ("5.0", set[str](), None),
+    ],
+)
+@pytest.mark.parametrize(
+    "family", ["by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd", "by-nd-nc", "unknown"]
+)
+def test_license_matrix_through_listing_and_refresh_matches_production(
+    scheme: str, jurisdiction: str, version: str, families: set[str], port: str | None, family: str
+) -> None:
+    path = f"/licenses/{family}/{version}/" + (f"{jurisdiction}/" if jurisdiction else "")
+    record = row(license_ccurl=f"{scheme}://creativecommons.org{path}")
+    report = subject.Report()
+    if family in families and (not jurisdiction or jurisdiction == port):
+        selected = subject.select_candidate(document(record), FAKE_ID, report)
+        assert (
+            subject.validate_refresh(document(record), FAKE_ID, selected, report) == selected.target
+        )
+        assert report.metadata_validated and report.candidate_refusals == []
+        credits = parse_listing(record).recording.credits
+        assert credits is not None
+        assert credits.license_url == f"https://creativecommons.org{path}"
+        label = (
+            jurisdiction
+            or {
+                "1.0": "Generic",
+                "2.0": "Generic",
+                "2.5": "Generic",
+                "3.0": "Unported",
+                "4.0": "International",
+            }[version]
+        )
+        assert credits.license_label == f"CC {family.upper()} {version} {label}"
+    else:
+        with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
+            subject.select_candidate(document(record), FAKE_ID, report)
+        assert len(report.candidate_refusals) == 1
+        refusal = report.candidate_refusals[0]
+        assert (refusal.gate, refusal.condition) == (subject.Gate.LICENSE, subject.Condition.SHAPE)
+        selected = subject.validate_candidate(row(), FAKE_ID)
+        with pytest.raises(subject.CandidateRefused) as refreshed:
+            subject.validate_refresh(document(record), FAKE_ID, selected, report)
+        assert refreshed.value.license_component == refusal.license_component
+        assert not report.metadata_validated
+        with pytest.raises(AdmissionInputError):
+            parse_listing(record)
+
+
+@pytest.mark.parametrize("path", ["by/4.0", "by-nc-sa/3.0/us", "by-nc-sa/2.0/fr", "by-nd-nc/1.0"])
+@pytest.mark.parametrize("slash", ["", "/"])
+@pytest.mark.parametrize(
+    ("authority", "accepted"),
+    [
+        ("http://creativecommons.org", True),
+        ("https://creativecommons.org", True),
+        ("HTTPS://creativecommons.org", True),
+        ("HTTP://creativecommons.org", False),
+        ("https://CreativeCommons.org", False),
+        ("https://creativecommons.org:443", False),
+        ("http://creativecommons.org:80", False),
+        ("https://creativecommons.org.", False),
+    ],
+)
+def test_license_spelling_and_authority_match_production(
+    path: str, slash: str, authority: str, accepted: bool
+) -> None:
+    record = row(license_ccurl=f"{authority}/licenses/{path}{slash}")
+    report = subject.Report()
+    if accepted:
+        selected = subject.select_candidate(document(record), FAKE_ID, report)
+        subject.validate_refresh(document(record), FAKE_ID, selected, report)
+        assert report.metadata_validated
+        credits = parse_listing(record).recording.credits
+        assert credits is not None and credits.license_url is not None
+        assert urlsplit(credits.license_url).path == f"/licenses/{path}{slash}"
+    else:
+        with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
+            subject.select_candidate(document(record), FAKE_ID, report)
+        selected = subject.validate_candidate(row(), FAKE_ID)
+        with pytest.raises(subject.CandidateRefused):
+            subject.validate_refresh(document(record), FAKE_ID, selected, report)
+        with pytest.raises(AdmissionInputError):
+            parse_listing(record)
+
+
+@pytest.mark.parametrize(
+    ("value", "component"),
+    [
+        ("", "text_shape"),
+        (" https://creativecommons.org/licenses/by/4.0/", "text_shape"),
+        ("https://creativecommons.org/licenses/by/4.0/\n", "text_shape"),
+        ("https://creativecommons.org/licenses/by/4.0/\u200b", "text_shape"),
+        ("https://creativecommons.org\\/licenses/by/4.0/", "text_shape"),
+        ("ftp://[invalid/licenses/by/5.0/?secret", "scheme"),
+        ("https", "scheme"),
+        ("http://wrong.test/licenses/unknown/5.0/?secret", "authority"),
+        ("https://[invalid/licenses/by/4.0/", "authority"),
+        (
+            "https://user:fake@creativecommons.org/licenses/by/4.0/",  # pragma: allowlist secret
+            "authority",
+        ),
+        ("https://creativecommons.org.evil.test/licenses/by/4.0/?secret", "authority"),
+        ("https://creativecommons.org:invalid/licenses/by/4.0/", "authority"),
+        ("https://creativecommons.org/licenses/unknown/5.0/?secret", "query_or_fragment"),
+        ("https://creativecommons.org/licenses/by/4.0/?", "query_or_fragment"),
+        ("https://creativecommons.org/licenses/by/4.0/#", "query_or_fragment"),
+        ("https://creativecommons.org/licenses/by/4.0/#secret", "query_or_fragment"),
+        ("https://creativecommons.org/publicdomain/zero/1.0/", "path_shape"),
+        ("https://creativecommons.org/Licenses/by/4.0/", "path_shape"),
+        ("https://creativecommons.org/licenses/by//", "path_shape"),
+        ("https://creativecommons.org/licenses/by/3.0/us//", "path_shape"),
+        ("https://creativecommons.org/licenses/by/3.0/us/legalcode", "path_shape"),
+        ("https://creativecommons.org/licenses/BY/4.0/", "family"),
+        ("https://creativecommons.org/licenses/%62y/4.0/", "family"),
+        ("https://creativecommons.org/licenses/unknown/5.0/de", "family"),
+        ("https://creativecommons.org/licenses/by/3/de", "version"),
+        ("https://creativecommons.org/licenses/by/3.0/US", "jurisdiction"),
+        ("https://creativecommons.org/licenses/by-nd-nc/4.0/de", "jurisdiction"),
+        ("https://creativecommons.org/licenses/by/3.0/fr/", "combination"),
+        ("https://creativecommons.org/licenses/by-nc-nd/1.0/", "combination"),
+        ("https://creativecommons.org/licenses/by-nd-nc/2.0/", "combination"),
+    ],
+)
+def test_first_license_component_is_fixed_and_same_on_refresh(value: str, component: str) -> None:
+    report = subject.Report()
+    record = row(license_ccurl=value, shareurl="also invalid")
+    with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
+        subject.select_candidate(document(record), FAKE_ID, report)
+    assert asdict(report.candidate_refusals[0]) == {
+        "ordinal": 1,
+        "gate": "license",
+        "condition": "shape",
+        "license_component": component,
+    }
+    selected = subject.validate_candidate(row(), FAKE_ID)
+    with pytest.raises(subject.CandidateRefused, match="^candidate_license_shape$") as refused:
+        subject.validate_refresh(document(record), FAKE_ID, selected, report)
+    assert refused.value.license_component == component
+    assert report.selected_track_id is None and not report.metadata_validated
+
+
+@pytest.mark.parametrize(
+    ("value", "condition"), [(None, "type"), (123, "type"), ("x" * 513, "bound")]
+)
+def test_license_nonshape_refusal_has_no_component(value: object, condition: str) -> None:
+    with pytest.raises(subject.CandidateRefused) as refused:
+        subject.validate_candidate(row(license_ccurl=value), FAKE_ID)
+    assert refused.value.condition == condition
+    assert refused.value.license_component is None
+
+
+@pytest.mark.parametrize("suffix", ["", "/us/", "?", "#"])
+def test_license_spelling_change_still_invalidates_whole_row_refresh(suffix: str) -> None:
+    report = subject.Report()
+    selected = subject.select_candidate(document(), FAKE_ID, report)
+    changed = row(license_ccurl="https://creativecommons.org/licenses/by-nc-sa/3.0" + suffix)
+    with pytest.raises(
+        subject.Stopped, match="^(refresh_evidence_changed|candidate_license_shape)$"
+    ):
+        subject.validate_refresh(document(changed), FAKE_ID, selected, report)
+    assert not report.metadata_validated
+
+
+@pytest.mark.parametrize("refresh", [False, True])
+def test_license_component_report_is_bounded_redacted_and_stops_requests(
+    refresh: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hostile = "https://creativecommons.org/licenses/by/4.0/?private=" + FAKE_ID
+    calls = 0
+
+    def exchange(_target: str, transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert metadata
+        transfer.requests_attempted = transfer.connection_attempts = 1
+        if refresh and calls == 1:
+            return listing([row(), row(id="169")])
+        return listing([row(license_ccurl=hostile)] * (1 if refresh else 10))
+
+    def read_id(_path: str) -> str:
+        return FAKE_ID
+
+    monkeypatch.setattr(subject, "read_id", read_id)
+    monkeypatch.setattr(subject, "exchange", exchange)
+    assert subject.run_child("synthetic-path") == 1
+    output = capsys.readouterr()
+    report = json.loads(output.out)
+    assert output.err == "" and len(output.out) < subject.REPORT_BYTES
+    assert calls == (2 if refresh else 1)
+    assert report["stream"] == asdict(subject.Transfer())
+    assert not report["metadata_validated"]
+    assert report["license_component"] == ("query_or_fragment" if refresh else None)
+    assert report["reason"] == ("candidate_license_shape" if refresh else "no_acceptable_candidate")
+    assert report["candidate_refusals"] == (
+        []
+        if refresh
+        else [
+            {
+                "ordinal": n,
+                "gate": "license",
+                "condition": "shape",
+                "license_component": "query_or_fragment",
+            }
+            for n in range(1, 11)
+        ]
+    )
+    for forbidden in (
+        hostile,
+        FAKE_ID,
+        "https://",
+        "private=",
+        hashlib.sha256(hostile.encode()).hexdigest(),
+    ):
+        assert forbidden not in output.out
 
 
 def test_one_listing_refresh_stream_and_no_raw_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -859,8 +1097,9 @@ def test_safe_diagnostics_report_never_echoes_raw_fields(
     output = capsys.readouterr()
     assert output.err == ""
     assert len(output.out) <= subject.REPORT_BYTES
-    for forbidden in (FAKE_ID, "secret.test", "Synthetic", "https://", "artist", "license"):
+    for forbidden in (FAKE_ID, "secret.test", "Synthetic", "https://", "artist", "by-nc-sa"):
         assert forbidden not in output.out
+    assert json.loads(output.out)["license_component"] is None
     report = json.loads(output.out)
     assert report["reason"] == "declared_count_type"
     assert report["search_results"]["declared_count_type"] == "string"
