@@ -28,7 +28,6 @@ from sobafm.gemini_interactions import (
     Transport,
     as_mapping,
     interaction_body,
-    load_json,
 )
 from sobafm.jamendo_admission import AdmissionInputError
 from sobafm.jamendo_catalog import Query
@@ -285,7 +284,11 @@ def response_schema(count: int) -> dict[str, object]:
 
 def parse_plan(text: str, recordings: Sequence[Recording]) -> Matched | Refused:
     """Validate model output against the recordings sent; reject anything else whole."""
-    plan = as_mapping(load_json(text, "output_not_json"))
+    try:
+        raw: object = json.loads(text, object_pairs_hook=_intent_pairs)
+    except ValueError, RecursionError:
+        raise MatchFailed("output_not_json") from None
+    plan = as_mapping(raw)
     if plan is None or plan.keys() != {"outcome", "ranked"}:
         raise MatchFailed("output_shape")
     ranked = plan["ranked"]
@@ -312,6 +315,41 @@ def parse_plan(text: str, recordings: Sequence[Recording]) -> Matched | Refused:
         seen.add(song)
         result.append(Ranked(recordings[song], Fit(fit)))
     return Matched(tuple(result))
+
+
+async def rank_catalog(
+    intent: Query, recordings: Sequence[Recording], *, client: GeminiClient
+) -> Matched | Refused:
+    """Rank one settled admitted pool through the caller's shared client, without retries.
+
+    Credits and source decisions remain local. Rendering happens only while holding
+    the shared model slot; an oversized pool makes no provider call.
+    """
+    intent.parameters()
+    sent = tuple(recordings)
+    if not sent:
+        raise MatchFailed(NO_RECORDINGS)
+    if len({recording.key for recording in sent}) != len(sent):
+        raise CatalogInputError("duplicate recording in matching pool")
+
+    def body() -> bytes:
+        songs = render_songs(sent)
+        query = json.dumps(
+            {
+                "search": intent.search,
+                "artist_name": intent.artist_name,
+                "name": intent.name,
+                "tags": intent.tags,
+            },
+            ensure_ascii=False,
+        )
+        return interaction_body(
+            system_instruction=SYSTEM_INSTRUCTION,
+            text=f"SONGS:\n{songs}\n\nREQUEST:\n{query}",
+            schema=response_schema(len(sent)),
+        )
+
+    return parse_plan(await client.interact(body), sent)
 
 
 class GeminiMatcher:
