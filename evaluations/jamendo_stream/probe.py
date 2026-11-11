@@ -16,6 +16,7 @@ import stat
 import subprocess
 import sys
 import time
+import unicodedata
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -64,12 +65,29 @@ class Condition(StrEnum):
     BOUND = "bound"
 
 
+class LicenseComponent(StrEnum):
+    TEXT_SHAPE = "text_shape"
+    SCHEME = "scheme"
+    AUTHORITY = "authority"
+    QUERY_OR_FRAGMENT = "query_or_fragment"
+    PATH_SHAPE = "path_shape"
+    FAMILY = "family"
+    VERSION = "version"
+    JURISDICTION = "jurisdiction"
+    COMBINATION = "combination"
+
+
 class CandidateRefused(Stopped):
     """Typed first gate failure, with no source value or exception text."""
 
-    def __init__(self, gate: Gate, condition: Condition) -> None:
+    def __init__(
+        self, gate: Gate, condition: Condition, license_component: LicenseComponent | None = None
+    ) -> None:
         self.gate = Gate(gate)
         self.condition = Condition(condition)
+        self.license_component = (
+            LicenseComponent(license_component) if license_component is not None else None
+        )
         super().__init__(f"candidate_{self.gate}_{self.condition}")
 
 
@@ -78,6 +96,7 @@ class Refusal:
     ordinal: int
     gate: Gate
     condition: Condition
+    license_component: LicenseComponent | None = None
 
 
 @dataclass
@@ -113,6 +132,7 @@ class Candidate:
 class Report:
     outcome: str = "inconclusive"
     reason: str | None = None
+    license_component: LicenseComponent | None = None
     search: Transfer = field(default_factory=Transfer)
     metadata: Transfer = field(default_factory=Transfer)
     stream: Transfer = field(default_factory=Transfer)
@@ -353,6 +373,53 @@ def numeric_id(value: object, gate: Gate) -> str:
     return value
 
 
+def check_license(value: object) -> None:
+    """Recognize only the production boundary's finite CC formats, not rights."""
+    try:
+        value = text_field(value, Gate.LICENSE)
+    except CandidateRefused as error:
+        if error.condition == Condition.SHAPE:
+            raise CandidateRefused(
+                Gate.LICENSE, Condition.SHAPE, LicenseComponent.TEXT_SHAPE
+            ) from None
+        raise
+    if any(c.isspace() or unicodedata.category(c).startswith("C") for c in value) or "\\" in value:
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.TEXT_SHAPE)
+    # Match production's lowercase public-HTTP upgrade and parsed HTTPS scheme.
+    # Keep authority/path case, escaping, ports and historical family exact.
+    scheme, separator, _ = value.partition(":")
+    if not separator or (scheme != "http" and scheme.lower() != "https"):
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.SCHEME)
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.AUTHORITY) from None
+    if parts.netloc != "creativecommons.org":
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.AUTHORITY)
+    if "?" in value or "#" in value:
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.QUERY_OR_FRAGMENT)
+    path = parts.path.removesuffix("/").split("/")
+    if len(path) not in (4, 5) or path[:2] != ["", "licenses"] or not all(path[2:]):
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.PATH_SHAPE)
+    family, version = path[2:4]
+    jurisdiction = path[4] if len(path) == 5 else None
+    if family not in {"by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd", "by-nd-nc"}:
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.FAMILY)
+    if version not in {"1.0", "2.0", "2.5", "3.0", "4.0"}:
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.VERSION)
+    if jurisdiction is not None and jurisdiction not in {"us", "fr"}:
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.JURISDICTION)
+    if (
+        (family == "by-nd-nc" and version != "1.0")
+        or (family == "by-nc-nd" and version == "1.0")
+        or (
+            jurisdiction is not None
+            and (version, jurisdiction) not in {("3.0", "us"), ("2.0", "fr")}
+        )
+    ):
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.COMBINATION)
+
+
 def album_shape(row: dict[str, object]) -> None:
     # Missing and empty optional fields both describe a single. Null or partial
     # album evidence is not an omission, and an explicit type must still agree.
@@ -483,13 +550,7 @@ def validate_candidate(value: object, application_id: str) -> Candidate:
         raise CandidateRefused(Gate.DURATION, Condition.SHAPE)
     if not 1 <= duration <= 480:
         raise CandidateRefused(Gate.DURATION, Condition.BOUND)
-    license_url = text_field(required_field(row, "license_ccurl", Gate.LICENSE), Gate.LICENSE)
-    if not re.fullmatch(
-        r"https?://creativecommons\.org/licenses/"
-        r"(?:by|by-sa|by-nd|by-nc|by-nc-sa|by-nc-nd)/(?:1\.0|2\.0|2\.5|3\.0|4\.0)/",
-        license_url,
-    ):
-        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE)
+    check_license(required_field(row, "license_ccurl", Gate.LICENSE))
     backlink = text_field(required_field(row, "shareurl", Gate.BACKLINK), Gate.BACKLINK)
     if backlink not in (
         f"http://www.jamendo.com/track/{track_id}",
@@ -527,9 +588,11 @@ def select_candidate(data: bytes, application_id: str, report: Report) -> Candid
             if len(report.candidate_refusals) < SEARCH_RESULTS:
                 # Never parse exception text, including an unexpected Stopped.
                 gate, condition = Gate.ROW, Condition.SHAPE
+                component = None
                 if isinstance(error, CandidateRefused):
                     gate, condition = error.gate, error.condition
-                report.candidate_refusals.append(Refusal(ordinal, gate, condition))
+                    component = error.license_component
+                report.candidate_refusals.append(Refusal(ordinal, gate, condition, component))
             continue
         report.selected_track_id = candidate.track_id
         return candidate
@@ -580,6 +643,8 @@ def run_child(application_id_path: str) -> int:
             probe(application_id, report)
     except Stopped as error:
         report.reason = str(error)
+        if isinstance(error, CandidateRefused):
+            report.license_component = error.license_component
     except TimeoutError:
         report.reason = "timeout"
     except KeyboardInterrupt:
