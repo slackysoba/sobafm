@@ -296,6 +296,8 @@ class Run:
             "max-size=64k",
             "--log-opt",
             "max-file=1",
+            "--log-opt",
+            "compress=false",
             "--entrypoint",
             "/app/.venv/bin/python",
         ]

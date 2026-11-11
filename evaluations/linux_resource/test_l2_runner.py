@@ -197,6 +197,56 @@ def test_wrapper_verdict_after_cleanup(runner: Runner, mode: str) -> None:
             assert (runner.state / ("2".zfill(64)) / "name").read_text().strip() == names["client"]
 
 
+def test_both_containers_use_bounded_uncompressed_logs(runner: Runner) -> None:
+    run = runner.run()
+    assert run.returncode == 0
+    for role in ("peer", "client"):
+        assert (runner.state / f"{role}-log-options").read_text().splitlines() == [
+            "local",
+            "64k",
+            "1",
+            "false",
+        ]
+    assert json.loads(run.stdout.splitlines()[-1])["cleanup_verified"] is True
+    assert not list(runner.state.glob("*/name"))
+
+
+@pytest.mark.parametrize("compression", [[], ["--log-opt", "compress=true"]])
+def test_double_rejects_single_file_compression(runner: Runner, compression: list[str]) -> None:
+    create = subprocess.run(
+        [
+            "docker",
+            "create",
+            "--name",
+            "fixture",
+            "--network",
+            "none",
+            "--log-driver",
+            "local",
+            "--log-opt",
+            "max-size=64k",
+            "--log-opt",
+            "max-file=1",
+            *compression,
+            IMAGE,
+        ],
+        env=runner.env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    start = subprocess.run(
+        ["docker", "start", create.stdout.strip()],
+        env=runner.env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert start.returncode == 1
+    assert "compression cannot be enabled when max file count is 1" in start.stderr
+    assert (runner.state / create.stdout.strip() / "running").read_text().strip() == "false"
+
+
 @pytest.mark.parametrize("mode", ["lost-peer", "lost-client", "wait"])
 def test_interrupt_reconciles_names_and_wait_process(runner: Runner, mode: str) -> None:
     (runner.state / "mode").write_text(mode)
