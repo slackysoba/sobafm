@@ -5,8 +5,10 @@ Prepared for [#184](https://github.com/slackysoba/sobafm/issues/184), following
 permission is granted by this code or walkthrough.** Default invocation reads no
 Client ID, starts no child and makes no request. The coordinator owns review,
 merge, the separate go-ahead and any eventual execution. The successful earlier
-metadata check and first stream-check invocation consumed their permissions;
-neither grants another request or retry.
+metadata check and both inconclusive stream-check invocations consumed their
+permissions; none grants another request or retry. This offline correction for
+[#189](https://github.com/slackysoba/sobafm/issues/189) needs independent review
+and merge before any fresh explicit authorization for a future request.
 
 This is a transient access/framing experiment using **one fresh listing**, not
 catalog admission, complete-recording validation, decoding or playback. Current
@@ -52,7 +54,11 @@ Metadata must contain a nonempty bounded title and artist name, numeric artist
 identity, a consistent album/single shape, a 1–480-second integer duration, a
 recognized CC license URL and the exact candidate's Jamendo backlink. If `type`
 is returned, it must agree with that shape. The API need not return a type field;
-album shape is only a consistency check, not proof of a whole recording. The
+album shape is only a consistency check, not proof of a whole recording. For a
+single, either or both optional album fields may be absent or empty strings.
+Null/non-string fields, a partially populated album, invalid album identity,
+or a conflicting explicit type still refuse the row. An album track requires
+both a positive numeric album ID and a nonempty bounded album name. The
 duration ceiling is a conservative sizing screen (480 seconds at 320 kbit/s
 is 19.2 MB); it is not a bitrate, size or completeness guarantee. The actual
 byte/deadline limits always win. The download flag must be Boolean, but either
@@ -92,7 +98,7 @@ review them separately without trying another route.
 | Time | One supervisor deadline covers startup, ID-file read, DNS, TLS, all three requests and parsing. Work stops by 117 seconds, leaving three seconds within the proposed 120-second total for cleanup. A child alarm independently covers its work, never reset between requests. On timeout/interrupt the parent kills its one child. |
 | Cleanup debt | Every reap wait is bounded. The original three-second cleanup cutoff is never reset, including repeated interruption. If the OS delays reaping beyond it, the supervisor retains ownership until actual settlement and reports failed cleanup; elapsed time can then exceed 120 seconds. This is failed cleanup, never permission to keep requesting, retry or abandon the child. No claim guarantees kernel release. |
 | Credential | Only the opted-in child opens a dedicated regular file: no symlink/FIFO, at most 160 bytes, ASCII ID of 6–128 allowed characters. Suspended shared test ID rejected. No environment-file loading, client secret/OAuth or ID value in arguments. Minimal child environment; stderr discarded and core-file limit zero. |
-| Report | One sanitized ASCII JSON report, at most 100 KB. Fixed local reasons, safe selected numeric ID/count diagnostics, Boolean refresh-validation flag, numeric request/status/byte facts, framing/EOF and stream-body SHA-256 only. No raw metadata/audio, headers, URL, title, artist, license text, key or exception message. An accidental key substring suppresses the entire child report. Keep all retained evidence for the invocation within 100 KB. |
+| Report | One sanitized ASCII JSON report, at most 100 KB. Fixed local reasons, at most ten candidate first-refusal entries (ordinal and fixed gate/condition only), safe selected numeric ID/count diagnostics, Boolean refresh-validation flag, numeric request/status/byte facts, framing/EOF and stream-body SHA-256 only. No raw metadata/audio, headers, URL, title, artist, license text, key or exception message. An accidental key substring suppresses the entire child report. Keep all retained evidence for the invocation within 100 KB. |
 
 The HTTP/1.0 choice follows the earlier [#175 review](https://github.com/slackysoba/sobafm/pull/175):
 [RFC 9112 §6.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.1) prohibits
@@ -132,13 +138,34 @@ and count/list disagreement. `selected_track_id` is null until selection;
 `rejected_candidates` counts only rows examined and rejected before selection.
 `metadata_validated` becomes true only after the refresh and consistency check.
 
+`candidate_refusals` retains only the first failed gate for each examined and
+refused listing row, in order, at most ten entries. `ordinal` is the one-based
+list position, never a source ID. `gate` is one of `row`, `identity`, `title`,
+`artist`, `album`, `duration`, `license`, `backlink`, `download_flag`,
+`stream_route`. `condition` is `missing` (absent required field), `type` (wrong
+JSON type), `shape` (empty/malformed/conflicting evidence), or `bound` (outside
+an existing length/range limit). A non-object row is `row/type`; an unclassified
+local candidate refusal is `row/shape`, without parsing its exception text.
+The shared field gates use fixed `candidate_<gate>_<condition>` reasons during
+refresh and do not add listing entries. Existing refresh identity/evidence
+and response-envelope reasons remain separate. These
+diagnostics contain no source values, IDs, URLs, value hashes, exceptions or
+secrets. They describe a local check, not a provider's reason or policy verdict.
+
 The [first stream-check assessment](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6794455477)
 preserves an **inconclusive** single-candidate count gate, zero audio exchange
 and safe cleanup. Its report did not distinguish count type/value from container
 shape/list count. Candidate 168's absence and the precise cause are unknown;
 free streaming was not proven. Keep that attempt and its consumed permission.
-This revision improves the next separately approved attempt; it does not
-reinterpret the old result or authorize a retry.
+The [second stream-check assessment](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6795405761)
+preserves an **inconclusive** ten-row listing, ten local refusals, no selection,
+zero refresh/audio requests and safe cleanup. No raw rows or per-row refusal
+reasons survived. Existing saved reports cannot recover the historical refusal
+causes. The optional-album omission gap was demonstrated synthetically; it is
+**not the established cause** of those ten refusals. Keep both attempts unchanged,
+with their consumed permissions. This revision improves only a future separately
+authorized attempt after independent review and merge; it neither reinterprets
+those results nor authorizes a retry.
 
 ## Operator walkthrough after review and merge
 
@@ -180,7 +207,7 @@ reinterpret the old result or authorize a retry.
 
 ### Proposed next go-ahead — not permission already received
 
-> I authorize one invocation of the reviewed and merged #184 Jamendo stream
+> I authorize one invocation of the reviewed and merged #189 Jamendo stream
 > evaluator at source commit `<exact reviewed commit>`, using my existing
 > dedicated operator-owned Client ID file without showing the ID to the agent.
 > Allow one HTTPS current listing of at most ten singles/album tracks ordered
@@ -213,8 +240,10 @@ uv run pytest -q evaluations/jamendo_stream
 
 Synthetic bytes/files, fake deadlines/children and loopback peers test request
 order, fixed destinations, no retries/redirects/address fallback, actual header
-parsing and prior framing failures, byte limits, invalid metadata, redaction,
-timeouts and retained cleanup debt. Loopback transport uses a TLS stand-in;
+parsing and prior framing failures, byte limits, optional single album fields,
+contradictory album evidence, fixed bounded first-refusal diagnostics, invalid
+metadata, redaction, timeouts and retained cleanup debt. Loopback transport uses
+a TLS stand-in;
 real TLS-context defaults are checked separately. Nothing here establishes
 actual provider/account/TLS/media behavior. No live request has been made by
 this preparation.
