@@ -97,7 +97,6 @@ type RouteComponent = Literal[
     "query_keys",
     "track_id",
     "format",
-    "application_binding",
 ]
 
 
@@ -124,7 +123,6 @@ class RouteDiagnostic:
     duplicate_keys: Presence = "not_evaluated"
     track_id: Match = "not_evaluated"
     format: Match = "not_evaluated"
-    application_binding: Match = "not_evaluated"
 
 
 class CandidateRefused(Stopped):
@@ -509,18 +507,18 @@ def album_shape(row: dict[str, object]) -> None:
             raise CandidateRefused(Gate.ALBUM, Condition.SHAPE)
 
 
-def stream_target(value: object, application_id: str, track_id: str) -> str:
+def stream_target(value: object, track_id: str) -> str:
     try:
-        return checked_stream_target(value, application_id, track_id)
+        return checked_stream_target(value, track_id)
     except CandidateRefused as error:
         # Missing/type/bound failures and earlier candidate gates have no URL
         # diagnostics. Classification never participates in acceptance or repair.
         if error.condition == Condition.SHAPE and isinstance(value, str):
-            error.route_diagnostic = diagnose_route(value, application_id, track_id)
+            error.route_diagnostic = diagnose_route(value, track_id)
         raise
 
 
-def diagnose_route(value: str, application_id: str, track_id: str) -> RouteDiagnostic:
+def diagnose_route(value: str, track_id: str) -> RouteDiagnostic:
     """Classify a bounded refused string, including independent mixed failures.
 
     Parsing here describes the standard parser's interpretation, even when the
@@ -597,10 +595,11 @@ def diagnose_route(value: str, application_id: str, track_id: str) -> RouteDiagn
     first("fragment", bool(parts.fragment) or "#" in value)
     if pairs is None:
         return diagnostic
-    expected = {"trackid": track_id, "format": "mp32", "from": f"app-{application_id}"}
+    expected = {"trackid": track_id, "format": "mp32"}
+    allowed_keys = {*expected, "from"}
     keys = {key for key, _ in pairs}
-    missing = bool(expected.keys() - keys)
-    extra = bool(keys - expected.keys())
+    missing = bool(allowed_keys - keys)
+    extra = bool(keys - allowed_keys)
     duplicate = len(keys) != len(pairs)
     diagnostic.missing_keys = presence(missing)
     diagnostic.extra_keys = presence(extra)
@@ -615,16 +614,14 @@ def diagnose_route(value: str, application_id: str, track_id: str) -> RouteDiagn
 
     diagnostic.track_id = match("trackid")
     diagnostic.format = match("format")
-    diagnostic.application_binding = match("from")
     first("query_keys", diagnostic.query_keys != "exact")
     first("track_id", diagnostic.track_id == "mismatch")
     first("format", diagnostic.format == "mismatch")
-    first("application_binding", diagnostic.application_binding == "mismatch")
     return diagnostic
 
 
-def checked_stream_target(value: object, application_id: str, track_id: str) -> str:
-    """Validate the fresh audio field, then build only that exact allowed request."""
+def checked_stream_target(value: object, track_id: str) -> str:
+    """Validate the returned route and preserve its opaque query without rewriting."""
     if not isinstance(value, str):
         raise CandidateRefused(Gate.STREAM_ROUTE, Condition.TYPE)
     if len(value) > 1024:
@@ -646,10 +643,15 @@ def checked_stream_target(value: object, application_id: str, track_id: str) -> 
         or "#" in value
     ):
         raise CandidateRefused(Gate.STREAM_ROUTE, Condition.SHAPE)
-    expected = {"trackid": track_id, "format": "mp32", "from": f"app-{application_id}"}
-    if len(pairs) != 3 or dict(pairs) != expected:
+    query = dict(pairs)
+    if (
+        len(pairs) != 3
+        or query.keys() != {"trackid", "format", "from"}
+        or query["trackid"] != track_id
+        or query["format"] != "mp32"
+    ):
         raise CandidateRefused(Gate.STREAM_ROUTE, Condition.SHAPE)
-    return "/?" + urlencode(expected)
+    return "/?" + parts.query
 
 
 def json_type(mapping: dict[str, object], key: str) -> str:
@@ -715,7 +717,7 @@ def metadata_rows(data: bytes, diagnostics: Results, limit: int) -> list[object]
     return entries
 
 
-def validate_candidate(value: object, application_id: str) -> Candidate:
+def validate_candidate(value: object) -> Candidate:
     if not isinstance(value, dict):
         raise CandidateRefused(Gate.ROW, Condition.TYPE)
     row = cast(dict[str, object], value)
@@ -743,15 +745,15 @@ def validate_candidate(value: object, application_id: str) -> Candidate:
     if type(required_field(row, "audiodownload_allowed", Gate.DOWNLOAD_FLAG)) is not bool:
         raise CandidateRefused(Gate.DOWNLOAD_FLAG, Condition.TYPE)
     # The download flag is not a streaming permission, and no download is made.
-    target = stream_target(
-        required_field(row, "audio", Gate.STREAM_ROUTE), application_id, track_id
-    )
+    target = stream_target(required_field(row, "audio", Gate.STREAM_ROUTE), track_id)
     # Conservatively bind every returned field, including optional details and
-    # notices. Normalize only the checked stream query and duration. This is
-    # transient consistency evidence, never an admission/rights certificate.
+    # notices. Normalize only query order and duration, never opaque escaping:
+    # distinct percent-encoded markers must not collapse through parse_qsl's
+    # replacement decoding. This transient digest is not a rights certificate.
+    normalized_target = "/?" + "&".join(sorted(urlsplit(target).query.split("&")))
     evidence = hashlib.sha256(
         json.dumps(
-            {**row, "audio": target, "duration": duration},
+            {**row, "audio": normalized_target, "duration": duration},
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=True,
@@ -761,11 +763,11 @@ def validate_candidate(value: object, application_id: str) -> Candidate:
     return Candidate(track_id, target, evidence)
 
 
-def select_candidate(data: bytes, application_id: str, report: Report) -> Candidate:
+def select_candidate(data: bytes, report: Report) -> Candidate:
     entries = metadata_rows(data, report.search_results, SEARCH_RESULTS)
     for ordinal, value in enumerate(entries, start=1):
         try:
-            candidate = validate_candidate(value, application_id)
+            candidate = validate_candidate(value)
         except Stopped as error:
             report.rejected_candidates += 1
             if len(report.candidate_refusals) < SEARCH_RESULTS:
@@ -788,14 +790,14 @@ def select_candidate(data: bytes, application_id: str, report: Report) -> Candid
     raise Stopped("no_acceptable_candidate")
 
 
-def validate_refresh(data: bytes, application_id: str, selected: Candidate, report: Report) -> str:
+def validate_refresh(data: bytes, selected: Candidate, report: Report) -> str:
     entries = metadata_rows(data, report.refresh_results, 1)
     if not entries:
         raise Stopped("refresh_empty")
     row = object_value(entries[0])
     if row.get("id") != selected.track_id:
         raise Stopped("candidate_identity")
-    refreshed = validate_candidate(row, application_id)
+    refreshed = validate_candidate(row)
     if refreshed.evidence != selected.evidence:
         raise Stopped("refresh_evidence_changed")
     report.metadata_validated = True
@@ -820,11 +822,11 @@ def probe(application_id: str, report: Report) -> None:
         }
     )
     data = exchange("/v3.0/tracks/?" + query, report.search, metadata=True)
-    selected = select_candidate(data, application_id, report)
+    selected = select_candidate(data, report)
     del data
     query = urlencode({**common, "id": selected.track_id, "limit": "1"})
     data = exchange("/v3.0/tracks/?" + query, report.metadata, metadata=True)
-    target = validate_refresh(data, application_id, selected, report)
+    target = validate_refresh(data, selected, report)
     del data
     exchange(target, report.stream, metadata=False)
     report.outcome = "stream_received"

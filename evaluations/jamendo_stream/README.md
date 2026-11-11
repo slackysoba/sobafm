@@ -5,9 +5,9 @@ Prepared for [#184](https://github.com/slackysoba/sobafm/issues/184), following
 permission is granted by this code or walkthrough.** Default invocation reads no
 Client ID, starts no child and makes no request. The coordinator owns review,
 merge, the separate go-ahead and any eventual execution. The successful earlier
-metadata check and all five inconclusive stream-check invocations consumed their
-permissions; none grants another request or retry. This offline diagnostic change for
-[#201](https://github.com/slackysoba/sobafm/issues/201) needs independent review
+metadata check and all six inconclusive stream-check invocations consumed their
+permissions; none grants another request or retry. This offline compatibility change for
+[#207](https://github.com/slackysoba/sobafm/issues/207) needs independent review
 and merge before the coordinator scopes one invocation under the
 [standing necessary-test authorization](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6798078261).
 The author must not run the live CLI or test unreviewed changes against Jamendo.
@@ -41,8 +41,12 @@ Official documentation rechecked on 2026-11-11, with documentation reads only:
   publishes the stream URL shape on `prod-1.storage.jamendo.com`, distinct from
   its download path. Accept only the refreshed `audio` URL with HTTPS, this exact
   host, no explicit port/userinfo/fragment, path `/`, and exactly three unique
-  query fields: `trackid=<selected ID>`, `format=mp32`, `from=app-<operator ID>`. Reconstruct
-  that checked query; never follow arbitrary source URLs or probe alternatives.
+  query fields: `trackid=<selected ID>`, `format=mp32`, and the returned opaque
+  `from`. Preserve the validated returned request target, including query order
+  and escaping. The existing 1,024-character ASCII/control and parser gates
+  bound the marker; no marker format or Client-ID equality is assumed. The
+  Client ID is used only in metadata requests, never injected into audio.
+  Never construct a substitute URL, follow arbitrary source URLs or probe alternatives.
 - [Tracks/file](https://developer.jamendo.com/v3.0/tracks/file) is a redirecting
   file route. It is not used. No download path, player page, alternate CDN,
   browser impersonation, proxy, Range, resume, redirect or fallback candidate.
@@ -89,7 +93,8 @@ attempt; it is not silently truncated or treated as an empty catalog.
 Both listing and refresh apply the same gates. The refreshed row must match
 the selected ID and a transient SHA-256 of **all returned row fields**, including
 optional notices/details and unknown fields. Only integer/string duration and
-the already validated stream query ordering are normalized; object key order
+the already validated stream query ordering are normalized for this
+transient comparison only; opaque spelling/escaping stays exact and object key order
 does not matter. Even an incidental changed field stops conservatively. This
 small access probe does not reconcile changes or certify notice completeness.
 The evidence digest and raw rows/URLs are neither reported nor persisted.
@@ -232,7 +237,7 @@ at report level with the unchanged `candidate_stream_route_shape` reason.
 | `query_parser` | `success` / `field_limit` / `syntax`; the existing three-field limit precedes syntax |
 | `query_keys` | `exact` / `mismatch` |
 | `missing_keys`, `extra_keys`, `duplicate_keys` | Independent `present` / `absent` facts, so simultaneous key-set failures remain visible |
-| `track_id`, `format`, `application_binding` | `match` / `mismatch` against the selected ID, mp32 and expected application binding |
+| `track_id`, `format` | `match` / `mismatch` against the selected ID and mp32 |
 
 Dependent fields are explicitly `not_evaluated` after parser failure; value
 comparisons are also `not_evaluated` for missing or duplicate corresponding keys.
@@ -244,7 +249,7 @@ without changing or repairing the input used by the acceptance gate.
 
 `first_component` preserves deterministic original-check precedence:
 `text_shape`, `url_parser`, `query_parser`, `scheme`, `authority`, `path`,
-`fragment`, `query_keys`, `track_id`, `format`, `application_binding`.
+`fragment`, `query_keys`, `track_id`, `format`.
 Text shape still rejects non-ASCII, ASCII characters 0–32 and DEL; backslash is
 an independent diagnostic fact, not a new acceptance predicate. Multiple later
 mismatches remain visible. No raw values, query names, credentials, IDs, lengths,
@@ -293,6 +298,19 @@ actual source strings and exact simultaneous mismatches are unknown. This
 diagnostic-only change preserves a1–a5 and their consumed permissions. It makes
 a future separately scoped experiment informative without expanding any route,
 rights, credential, identity, refresh or request predicate.
+
+The [independent sixth-attempt review](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6800123931)
+preserves an **inconclusive** ten-row listing: nine rows failed only the former
+`application_binding` equality and one failed the license jurisdiction gate.
+No refresh or audio request occurred. Official documentation does not establish
+the assumed `from=app-<Client ID>` formula; actual returned markers and the
+provider cause remain unknown. The accepted [opaque-locator contract](https://github.com/slackysoba/sobafm/issues/188#issuecomment-6795394426)
+supports removing only this evaluator assumption. Current diagnostics omit
+`application_binding`; its historical mismatch meant unequal text, never failed
+authentication. The returned opaque marker still participates in the whole-row
+refresh binding, so a changed marker stops before audio. a1–a6 and their verdicts
+remain unchanged and permission-consumed. This correction predicts no live
+success and supplies no stream, production or release qualification.
 
 ## Operator walkthrough after review and merge
 

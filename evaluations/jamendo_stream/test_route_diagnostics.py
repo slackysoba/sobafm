@@ -17,11 +17,94 @@ QUERY = f"trackid=168&format=mp32&from=app-{FAKE_ID}"
 VALID = BASE + "?" + QUERY
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [f"app-{FAKE_ID}", "synthetic-opaque", "%2f%25%2B+opaque", "", "opaque\\?%", "x" * 974],
+)
+def test_returned_marker_and_target_are_preserved(
+    marker: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = f"/?from={marker}&format=mp32&trackid=%31%36%38"
+    url = f"https://{subject.STREAM_HOST}" + target
+    if len(url) > 1024:
+        # Exercise the exact existing whole-URL boundary without a marker limit.
+        marker = marker[: len(marker) - (len(url) - 1024)]
+        target = f"/?from={marker}&format=mp32&trackid=%31%36%38"
+        url = f"https://{subject.STREAM_HOST}" + target
+        assert len(url) == 1024
+    calls: list[tuple[str, bool]] = []
+
+    def exchange(request: str, transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        calls.append((request, metadata))
+        transfer.requests_attempted = 1
+        if metadata:
+            assert len(calls) <= 2
+            assert dict(parse_qsl(urlsplit(request).query))["client_id"] == FAKE_ID
+            return document(row(audio=url))
+        assert len(calls) == 3 and request == target
+        return b""
+
+    monkeypatch.setattr(subject, "exchange", exchange)
+
+    def read_id(_path: str) -> str:
+        return FAKE_ID
+
+    monkeypatch.setattr(subject, "read_id", read_id)
+    assert subject.run_child("synthetic-path") == 0
+    output = capsys.readouterr()
+    report = json.loads(output.out)
+    assert output.err == "" and len(output.out.encode()) < subject.REPORT_BYTES
+    assert len(calls) == 3 and [metadata for _, metadata in calls] == [True, True, False]
+    assert report["outcome"] == "stream_received" and report["metadata_validated"]
+    assert report["route_diagnostic"] is None and report["candidate_refusals"] == []
+    for private in (url, target, FAKE_ID, marker, hashlib.sha256(url.encode()).hexdigest()):
+        if private:
+            assert private not in output.out
+    assert "application_binding" not in output.out
+
+
 def refused(url: str) -> dict[str, object]:
     with pytest.raises(subject.CandidateRefused, match="^candidate_stream_route_shape$") as error:
-        subject.stream_target(url, FAKE_ID, "168")
+        subject.stream_target(url, "168")
     assert error.value.route_diagnostic is not None
     return asdict(error.value.route_diagnostic)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("opaque-before", "opaque-after"), ("%FF", "%FE"), ("opaque%2F", "opaque/")],
+)
+def test_changed_opaque_marker_stops_before_audio_without_disclosure(
+    before: str,
+    after: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = 0
+
+    def exchange(_target: str, transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert metadata and calls <= 2
+        transfer.requests_attempted = 1
+        marker = before if calls == 1 else after
+        return listing([row(audio=BASE + "?trackid=168&format=mp32&from=" + marker)])
+
+    monkeypatch.setattr(subject, "exchange", exchange)
+
+    def read_id(_path: str) -> str:
+        return FAKE_ID
+
+    monkeypatch.setattr(subject, "read_id", read_id)
+    assert subject.run_child("synthetic-path") == 1
+    output = capsys.readouterr()
+    report = json.loads(output.out)
+    assert calls == 2 and report["reason"] == "refresh_evidence_changed"
+    assert not report["metadata_validated"] and report["stream"] == asdict(subject.Transfer())
+    assert report["candidate_refusals"] == [] and report["route_diagnostic"] is None
+    for private in (before, after, BASE, FAKE_ID):
+        assert private not in output.out
+    assert output.err == "" and len(output.out.encode()) < subject.REPORT_BYTES
 
 
 @pytest.mark.parametrize(
@@ -31,8 +114,8 @@ def refused(url: str) -> dict[str, object]:
         (" " + VALID, "text_shape", {"whitespace": "present", "control": "absent"}),
         ("\t" + VALID, "text_shape", {"whitespace": "present", "control": "present"}),
         ("\x00" + VALID, "text_shape", {"whitespace": "absent", "control": "present"}),
-        (VALID + "\x7f", "text_shape", {"control": "present", "application_binding": "mismatch"}),
-        (VALID + "\\", "application_binding", {"backslash": "present"}),
+        (VALID + "\x7f", "text_shape", {"control": "present"}),
+        (VALID + "\\#", "fragment", {"backslash": "present"}),
         (
             "https://[broken/?" + QUERY + "#",
             "url_parser",
@@ -91,7 +174,6 @@ def refused(url: str) -> dict[str, object]:
                 "duplicate_keys": "absent",
                 "track_id": "mismatch",
                 "format": "mismatch",
-                "application_binding": "not_evaluated",
             },
         ),
         (
@@ -106,11 +188,6 @@ def refused(url: str) -> dict[str, object]:
         ),
         (VALID.replace("168", "169"), "track_id", {"track_id": "mismatch"}),
         (VALID.replace("mp32", "mp31"), "format", {"format": "mismatch"}),
-        (
-            VALID.replace(FAKE_ID, "wrong"),
-            "application_binding",
-            {"application_binding": "mismatch"},
-        ),
     ],
 )
 def test_each_dimension(url: str, first: str, facts: dict[str, str]) -> None:
@@ -126,7 +203,6 @@ def test_each_dimension(url: str, first: str, facts: dict[str, str]) -> None:
             "duplicate_keys",
             "track_id",
             "format",
-            "application_binding",
         ):
             assert diagnostic[name] == "not_evaluated"
 
@@ -151,7 +227,6 @@ def test_mixed_failures_keep_original_component_precedence() -> None:
         "duplicate_keys": "absent",
         "track_id": "mismatch",
         "format": "mismatch",
-        "application_binding": "mismatch",
     }
     # Original query parsing precedes scheme/authority checks, even with both wrong.
     diagnostic = refused(mixed.replace("trackid=wrong", "broken"))
@@ -173,12 +248,12 @@ def test_type_bound_and_prior_gate_do_not_parse(
     monkeypatch.setattr(subject, "diagnose_route", forbidden)
     for record in (row(audio=value), row(name="", audio=value)):
         with pytest.raises(subject.CandidateRefused) as error:
-            subject.validate_candidate(record, FAKE_ID)
+            subject.validate_candidate(record)
         assert error.value.route_diagnostic is None
     record = row()
     del record["audio"]
     with pytest.raises(subject.CandidateRefused, match="^candidate_stream_route_missing$") as error:
-        subject.validate_candidate(record, FAKE_ID)
+        subject.validate_candidate(record)
     assert error.value.route_diagnostic is None
 
 
@@ -209,7 +284,7 @@ def original_target(value: str) -> str | None:
     return "/?" + urlencode(expected) if len(pairs) == 3 and dict(pairs) == expected else None
 
 
-def test_original_acceptance_and_reconstruction_corpus() -> None:
+def test_original_acceptance_corpus_except_opaque_marker() -> None:
     corpus = [
         VALID,
         VALID.replace("https", "HTTPS"),
@@ -223,11 +298,14 @@ def test_original_acceptance_and_reconstruction_corpus() -> None:
             corpus.append(VALID[:index] + char + VALID[index:])
     for value in corpus:
         expected = original_target(value)
-        if expected is None:
+        # Only the former marker equality is relaxed. These suffixes had no
+        # independent text/parser refusal and now belong to the opaque value.
+        newly_opaque = value in {VALID + suffix for suffix in ("\\", "?", "%")}
+        if expected is None and not newly_opaque:
             with pytest.raises(subject.CandidateRefused):
-                subject.stream_target(value, FAKE_ID, "168")
+                subject.stream_target(value, "168")
         else:
-            assert subject.stream_target(value, FAKE_ID, "168") == expected
+            assert subject.stream_target(value, "168") == "/?" + urlsplit(value).query
 
 
 @pytest.mark.parametrize("refresh", [False, True])
