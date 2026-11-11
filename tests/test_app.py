@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "placeholder-token-value"  # pragma: allowlist secret - test placeholder
 GEMINI_KEY = "placeholder-gemini-value"  # pragma: allowlist secret - test placeholder
 PAYLOAD = bytes(range(256)) * 8
-LIMITS = {"memory.max": "90177536\n", "memory.swap.max": "0\n", "pids.max": "64\n"}
+LIMITS = {"memory.max": "268435456\n", "memory.swap.max": "0\n", "pids.max": "64\n"}
 
 
 def cgroup(tmp_path: Path, **values: str) -> Path:
@@ -84,7 +84,7 @@ def test_limit_gate_accepts_exactly_the_adr_values(tmp_path: Path) -> None:
         ("memory.max", "90177537\n"),
         ("memory.max", "268435456\n"),
         ("memory.swap.max", "max\n"),
-        ("memory.swap.max", "90177536\n"),
+        ("memory.swap.max", "268435456\n"),
         ("pids.max", "max\n"),
         ("pids.max", "65\n"),
         ("pids.max", "6 4\n"),
@@ -506,7 +506,7 @@ def compose_service() -> dict[str, object]:
 
 def test_compose_carries_the_adr_limits_and_hardening() -> None:
     service = compose_service()
-    assert service["mem_limit"] == 90_177_536 and service["memswap_limit"] == 90_177_536
+    assert service["mem_limit"] == 268_435_456 and service["memswap_limit"] == 268_435_456
     assert service["pids_limit"] == 64 and service["cpus"] == 2
     assert service["init"] is True and service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]

@@ -61,6 +61,7 @@ from sobafm.pcm import (
     PcmBankPool,
     PcmCapacityError,
     PcmStateError,
+    StationReservation,
 )
 
 if TYPE_CHECKING:
@@ -898,8 +899,8 @@ class _Voice:
 class GeneratedStream:
     """One generated program's audio across as many sessions as it takes.
 
-    Uses a second bank during a renewal, so it overlaps within the existing two-bank
-    reservation; when the other bank is in use elsewhere the session plays to its end and
+    Uses its station's second bank during renewal. If that bank is held by the same
+    station's replacement or cleanup debt, the session plays to its end and
     the replacement follows after a gap. Attempts are finite for each renewal, and once
     they run out the stream ends after its buffered audio drains.
     """
@@ -911,7 +912,7 @@ class GeneratedStream:
         api_key: str,
         endpoint: str = ENDPOINT,
         ssl_context: ssl.SSLContext | None = None,
-        pool: PcmBankPool = GLOBAL_PCM_BANKS,
+        pool: PcmBankPool | StationReservation = GLOBAL_PCM_BANKS,
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
         renew_after: float = RENEW_AFTER_SECONDS,

@@ -136,6 +136,7 @@ from sobafm.pcm import (
     SAMPLE_BYTES,
     PcmBank,
     PcmBankPool,
+    StationReservation,
     PcmCapacityError,
     VoiceFrameCredit,
 )
@@ -652,16 +653,25 @@ class StationOutput(disnake.PCMVolumeTransformer[StationSource]):
     """Apply gain with bounded scratch, including outputs still held by a voice thread."""
 
     def __init__(
-        self, source: StationSource, volume: float, pool: PcmBankPool, stopping: Callable[[], bool]
+        self,
+        source: StationSource,
+        volume: float,
+        pool: PcmBankPool | StationReservation | None,
+        stopping: Callable[[], bool],
     ) -> None:
         super().__init__(source, volume)
         self._pool = pool
         self._reader = _Reader()
         self._stopping = stopping
 
+    def use_reservation(self, reservation: StationReservation | None) -> None:
+        self._pool = reservation
+
     def read(self) -> bytes:
         if self._stopping():
             return b""
+        if self._pool is None:
+            return self.original.wait_for_credit()
         ref = self._reader.credit
         credit = None if ref is None else ref()
         if credit is None:
@@ -717,7 +727,8 @@ class GuildPlayer:
     voice: disnake.VoiceClient
     source: StationSource
     # What the voice player reads: the source's frames at this server's volume.
-    output: disnake.PCMVolumeTransformer[StationSource]
+    output: StationOutput
+    reservation: StationReservation | None = None
     station: Station = field(default_factory=Station)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # One request is matched at a time per server. A stop during the wait must win, so
@@ -952,6 +963,7 @@ class Adapter:
         self._producer = producer
         self._settings = settings
         self._pool = pool
+        self._station_requests: dict[int, int] = {}
         self._sleep = sleep  # the grace and refill timers' clock; tests inject one
         self._clock = clock  # monotonic time for cooldowns and refill retry deadlines
         self._credit_views = CreditViews()
@@ -1113,7 +1125,7 @@ class Adapter:
         log.info("voice connected")
         source = StationSource(self._reporter(guild_id), self._clock)
         gain = self._settings.get(guild_id).volume_percent / 100
-        output = StationOutput(source, gain, self._pool, self.stopping.is_set)
+        output = StationOutput(source, gain, None, self.stopping.is_set)
         player = GuildPlayer(guild_id, voice, source, output)
         self.players[guild_id] = player
         return player
@@ -1169,10 +1181,29 @@ class Adapter:
             return
         if player.closing or self.stopping.is_set():
             reply = STOPPED_WHILE_MATCHING
-        elif generated:
-            reply = await self._generate(player, request)
         else:
-            reply = await self._prepare(player, request)
+            self._release_idle_reservations()
+            try:
+                reservation = self._pool.reserve(player.guild_id)
+            except PcmCapacityError:
+                reply = "Three stations are active or cleaning up. Try again after one stops."
+            else:
+                player.reservation = reservation
+                player.output.use_reservation(reservation)
+                self._station_requests[player.guild_id] = (
+                    self._station_requests.get(player.guild_id, 0) + 1
+                )
+                try:
+                    reply = (
+                        await self._generate(player, request)
+                        if generated
+                        else await self._prepare(player, request)
+                    )
+                finally:
+                    self._station_requests[player.guild_id] -= 1
+                    if not self._station_requests[player.guild_id]:
+                        del self._station_requests[player.guild_id]
+                    self._release_idle_reservations()
         self._review_listeners(player)  # e.g. a deafened caller started a program
         await self._deliver(
             inter,
@@ -1371,7 +1402,9 @@ class Adapter:
         self._give_back(player, displaced.claim)
         return self._retire(displaced)
 
-    def _generated_stream(self, plan: GeneratedPlan) -> GeneratedStream:
+    def _generated_stream(
+        self, plan: GeneratedPlan, reservation: StationReservation
+    ) -> GeneratedStream:
         request = MusicRequest(
             tuple(Prompt(style.text, style.weight) for style in plan.styles),
             bpm=plan.tempo_bpm,
@@ -1384,7 +1417,7 @@ class Adapter:
         return GeneratedStream(
             request,
             api_key=self._lyria_key,
-            pool=self._pool,
+            pool=reservation,
             on_cleanup_expired=self._cleanup_expired,
             on_bank_released=self._capacity_changed,
         )
@@ -1441,12 +1474,13 @@ class Adapter:
             self._end_generated(player, audio.program, EndReason.DURATION)
             return "The generated duration elapsed before the music could start."
         try:
-            bank = self._pool.acquire()
+            assert player.reservation is not None
+            bank = player.reservation.acquire()
         except PcmCapacityError:
             station.switch_failed(audio, EndReason.CAPACITY if accepted else None)
             return "Audio capacity is busy. Any current audio continues. Try again shortly."
         if isinstance(audio, GeneratedAudio):
-            stream = self._generated_stream(audio.plan)
+            stream = self._generated_stream(audio.plan, player.reservation)
             track: PlayingTrack = GeneratedTrack(audio, stream, claim=player.waiting_claim)
             player.durations[audio.program].track = track
             stream.start(bank)
@@ -1711,22 +1745,23 @@ class Adapter:
         return heard is not None and heard.program == player.station.desired
 
     def _bank_free(self, player: GuildPlayer) -> bool:
-        """Whether ``player``'s next track may lease a bank now.
+        """Only this station's two slots can fund its next track, including debt."""
+        return player.reservation is not None and player.reservation.leased < BANK_COUNT
 
-        A program that is still audible leaves a free bank to another server's
-        program whose drained track left it silent, so a server whose track ended
-        is not starved by one still playing.
-        """
-        if self._pool.leased >= BANK_COUNT:
-            return False
-        return not self._audible(player) or not any(
-            other is not player
-            and not other.closing  # a connection that's ending has no claim on a bank
-            and other.voice.is_connected()  # a reconnect can't use the bank yet
-            and other.station.needs_next
-            and not self._audible(other)
-            for other in self.players.values()
-        )
+    def _release_idle_reservations(self) -> None:
+        for owner in self._pool.owners:
+            if not isinstance(owner, int) or owner in self._station_requests:
+                continue
+            player = self.players.get(owner)
+            if player is not None:
+                station = player.station
+                if any((station.desired, station.heard, station.ready, station.switching)):
+                    continue
+            # Native/session work holds banks until settlement; voice frames hold
+            # credits even after disconnect. Neither a stop nor a timeout frees them.
+            if self._pool.release(owner) and player is not None:
+                player.reservation = None
+                player.output.use_reservation(None)
 
     def _capacity_waiter(self) -> asyncio.Future[None]:
         """Register for the next capacity change; created under the player lock, so
@@ -1744,6 +1779,7 @@ class Adapter:
 
     def _capacity_changed(self) -> None:
         """Wake waiting starts and continuations to check capacity and their program again."""
+        self._release_idle_reservations()
         waiters, self._capacity_waiters = self._capacity_waiters, set()
         for waiter in waiters:
             if not waiter.done():
@@ -2600,7 +2636,7 @@ class Adapter:
                     return
                 # During a reconnect only a real wakeup can make this start admissible.
                 remaining = deadline - time.monotonic() if player.voice.is_connected() else None
-                if remaining is not None and (self._pool.leased < BANK_COUNT or remaining <= 0):
+                if remaining is not None and (self._bank_free(player) or remaining <= 0):
                     if await self._start(player, accepted=True) is not None:
                         self._give_back(player, claim)
                         self._resume(player)
