@@ -178,9 +178,14 @@ for a reason (leaving the HTTP status-line prefix/CRLF). The compiled parser can
 accept a name and value each up to 1020 bytes: this setting alone does not bound
 their sum. Before body consumption or status acceptance, explicit raw-header
 validation requires `len(name) + len(value) + 4 <= 1024`, including the canonical
-colon/space/CRLF projection. The maintained parser strips optional surrounding
-whitespace; this check does not claim to recover stripped wire whitespace. The
-Python parser's whole-line interpretation is stricter.
+colon/space/CRLF projection after the maintained parser removes surrounding
+optional whitespace. This is the [explicitly adopted field-content refinement](https://github.com/slackysoba/sobafm/issues/190#issuecomment-6798626947),
+which supersedes the earlier complete-wire-field interpretation. Discarded leading
+whitespace has **no configured aggregate wire-byte cap**: it is processed
+incrementally within the unchanged 5-second response-header deadline and
+10-second metadata absolute deadline, with bounded retained payload and current
+delivery copies. The Python parser's whole-line interpretation is stricter. No
+socket-prefix limit, parser replacement or global runtime switch is adopted.
 
 Pre-validation copies are charged even for a rejected field. The 409600-byte
 header subdivision covers 33 fields (including the count-overflow field) with
@@ -192,6 +197,13 @@ whole lines plus raw/decoded fields fit within that larger compiled-parser bound
 The delivery itself is already included in the read/write subdivision below.
 Header objects and allocator overhead remain in the whole-service group; these
 payload copies are charged separately. No slot or whole-service cap increased.
+
+Fragmented HTTP/TLS regressions deliver 4 MiB of leading spaces or tabs in observed
+16384-byte fragments. GC-visible retained header bytes/text do not grow between
+the 16 KiB, 1 MiB and 4 MiB checkpoints, and only the small JSON body enters the
+body counter. The 4 MiB fixture is not a maximum or proof of native-heap/RSS fit.
+Unfinished-header regressions exercise the actual header timeout, abort, repeated
+cancellation and restart with the complete unknown-usage reservation preserved.
 
 | Read/write slot payload | Bytes |
 | --- | ---: |
@@ -218,6 +230,11 @@ unconsumed buffered bodies; metadata/audio totals remain separate. Counts descri
 application bodies, not encrypted/TLS/wire billing. Valid Retry-After values on
 denial/429 establish a not-before time; absence of a usable value latches that
 client until replacement. The transport never sleeps/retries a provider request.
+
+Discarded header whitespace is not body usage. These counters do not establish
+total network billing or a provider/host traffic allowance. Any deployment limit
+defined on another metric requires separate qualification and enforcement before
+claiming it is honored; this refinement grants no traffic or spending entitlement.
 
 If the maintained parser fails **before exposing a response**, no public raw-body
 counter exists. The safe report uses `body_bytes=None`, persists the known

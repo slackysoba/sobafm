@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import socket
 import ssl
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -232,6 +233,178 @@ def test_combined_header_field_byte_limit(
             assert scope.last_report.kind == (None if accepted else Kind.MALFORMED)
         await client.close()
         await journal.close()
+
+    asyncio.run(run())
+
+
+def retained_parser_payload(parser: object) -> int:
+    """GC-visible bytes/text through containers only, not native heap or RSS."""
+    pending: list[object] = gc.get_referents(parser)
+    seen: set[int] = set()
+    total = 0
+    while pending:
+        value = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, bytes | bytearray):
+            total += len(value)
+        elif isinstance(value, str):
+            total += 4 * len(value)  # Conservative Unicode character backing.
+        elif isinstance(value, list | tuple | dict | set | frozenset):
+            pending.extend(gc.get_referents(value))
+    return total
+
+
+@pytest.mark.parametrize("secure", [False, True], ids=["http", "tls"])
+@pytest.mark.parametrize("whitespace", [b" ", b"\t"], ids=["spaces", "tabs"])
+def test_fragmented_header_whitespace_has_bounded_retention_and_body_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tls_pair: tuple[ssl.SSLContext, ssl.SSLContext],
+    secure: bool,
+    whitespace: bytes,
+) -> None:
+    async def run() -> None:
+        prefix = b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nX: "
+        checkpoints = {16_384, 1_048_576, 4_194_304}
+        retained: dict[int, int] = {}
+        consumed = asyncio.Event()
+        delivered = target = maximum_delivery = 0
+        header_pending = True
+        original = ResponseHandler.data_received
+
+        def observe(protocol: ResponseHandler, data: bytes) -> None:
+            nonlocal delivered, maximum_delivery
+            delivered += len(data)
+            maximum_delivery = max(maximum_delivery, len(data))
+            original(protocol, data)
+            progress = delivered - len(prefix)
+            if header_pending and progress in checkpoints:
+                parser = protocol._parser  # pyright: ignore[reportPrivateUsage] -- observe the actual retained parser in this boundary test only
+                assert parser is not None
+                retained[progress] = retained_parser_payload(parser)
+            if delivered >= target:
+                consumed.set()
+
+        monkeypatch.setattr(ResponseHandler, "data_received", observe)
+
+        async def script(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            nonlocal target, header_pending
+
+            async def fragment(data: bytes) -> None:
+                nonlocal target
+                target += len(data)
+                consumed.clear()
+                writer.write(data)
+                await writer.drain()
+                await consumed.wait()  # Gate on parsing, never timing or an arbitrary sleep.
+
+            await fragment(prefix)
+            chunk = whitespace * 16_384
+            for _ in range(256):
+                await fragment(chunk)
+            header_pending = False
+            writer.write(b"v\r\n\r\n" + BODY)
+            await writer.drain()
+
+        journal = await Journal.open(tmp_path / "journal.json")
+        client = JamendoTransport("placeholder", journal)
+        scope = client.reserve_station()
+        async with peer(monkeypatch, script, tls=tls_pair if secure else None) as requests:
+            assert await scope.fetch(request()) == BODY
+            assert len(requests) == 1
+        assert retained.keys() == checkpoints
+        assert len(set(retained.values())) == 1 and 0 < max(retained.values()) < 1024
+        assert maximum_delivery <= (65_536 if secure else module.SOCKET_READ_BYTES)
+        assert scope.last_report is not None and scope.last_report.kind is None
+        assert scope.last_report.dispatches == 1 and scope.last_report.body_bytes == len(BODY)
+        assert journal.snapshot.metadata.body_bytes == len(BODY)
+        assert not journal.snapshot.reservations
+        await client.close()
+        await journal.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("secure", [False, True], ids=["http", "tls"])
+def test_unfinished_header_timeout_retains_unknown_usage_through_cancel_and_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tls_pair: tuple[ssl.SSLContext, ssl.SSLContext],
+    secure: bool,
+) -> None:
+    async def run() -> None:
+        closing, release, peer_closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        now = 10.0
+        header_timeouts: list[asyncio.Timeout] = []
+        original_timeout = asyncio.timeout
+
+        def timeout(delay: float | None) -> asyncio.Timeout:
+            timer = original_timeout(delay)
+            if delay == module.GAP_SECONDS:
+                header_timeouts.append(timer)
+            return timer
+
+        monkeypatch.setattr(asyncio, "timeout", timeout)
+
+        class Resolver(CheckedResolver):
+            async def close(self) -> None:
+                closing.set()
+                await release.wait()
+                await super().close()
+
+        monkeypatch.setattr(module, "CheckedResolver", Resolver)
+
+        async def script(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            writer.write(b"HTTP/1.0 200 OK\r\nX: " + b" " * 32_768)
+            await writer.drain()
+            assert await reader.read(1) == b""
+            peer_closed.set()
+
+        path = tmp_path / "journal.json"
+        journal = await Journal.open(path)
+        client = JamendoTransport(
+            "placeholder", journal, quota=Quota(requests=1), clock=lambda: now
+        )
+        scope = client.reserve_station()
+        async with peer(monkeypatch, script, tls=tls_pair if secure else None) as requests:
+            fetch = asyncio.create_task(scope.fetch(request()))
+            await closing.wait()
+            header_expired = any(timer.expired() for timer in header_timeouts)
+            await peer_closed.wait()
+            now = 14.0
+            fetch.cancel()
+            await tick()
+            fetch.cancel()
+            retained_owner = not fetch.done()
+            now = 18.0
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await fetch
+            assert header_expired and retained_owner
+            report = scope.last_report
+            assert report is not None and report.kind == Kind.TIMEOUT
+            assert report.body_bytes is None and report.dispatches == 1 and report.responses == 0
+            assert report.stopped_at == 10.0 and report.settled_at == 18.0
+            assert report.cleanup_expired and scope.failed_cleanups == 1
+            assert journal.snapshot.metadata.dispatches == journal.snapshot.metadata.failures == 1
+            assert journal.snapshot.metadata.body_bytes == 0
+            assert len(journal.snapshot.reservations) == 1
+            assert journal.snapshot.reservations[0].body_bytes == 1_146_880
+            await client.close()
+            await journal.close()
+            restarted = await Journal.open(path)
+            assert restarted.snapshot.reservations == journal.snapshot.reservations
+            assert restarted.snapshot.metadata == journal.snapshot.metadata
+            replacement = JamendoTransport("placeholder", restarted, quota=Quota(requests=1))
+            next_scope = replacement.reserve_station()
+            assert isinstance(await next_scope.fetch(request()), Refusal)
+            assert next_scope.last_report is not None and next_scope.last_report.kind == Kind.QUOTA
+            assert len(requests) == 1
+            assert scope.last_report == report  # Late close cannot erase the first verdict.
+            await replacement.close()
+            await restarted.close()
 
     asyncio.run(run())
 
