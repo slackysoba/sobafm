@@ -553,23 +553,33 @@ class _Operation:
             if not self.dispatches
             else None
         )
-        if self.reservation is not None and (self.response is not None or not self.dispatches):
-            await self.client.journal.settle_usage(
-                self.reservation,
-                dispatches=self.dispatches,
-                responses=int(self.response is not None),
-                body_bytes=0 if self.response is None else self.response.content.total_raw_bytes,
-                failed=self.kind is not None,
-            )
-        elif self.reservation is not None:
-            await self.client.journal.retain_unknown(self.reservation, dispatches=self.dispatches)
-        # Without response ownership the parser may have rejected a body before
-        # returning it. Unknown usage stays reserved; never report zero/refund it.
-        self.response = None
-        self.session = None
-        self.transport = None
-        self.protocol = None
-        self.finished_at = self.client.clock()
+        try:
+            if self.reservation is not None and (self.response is not None or not self.dispatches):
+                await self.client.journal.settle_usage(
+                    self.reservation,
+                    dispatches=self.dispatches,
+                    responses=int(self.response is not None),
+                    body_bytes=0
+                    if self.response is None
+                    else self.response.content.total_raw_bytes,
+                    failed=self.kind is not None,
+                )
+            elif self.reservation is not None:
+                # Unknown rejected bodies retain their entire reservation.
+                await self.client.journal.retain_unknown(
+                    self.reservation, dispatches=self.dispatches
+                )
+        except JournalError:
+            self.kind = Kind.JOURNAL
+            raise
+        finally:
+            # Even a failed write has settled here. Its conservative pending snapshot
+            # and admission latch belong to Journal; no raw HTTP payload belongs there.
+            self.response = None
+            self.session = None
+            self.transport = None
+            self.protocol = None
+            self.finished_at = self.client.clock()
 
     def report(self) -> Report:
         raw = (
@@ -704,8 +714,11 @@ class OwnedAudio:
             self.cancel()
             with suppress(asyncio.CancelledError, TransportError, aiohttp.ClientError):
                 await _join(read)
-        await self._operation.close()
-        self._release()
+        try:
+            await self._operation.close()
+        finally:
+            if self._operation.finished_at is not None:
+                self._release()
 
 
 class StationTransport:
@@ -716,7 +729,9 @@ class StationTransport:
         self._audio_banks: set[PcmBank] = set()
         self._audio: set[OwnedAudio] = set()
         self._work: set[asyncio.Task[Any]] = set()
+        self._operations: set[_Operation] = set()
         self.closed = False
+        self._closing: asyncio.Task[None] | None = None
         self.last_report: Report | None = None
         self.failed_cleanups = 0
         self.failure_counts: dict[Kind, int] = dict.fromkeys(Kind, 0)
@@ -731,6 +746,10 @@ class StationTransport:
             else:
                 self.failure_counts[report.kind] += 1
 
+    @property
+    def settled(self) -> bool:
+        return self.closed and not self._operations and not self._audio_banks
+
     async def fetch(self, request: Request, *, deadline: float | None = None) -> bytes | Refusal:
         start = asyncio.get_running_loop().time()
         if self.closed or self._client.closed or self._metadata_owners >= 2:
@@ -738,6 +757,7 @@ class StationTransport:
             return Refusal(Failure.TRANSPORT)
         self._metadata_owners += 1
         operation = _Operation(self._client, Channel.METADATA, MAX_RESPONSE_BYTES)
+        self._operations.add(operation)
 
         async def run() -> bytes | Refusal:
             held = False
@@ -816,6 +836,7 @@ class StationTransport:
                 operation.kind = Kind.CANCELLED
             self._record(operation.report())
             self._metadata_owners -= 1
+            self._operations.discard(operation)
 
         task.add_done_callback(completed)
         self._work.add(task)
@@ -852,6 +873,7 @@ class StationTransport:
             raise TransportError(Kind.JOURNAL) from None
         self._audio_banks.add(bank)
         operation = _Operation(self._client, Channel.AUDIO, limits.encoded_bytes)
+        self._operations.add(operation)
         start = asyncio.get_running_loop().time()
 
         async def run() -> OwnedAudio:
@@ -900,6 +922,7 @@ class StationTransport:
         task = asyncio.create_task(run())
 
         def completed(work: asyncio.Task[OwnedAudio]) -> None:
+            self._operations.discard(operation)
             if work.cancelled() or work.exception() is not None:
                 self._audio_banks.discard(bank)
 
@@ -916,13 +939,21 @@ class StationTransport:
 
     async def close(self) -> None:
         self.closed = True
+        if self._closing is None:
+            self._closing = asyncio.create_task(self._close())
+        await _join(self._closing)
+
+    async def _close(self) -> None:
+        for operation in self._operations:
+            operation.stop()
         for task in self._work:
             task.cancel()
         for audio in tuple(self._audio):
             audio.cancel()
-            await audio.close()
+            with suppress(JournalError):
+                await audio.close()
         for task in tuple(self._work):
-            with suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError, JournalError, TransportError):
                 await _join(task)
         self._client.release_station(self)
 
@@ -969,6 +1000,7 @@ class JamendoTransport:
         self.not_before = 0.0
         self.closed = False
         self._stations: set[StationTransport] = set()
+        self._closing: asyncio.Task[None] | None = None
 
     def reserve_station(self) -> StationTransport:
         if self.closed or len(self._stations) >= 3:
@@ -978,7 +1010,7 @@ class JamendoTransport:
         return station
 
     def release_station(self, station: StationTransport) -> None:
-        if not station.closed:
+        if not station.settled:
             raise TransportError(Kind.CAPACITY)
         self._stations.discard(station)
 
@@ -989,4 +1021,6 @@ class JamendoTransport:
             for station in tuple(self._stations):
                 await station.close()
 
-        await _join(asyncio.create_task(close_all()))
+        if self._closing is None:
+            self._closing = asyncio.create_task(close_all())
+        await _join(self._closing)

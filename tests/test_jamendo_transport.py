@@ -20,7 +20,7 @@ from aiohttp.client_proto import ResponseHandler
 from sobafm import jamendo_transport as module
 from sobafm.jamendo_admission import Policy
 from sobafm.jamendo_catalog import Query, Refreshed, Refusal, Request, SearchWindow
-from sobafm.jamendo_journal import Journal, Quota
+from sobafm.jamendo_journal import Journal, Quota, atomic_write
 from sobafm.jamendo_transport import (
     CheckedResolver,
     JamendoTransport,
@@ -250,7 +250,7 @@ def test_request_and_audio_route_revalidation() -> None:
         base + "#x",
         base.replace("/?", "/download?"),
         base.replace("mp32", "mp31"),
-        base.replace("https://", "https://user:secret@"),
+        base.replace("https://", "https://user:secret@"),  # pragma: allowlist secret
         base.replace(".com/", ".com:444/"),
         base + "&extra=x",
         base + "\\",
@@ -593,6 +593,79 @@ def test_queue_deadline_and_stale_locator_make_no_dispatch(tmp_path: Path) -> No
         assert "secret-synthetic" not in repr(locator)
         with pytest.raises(TransportError, match="stale"):
             locator.take(client.clock())
+        await client.close()
+
+    asyncio.run(run())
+
+
+def test_failed_usage_write_latches_but_releases_settled_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        writes = 0
+
+        def writer(path: Path, payload: bytes) -> None:
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise OSError("synthetic settlement failure")
+            atomic_write(path, payload)
+
+        journal = await Journal.open(tmp_path / "journal.json", writer=writer)
+        client = JamendoTransport("placeholder", journal)
+        scope = client.reserve_station()
+        async with peer(monkeypatch, response_script(wire(BODY))):
+            assert isinstance(await scope.fetch(request()), Refusal)
+        assert journal.latched and journal.snapshot.reservations
+        assert scope.last_report is not None and scope.last_report.kind == Kind.JOURNAL
+        assert scope.last_report.body_bytes == len(BODY)
+        await client.close()
+        assert scope.settled
+        await journal.restore()
+        assert not journal.snapshot.reservations
+        assert journal.snapshot.metadata.body_bytes == len(BODY)
+        await journal.close()
+
+    asyncio.run(run())
+
+
+def test_cancelled_scope_close_joins_all_original_owners(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        begun, closing, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        class Resolver(CheckedResolver):
+            async def close(self) -> None:
+                closing.set()
+                await release.wait()
+                await super().close()
+
+        monkeypatch.setattr(module, "CheckedResolver", Resolver)
+
+        async def script(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            begun.set()
+            await reader.read(1)
+
+        journal = await Journal.open(tmp_path / "journal.json")
+        client = JamendoTransport("placeholder", journal)
+        scope = client.reserve_station()
+        async with peer(monkeypatch, script):
+            fetch = asyncio.create_task(scope.fetch(request()))
+            await begun.wait()
+            close = asyncio.create_task(scope.close())
+            await closing.wait()
+            close.cancel()
+            close.cancel()
+            assert not close.done() and not scope.settled
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await close
+            with pytest.raises(asyncio.CancelledError):
+                await fetch
+            assert scope.settled
         await client.close()
 
     asyncio.run(run())
