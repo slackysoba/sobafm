@@ -35,9 +35,11 @@ from tests.test_discord_adapter import (
     SERVER_ONLY,
     FakeChannel,
     FakeGuild,
+    FakeInteraction,
     FakeMatcher,
     FakeVoice,
     Harness,
+    Tagged,
     harness,
     inter,
     matcher_of,
@@ -592,8 +594,10 @@ def test_internal_renewal_wakes_the_accepted_catalog_track(
                     listener = inter(other)
                     listener.guild = other.guild
                     reply = await command(lambda i: h.adapter.play(i, "other"), listener)
-                    assert "capacity" in (reply.texts()[0] or "")
-                assert player.station.switching is expected and decoder.started == ["b"]
+                    assert "accepted" in (reply.texts()[0] or "")
+                    await settle()
+                assert player.station.switching is expected
+                assert decoder.started == ["b"] * (2 if competing_guild else 1)
                 assert sample_of(player.output.read()) == sample_of(tag("b")) // 2
                 await settle()
                 assert (
@@ -803,7 +807,7 @@ def test_full_pool_refuses_before_starting_voice(monkeypatch: pytest.MonkeyPatch
             h = harness()
             h.adapter.interpreter = interpreter(FakeTransport(interaction(output())))
             source = await h.join()
-            held = [h.pool.acquire(), h.pool.acquire()]
+            held = [h.pool.reserve(1).acquire(), h.pool.reserve(1).acquire()]
             reply = await generate(h)
             player = h.adapter.players[1]
             playing = player.voice.is_playing()
@@ -840,7 +844,7 @@ def test_unsuccessful_catalog_match_preserves_generation(
             h.adapter.matcher = GeminiMatcher((recording("a"),), KEY, transport=catalog)
             banks = []
             if outcome == "capacity":
-                banks = [h.pool.acquire(), h.pool.acquire()]
+                banks = [h.pool.reserve(1).acquire(), h.pool.reserve(1).acquire()]
             assert "accepted" not in (await h.play())[0]
             assert len(catalog.calls) == 1
             for bank in banks:
@@ -1239,5 +1243,74 @@ def test_real_voice_frame_deadline_runs_during_disconnect(
         assert h.pool.voice_readers == 0
         assert await h.adapter.shutdown() is (not held_past_deadline)
         assert h.adapter.cleanup_failures == failures_at_deadline
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("catalog_stations", [0, 1, 2])
+def test_three_stations_reserve_simultaneous_prefetch_and_renewal(
+    monkeypatch: pytest.MonkeyPatch, catalog_stations: int
+) -> None:
+    async def scenario() -> None:
+        renewals = asyncio.Queue[None]()
+
+        async def sleep(delay: float) -> None:
+            if delay == RENEW_AFTER_SECONDS:
+                await renewals.get()
+            else:
+                await asyncio.sleep(delay)
+
+        generated = 3 - catalog_stations
+        async with FakeLyria(*([music(1000)] * generated + [music(3000)] * generated)) as peer:
+            monkeypatch.setattr(
+                discord_adapter,
+                "GeneratedStream",
+                partial(GeneratedStream, endpoint=peer.url, sleep=sleep),
+            )
+            h, producer = program_harness("a", "b", producer=Tagged(frames=2))
+            transport = FakeTransport(interaction(output()))
+            h.adapter.interpreter = interpreter(transport)
+            streams: list[GeneratedStream] = []
+
+            def listener(guild: int, *, manager: bool = False) -> FakeInteraction:
+                room = FakeChannel(str(guild), guild=FakeGuild(guild))
+                if guild in h.adapter.players:
+                    room = cast(FakeChannel, h.adapter.players[guild].voice.channel)
+                fake = inter(room, manager=manager)
+                fake.guild = room.guild
+                return fake
+
+            for guild in range(1, 4):
+                await command(h.adapter.join, listener(guild, manager=True))
+                if guild <= catalog_stations:
+                    await command(lambda i: h.adapter.play(i, "piano"), listener(guild))
+                else:
+                    await command(lambda i: h.adapter.freestyle(i, "piano"), listener(guild))
+                    stream = pending_stream(h.adapter.players[guild].source)
+                    streams.append(stream)
+                    assert await stream.wait_ready()
+            await settle()
+            for player in h.adapter.players.values():
+                assert player.output.read()
+            await until(lambda: producer.started.count("b") == catalog_stations)
+            for _ in streams:
+                renewals.put_nowait(None)
+            await until(lambda: all(stream.crossfading for stream in streams))
+            assert h.pool.leased == 6 and len(peer.requests) == generated * 2
+            for player in h.adapter.players.values():
+                assert player.reservation is not None and player.reservation.leased == 2
+
+            await command(h.adapter.join, listener(4, manager=True))
+            calls = len(transport.calls)
+            refused = await command(lambda i: h.adapter.freestyle(i, "piano"), listener(4))
+            assert "Three stations" in str(refused.texts())
+            assert len(transport.calls) == calls
+            assert len(peer.requests) == generated * 2
+            for guild in range(catalog_stations + 1, 4):
+                player = h.adapter.players[guild]
+                levels = [sample_of(player.output.read()) for _ in range(CROSSFADE_FRAMES)]
+                assert_faded(levels, 500, 1500, CROSSFADE_FRAMES)
+            await until(lambda: h.pool.leased == 3 + catalog_stations)
+            assert await h.adapter.shutdown()
 
     run(scenario())

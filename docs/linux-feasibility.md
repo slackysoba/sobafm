@@ -13,6 +13,12 @@ which keeps them. The kept [decoder startup](../evaluations/linux_resource/decod
 and [mpg123 supply](../evaluations/linux_resource/mpg123-proposal.md) records explain
 the `Dockerfile` decoder pins.
 
+## Current contract and historical scope
+
+The maintainer selected one bot identity with three stations in [#166](https://github.com/slackysoba/sobafm/issues/166). [ADR 0012](decisions/0012-three-station-capacity.md) records the accepted numeric contract: group 268,435,456, six banks 13,824,000 and copies 12,582,912 = 294,842,368 controlled bytes; conditional PCM 101,552,640. The numeric contract is accepted; actual-image three-station qualification remains pending. Every playing guild charges the full global totals. Original cleanup clocks, retained ownership/debt and exclusions remain.
+
+The proposal, arithmetic and Q1–Q4 evidence below describe the **historical two-slot configuration**, not current Compose or three-station fit. The retained five-pair L2 harness also keeps that original workload and limits. Future qualification must exercise three simultaneous catalog boundaries, generated renewals, mixed modes, stop/restart, useful memory/task/CPU fit and original-clock release on the actual candidate image. Existing continuity and latency criteria remain. No execution is authorized here; #151 remains deferred and #60 unchanged.
+
 ## Result and evidence boundary
 
 Evaluate one ordinary Docker container with a runtime-installed cgroup v2 memory

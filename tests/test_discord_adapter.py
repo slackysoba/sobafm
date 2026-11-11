@@ -1341,7 +1341,7 @@ async def test_refused_bank_lease_replies_busy_and_keeps_heard_audio() -> None:
     player = h.adapter.players[1]
     heard = player.station.heard
     assert heard is not None
-    blocker = h.pool.acquire()  # the remaining global lease is taken elsewhere
+    blocker = h.pool.reserve(1).acquire()  # this station retains its replacement slot
 
     (busy,) = await h.play()
     assert "capacity is busy" in busy and "current audio continues" in busy
@@ -1780,7 +1780,7 @@ async def test_the_next_track_waits_for_capacity_held_by_a_retiring_track() -> N
 @offline
 async def test_a_replacement_gets_its_own_continuation_while_the_old_one_waits() -> None:
     h, tagged = program_harness("a", "b", "c", producer=Tagged(frames=50))
-    blocker = h.pool.acquire()  # the old program's next track waits for a bank
+    blocker = h.pool.reserve(1).acquire()  # the old program's next track waits for a bank
     source = await start_program(h)
     player = h.adapter.players[1]
     station = player.station
@@ -1951,7 +1951,7 @@ def test_shutdown_finishes_while_a_continuation_waits_on_a_stuck_retirement(
 @offline
 async def test_skip_survives_a_failed_start_of_its_next_track() -> None:
     h, tagged = program_harness("a", "b", "c", producer=Tagged(frames=50))
-    blocker = h.pool.acquire()  # the next track waits for a bank
+    blocker = h.pool.reserve(1).acquire()  # the next track waits for a bank
     source = await start_program(h)
     player = h.adapter.players[1]
     flaky_voice(h, failures=1)  # the first start of the next track fails
@@ -1983,7 +1983,7 @@ async def test_failed_next_track_attempts_are_bounded_and_end_the_program() -> N
 
 
 @offline
-async def test_a_program_continues_after_its_own_track_when_two_servers_hold_both_banks() -> None:
+async def test_three_catalog_stations_prefetch_without_cross_guild_contention() -> None:
     h, tagged = program_harness("a", "b", producer=Tagged(frames=1))
     room2 = FakeChannel("room2")
 
@@ -1997,22 +1997,26 @@ async def test_a_program_continues_after_its_own_track_when_two_servers_hold_bot
     await run(h.adapter.join, second(manager=True))
     await run(lambda i: h.adapter.play(i, "piano"), second())
     source2 = h.adapter.players[2].source
+    room3 = FakeChannel("room3")
+    join3 = inter(room3, manager=True)
+    join3.guild = FakeGuild(3)
+    await run(h.adapter.join, join3)
+    play3 = inter(room3)
+    play3.guild = FakeGuild(3)
+    await run(lambda i: h.adapter.play(i, "piano"), play3)
+    source3 = h.adapter.players[3].source
     await settle()
-    assert source1.read() == tag("a") and source2.read() == tag("a")
-    one, two = h.adapter.players[1], h.adapter.players[2]
-    await until(lambda: one.station.heard is not None and two.station.heard is not None)
-    for _ in range(50):
-        await asyncio.sleep(0)
-    # Both servers play their current tracks; neither next track can lease.
-    assert h.pool.leased == 2 and tagged.started == ["a", "a"]
-    assert one.attempts == two.attempts == 0 and one.station.needs_next
-
-    assert source1.read() == b""  # server 1's track ends and frees its bank
-    await prepared_next(h, "b")  # server 1 gets it, although server 2 also waits
-    assert two.station.switching is None and h.pool.leased == 2
-    assert source1.read() == tag("b")  # after a gap
+    for source in (source1, source2, source3):
+        assert source.read() == tag("a")
+    await until(lambda: tagged.started.count("b") == 3)
+    await settle()
+    assert h.pool.leased == 6
+    assert all(
+        p.reservation is not None and p.reservation.leased == 2 for p in h.adapter.players.values()
+    )
+    for source in (source1, source2, source3):
+        assert source.read() == tag("b")  # each prepared next track follows with no gap
     await until(lambda: heard_id(h) == "b")
-    assert two.station.heard is not None and two.station.needs_next
     assert await h.adapter.shutdown() is True
 
 
@@ -2037,7 +2041,7 @@ def test_capacity_that_never_frees_ends_the_program_without_a_hot_loop(
             FakeMatcher(recording("a"), recording("b")), tagged, FakeSettings(), pool=pool
         )
         h = Harness(adapter, pool, tagged)
-        blocker = pool.acquire()  # held elsewhere throughout
+        blocker = pool.reserve(1).acquire()  # this station's retained replacement slot
         source = await start_program(h)
         station = h.adapter.players[1].station
         assert source.read() == b""  # a drains; no bank frees

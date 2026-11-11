@@ -480,7 +480,7 @@ async def test_recordings_with_unusable_credits_give_back_the_claim() -> None:
 async def test_a_refused_bank_lease_gives_back_the_claim() -> None:
     h = cooling(harness())
     await h.join()
-    banks = [h.pool.acquire(), h.pool.acquire()]
+    banks = [h.pool.reserve(1).acquire(), h.pool.reserve(1).acquire()]
     assert "capacity is busy" in (await h.play())[0]
     assert player_of(h).waiting_claim is None
     for bank in banks:
@@ -540,7 +540,7 @@ async def test_a_failed_start_after_a_deferred_claim_gives_it_back() -> None:
     assert player.waiting_claim is not None and player.station.ready is not None
     banks: list[PcmBank] = []
     while h.pool.leased < 2:
-        banks.append(h.pool.acquire())  # the settled report's start finds no capacity
+        banks.append(h.pool.reserve(1).acquire())  # the settled report's start finds no capacity
     with pytest.MonkeyPatch.context() as bounds:
         bounds.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 0.05)
         await until_settled(lambda: player.station.ready is None)
@@ -605,7 +605,7 @@ def test_a_stop_leaves_a_waiting_skips_cooldown_running(monkeypatch: pytest.Monk
         source = await h.join()
         await h.play()
         await settle()
-        other = h.pool.acquire()  # the next track waits for capacity
+        other = h.pool.reserve(1).acquire()  # the next track waits for capacity
         assert source.read() == tag("a")
         await until(lambda: heard_id(h) == "a")
         h.clock.now += 30
@@ -655,7 +655,7 @@ def test_a_skip_that_outlives_its_reply_gives_back_its_claim_when_it_fails(
         source = await h.join()
         await h.play()
         await settle()
-        other = h.pool.acquire()  # another server holds the free bank
+        other = h.pool.reserve(1).acquire()  # this station retains its replacement slot
         # The heard track's own bank stays held by its retirement, so none ever comes free.
         gate = tagged.holding["a"] = asyncio.Event()
         assert source.read() == tag("a")
@@ -738,7 +738,7 @@ async def test_a_superseded_continuation_leaves_a_newer_requests_claim_alone() -
     source = await h.join()
     await h.play("old")
     await settle()
-    blockers = [h.pool.acquire()]  # the old program's next track waits for capacity
+    blockers = [h.pool.reserve(1).acquire()]  # the old program's next track waits for capacity
     assert source.read() == tag("a")
     await until(lambda: heard_id(h) == "a")
     player = player_of(h)
@@ -747,7 +747,7 @@ async def test_a_superseded_continuation_leaves_a_newer_requests_claim_alone() -
     assert source.read() == tag("a")
     assert source.read() == b""  # its track drains; its retirement frees that bank
     await until(lambda: h.pool.leased == 1)
-    blockers.append(h.pool.acquire())  # keep it waiting, now with nothing audible
+    blockers.append(h.pool.reserve(1).acquire())  # keep it waiting, now with nothing audible
     await settle()  # it wakes for the freed bank and finds none, then sleeps again
     assert not waiting.done()
 

@@ -5,7 +5,7 @@ the program and before its native dependencies are even imported, because the
 credentials are in this process's environment from the moment it starts and a
 crash at import would copy them. Importing this module, as the tests do, changes
 nothing. The limit gate then fails closed, so no catalog, media, Discord or audio
-input is read unless the service runs under the ADR 0004 whole-service limits.
+input is read unless the service runs under the ADR 0012 whole-service limits.
 Configuration then comes from environment variables only. The settings database
 must then open and accept a write, so a server's settings are never silently lost;
 this also fails closed, before any Discord connection. Finally the decode-backed
@@ -68,17 +68,17 @@ from sobafm.settings import SettingsError, SettingsStore
 MEDIA_VARIABLE = "SOBAFM_MEDIA"
 DATABASE_VARIABLE = "SOBAFM_DATABASE"
 CGROUP_ROOT = Path("/sys/fs/cgroup")
-# ADR 0004: the whole-service group memory, no swap and 64 tasks.
-REQUIRED_LIMITS = (("memory.max", "90177536"), ("memory.swap.max", "0"), ("pids.max", "64"))
+# ADR 0012: the whole-service group memory, no swap and 64 tasks.
+REQUIRED_LIMITS = (("memory.max", "268435456"), ("memory.swap.max", "0"), ("pids.max", "64"))
 MAX_LIMIT_FILE_BYTES = 64
 
 
 class LimitError(Exception):
-    """The effective container limits do not match ADR 0004; names only, no paths."""
+    """The effective container limits do not match ADR 0012; names only, no paths."""
 
 
 def check_limits(root: Path = CGROUP_ROOT) -> None:
-    """Refuse unless the cgroup v2 limits seen by this process are exactly ADR 0004's.
+    """Refuse unless the cgroup v2 limits seen by this process are exactly ADR 0012's.
 
     Docker's default private cgroup namespace shows the container's own group at
     ``root``. A missing, unreadable or different value refuses startup.

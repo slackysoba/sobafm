@@ -53,7 +53,7 @@ def test_format_is_fixed_in_one_place() -> None:
     assert FRAME_BYTES == 3_840
     assert READY_BYTES == 1_152_000
     assert BANK_BYTES == 2_304_000
-    assert pcm.BANK_COUNT * BANK_BYTES == pcm.PCM_RESERVATION_BYTES == 4_608_000
+    assert pcm.BANK_COUNT * BANK_BYTES == pcm.PCM_RESERVATION_BYTES == 13_824_000
     assert pcm.GLOBAL_PCM_BANKS.leased == 0
 
 

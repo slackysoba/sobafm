@@ -1837,7 +1837,7 @@ def test_deferred_catalog_start_rechecks_voice_and_its_claim(
         await h.play()
         await settle()
         player = player_of(h)
-        blocker = h.pool.acquire()
+        blocker = h.pool.reserve(1).acquire()
         release_a = decoder.holding["a"] = asyncio.Event()
         try:
             assert source.read() == tag("a") and source.read() == b""
@@ -1960,7 +1960,7 @@ def test_a_wait_for_a_bank_that_ends_during_a_reconnect_uses_no_attempt(
         source = await h.join()
         await h.play()
         await settle()
-        blocker = h.pool.acquire()  # the next track has to wait for a bank
+        blocker = h.pool.reserve(1).acquire()  # the next track has to wait for a bank
         gate = tagged.holding["a"] = asyncio.Event()  # as does the heard track's retirement
         assert source.read() == tag("a")
         player = player_of(h)
@@ -2131,7 +2131,7 @@ def test_the_wait_for_a_bank_starts_again_after_a_reconnect(
         source = await h.join()
         await h.play()
         await settle()
-        blocker = h.pool.acquire()
+        blocker = h.pool.reserve(1).acquire()
         gate = tagged.holding["a"] = asyncio.Event()  # no bank comes free for now
         assert source.read() == tag("a")
         player = player_of(h)

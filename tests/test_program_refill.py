@@ -44,7 +44,6 @@ from tests.test_discord_adapter import (
     FakeChannel,
     FakeClock,
     FakeGuild,
-    FakeInteraction,
     FakeMatcher,
     FakeSettings,
     FakeVoice,
@@ -188,7 +187,7 @@ async def test_a_refill_sends_the_same_checked_request_as_the_first_call() -> No
 @offline
 async def test_a_refill_does_not_wait_for_a_free_bank() -> None:
     h, tagged, fake = one_at_a_time("a", "b")
-    blocker = h.pool.acquire()  # another server holds the free bank
+    blocker = h.pool.reserve(1).acquire()  # this station retains its replacement slot
     await start_program(h)
     await calls_reach(fake, 2)
     await settle()
@@ -635,7 +634,7 @@ async def test_a_failed_replacement_hands_the_refill_back_to_the_program() -> No
     old = desired_of(h)
     first = player.refill
     assert first is not None
-    blocker = h.pool.acquire()  # the replacement can't lease a bank
+    blocker = h.pool.reserve(1).acquire()  # the replacement can't lease a bank
 
     h.adapter.matcher = FakeMatcher(recording("a"), recording("c"))
     (reply,) = await h.play("other")
@@ -676,7 +675,7 @@ def test_a_replacement_interrupting_the_last_refill_call(replacement_starts: boo
         replacement = FakeMatcher(recording("c"), recording("d"))
         replacement.batch = 1
         h.adapter.matcher = replacement
-        blocker = None if replacement_starts else h.pool.acquire()
+        blocker = None if replacement_starts else h.pool.reserve(1).acquire()
         (reply,) = await h.play("other")
         assert last.task.cancelling()
         source = player_of(h).source
@@ -720,7 +719,7 @@ async def test_a_replacement_failing_in_its_deferred_start_hands_the_refill_back
     assert source.read() == tag("a")  # the switch is reported but not yet settled
     assert "Request accepted" in (await h.play("second"))[0]
     assert station_of(h).ready is not None and heard_id(h) is None
-    blocker = h.pool.acquire()  # the settled report's start finds no capacity
+    blocker = h.pool.reserve(1).acquire()  # the settled report's start finds no capacity
 
     # a is still playing, so nothing else would act until it ended. Its program asks for more.
     with pytest.MonkeyPatch.context() as bounds:
@@ -880,7 +879,7 @@ async def test_failed_replacements_preserve_the_refills_attempts_and_retry_times
     await retry_waiting(h)
     original = desired_of(h)
     status = await now_texts(h)
-    blocker = h.pool.acquire()
+    blocker = h.pool.reserve(1).acquire()
 
     # Five matched replacements interrupt the waits after 429s. The heard program keeps
     # its credits, and its calls are distinguishable on the wire by the one song left.
@@ -1009,41 +1008,6 @@ async def test_a_connection_thats_ending_starts_nothing_while_it_waits_for_the_l
 
 
 @offline
-async def test_a_connection_thats_ending_has_no_priority_for_a_bank() -> None:
-    h, _ = program_harness("a", "b", producer=Tagged(frames=1))
-    room2 = FakeChannel("room2")
-
-    def second(manager: bool = False) -> FakeInteraction:
-        fake = inter(room2, manager=manager)
-        fake.guild = FakeGuild(2)
-        return fake
-
-    source1 = await h.join()
-    await h.play()
-    await run(h.adapter.join, second(manager=True))
-    await run(lambda i: h.adapter.play(i, "piano"), second())
-    source2 = h.adapter.players[2].source
-    await settle()
-    assert source1.read() == tag("a") and source2.read() == tag("a")
-    one, two = h.adapter.players[1], h.adapter.players[2]
-    await until(lambda: one.station.heard is not None and two.station.heard is not None)
-
-    # Hold server 1 before it can take the bank its own ended track is about to free.
-    await one.lock.acquire()
-    assert source1.read() == b""
-    await until(lambda: one.station.heard is None and h.pool.leased == 1)
-    bank_free = h.adapter._bank_free  # pyright: ignore[reportPrivateUsage]
-    assert one.station.needs_next and not bank_free(two)  # silent, so it outranks server 2
-
-    h.adapter._voice_gone(1, one.voice)  # pyright: ignore[reportPrivateUsage]
-    assert one.closing and bank_free(two)  # server 2 no longer waits on a lost connection
-
-    one.lock.release()
-    await until(lambda: 1 not in h.adapter.players)
-    assert await h.adapter.shutdown() is True
-
-
-@offline
 async def test_a_retry_falling_due_while_a_connection_ends_makes_no_further_call() -> None:
     h, _, fake = one_at_a_time("a", "b")
     await first_heard(h, fake, MatchFailed("timeout"))
@@ -1066,7 +1030,7 @@ async def test_a_retry_falling_due_while_a_connection_ends_makes_no_further_call
 
 
 @offline
-async def test_a_silent_reconnecting_server_does_not_reserve_a_healthy_servers_next_bank() -> None:
+async def test_a_silent_or_reconnecting_server_cannot_take_another_stations_bank() -> None:
     h, _ = program_harness("a", "b")
     await h.join()
     second = inter(FakeChannel("second", guild=FakeGuild(2)), manager=True)
@@ -1074,6 +1038,8 @@ async def test_a_silent_reconnecting_server_does_not_reserve_a_healthy_servers_n
     await run(h.adapter.join, second)
     one, two = h.adapter.players[1], h.adapter.players[2]
     for player in (one, two):
+        player.reservation = h.pool.reserve(player.guild_id)
+        player.output.use_reservation(player.reservation)
         station = player.station
         program = station.request("piano", (recording("a"), recording("b"))).program
         station.prepared(program, recording("a"))
@@ -1083,7 +1049,7 @@ async def test_a_silent_reconnecting_server_does_not_reserve_a_healthy_servers_n
         if player is one:
             station.drained(audio)
     bank_free = h.adapter._bank_free  # pyright: ignore[reportPrivateUsage]
-    assert not bank_free(two)  # a connected silent server still gets priority
+    assert bank_free(two)  # silent guild 1 cannot reserve guild 2's replacement slot
     cast(FakeVoice, one.voice).connected = False
     assert one.station.needs_next and not one.closing
     assert bank_free(two)  # this server cannot play until it reconnects
@@ -1091,7 +1057,7 @@ async def test_a_silent_reconnecting_server_does_not_reserve_a_healthy_servers_n
     await asyncio.wait_for(continuation, 1)
     assert two.station.switching is not None and h.pool.leased == 1
     cast(FakeVoice, one.voice).connected = True
-    assert not bank_free(two)  # priority returns when the server can use it
+    assert bank_free(two)  # reconnecting guild 1 still cannot take guild 2's free slot
     assert await h.adapter.shutdown() is True
 
 

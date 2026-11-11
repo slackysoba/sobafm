@@ -32,7 +32,13 @@ from sobafm.lyria import (  # noqa: E402
     MusicRequest,
     Prompt,
 )
-from sobafm.pcm import BANK_BYTES, BYTES_PER_SECOND, FRAME_BYTES, PcmBank, PcmBankPool  # noqa: E402
+from sobafm.pcm import (  # noqa: E402
+    BANK_BYTES,
+    BYTES_PER_SECOND,
+    FRAME_BYTES,
+    PcmBank,
+    StationReservation,
+)
 
 GROUP = 90_177_536
 PRODUCER_COPIES = 1_048_576 + 524_288
@@ -75,7 +81,7 @@ def check_peak(raw: int, banks: int) -> None:
         raise Bound("copy_budget")
 
 
-class ObservedPool(PcmBankPool):
+class ObservedPool(StationReservation):
     """Actual allocator and release. Keep handles for public facts after refund."""
 
     def __init__(self, result: Pair) -> None:

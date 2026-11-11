@@ -97,7 +97,7 @@ MPG123_ARGV = (
     "-",
 )
 # The reviewed per-decoder limits behind the conditional PCM bound
-# 2 * 12,524,288 + 4,608,000 + 4,194,304 = 33,850,880 (docs/linux-feasibility.md).
+# 6 * 12,524,288 + 13,824,000 + 12,582,912 = 101,552,640 (docs/linux-feasibility.md).
 MPG123_LIMITS = (
     (resource.RLIMIT_CORE, 0),
     (resource.RLIMIT_STACK, 524_288),
