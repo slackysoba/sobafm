@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from evaluations.lyria_live import probe as evaluator
+from sobafm import lyria
 from sobafm.lyria import LyriaSession, SessionReport
 from sobafm.pcm import PcmBank
 from tests.test_lyria import FakeLyria, Peer, Refuse, audio_message, until
@@ -65,6 +68,112 @@ def test_refusal_never_retries(status: int) -> None:
     asyncio.run(scenario())
 
 
+def test_disconnect_during_upgrade_cannot_emit_a_second_request() -> None:
+    async def scenario() -> None:
+        connections = 0
+        requests = 0
+        handlers: set[asyncio.Task[None]] = set()
+
+        async def disconnect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            nonlocal connections, requests
+            task = asyncio.current_task()
+            assert task is not None
+            handlers.add(task)
+            connections += 1
+            try:
+                await reader.readuntil(b"\r\n\r\n")
+                requests += 1
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                handlers.remove(task)
+
+        server = await asyncio.start_server(disconnect, "127.0.0.1", 0, limit=16384)
+        port = cast(tuple[str, int], server.sockets[0].getsockname())[1]
+        endpoint = f"ws://127.0.0.1:{port}/"
+        original = lyria.receive_bounded_socket
+        try:
+            # Positive control: the pinned production client retries this disconnect.
+            control = await evaluator._probe("placeholder", endpoint=endpoint)  # pyright: ignore[reportPrivateUsage]
+            assert connections == requests == 2
+            assert control.reason == "connect" and control.leased == 0
+            connections = requests = 0
+            result = await evaluator.probe("placeholder", endpoint=endpoint)
+            assert connections == requests == 1
+            assert result.reason == "connect"
+            assert result.cleanup == "clean" and result.leased == 0
+            assert lyria.receive_bounded_socket is original
+        finally:
+            server.close()
+            await server.wait_closed()
+            await asyncio.gather(*handlers)
+
+    asyncio.run(scenario())
+
+
+def test_failed_first_socket_does_not_permit_address_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    allocations = 0
+
+    def refuse_first(_address: object) -> socket.socket:
+        nonlocal allocations
+        allocations += 1
+        raise OSError("synthetic address failure")
+
+    monkeypatch.setattr(lyria, "receive_bounded_socket", refuse_first)
+    with evaluator.one_socket():
+        with pytest.raises(OSError, match="synthetic address failure"):
+            lyria.receive_bounded_socket((socket.AF_INET, socket.SOCK_STREAM, 6, "", ()))
+        with pytest.raises(OSError, match="evaluation connection limit"):
+            lyria.receive_bounded_socket((socket.AF_INET6, socket.SOCK_STREAM, 6, "", ()))
+    assert allocations == 1
+    assert lyria.receive_bounded_socket is refuse_first
+
+
+def test_redirect_cannot_emit_another_upgrade_on_the_same_or_a_new_socket() -> None:
+    async def scenario() -> None:
+        connections = 0
+        requests = 0
+        closed = asyncio.Event()
+        endpoint = ""
+
+        async def redirect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            nonlocal connections, requests
+            connections += 1
+            try:
+                while await reader.read(1):
+                    await reader.readuntil(b"\r\n\r\n")
+                    requests += 1
+                    writer.write(
+                        (
+                            f"HTTP/1.1 302 Found\r\nLocation: {endpoint}\r\n"
+                            "Content-Length: 0\r\nConnection: keep-alive\r\n\r\n"
+                        ).encode()
+                    )
+                    await writer.drain()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                closed.set()
+
+        server = await asyncio.start_server(redirect, "127.0.0.1", 0, limit=16384)
+        port = cast(tuple[str, int], server.sockets[0].getsockname())[1]
+        endpoint = f"ws://127.0.0.1:{port}/redirect"
+        try:
+            async with asyncio.timeout(5):
+                result = await evaluator.probe("placeholder", endpoint=endpoint)
+                await closed.wait()
+            assert connections == requests == 1
+            assert result.reason == "rejected"
+            assert result.cleanup == "clean" and result.leased == 0
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
 def test_malformed_payload_is_not_output(capsys: pytest.CaptureFixture[str]) -> None:
     async def script(peer: Peer) -> None:
         await peer.setup()
@@ -118,6 +227,7 @@ def test_repeated_cancel_keeps_owner_until_settlement(monkeypatch: pytest.Monkey
         monkeypatch.setattr(evaluator.PcmBankPool, "acquire", acquire)
         monkeypatch.setattr(evaluator, "LyriaSession", Delayed)
         async with FakeLyria(Refuse(429)) as server:
+            original_factory = lyria.receive_bounded_socket
             task = asyncio.create_task(evaluator.probe("placeholder", endpoint=server.url))
             await settling.wait()
             cancelled = banks[0].facts().cancelled_at
@@ -125,6 +235,7 @@ def test_repeated_cancel_keeps_owner_until_settlement(monkeypatch: pytest.Monkey
                 task.cancel()
                 await asyncio.sleep(0)
                 assert not banks[0].facts().released
+                assert lyria.receive_bounded_socket is not original_factory
                 assert banks[0].facts().cancelled_at == cancelled
                 assert not task.done()
             release.set()
@@ -133,6 +244,7 @@ def test_repeated_cancel_keeps_owner_until_settlement(monkeypatch: pytest.Monkey
             assert result.cleanup == "expired"
             assert result.leased == 0
             assert len(reports) == 1
+            assert lyria.receive_bounded_socket is original_factory
 
     asyncio.run(scenario())
 

@@ -8,12 +8,15 @@ import logging
 import os
 import platform
 import signal
+import socket
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import FrameType
+from typing import Any
 
 from sobafm.crash_dumps import disable_crash_dumps
 
@@ -25,6 +28,7 @@ if __name__ == "__main__" and "--send-to-lyria" in sys.argv:
         print('{"result":"failed","reason":"crash_controls"}')
         sys.exit(1)
 
+from sobafm import lyria  # noqa: E402
 from sobafm.lyria import (  # noqa: E402
     CLEANUP_SECONDS,
     ENDPOINT,
@@ -45,6 +49,36 @@ REQUEST = MusicRequest((Prompt("gentle instrumental jazz, piano and soft drums")
 
 class Failed(Exception):
     """A fixed local reason, never provider text."""
+
+
+@contextmanager
+def one_socket() -> Generator[None]:
+    """Cap the isolated evaluator before aiohttp's internal GET retry can connect.
+
+    The existing public socket-factory boundary still creates the first socket
+    with its production receive limits. Deny every subsequent allocation,
+    including address fallback, and keep the guard through actual settlement.
+    This process runs one probe; no application or other client runs alongside it.
+    """
+    original = lyria.receive_bounded_socket
+    attempted = False
+
+    def bounded(
+        addr_info: tuple[
+            int | socket.AddressFamily, int | socket.SocketKind, int, str, tuple[Any, ...]
+        ],
+    ) -> socket.socket:
+        nonlocal attempted
+        if attempted:
+            raise OSError("evaluation connection limit")
+        attempted = True
+        return original(addr_info)
+
+    lyria.receive_bounded_socket = bounded
+    try:
+        yield
+    finally:
+        lyria.receive_bounded_socket = original
 
 
 @dataclass
@@ -77,6 +111,11 @@ async def probe(
     Endpoint injection is for explicitly invoked offline regressions;
     the CLI never accepts an endpoint, prompt, duration, retry or quota override.
     """
+    with one_socket():
+        return await _probe(key, endpoint=endpoint)
+
+
+async def _probe(key: str, *, endpoint: str) -> Result:
     result = Result()
     pool = PcmBankPool()
     bank = pool.acquire()

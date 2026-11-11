@@ -26,6 +26,7 @@ chmod 700 "$record_dir"
 reason=setup
 client_exit=unknown
 clean=false
+cleanup_commands_ok=true
 create_pending=false
 
 docker_bounded() {
@@ -45,18 +46,23 @@ cleanup() {
         owner=$(docker_bounded inspect --format "{{index .Config.Labels \"$label\"}}" "$name")
         if [ "$?" -eq 0 ] && [ "$owner" = "$run_id" ]; then
             # stop is idempotent for an exited container; never force-remove.
-            docker_bounded stop --time 0 "$name" >/dev/null
-            docker_bounded rm "$name" >/dev/null
+            docker_bounded stop --time 0 "$name" >/dev/null || cleanup_commands_ok=false
+            docker_bounded rm "$name" >/dev/null || cleanup_commands_ok=false
             found=$(docker_bounded container ls -a --filter "name=^/$name$" --format '{{.Names}}')
             if [ "$?" -eq 0 ] && [ -z "$found" ]; then clean=true; fi
         fi
     fi
+    if [ "$reason" = complete ]; then
+        if [ "$cleanup_commands_ok" = false ]; then reason=cleanup_command; fi
+        if [ "$clean" = false ]; then reason=cleanup_unconfirmed; fi
+    fi
     verdict=failed
-    if [ "$reason" = complete ] && [ "$client_exit" = 0 ] && [ "$clean" = true ]; then
+    if [ "$reason" = complete ] && [ "$client_exit" = 0 ] && [ "$clean" = true ] && \
+        [ "$cleanup_commands_ok" = true ]; then
         verdict=pass
     fi
-    printf '{"wrapper":"%s","reason":"%s","client_exit":"%s","cleanup_verified":%s,"run":"%s"}\n' \
-        "$verdict" "$reason" "$client_exit" "$clean" "$run_id"
+    printf '{"wrapper":"%s","reason":"%s","client_exit":"%s","cleanup_verified":%s,"cleanup_commands_ok":%s,"run":"%s"}\n' \
+        "$verdict" "$reason" "$client_exit" "$clean" "$cleanup_commands_ok" "$run_id"
     [ "$verdict" = pass ] && exit 0
     exit 1
 }

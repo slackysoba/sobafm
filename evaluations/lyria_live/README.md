@@ -16,6 +16,23 @@ Use the installed production `LyriaSession`, with its actual setup, prompt,
 configuration, PLAY, message validation, receive limits and cleanup. This avoids
 `GeneratedStream`'s automatic retries. One session is enough to answer first
 availability; renewal, Gemini interpretation and Discord are separate scopes.
+The pinned HTTP client can also retry a disconnected WebSocket upgrade internally.
+For this isolated evaluator process, a guard around the production client's
+existing socket factory permits only its first allocation and refuses all later
+allocations before connection, including address fallback and handshake retry.
+The first socket still uses the production receive limits and transport path.
+The guard remains installed through actual settlement, then restores the factory.
+This intentionally stricter connection budget is specific to this check; it does
+not change the installed application or claim to test its retry/fallback behavior.
+One socket alone is not a general HTTP request bound. Here the production client
+uses a fresh `force_close=True` connector and rejects redirects in its middleware.
+The pinned aiohttp send/response-start failure path closes its connection before
+its internal retry; it cannot resend that upgrade on the existing connection.
+Together these paths and the allocation guard permit at most one HTTP upgrade.
+Raw-peer regressions count both connections and upgrade requests for a dropped
+handshake and a redirect that offers to keep the connection open. A connection
+failure or refused address fallback is inconclusive about account/model access;
+it is not evidence that free-tier Lyria is unavailable.
 The fixed non-personal prompt is “gentle instrumental jazz, piano and soft drums”,
 at 90 BPM. Nothing is played, uploaded as audio, saved or listened to.
 
@@ -108,9 +125,12 @@ with it in the final evidence comment.
    ownership label, running/exit/OOM state. Stop it immediately if still running,
    then remove only this owned evaluation container and verify absence, within
    the 15-second cleanup allowance (five bounded operations). Never force-remove
-   an unidentified container. A missing create response, daemon timeout, failed
-   removal or unconfirmed absence leaves recovery debt; retain the name/label and
-   report incomplete. The wrapper stores its recovery name/label before create
+   an unidentified container. A missing create response, daemon timeout,
+   or unconfirmed absence leaves recovery debt; retain the name/label and
+   report incomplete. A stop/removal command failure also fails the attempt, even
+   if later absence is verified: `cleanup_commands_ok=false` preserves that failed
+   operation while `cleanup_verified=true` records the observed release. In that
+   case no container recovery debt remains. The wrapper stores its recovery name/label before create
    under a private `sobafm-lyria.*` temporary directory; keep that small record
    if recovery is needed. Only its final `wrapper=pass` row, exit zero and a
    successful outer watchdog exit complete the check. No final row means failure.

@@ -44,6 +44,9 @@ elif args[:2] == ["container", "ls"]:
 elif args[0] == "rm":
     if mode == "retained": sys.exit(1)
     state.unlink()
+    if mode == "removed_with_error": sys.exit(1)
+elif args[0] == "stop" and mode == "stop_error":
+    sys.exit(1)
 elif args[0] not in {"start", "stop"}:
     sys.exit(2)
 """
@@ -98,6 +101,8 @@ def test_runner_uses_exact_image_and_no_credential_environment(tmp_path: Path) -
         "missing_verdict",
         "retained",
         "unknown_cleanup",
+        "removed_with_error",
+        "stop_error",
     ],
 )
 def test_host_failures_cannot_pass(tmp_path: Path, mode: str) -> None:
@@ -112,6 +117,9 @@ def test_host_failures_cannot_pass(tmp_path: Path, mode: str) -> None:
         assert '"cleanup_verified":false' in result.stdout
     else:
         assert not (tmp_path / "state").exists()
+    if mode in {"removed_with_error", "stop_error"}:
+        assert '"cleanup_verified":true' in result.stdout
+        assert '"cleanup_commands_ok":false' in result.stdout
 
 
 def test_wrong_owner_is_never_stopped_or_removed(tmp_path: Path) -> None:
