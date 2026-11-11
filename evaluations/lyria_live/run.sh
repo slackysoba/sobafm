@@ -82,7 +82,7 @@ docker_bounded create --name "$name" --label "$label=$run_id" \
     --log-driver local --log-opt max-size=64k --log-opt max-file=1 --log-opt compress=false \
     --mount "type=bind,src=$script_dir/probe.py,dst=/eval/probe.py,readonly" \
     --mount "type=bind,src=$key_file,dst=/run/lyria-key,readonly" \
-    --entrypoint python "$image" -I /eval/probe.py --send-to-lyria --confirm-free-tier >/dev/null
+    --entrypoint /app/.venv/bin/python "$image" -I /eval/probe.py --send-to-lyria --confirm-free-tier >/dev/null
 create_pending=false
 reason=start
 docker_bounded start "$name" >/dev/null
@@ -91,11 +91,16 @@ client_exit=$(timeout --signal=TERM --kill-after=1s 40s docker wait "$name" 2>/d
 case "$client_exit" in 0|1|2|124|137|143) ;; *) client_exit=unknown; exit 1 ;; esac
 state=$(docker_bounded inspect --format '{{.State.Running}} {{.State.OOMKilled}}' "$name")
 [ "$state" = 'false false' ] || exit 1
-reason=client_result
+reason=log_retrieval
 # The sole process prints fixed-schema bounded records; no other entrypoint runs.
+# Keep stderr discarded: it can contain raw startup/provider tracebacks.
 docker_bounded logs "$name" > "$record_dir/result.jsonl"
+reason=log_size
 [ "$(wc -c < "$record_dir/result.jsonl")" -le 65536 ] || exit 1
-grep -q '"result": "pass"' "$record_dir/result.jsonl" || {
+reason=evaluator_output_missing
+grep -Eq '"result"[[:space:]]*:[[:space:]]*"(pass|failed)"' "$record_dir/result.jsonl" || exit 1
+reason=client_result
+grep -Eq '"result"[[:space:]]*:[[:space:]]*"pass"' "$record_dir/result.jsonl" || {
     cat "$record_dir/result.jsonl"
     exit 1
 }
