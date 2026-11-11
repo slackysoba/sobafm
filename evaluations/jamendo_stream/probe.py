@@ -77,16 +77,30 @@ class LicenseComponent(StrEnum):
     COMBINATION = "combination"
 
 
+class LicenseTextDetail(StrEnum):
+    BLANK = "blank"
+    WHITESPACE = "whitespace"
+    CONTROL = "control"
+    BACKSLASH = "backslash"
+
+
 class CandidateRefused(Stopped):
     """Typed first gate failure, with no source value or exception text."""
 
     def __init__(
-        self, gate: Gate, condition: Condition, license_component: LicenseComponent | None = None
+        self,
+        gate: Gate,
+        condition: Condition,
+        license_component: LicenseComponent | None = None,
+        license_text_detail: LicenseTextDetail | None = None,
     ) -> None:
         self.gate = Gate(gate)
         self.condition = Condition(condition)
         self.license_component = (
             LicenseComponent(license_component) if license_component is not None else None
+        )
+        self.license_text_detail = (
+            LicenseTextDetail(license_text_detail) if license_text_detail is not None else None
         )
         super().__init__(f"candidate_{self.gate}_{self.condition}")
 
@@ -97,6 +111,7 @@ class Refusal:
     gate: Gate
     condition: Condition
     license_component: LicenseComponent | None = None
+    license_text_detail: LicenseTextDetail | None = None
 
 
 @dataclass
@@ -133,6 +148,7 @@ class Report:
     outcome: str = "inconclusive"
     reason: str | None = None
     license_component: LicenseComponent | None = None
+    license_text_detail: LicenseTextDetail | None = None
     search: Transfer = field(default_factory=Transfer)
     metadata: Transfer = field(default_factory=Transfer)
     stream: Transfer = field(default_factory=Transfer)
@@ -375,16 +391,22 @@ def numeric_id(value: object, gate: Gate) -> str:
 
 def check_license(value: object) -> None:
     """Recognize only the production boundary's finite CC formats, not rights."""
-    try:
-        value = text_field(value, Gate.LICENSE)
-    except CandidateRefused as error:
-        if error.condition == Condition.SHAPE:
-            raise CandidateRefused(
-                Gate.LICENSE, Condition.SHAPE, LicenseComponent.TEXT_SHAPE
-            ) from None
-        raise
-    if any(c.isspace() or unicodedata.category(c).startswith("C") for c in value) or "\\" in value:
-        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.TEXT_SHAPE)
+    if not isinstance(value, str):
+        raise CandidateRefused(Gate.LICENSE, Condition.TYPE)
+    if len(value) > 512:
+        raise CandidateRefused(Gate.LICENSE, Condition.BOUND)
+    # Preserve the text gate's rejection set; report only the first fixed detail.
+    detail = None
+    if not value.strip():
+        detail = LicenseTextDetail.BLANK
+    elif any(c.isspace() for c in value):
+        detail = LicenseTextDetail.WHITESPACE
+    elif any(unicodedata.category(c).startswith("C") for c in value):
+        detail = LicenseTextDetail.CONTROL
+    elif "\\" in value:
+        detail = LicenseTextDetail.BACKSLASH
+    if detail is not None:
+        raise CandidateRefused(Gate.LICENSE, Condition.SHAPE, LicenseComponent.TEXT_SHAPE, detail)
     # Match production's lowercase public-HTTP upgrade and parsed HTTPS scheme.
     # Keep authority/path case, escaping, ports and historical family exact.
     scheme, separator, _ = value.partition(":")
@@ -589,10 +611,14 @@ def select_candidate(data: bytes, application_id: str, report: Report) -> Candid
                 # Never parse exception text, including an unexpected Stopped.
                 gate, condition = Gate.ROW, Condition.SHAPE
                 component = None
+                detail = None
                 if isinstance(error, CandidateRefused):
                     gate, condition = error.gate, error.condition
                     component = error.license_component
-                report.candidate_refusals.append(Refusal(ordinal, gate, condition, component))
+                    detail = error.license_text_detail
+                report.candidate_refusals.append(
+                    Refusal(ordinal, gate, condition, component, detail)
+                )
             continue
         report.selected_track_id = candidate.track_id
         return candidate
@@ -621,7 +647,15 @@ def probe(application_id: str, report: Report) -> None:
         "type": "single albumtrack",
         "audioformat": "mp32",
     }
-    query = urlencode({**common, "limit": str(SEARCH_RESULTS), "order": "id_desc"})
+    query = urlencode(
+        {
+            **common,
+            "limit": str(SEARCH_RESULTS),
+            "order": "id_desc",
+            "ccnc": "true",
+            "durationbetween": "1_480",
+        }
+    )
     data = exchange("/v3.0/tracks/?" + query, report.search, metadata=True)
     selected = select_candidate(data, application_id, report)
     del data
@@ -645,6 +679,7 @@ def run_child(application_id_path: str) -> int:
         report.reason = str(error)
         if isinstance(error, CandidateRefused):
             report.license_component = error.license_component
+            report.license_text_detail = error.license_text_detail
     except TimeoutError:
         report.reason = "timeout"
     except KeyboardInterrupt:
