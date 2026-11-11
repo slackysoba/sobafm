@@ -234,7 +234,7 @@ def test_deferred_failure_names_the_request_and_preserves_heard_audio(
 
             bank = None
             if failure == "capacity":
-                bank = h.pool.acquire()
+                bank = h.pool.reserve(1).acquire()
                 monkeypatch.setattr(discord_adapter, "CAPACITY_WAIT_SECONDS", 0)
                 reason = "both audio banks were in use"
             else:

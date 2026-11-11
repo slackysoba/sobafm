@@ -41,9 +41,10 @@ FRAME_BYTES = BYTES_PER_SECOND * FRAME_MILLISECONDS // 1000
 READY_SECONDS = 6
 READY_BYTES = BYTES_PER_SECOND * READY_SECONDS
 BANK_BYTES = 2_304_000
-BANK_COUNT = 2
+BANKS_PER_STATION = 2
 STATION_COUNT = 3
-PCM_RESERVATION_BYTES = BANK_BYTES * BANK_COUNT * STATION_COUNT
+BANK_COUNT = BANKS_PER_STATION * STATION_COUNT
+PCM_RESERVATION_BYTES = BANK_BYTES * BANK_COUNT
 
 assert BYTES_PER_SECOND == 192_000
 assert FRAME_BYTES == 3_840
@@ -132,11 +133,11 @@ class StationReservation:
         self._closed = False
         # Independent of the bank leases: a retry can return a bank while
         # disnake still holds the frame passed to its previous send.
-        self._voice_slots = deque([float("-inf")] * BANK_COUNT)
+        self._voice_slots = deque([float("-inf")] * BANKS_PER_STATION)
 
     @property
     def voice_readers(self) -> int:
-        return BANK_COUNT - len(self._voice_slots)
+        return BANKS_PER_STATION - len(self._voice_slots)
 
     def claim_voice_reader(self) -> VoiceFrameCredit | None:
         if not self._lock.acquire(blocking=False):
@@ -163,7 +164,7 @@ class StationReservation:
         # The last actual return can arrive after the cutoff but before the
         # event loop gets to observe it. Snapshot both free slots together.
         returns = tuple(self._voice_slots)
-        return len(returns) == BANK_COUNT and max(returns) <= deadline
+        return len(returns) == BANKS_PER_STATION and max(returns) <= deadline
 
     @property
     def last_voice_return(self) -> float:
@@ -178,7 +179,7 @@ class StationReservation:
     def acquire(self) -> PcmBank:
         """Lease one bank, refusing before allocation when none is available."""
         with self._lock:
-            if self._closed or self._leased >= BANK_COUNT:
+            if self._closed or self._leased >= BANKS_PER_STATION:
                 raise PcmCapacityError("no PCM bank lease is available")
             self._leased += 1
         try:
@@ -213,7 +214,8 @@ class PcmBankPool:
     The direct bank/voice methods are a single two-slot reservation for offline
     producer tools. They share this budget; they cannot bypass guild admission.
     The adapter always reserves by guild before interpreting a request.
-    Reservation changes are owned by the event loop (or a standalone tool).
+    The service uses ``GLOBAL_PCM_BANKS``; other pools isolate tests/tools.
+    Standalone decoder tools may acquire their shared pair from worker threads.
     """
 
     def __init__(
@@ -224,60 +226,71 @@ class PcmBankPool:
     ) -> None:
         self._allocate = allocate
         self._clock = clock
+        self._lock = threading.RLock()
         self._stations: dict[object, StationReservation] = {}
         self._direct_owner = object()
         self._last_voice_return = float("-inf")
 
     @property
     def owners(self) -> tuple[object, ...]:
-        return tuple(self._stations)
+        with self._lock:
+            return tuple(self._stations)
 
     def reserve(self, owner: object) -> StationReservation:
-        if (reservation := self._stations.get(owner)) is not None:
+        with self._lock:
+            if (reservation := self._stations.get(owner)) is not None:
+                return reservation
+            if len(self._stations) >= STATION_COUNT:
+                raise PcmCapacityError("three station reservations are in use")
+            reservation = StationReservation(allocate=self._allocate, clock=self._clock)
+            self._stations[owner] = reservation
             return reservation
-        if len(self._stations) >= STATION_COUNT:
-            raise PcmCapacityError("three station reservations are in use")
-        reservation = StationReservation(allocate=self._allocate, clock=self._clock)
-        self._stations[owner] = reservation
-        return reservation
 
     def release(self, owner: object) -> bool:
-        reservation = self._stations.get(owner)
-        if reservation is None:
+        with self._lock:
+            reservation = self._stations.get(owner)
+            if reservation is None:
+                return True
+            if not reservation.close():
+                return False
+            self._last_voice_return = max(self._last_voice_return, reservation.last_voice_return)
+            del self._stations[owner]
             return True
-        if not reservation.close():
-            return False
-        self._last_voice_return = max(self._last_voice_return, reservation.last_voice_return)
-        del self._stations[owner]
-        return True
 
     @property
     def leased(self) -> int:
-        return sum(reservation.leased for reservation in self._stations.values())
+        with self._lock:
+            return sum(reservation.leased for reservation in self._stations.values())
 
     @property
     def voice_readers(self) -> int:
-        return sum(reservation.voice_readers for reservation in self._stations.values())
+        with self._lock:
+            return sum(reservation.voice_readers for reservation in self._stations.values())
 
     def voice_returned_by(self, deadline: float) -> bool:
-        return self._last_voice_return <= deadline and all(
-            reservation.voice_returned_by(deadline) for reservation in self._stations.values()
-        )
+        with self._lock:
+            return self._last_voice_return <= deadline and all(
+                reservation.voice_returned_by(deadline) for reservation in self._stations.values()
+            )
 
     def acquire(self) -> PcmBank:
         return self.reserve(self._direct_owner).acquire()
 
     def claim_voice_reader(self) -> VoiceFrameCredit | None:
+        if not self._lock.acquire(blocking=False):
+            return None
         try:
             return self.reserve(self._direct_owner).claim_voice_reader()
         except PcmCapacityError:
             return None
+        finally:
+            self._lock.release()
 
 
 class PcmBank:
     """One leased 2,304,000-byte ring of prepared PCM.
 
-    Construct banks only through ``PcmBankPool.acquire``.
+    Construct banks only through the pool or a station reservation's ``acquire``.
     """
 
     def __init__(

@@ -128,7 +128,7 @@ from sobafm.lyria import (
 )
 from sobafm.media import MediaMissingError
 from sobafm.pcm import (
-    BANK_COUNT,
+    BANKS_PER_STATION,
     FRAME_BYTES,
     FRAME_MILLISECONDS,
     GLOBAL_PCM_BANKS,
@@ -136,8 +136,8 @@ from sobafm.pcm import (
     SAMPLE_BYTES,
     PcmBank,
     PcmBankPool,
-    StationReservation,
     PcmCapacityError,
+    StationReservation,
     VoiceFrameCredit,
 )
 from sobafm.settings import (
@@ -670,12 +670,13 @@ class StationOutput(disnake.PCMVolumeTransformer[StationSource]):
     def read(self) -> bytes:
         if self._stopping():
             return b""
-        if self._pool is None:
+        pool = self._pool
+        if pool is None:
             return self.original.wait_for_credit()
         ref = self._reader.credit
         credit = None if ref is None else ref()
         if credit is None:
-            credit = self._pool.claim_voice_reader()
+            credit = pool.claim_voice_reader()
             if credit is None:
                 return self.original.wait_for_credit()
             self._reader.credit = weakref.ref(credit)
@@ -1200,10 +1201,7 @@ class Adapter:
                         else await self._prepare(player, request)
                     )
                 finally:
-                    self._station_requests[player.guild_id] -= 1
-                    if not self._station_requests[player.guild_id]:
-                        del self._station_requests[player.guild_id]
-                    self._release_idle_reservations()
+                    self._request_finished(player.guild_id)
         self._review_listeners(player)  # e.g. a deafened caller started a program
         await self._deliver(
             inter,
@@ -1631,6 +1629,8 @@ class Adapter:
             return
         self._cancel_refill(player)
         task = self._own(asyncio.create_task(self._refill(player, program)))
+        self._station_requests[player.guild_id] = self._station_requests.get(player.guild_id, 0) + 1
+        task.add_done_callback(lambda _: self._request_finished(player.guild_id))
         player.refill = Refill(program, task)
 
     @staticmethod
@@ -1746,9 +1746,16 @@ class Adapter:
 
     def _bank_free(self, player: GuildPlayer) -> bool:
         """Only this station's two slots can fund its next track, including debt."""
-        return player.reservation is not None and player.reservation.leased < BANK_COUNT
+        return player.reservation is not None and player.reservation.leased < BANKS_PER_STATION
 
     def _release_idle_reservations(self) -> None:
+        self.debt = [bank for bank in self.debt if not bank.release()]
+        # A generated bank return can synchronously call `_capacity_changed`.
+        # Detach the list first so reentrant observation cannot retry the same debt.
+        debt, self.generated_debt = self.generated_debt, []
+        for stream in debt:
+            if not stream.release_debt():
+                self.generated_debt.append(stream)
         for owner in self._pool.owners:
             if not isinstance(owner, int) or owner in self._station_requests:
                 continue
@@ -1762,6 +1769,12 @@ class Adapter:
             if self._pool.release(owner) and player is not None:
                 player.reservation = None
                 player.output.use_reservation(None)
+
+    def _request_finished(self, guild_id: int) -> None:
+        self._station_requests[guild_id] -= 1
+        if not self._station_requests[guild_id]:
+            del self._station_requests[guild_id]
+        self._release_idle_reservations()
 
     def _capacity_waiter(self) -> asyncio.Future[None]:
         """Register for the next capacity change; created under the player lock, so

@@ -82,7 +82,7 @@ def test_limit_gate_accepts_exactly_the_adr_values(tmp_path: Path) -> None:
     [
         ("memory.max", "max\n"),
         ("memory.max", "90177537\n"),
-        ("memory.max", "268435456\n"),
+        ("memory.max", "90177536\n"),
         ("memory.swap.max", "max\n"),
         ("memory.swap.max", "268435456\n"),
         ("pids.max", "max\n"),

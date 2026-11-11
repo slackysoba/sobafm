@@ -5,7 +5,7 @@ each generated stream through settlement and release.
 
 ``LyriaSession`` owns one WebSocket feeding one leased ``pcm.py`` bank. It uses the
 ``aiohttp`` already in the lock rather than the Google SDK, whose import alone nearly
-fills the 90 MB service limit and which cannot bound a message before allocating it.
+filled the historical 90 MB service limit and which cannot bound a message before allocating it.
 
 The budget depends on three things aiohttp would not do by default. Reading is paused
 between messages, so a second message never assembles while one is held. The socket's

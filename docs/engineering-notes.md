@@ -13,7 +13,9 @@ supplies bounded owned-fixture useful-fit, aggregate PCM and four controlled
 process-release results, with distinct case source/image bindings. On that
 evidence, the [accepted amd64 adoption](decisions/0004-amd64-whole-service-adoption.md)
 permits building the first eligible-recording playback slice around this group,
-with every limit and the shared OOM failure domain unchanged. It does not qualify
+with its historical limits and shared OOM failure domain. The three-station
+implementation candidate in [ADR 0012](decisions/0012-three-station-capacity.md)
+proposes explicit new limits and admission; historical proof does not qualify it. It does not qualify
 the application: the actual image, entrypoint, native dependencies, target kernel,
 page size and core-routing premises still need qualification at their real
 boundaries. Native arm64 is on hold until after the first amd64 release
@@ -50,7 +52,9 @@ Use the exact controlled-capacity definition and exclusions in [requirements](re
 
 The [accepted decoder-PTY exclusion](decisions/0003-decoder-pty-exclusion.md)
 covers kernel backing only. Userspace diagnostic/audio/application/IPC payload
-stays charged, with the original partitions and first-cancellation deadline.
+stays charged, with the first-cancellation deadline unchanged. ADR 0012
+explicitly proposes three station pairs and their copy partitions; no historical
+evidence is transferred to the larger candidate.
 Require actual userspace/process/FD settlement before a subsequent pair; a
 closed descriptor, EOF or exited leader alone cannot establish that settlement
 or prove prior kernel objects were reclaimed. Preserve failed verdicts and
