@@ -19,12 +19,11 @@ FMA recordings. The saved-source importer and FMA manual reviews are unchanged.
 | `refresh_request(key, policy)` / `refresh(request, bytes_or_refusal, ranked, policy, observed_at)` | Construct a by-ID request, then evaluate its new response. Result is `Refreshed` or `Refusal`; failed refresh never falls back to search metadata. This must run immediately before **every** audio open, including cache hits. |
 | `Refreshed` | A new candidate/credit snapshot, an evidence-comparison flag and a transient stream URL excluded from its representation. It is not audio-integrity/readiness approval and is not a reusable playback permit. Only its candidate is suitable for a future bounded provenance journal; never serialize the wrapper or `Listing`. |
 
-The future transport must use the fixed HTTPS tracks endpoint and encode the
-request's parameters, inject the client ID separately, enforce the byte cap while
-receiving, and return only a complete response or a safe failure. An issued request
-is not evidence that a network call happened. Actual calls, bytes, quota and retained
-operation ownership remain the transport's responsibility. Cancellation must keep
-its owner until settlement; this pure boundary starts no task or cleanup clock.
+The separate transport below uses the fixed HTTPS tracks endpoint, validates the
+request again, and injects the client ID separately. An issued pure `Request` is
+not evidence that a network call happened. Actual calls, bytes, quota and retained
+operation ownership belong to transport. This pure metadata boundary starts no
+task or cleanup clock; returned bytes still require `receive` or `refresh`.
 Do not construct a fresh window to evade the attempt's two-page limit.
 
 The search/ranking owner must wait until the window settles before ranking its
@@ -100,18 +99,207 @@ evidence; it cannot establish freshness or authorize cached audio. Leading and
 later embedded notices are the stream producer's responsibility, including
 discarding buffered audio on late conflict and preserving heard credits/debt.
 
-## Following implementation requirements
+## HTTP transport and ownership
 
-Before production network transport becomes Ready, its issue must fix request
-timeouts, credential injection/redaction, redirect and host validation, actual
-call/byte/quota accounting, cancellation/close ownership and finite failure handling.
-No client, SDK retry behavior or traffic allowance has been selected here.
-Before a provenance journal is added, its issue must specify its required fields,
-entry/byte retention limits, expiry and removal behavior. This slice adds no raw
-response archive or catalog database. These follow-on requirements are recorded
-on [#183](https://github.com/slackysoba/sobafm/issues/183), for coordinator ownership.
+`jamendo_transport.py` and `jamendo_journal.py` implement prerequisite A of the
+[adopted engineering contract](https://github.com/slackysoba/sobafm/issues/188#issuecomment-6795394426).
+They are not imported by runtime configuration, the station, adapter or media
+producer. No discovery loop, decoder, MP3/tag checker or PCM producer is added.
 
-Search/model work and streaming work can independently consume these interfaces
-after this slice is reviewed and merged. They must precede station integration.
-No live Jamendo/Gemini/Discord request, audio access, build, native qualification,
-listening result or release-readiness claim follows from the offline tests.
+The [adopted framing refinement](https://github.com/slackysoba/sobafm/issues/190#issuecomment-6796182251)
+uses public aiohttp HTTP/1.0 and explicit `Connection: close` controls. Metadata
+accepts a complete bounded Content-Length or connection-EOF document. Audio
+requires exactly one Content-Length. Both reject Transfer-Encoding and Trailer
+headers before application consumption: the locked client otherwise accepts
+unannounced chunk trailers without exposing them. HTTP success alone grants no
+source admission, and valid JSON alone is not a successful Jamendo envelope.
+
+| Interface | Ownership and caller obligations |
+| --- | --- |
+| `JamendoTransport(client_id: str, journal: Journal, *, quota: Quota = UNCONFIGURED_QUOTA, clock=time.monotonic)` | One process-wide client, separate API credential, caller-owned journal. No configuration/env-file read. Closing marks it closed before joining owners. |
+| `client.reserve_station() -> StationTransport` | At most three live scopes. Reserve only after the corresponding existing station reservation, before interpretation. The fourth scope fails before any request. A scope is retained through cleanup. |
+| `await scope.fetch(request: Request, *, deadline: float \| None = None) -> bytes \| Refusal` | Revalidates the existing credential-free request. One active operation plus one waiter per scope; retained cleanup holds the active gate. Absolute ten-second budget includes the wait. For a two-page window, the search owner supplies the **same loop-monotonic start + 20 s deadline** to both calls. |
+| `scope.last_report`, `scope.failed_cleanups` | Safe last-operation category, dispatch/response counts, raw body bytes or explicit unknown, numeric HTTP status, response completion and original stop/settlement times. Failed cleanup count survives a subsequent report. Do not log an aiohttp exception or request. |
+| `Locator(refreshed: Refreshed, completed_at: float)` | Ephemeral non-repr wrapper. Use the successful refresh fetch's `last_report.completed_at`, not the later cleanup time. The locator consumes itself on its first attempted open and expires after five seconds; its candidate must have an admitted refresh decision with current UTC time. |
+| `await scope.open_audio(locator: Locator, *, attempt: Attempt, bank: PcmBank, deadline: float \| None = None) -> OwnedAudio` | Requires the exact durable, pinned, unused attempt and an already leased uncancelled bank. At most two HTTP audio owners per station. Consume the journal attempt once; constructing another locator cannot reuse it. Caller retains the bank/decoder ownership independently. |
+| `StreamLimits.for_duration(duration: int) -> StreamLimits` | Validates 1–86400 seconds; derives `T=min(30,max(2,.01*D),.1*D)`, encoded cap `ceil(41000*(D+T))+262144` and absolute wall budget `2*(D+T)+60`. These are counters/deadlines, not allocations or traffic entitlements. |
+| `await owner.read() -> bytes` | Exactly one reader, at most 16384 bytes per return. Five-second gap timer runs only while requesting bytes. Empty bytes mean verified HTTP length completion only, not MP3/decoder/PCM completion. Caller must keep only its one bounded handoff. |
+| `owner.ready_deadline`, `owner.stopped`, `owner.report` | The following stream producer must enforce the unchanged 15-second readiness deadline and watch the stopped event to discard PCM on failure. The HTTP wall-deadline timer continues during backpressure. `report.stopped_at` lets the producer adopt the earliest HTTP/bank/decoder cleanup clock. |
+| `owner.cancel(first_stop: float \| None = None)` / `await owner.close()` | Stop reads, abort transport without a drain, join a pending read, real connection-close notification, DNS and journal reconciliation. Repeat cancellation cannot reset the first stop or free capacity early. A close after the original three seconds remains expired after settlement. |
+| `scope.cancel(first_stop: float \| None = None)` / `await scope.close()` / `await client.close()` | Stop every affected operation and audio owner before joining any cleanup, including across all stations on client shutdown. Each owner retains the earliest stop clock. Never reopen a closed client. Close the shared journal only after transport and stream owners finish. |
+
+Metadata uses 3 s connect/pool/DNS, 5 s response-header/read-gap and 10 s absolute
+operation bounds. Audio has 3 s connect/DNS, 5 s response-header, demand-based
+5 s reads, the caller's readiness deadline and its duration-derived wall deadline.
+Both request identity encoding, disable decompression, use no cookies/proxy/netrc
+or environment credentials, verify TLS normally, and follow no redirects. A
+fresh public middleware guard refuses a second handler dispatch; force-close and
+HTTP/1.0 alone demonstrably retry GET after a disconnect.
+
+The resolver validates every answer, including mixed results, and rejects
+non-global and IPv4-mapped IPv6 addresses. Only the fixed API host or exact
+numeric storage-host grammar reaches it. Checked addresses go directly to the
+connector, with caching disabled. Cancelled DNS work is joined before release.
+Audio retains only the refreshed ordinary mp32 route and optional opaque locator
+values; it receives no API client ID/header from the metadata transport.
+
+Before constructing a JSON tree, metadata validates strict UTF-8, depth <=8,
+<=32768 lexical tokens and <=65536 decoded UTF-8 bytes per string, including
+surrogate-pair accounting. The syntax pass rejects duplicate keys and nonfinite
+numbers. The existing metadata/admission code then owns success-envelope,
+identity, field and evidence checks. Raw pages and locators never enter the
+journal. Request/body exceptions expose only fixed safe categories.
+
+### Receive copies and counters
+
+The implementation targets the existing CPython 3.14 Linux selector loop and
+locked aiohttp 3.14.5, not arbitrary event-loop replacements. Public
+`socket_factory` supplies a socket whose `recv` and `recv_into` explicitly cap
+delivery at 32768 bytes; SO_RCVBUF is also set to 32768. The supported
+`request_class` hook sets TLS read high water to 32768 **before sending HTTP**,
+captures the exact connection owner, and refuses TLS without that control.
+The aiohttp low/high water marks are 16384/32768. Read-ahead can overshoot high
+water within one delivery; `read(16384)` is not the queue bound.
+
+The adopted slot totals remain unchanged. Additional library copies are charged
+inside those slots, with these conservative subdivisions for the later stream:
+
+| Network slot payload | Bytes |
+| --- | ---: |
+| Received body queue including delivery overshoot | 98304 |
+| Header wire/text copies, status and field temporaries | 409600 |
+| Retained tags, decoded notices, normalization temporary | 3 × 131072 |
+| Canonical notice UTF-8 | 32768 |
+| Application read, handoff, MP3 remainder | 3 × 16384 |
+| **Total / existing network slot** | **983040 / 1048576** |
+
+The parser is configured for 32 fields, 1020 bytes per component and 4081 bytes
+for a reason (leaving the HTTP status-line prefix/CRLF). The compiled parser can
+accept a name and value each up to 1020 bytes: this setting alone does not bound
+their sum. Before body consumption or status acceptance, explicit raw-header
+validation requires `len(name) + len(value) + 4 <= 1024`, including the canonical
+colon/space/CRLF projection after the maintained parser removes surrounding
+optional whitespace. This is the [explicitly adopted field-content refinement](https://github.com/slackysoba/sobafm/issues/190#issuecomment-6798626947),
+which supersedes the earlier complete-wire-field interpretation. Discarded leading
+whitespace has **no configured aggregate wire-byte cap**: it is processed
+incrementally within the unchanged 5-second response-header deadline and
+10-second metadata absolute deadline, with bounded retained payload and current
+delivery copies. The Python parser's whole-line interpretation is stricter. No
+socket-prefix limit, parser replacement or global runtime switch is adopted.
+
+Pre-validation copies are charged even for a rejected field. The 409600-byte
+header subdivision covers 33 fields (including the count-overflow field) with
+two 1020-byte raw components, an ASCII name and a worst-case four-byte-per-character
+decoded value: `33 * 7 * 1020 = 235620` bytes. Add `5 * 4096 = 20480` for raw and
+decoded status and `2 * (65536 + 1024) = 133120` for oversized-field/error
+concatenation temporaries, totaling 389220 bytes. The Python parser's retained
+whole lines plus raw/decoded fields fit within that larger compiled-parser bound.
+The delivery itself is already included in the read/write subdivision below.
+Header objects and allocator overhead remain in the whole-service group; these
+payload copies are charged separately. No slot or whole-service cap increased.
+
+Fragmented HTTP/TLS regressions deliver 4 MiB of leading spaces or tabs in observed
+16384-byte fragments. GC-visible retained header bytes/text do not grow between
+the 16 KiB, 1 MiB and 4 MiB checkpoints, and only the small JSON body enters the
+body counter. The 4 MiB fixture is not a maximum or proof of native-heap/RSS fit.
+Unfinished-header regressions exercise the actual header timeout, abort, repeated
+cancellation and restart with the complete unknown-usage reservation preserved.
+
+| Read/write slot payload | Bytes |
+| --- | ---: |
+| CPython's fixed SSL receive backing | 262144 |
+| TLS incoming staging, including a bounded receive overshoot | 65536 |
+| Decrypted delivery pieces and their simultaneous join | 2 × 65536 |
+| Decoder feeder and simultaneous write copy | 2 × 16384 |
+| Screen frame, sample scratch, partial frame | 3 × 3840 |
+| **Total / existing read/write slot** | **503040 / 524288** |
+
+The socket receives into the fixed SSL backing, so that view is not charged as
+another allocation. CPython's SSL copied-read path can retain pieces alongside
+their joined delivery; both are included. Setting TLS high water does not shrink
+its fixed 262144-byte backing. Offline real-client TLS tests exercise delivery,
+paused body queues and cancellation without consumption. These bounds still need
+independent review and actual-image useful-fit qualification; they do not claim
+total RSS, kernel reclamation, native decode or six-stream runtime qualification.
+
+Before dispatch, the journal reserves one call and the operation's full encoded
+cap **plus 98304 read-ahead bytes** against configured aggregate limits. This is
+conservative, especially for long tracks, and is not a new allowance. At actual
+settlement, `total_raw_bytes` counts received body bytes, including refused and
+unconsumed buffered bodies; metadata/audio totals remain separate. Counts describe
+application bodies, not encrypted/TLS/wire billing. Valid Retry-After values on
+denial/429 establish a not-before time; absence of a usable value latches that
+client until replacement. The transport never sleeps/retries a provider request.
+
+Discarded header whitespace is not body usage. These counters do not establish
+total network billing or a provider/host traffic allowance. Any deployment limit
+defined on another metric requires separate qualification and enforcement before
+claiming it is honored; this refinement grants no traffic or spending entitlement.
+
+If the maintained parser fails **before exposing a response**, no public raw-body
+counter exists. The safe report uses `body_bytes=None`, persists the known
+dispatch/failure count and retains the entire byte reservation. An interrupted
+write can also leave an uncertain reservation. Neither error, cancellation nor
+restart refunds it. Settled body totals are known counts, not invented exact totals
+for those failures. [The counter limitation](https://github.com/slackysoba/sobafm/issues/190#issuecomment-6796927635)
+is explicit; conservative unknown usage can exhaust configured capacity sooner.
+
+## Bounded provenance journal
+
+`await Journal.open(path, *, clock, writer=atomic_write)` loads one exclusive
+instance on the existing writable data volume. `clock` and `writer` are injected
+for deterministic tests, not provider extensions. Invalid, duplicate, noncanonical
+or oversized state refuses startup. An interrupted `.tmp` snapshot requires
+explicit recovery; it is never silently removed or promoted. There are no backups,
+WAL, raw-response archives or audio files.
+
+| Journal API | Durable meaning |
+| --- | --- |
+| `await reserve_attempt(candidate: Candidate) -> Attempt` | Validate a safe **refresh-purpose** candidate and complete credits, persist an unsettled entry, then pin it. Search decisions cannot create attempts. An unsettled/restarted or quarantined key cannot be reserved again. Maximum six pins. |
+| `claim_attempt(attempt)` | Consume a current pinned initial entry once, immediately before audio opening. It cannot be reused by a second locator or after a failure. |
+| `await commit(number, facts: Facts, *, settled: bool, conflict_digest=None)` | Update transfer/decode/PCM, observed encoded hash/bytes, decoded samples, failure and cleanup facts. Never replace the entry's decision or credits. An expired cleanup stays expired; a recorded failure cannot become success. A semantic conflict binds a specific digest and reason. |
+| `release_pin(number)` | Only after recorded actual settlement. An expired cleanup can settle late while preserving the failed verdict. |
+| `await credit_used(number)` | Extend normal retention from actual last credit use without granting approval or changing the snapshot. |
+| `blocked(key)` / `snapshot` | Inspect immutable safe provenance and quota state, not reusable playback approvals. |
+| `await resolve(number, *, expected_evidence_digest, expected_conflict_digest, operator_review)` | A trusted operator action resolving exactly that retained evidence/conflict, only after runtime pins end. An unrelated metadata change never resolves it automatically. No operator command is wired by this slice. |
+| `await reserve_usage(channel, body_bytes, quota) -> Reservation` | Persist configured call/byte reservation before external work. At most nine unresolved reservations: three metadata plus six audio. |
+| `await settle_usage(reservation, *, dispatches, responses, body_bytes, failed)` | Reconcile known actual usage only for a live reservation after underlying owners settle. |
+| `await retain_unknown(reservation, *, dispatches)` | Persist known calls/failure while retaining all uncertain body budget. Restart cannot claim that budget is free. |
+| `await restore()` / `await close()` | Retry the pending conservative snapshot after a storage failure, or mark closed and join the writer. Restoring never silently clears quarantine or unknown usage. |
+
+The canonical UTF-8 snapshot has <=256 entries, <=131072 bytes per entry, and
+<=4194304 bytes total, including a <=4096-byte counters/reservations envelope.
+Current plus temporary file is <=8388608 payload bytes. One executor writer and
+at most six waiters serialize mutations. Writes flush, fsync, replace, fsync the
+directory, then publish the new in-memory snapshot. Repeated cancellation joins
+the same job; it cannot abandon a write or publish early. A failed late-conflict
+write latches new Jamendo admission and retains its pending snapshot for durable
+restoration. Initial persistence failure permits no audio.
+
+Persisted entries contain the exact safe Recording/Decision/content-digest
+projection, its integrity checksum, separate completion/cleanup facts, and UTC
+settlement/use/expiry times. The existing catalog validator and credit renderer
+validate the projection. Metadata digest is checked again; the extra checksum
+detects changes to retained details too. The policy-evidence/content digests cannot
+be reconstructed from this intentionally smaller projection and are validated as
+bindings, not turned into a source-response archive or a new approval claim.
+
+Settled unpinned entries expire 24 hours after settlement/last credit use. Startup
+prunes them; a single timer drives later expiry through the same writer. Earliest
+settled entries may be evicted sooner for either cap. Pins, unresolved restart
+attempts and semantic/rights conflicts never disappear through TTL/LRU. Expiry
+write failure is explicit and latches admission. When protected entries fill a
+cap, reject new Jamendo work while leaving FMA/unrelated audio to its own owner.
+
+Tests use temporary journals, synthetic loopback HTTP/TLS, delayed owned DNS/write
+work and the existing synthetic certificate fixture. They cover byte/structural
+caps, malicious routes/addresses, framing, dropped GET dispatches, buffered-byte
+accounting, cancellation, exact Unicode credits, quota uncertainty, quarantine,
+entry capacity and atomic-write faults. They do not establish source compatibility,
+music quality, decoder behavior, Linux whole-service fit or release readiness.
+
+Search/ranking and checked streaming may consume these interfaces only after
+review and merge. Their semantic intent, two-page deadline, MP3/notices/screening,
+readiness, whole-stream completion and earliest bank/HTTP/decoder cleanup owner
+remain necessary. Station/configuration/Discord integration follows those slices.
+No live/source request or runtime enablement follows from these offline modules.
