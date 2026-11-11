@@ -210,6 +210,33 @@ def test_byte_cap_at_boundary_and_one_over(tmp_path: Path, monkeypatch: pytest.M
 
 
 @pytest.mark.parametrize(
+    ("name_bytes", "value_bytes", "accepted"),
+    [(10, 1010, True), (10, 1011, False), (1000, 20, True), (1000, 21, False), (1000, 1000, False)],
+)
+def test_combined_header_field_byte_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name_bytes: int,
+    value_bytes: int,
+    accepted: bool,
+) -> None:
+    async def run() -> None:
+        journal = await Journal.open(tmp_path / "journal.json")
+        client = JamendoTransport("placeholder", journal)
+        scope = client.reserve_station()
+        header = b"X" * name_bytes + b": " + b"v" * value_bytes + b"\r\n"
+        async with peer(monkeypatch, response_script(wire(BODY, header))):
+            result = await scope.fetch(request())
+            assert (result == BODY) if accepted else isinstance(result, Refusal)
+            assert scope.last_report is not None
+            assert scope.last_report.kind == (None if accepted else Kind.MALFORMED)
+        await client.close()
+        await journal.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
     "payload",
     [
         b'{"a":1,"a":2}',
@@ -667,5 +694,80 @@ def test_cancelled_scope_close_joins_all_original_owners(
                 await fetch
             assert scope.settled
         await client.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("station_count", [1, 3])
+def test_shutdown_stops_all_audio_before_joining_delayed_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, station_count: int
+) -> None:
+    async def run() -> None:
+        closing, release = asyncio.Event(), asyncio.Event()
+        now = 10.0
+
+        class Resolver(CheckedResolver):
+            async def close(self) -> None:
+                if not closing.is_set():
+                    closing.set()
+                    await release.wait()
+                await super().close()
+
+        monkeypatch.setattr(module, "CheckedResolver", Resolver)
+
+        async def script(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            writer.write(wire(b"x", b"Content-Length: 100\r\n", audio=True))
+            await writer.drain()
+            await reader.read(1)
+
+        journal = await Journal.open(tmp_path / "journal.json")
+        client = JamendoTransport("placeholder", journal, clock=lambda: now)
+        scopes = [client.reserve_station() for _ in range(station_count)]
+        pool = PcmBankPool()
+        banks = [pool.reserve(scope).acquire() for scope in scopes for _ in range(2)]
+        owners: list[module.OwnedAudio] = []
+        async with peer(monkeypatch, script):
+            for index, bank in enumerate(banks):
+                original = candidate(str(123 + index))
+                fresh = replace(
+                    original, decision=replace(original.decision, refreshed_at=datetime.now(UTC))
+                )
+                attempt = await journal.reserve_attempt(fresh)
+                locator = Locator(
+                    Refreshed(
+                        fresh,
+                        True,
+                        f"https://prod-1.storage.jamendo.com/?trackid={123 + index}&format=mp32",
+                    ),
+                    now,
+                )
+                owners.append(
+                    await scopes[index // 2].open_audio(locator, attempt=attempt, bank=bank)
+                )
+            close = asyncio.create_task(scopes[0].close() if station_count == 1 else client.close())
+            await closing.wait()
+            stopped_before_join = [owner.stopped.is_set() for owner in owners]
+            clocks_before_join = [owner.report.stopped_at for owner in owners]
+            retained_before_join = any(not scope.settled for scope in scopes)
+            close.cancel()
+            await tick()
+            close.cancel()
+            now = 14.0
+            joined_after_repeated_cancel = not close.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await close
+            assert all(stopped_before_join)
+            assert clocks_before_join == [10.0] * len(owners)
+            assert retained_before_join and joined_after_repeated_cancel
+            assert all(scope.settled for scope in scopes)
+            assert all(owner.report.stopped_at == 10.0 for owner in owners)
+            assert any(owner.report.cleanup_expired for owner in owners)
+            await client.close()
+            assert any(owner.report.cleanup_expired for owner in owners)
+        for bank in banks:
+            bank.cancel()
+            assert bank.release()
+        await journal.close()
 
     asyncio.run(run())

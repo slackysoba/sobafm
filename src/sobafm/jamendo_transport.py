@@ -390,6 +390,12 @@ async def _join[T](task: asyncio.Task[T]) -> T:
 
 
 def checked_headers(response: aiohttp.ClientResponse, *, audio: bool, maximum: int) -> int | None:
+    # The compiled parser limits names and values separately. Validate their
+    # combined raw-byte projection, including ': ' and CRLF, before body use.
+    if len(response.raw_headers) > 32 or any(
+        len(name) + len(value) + 4 > 1024 for name, value in response.raw_headers
+    ):
+        raise TransportError(Kind.MALFORMED)
     if response.status in (401, 403):
         raise TransportError(Kind.ACCESS_DENIED)
     if response.status == 429:
@@ -500,7 +506,7 @@ class _Operation:
             middlewares=(once,),
             read_bufsize=READ_BYTES,
             max_headers=32,
-            max_field_size=1020,  # Include colon/space/CRLF in the 1024-byte field cap.
+            max_field_size=1020,  # Per-component parser bound; checked_headers combines them.
             max_line_size=4081,  # Include "HTTP/1.x 200 " and CRLF in the status-line cap.
             timeout=aiohttp.ClientTimeout(total=None, connect=CONNECT_SECONDS, sock_read=None),
         )
@@ -937,19 +943,25 @@ class StationTransport:
         finally:
             self._work.discard(task)
 
-    async def close(self) -> None:
+    def cancel(self, first_stop: float | None = None) -> None:
+        at = self._client.clock() if first_stop is None else first_stop
         self.closed = True
-        if self._closing is None:
-            self._closing = asyncio.create_task(self._close())
-        await _join(self._closing)
-
-    async def _close(self) -> None:
         for operation in self._operations:
-            operation.stop()
+            operation.stop(at)
         for task in self._work:
             task.cancel()
         for audio in tuple(self._audio):
-            audio.cancel()
+            audio.cancel(at)
+        if self._closing is None:
+            self._closing = asyncio.create_task(self._close())
+
+    async def close(self) -> None:
+        self.cancel()
+        assert self._closing is not None
+        await _join(self._closing)
+
+    async def _close(self) -> None:
+        for audio in tuple(self._audio):
             with suppress(JournalError):
                 await audio.close()
         for task in tuple(self._work):
@@ -1016,9 +1028,13 @@ class JamendoTransport:
 
     async def close(self) -> None:
         self.closed = True
+        stations = tuple(self._stations)
+        stopped_at = self.clock()
+        for station in stations:
+            station.cancel(stopped_at)
 
         async def close_all() -> None:
-            for station in tuple(self._stations):
+            for station in stations:
                 await station.close()
 
         if self._closing is None:

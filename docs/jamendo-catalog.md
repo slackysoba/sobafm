@@ -126,7 +126,7 @@ source admission, and valid JSON alone is not a successful Jamendo envelope.
 | `await owner.read() -> bytes` | Exactly one reader, at most 16384 bytes per return. Five-second gap timer runs only while requesting bytes. Empty bytes mean verified HTTP length completion only, not MP3/decoder/PCM completion. Caller must keep only its one bounded handoff. |
 | `owner.ready_deadline`, `owner.stopped`, `owner.report` | The following stream producer must enforce the unchanged 15-second readiness deadline and watch the stopped event to discard PCM on failure. The HTTP wall-deadline timer continues during backpressure. `report.stopped_at` lets the producer adopt the earliest HTTP/bank/decoder cleanup clock. |
 | `owner.cancel(first_stop: float \| None = None)` / `await owner.close()` | Stop reads, abort transport without a drain, join a pending read, real connection-close notification, DNS and journal reconciliation. Repeat cancellation cannot reset the first stop or free capacity early. A close after the original three seconds remains expired after settlement. |
-| `await scope.close()` / `await client.close()` | Cancel and join retained operations; never reopen a closed client. Close the shared journal only after transport and stream owners finish. |
+| `scope.cancel(first_stop: float \| None = None)` / `await scope.close()` / `await client.close()` | Stop every affected operation and audio owner before joining any cleanup, including across all stations on client shutdown. Each owner retains the earliest stop clock. Never reopen a closed client. Close the shared journal only after transport and stream owners finish. |
 
 Metadata uses 3 s connect/pool/DNS, 5 s response-header/read-gap and 10 s absolute
 operation bounds. Audio has 3 s connect/DNS, 5 s response-header, demand-based
@@ -167,18 +167,31 @@ inside those slots, with these conservative subdivisions for the later stream:
 | Network slot payload | Bytes |
 | --- | ---: |
 | Received body queue including delivery overshoot | 98304 |
-| Header wire/text copies, status and field temporaries | 229376 |
+| Header wire/text copies, status and field temporaries | 409600 |
 | Retained tags, decoded notices, normalization temporary | 3 × 131072 |
 | Canonical notice UTF-8 | 32768 |
 | Application read, handoff, MP3 remainder | 3 × 16384 |
-| **Total / existing network slot** | **802816 / 1048576** |
+| **Total / existing network slot** | **983040 / 1048576** |
 
-The header allowance includes raw bytes and decoded text together. Parser limits
-are 32 fields, 1020 bytes for a name/value (leaving space for punctuation/CRLF),
-and 4081 bytes for a reason (leaving the HTTP status-line prefix/CRLF). The Python
-parser's whole-line interpretation can be slightly stricter than the compiled
-parser. Header objects and allocator overhead remain in the whole-service group;
-the payload copies above are charged separately.
+The parser is configured for 32 fields, 1020 bytes per component and 4081 bytes
+for a reason (leaving the HTTP status-line prefix/CRLF). The compiled parser can
+accept a name and value each up to 1020 bytes: this setting alone does not bound
+their sum. Before body consumption or status acceptance, explicit raw-header
+validation requires `len(name) + len(value) + 4 <= 1024`, including the canonical
+colon/space/CRLF projection. The maintained parser strips optional surrounding
+whitespace; this check does not claim to recover stripped wire whitespace. The
+Python parser's whole-line interpretation is stricter.
+
+Pre-validation copies are charged even for a rejected field. The 409600-byte
+header subdivision covers 33 fields (including the count-overflow field) with
+two 1020-byte raw components, an ASCII name and a worst-case four-byte-per-character
+decoded value: `33 * 7 * 1020 = 235620` bytes. Add `5 * 4096 = 20480` for raw and
+decoded status and `2 * (65536 + 1024) = 133120` for oversized-field/error
+concatenation temporaries, totaling 389220 bytes. The Python parser's retained
+whole lines plus raw/decoded fields fit within that larger compiled-parser bound.
+The delivery itself is already included in the read/write subdivision below.
+Header objects and allocator overhead remain in the whole-service group; these
+payload copies are charged separately. No slot or whole-service cap increased.
 
 | Read/write slot payload | Bytes |
 | --- | ---: |
