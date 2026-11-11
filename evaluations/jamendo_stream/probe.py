@@ -1,4 +1,4 @@
-"""One separately authorized refresh and transient stream check (Linux only)."""
+"""One separately authorized listing, refresh and stream check (Linux only)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 API_HOST = "api.jamendo.com"
 STREAM_HOST = "prod-1.storage.jamendo.com"
-TRACK_ID = "168"
+SEARCH_RESULTS = 10
 METADATA_BYTES = 256_000
 STREAM_BYTES = 20_000_000
 HEADER_BYTES = 16_384
@@ -57,13 +57,33 @@ class Transfer:
 
 
 @dataclass
+class Results:
+    application_code: int | None = None
+    declared_count_type: str | None = None
+    declared_count_value: int | str | None = None
+    container_type: str | None = None
+    list_count: int | None = None
+
+
+@dataclass(frozen=True)
+class Candidate:
+    track_id: str
+    target: str
+    evidence: str
+
+
+@dataclass
 class Report:
     outcome: str = "inconclusive"
     reason: str | None = None
+    search: Transfer = field(default_factory=Transfer)
     metadata: Transfer = field(default_factory=Transfer)
     stream: Transfer = field(default_factory=Transfer)
+    search_results: Results = field(default_factory=Results)
+    refresh_results: Results = field(default_factory=Results)
+    selected_track_id: str | None = None
+    rejected_candidates: int = 0
     metadata_validated: bool = False
-    application_code: int | None = None
 
 
 @contextmanager
@@ -278,13 +298,19 @@ def text_field(value: object) -> str:
     return value
 
 
-def stream_target(value: object, application_id: str) -> str:
+def stream_target(value: object, application_id: str, track_id: str) -> str:
     """Validate the fresh audio field, then build only that exact allowed request."""
     if not isinstance(value, str) or not value.isascii() or len(value) > 1024:
         raise Stopped("stream_url")
     if any(ord(char) <= 32 or ord(char) == 127 for char in value):
         raise Stopped("stream_url")
-    parts = urlsplit(value)
+    try:
+        parts = urlsplit(value)
+        pairs = parse_qsl(
+            parts.query, keep_blank_values=True, strict_parsing=True, max_num_fields=3
+        )
+    except ValueError:
+        raise Stopped("stream_url") from None
     if (
         parts.scheme != "https"
         or parts.netloc != STREAM_HOST
@@ -293,21 +319,43 @@ def stream_target(value: object, application_id: str) -> str:
         or "#" in value
     ):
         raise Stopped("stream_url")
-    pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=True, max_num_fields=3)
-    expected = {"trackid": TRACK_ID, "format": "mp32", "from": f"app-{application_id}"}
+    expected = {"trackid": track_id, "format": "mp32", "from": f"app-{application_id}"}
     if len(pairs) != 3 or dict(pairs) != expected:
         raise Stopped("stream_url")
     return "/?" + urlencode(expected)
 
 
-def validate_metadata(data: bytes, application_id: str, report: Report) -> str:
-    payload: object = json.loads(data.decode("utf-8"), object_pairs_hook=unique_object)
+def json_type(mapping: dict[str, object], key: str) -> str:
+    """Fixed JSON type labels only; never echo an untrusted value or type name."""
+    if key not in mapping:
+        return "missing"
+    value = mapping[key]
+    labels: dict[type[object], str] = {
+        type(None): "null",
+        bool: "boolean",
+        int: "integer",
+        float: "number",
+        str: "string",
+        list: "list",
+        dict: "object",
+    }
+    return labels.get(type(value), "unknown")
+
+
+def reject_constant(_value: str) -> object:
+    raise Stopped("invalid_metadata")
+
+
+def metadata_rows(data: bytes, diagnostics: Results, limit: int) -> list[object]:
+    payload: object = json.loads(
+        data.decode("utf-8"), object_pairs_hook=unique_object, parse_constant=reject_constant
+    )
     root = object_value(payload)
     headers = object_value(root.get("headers"))
     code = headers.get("code")
     if type(code) is not int or not 0 <= code <= 999:
         raise Stopped("invalid_metadata")
-    report.application_code = code
+    diagnostics.application_code = code
     if code != 0:
         raise Stopped("application_rejected")
     if headers.get("status") not in ("success", "succeed") or (
@@ -316,13 +364,34 @@ def validate_metadata(data: bytes, application_id: str, report: Report) -> str:
         raise Stopped("application_status_or_warning")
     rows = root.get("results")
     count = headers.get("results_count")
-    if type(count) is not int or count != 1 or not isinstance(rows, list):
-        raise Stopped("candidate_missing_or_count")
+    diagnostics.declared_count_type = json_type(headers, "results_count")
+    diagnostics.container_type = json_type(root, "results")
+    if isinstance(rows, list):
+        diagnostics.list_count = len(cast(list[object], rows))
+    if type(count) is not int:
+        diagnostics.declared_count_value = "not_integer"
+        raise Stopped("declared_count_type")
+    # Only small counts can enter a report. Large or negative numbers receive
+    # fixed labels, not a covert channel for arbitrary response text/numbers.
+    diagnostics.declared_count_value = (
+        "negative" if count < 0 else "above_limit" if count > limit else count
+    )
+    if not 0 <= count <= limit:
+        raise Stopped("declared_count_value")
+    if not isinstance(rows, list):
+        raise Stopped("results_container")
     entries = cast(list[object], rows)
-    if len(entries) != 1:
-        raise Stopped("candidate_missing_or_count")
-    row = object_value(entries[0])
-    if row.get("id") != TRACK_ID:
+    if len(entries) > limit:
+        raise Stopped("results_limit")
+    if len(entries) != count:
+        raise Stopped("results_count_mismatch")
+    return entries
+
+
+def validate_candidate(value: object, application_id: str) -> Candidate:
+    row = object_value(value)
+    track_id = row.get("id")
+    if not isinstance(track_id, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", track_id):
         raise Stopped("candidate_identity")
     text_field(row.get("name"))
     text_field(row.get("artist_name"))
@@ -351,32 +420,71 @@ def validate_metadata(data: bytes, application_id: str, report: Report) -> str:
     ):
         raise Stopped("license_field")
     if row.get("shareurl") not in (
-        f"http://www.jamendo.com/track/{TRACK_ID}",
-        f"https://www.jamendo.com/track/{TRACK_ID}",
+        f"http://www.jamendo.com/track/{track_id}",
+        f"https://www.jamendo.com/track/{track_id}",
     ):
         raise Stopped("credit_fields")
     if type(row.get("audiodownload_allowed")) is not bool:
         raise Stopped("invalid_metadata")
     # The download flag is not a streaming permission, and no download is made.
-    target = stream_target(row.get("audio"), application_id)
+    target = stream_target(row.get("audio"), application_id, track_id)
+    # Conservatively bind every returned field, including optional details and
+    # notices. Normalize only the checked stream query and duration. This is
+    # transient consistency evidence, never an admission/rights certificate.
+    evidence = hashlib.sha256(
+        json.dumps(
+            {**row, "audio": target, "duration": duration},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+    return Candidate(track_id, target, evidence)
+
+
+def select_candidate(data: bytes, application_id: str, report: Report) -> Candidate:
+    entries = metadata_rows(data, report.search_results, SEARCH_RESULTS)
+    for value in entries:
+        try:
+            candidate = validate_candidate(value, application_id)
+        except Stopped:
+            report.rejected_candidates += 1
+            continue
+        report.selected_track_id = candidate.track_id
+        return candidate
+    raise Stopped("no_acceptable_candidate")
+
+
+def validate_refresh(data: bytes, application_id: str, selected: Candidate, report: Report) -> str:
+    entries = metadata_rows(data, report.refresh_results, 1)
+    if not entries:
+        raise Stopped("refresh_empty")
+    row = object_value(entries[0])
+    if row.get("id") != selected.track_id:
+        raise Stopped("candidate_identity")
+    refreshed = validate_candidate(row, application_id)
+    if refreshed.evidence != selected.evidence:
+        raise Stopped("refresh_evidence_changed")
     report.metadata_validated = True
-    return target
+    return refreshed.target
 
 
 def probe(application_id: str, report: Report) -> None:
     """Called only within the isolated child's one deadline."""
-    query = urlencode(
-        {
-            "client_id": checked_id(application_id),
-            "format": "json",
-            "id": TRACK_ID,
-            "limit": "1",
-            "type": "single albumtrack",
-            "audioformat": "mp32",
-        }
-    )
+    common = {
+        "client_id": checked_id(application_id),
+        "format": "json",
+        "type": "single albumtrack",
+        "audioformat": "mp32",
+    }
+    query = urlencode({**common, "limit": str(SEARCH_RESULTS), "order": "id_desc"})
+    data = exchange("/v3.0/tracks/?" + query, report.search, metadata=True)
+    selected = select_candidate(data, application_id, report)
+    del data
+    query = urlencode({**common, "id": selected.track_id, "limit": "1"})
     data = exchange("/v3.0/tracks/?" + query, report.metadata, metadata=True)
-    target = validate_metadata(data, application_id, report)
+    target = validate_refresh(data, application_id, selected, report)
     del data
     exchange(target, report.stream, metadata=False)
     report.outcome = "stream_received"

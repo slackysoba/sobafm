@@ -26,8 +26,9 @@ AUDIO = b"synthetic bytes, not an audio file"
 
 
 def row(**changes: object) -> dict[str, object]:
+    track_id = changes.get("id", "168")
     return {
-        "id": "168",
+        "id": track_id,
         "name": "Synthetic title",
         "artist_id": "9",
         "artist_name": "Synthetic",
@@ -35,14 +36,18 @@ def row(**changes: object) -> dict[str, object]:
         "album_name": "Synthetic album",
         "duration": 180,
         "license_ccurl": "http://creativecommons.org/licenses/by-nc-sa/3.0/",
-        "shareurl": "http://www.jamendo.com/track/168",
+        "shareurl": f"http://www.jamendo.com/track/{track_id}",
         "audiodownload_allowed": False,
-        "audio": f"https://{subject.STREAM_HOST}/?trackid=168&format=mp32&from=app-{FAKE_ID}",
+        "audio": f"https://{subject.STREAM_HOST}/?trackid={track_id}&format=mp32&from=app-{FAKE_ID}",
         **changes,
     }
 
 
 def document(record: dict[str, object] | None = None, /, **changes: object) -> bytes:
+    return listing([row() if record is None else record], **changes)
+
+
+def listing(records: list[object], **changes: object) -> bytes:
     return json.dumps(
         {
             "headers": {
@@ -50,10 +55,10 @@ def document(record: dict[str, object] | None = None, /, **changes: object) -> b
                 "code": 0,
                 "error_message": "",
                 "warnings": "",
-                "results_count": 1,
+                "results_count": len(records),
                 **changes,
             },
-            "results": [row() if record is None else record],
+            "results": records,
         }
     ).encode()
 
@@ -248,7 +253,10 @@ def test_metadata_response_cap_is_separate(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.parametrize(
     "changes",
     [
-        {"id": "169"},
+        {"id": "not-numeric"},
+        {"id": "0"},
+        {"id": "1" * 21},
+        {"id": 168},
         {"name": ""},
         {"artist_name": None},
         {"artist_id": "x"},
@@ -267,7 +275,7 @@ def test_metadata_response_cap_is_separate(monkeypatch: pytest.MonkeyPatch) -> N
 )
 def test_metadata_gate_rejects_invalid_candidate(changes: dict[str, object]) -> None:
     with pytest.raises(subject.Stopped):
-        subject.validate_metadata(document(row(**changes)), FAKE_ID, subject.Report())
+        subject.validate_candidate(row(**changes), FAKE_ID)
 
 
 @pytest.mark.parametrize(
@@ -288,7 +296,7 @@ def test_metadata_gate_rejects_invalid_candidate(changes: dict[str, object]) -> 
 )
 def test_application_gate(changes: dict[str, object]) -> None:
     with pytest.raises(subject.Stopped):
-        subject.validate_metadata(document(**changes), FAKE_ID, subject.Report())
+        subject.metadata_rows(document(**changes), subject.Results(), 1)
 
 
 @pytest.mark.parametrize(
@@ -296,7 +304,7 @@ def test_application_gate(changes: dict[str, object]) -> None:
 )
 def test_bad_json(data: bytes) -> None:
     with pytest.raises((subject.Stopped, ValueError)):
-        subject.validate_metadata(data, FAKE_ID, subject.Report())
+        subject.metadata_rows(data, subject.Results(), 1)
 
 
 @pytest.mark.parametrize(
@@ -304,7 +312,9 @@ def test_bad_json(data: bytes) -> None:
 )
 def test_candidate_controls_are_not_admission(changes: dict[str, object]) -> None:
     report = subject.Report()
-    assert subject.validate_metadata(document(row(**changes)), FAKE_ID, report) == (
+    data = document(row(**changes))
+    selected = subject.select_candidate(data, FAKE_ID, report)
+    assert subject.validate_refresh(data, FAKE_ID, selected, report) == (
         "/?trackid=168&format=mp32&from=app-" + FAKE_ID
     )
     assert report.metadata_validated
@@ -334,10 +344,10 @@ def test_candidate_controls_are_not_admission(changes: dict[str, object]) -> Non
 )
 def test_stream_url_is_fixed(url: str) -> None:
     with pytest.raises((subject.Stopped, ValueError)):
-        subject.stream_target(url, FAKE_ID)
+        subject.stream_target(url, FAKE_ID, "168")
 
 
-def test_one_refresh_then_one_stream_and_no_raw_output(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_one_listing_refresh_stream_and_no_raw_output(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, bool]] = []
 
     def exchange(target: str, _transfer: subject.Transfer, *, metadata: bool) -> bytes:
@@ -348,8 +358,16 @@ def test_one_refresh_then_one_stream_and_no_raw_output(monkeypatch: pytest.Monke
     report = subject.Report()
     subject.probe(FAKE_ID, report)
     assert report.outcome == "stream_received"
-    assert [metadata for _, metadata in calls] == [True, False]
+    assert [metadata for _, metadata in calls] == [True, True, False]
     assert parse_qs(urlsplit(calls[0][0]).query) == {
+        "client_id": [FAKE_ID],
+        "format": ["json"],
+        "order": ["id_desc"],
+        "limit": ["10"],
+        "type": ["single albumtrack"],
+        "audioformat": ["mp32"],
+    }
+    assert parse_qs(urlsplit(calls[1][0]).query) == {
         "client_id": [FAKE_ID],
         "format": ["json"],
         "id": ["168"],
@@ -357,6 +375,7 @@ def test_one_refresh_then_one_stream_and_no_raw_output(monkeypatch: pytest.Monke
         "type": ["single albumtrack"],
         "audioformat": ["mp32"],
     }
+    assert report.selected_track_id == "168"
     assert FAKE_ID not in json.dumps(asdict(report))
 
 
@@ -367,12 +386,294 @@ def test_bad_refresh_prevents_stream(monkeypatch: pytest.MonkeyPatch) -> None:
         nonlocal calls
         calls += 1
         assert metadata
-        return document(code=6)
+        return document() if calls == 1 else document(code=6)
 
     monkeypatch.setattr(subject, "exchange", exchange)
     with pytest.raises(subject.Stopped, match="application_rejected"):
         subject.probe(FAKE_ID, subject.Report())
+    assert calls == 2
+
+
+def test_fresh_selection_skips_invalid_rows_in_returned_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    selected = row(id="702")
+    responses = iter(
+        [listing([row(id="703", duration=481), selected, row(id="701")]), document(selected), b""]
+    )
+
+    def exchange(target: str, _transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        calls.append(target)
+        assert metadata == (len(calls) < 3)
+        return next(responses)
+
+    monkeypatch.setattr(subject, "exchange", exchange)
+    report = subject.Report()
+    subject.probe(FAKE_ID, report)
+    assert report.selected_track_id == "702"
+    assert report.rejected_candidates == 1
+    assert report.search_results.list_count == 3
+    assert parse_qs(urlsplit(calls[1]).query)["id"] == ["702"]
+    assert parse_qs(urlsplit(calls[2]).query)["trackid"] == ["702"]
+    assert report.outcome == "stream_received"
+
+
+@pytest.mark.parametrize(
+    "records", [[], [None, row(duration=0), row(audio="https://unexpected.test/")]]
+)
+def test_no_acceptable_candidate_stops_after_listing(
+    records: list[object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def exchange(_target: str, _transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert metadata and calls == 1
+        return listing(records)
+
+    monkeypatch.setattr(subject, "exchange", exchange)
+    report = subject.Report()
+    with pytest.raises(subject.Stopped, match="no_acceptable_candidate"):
+        subject.probe(FAKE_ID, report)
     assert calls == 1
+    assert report.selected_track_id is None
+    assert report.rejected_candidates == len(records)
+    assert report.metadata.requests_attempted == report.stream.requests_attempted == 0
+
+
+@pytest.mark.parametrize(
+    ("count", "kind", "value", "reason"),
+    [
+        (None, "null", "not_integer", "declared_count_type"),
+        (True, "boolean", "not_integer", "declared_count_type"),
+        (1.0, "number", "not_integer", "declared_count_type"),
+        (FAKE_ID, "string", "not_integer", "declared_count_type"),
+        ([], "list", "not_integer", "declared_count_type"),
+        ({"secret": FAKE_ID}, "object", "not_integer", "declared_count_type"),
+        (-1, "integer", "negative", "declared_count_value"),
+        (999999999999999, "integer", "above_limit", "declared_count_value"),
+        (0, "integer", 0, "results_count_mismatch"),
+        (2, "integer", 2, "results_count_mismatch"),
+    ],
+)
+def test_safe_declared_count_diagnostics(
+    count: object, kind: str, value: int | str, reason: str
+) -> None:
+    diagnostics = subject.Results()
+    with pytest.raises(subject.Stopped, match=f"^{reason}$"):
+        subject.metadata_rows(document(results_count=count), diagnostics, 10)
+    assert diagnostics.declared_count_type == kind
+    assert diagnostics.declared_count_value == value
+    assert diagnostics.container_type == "list" and diagnostics.list_count == 1
+    assert FAKE_ID not in json.dumps(asdict(diagnostics))
+
+
+@pytest.mark.parametrize(
+    ("value", "kind"),
+    [
+        (None, "null"),
+        (True, "boolean"),
+        (1, "integer"),
+        (1.5, "number"),
+        (FAKE_ID, "string"),
+        ({}, "object"),
+    ],
+)
+def test_safe_results_container_diagnostics(value: object, kind: str) -> None:
+    payload = json.loads(document())
+    payload["results"] = value
+    diagnostics = subject.Results()
+    with pytest.raises(subject.Stopped, match="^results_container$"):
+        subject.metadata_rows(json.dumps(payload).encode(), diagnostics, 10)
+    assert diagnostics.container_type == kind
+    assert diagnostics.list_count is None
+    assert diagnostics.declared_count_value == 1
+    assert FAKE_ID not in json.dumps(asdict(diagnostics))
+
+
+@pytest.mark.parametrize("missing", ["count", "results"])
+def test_missing_count_and_results_are_distinguished(missing: str) -> None:
+    payload = json.loads(document())
+    if missing == "count":
+        del payload["headers"]["results_count"]
+    else:
+        del payload["results"]
+    diagnostics = subject.Results()
+    with pytest.raises(subject.Stopped):
+        subject.metadata_rows(json.dumps(payload).encode(), diagnostics, 10)
+    assert (
+        diagnostics.declared_count_type if missing == "count" else diagnostics.container_type
+    ) == "missing"
+
+
+def test_listing_count_limit_is_not_silently_truncated() -> None:
+    diagnostics = subject.Results()
+    with pytest.raises(subject.Stopped, match="^results_limit$"):
+        subject.metadata_rows(listing([row()] * 11, results_count=10), diagnostics, 10)
+    assert diagnostics.list_count == 11
+    assert diagnostics.declared_count_value == 10
+    assert len(subject.metadata_rows(listing([row()] * 10), subject.Results(), 10)) == 10
+
+
+@pytest.mark.parametrize("literal", [b"NaN", b"Infinity", b"-Infinity"])
+def test_non_json_numbers_stop_before_selection(literal: bytes) -> None:
+    with pytest.raises(subject.Stopped, match="invalid_metadata"):
+        subject.metadata_rows(
+            document().replace(b'"duration": 180', b'"duration": ' + literal), subject.Results(), 10
+        )
+
+
+@pytest.mark.parametrize(
+    ("refresh", "reason"),
+    [
+        (document(row(id="701")), "candidate_identity"),
+        (document(row(name="Changed title")), "refresh_evidence_changed"),
+        (document(row(artist_name="Changed creator")), "refresh_evidence_changed"),
+        (document(row(duration=179)), "refresh_evidence_changed"),
+        (document(row(details={"notice": "new notice"})), "refresh_evidence_changed"),
+        (
+            document(row(license_ccurl="https://creativecommons.org/licenses/by/4.0/")),
+            "refresh_evidence_changed",
+        ),
+        (document(row(audio="https://unexpected.test/")), "stream_url"),
+        (listing([]), "refresh_empty"),
+        (document(warnings=FAKE_ID), "application_status_or_warning"),
+    ],
+)
+def test_refresh_refusal_cannot_choose_alternative(
+    refresh: bytes, reason: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def exchange(_target: str, _transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert metadata and calls <= 2
+        return listing([row(), row(id="701")]) if calls == 1 else refresh
+
+    monkeypatch.setattr(subject, "exchange", exchange)
+    report = subject.Report()
+    with pytest.raises(subject.Stopped, match=f"^{reason}$"):
+        subject.probe(FAKE_ID, report)
+    assert calls == 2
+    assert not report.metadata_validated
+    assert report.selected_track_id == "168"
+    assert report.stream.requests_attempted == 0
+
+
+def test_refresh_normalizes_only_duration_and_checked_stream_query() -> None:
+    report = subject.Report()
+    selected = subject.select_candidate(document(), FAKE_ID, report)
+    refreshed = document(
+        row(
+            duration="180",
+            audio=f"https://{subject.STREAM_HOST}/?from=app-{FAKE_ID}&format=mp32&trackid=168",
+        )
+    )
+    assert subject.validate_refresh(refreshed, FAKE_ID, selected, report) == selected.target
+
+
+@pytest.mark.parametrize("stage", [0, 1, 2])
+@pytest.mark.parametrize("failure", ["http_rejected", "response_limit", "timeout"])
+def test_all_three_transfers_have_independent_caps_and_no_retry(
+    stage: int, failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(subject, "METADATA_BYTES", 2_000)
+    monkeypatch.setattr(subject, "STREAM_BYTES", 3_000)
+    calls: list[subject.Transfer] = []
+
+    def exchange(_target: str, transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        index = len(calls)
+        calls.append(transfer)
+        transfer.connection_attempts = transfer.requests_attempted = 1
+        assert metadata == (index < 2)
+        if index == stage and failure == "timeout":
+            raise TimeoutError
+        body = document() if metadata else AUDIO
+        if index == stage and failure == "response_limit":
+            body = b"x" * 4_000
+        response = wire(
+            body,
+            metadata=metadata,
+            headers=b"",
+            status=403 if index == stage and failure == "http_rejected" else 200,
+        )
+        return subject.receive(cast(ssl.SSLSocket, Receiver(response)), transfer, metadata=metadata)
+
+    monkeypatch.setattr(subject, "exchange", exchange)
+    report = subject.Report()
+    with pytest.raises(TimeoutError if failure == "timeout" else subject.Stopped):
+        subject.probe(FAKE_ID, report)
+    assert calls == [report.search, report.metadata, report.stream][: stage + 1]
+    assert sum(item.requests_attempted for item in calls) == stage + 1
+    assert report.search.response_bytes <= 2_000
+    assert report.metadata.response_bytes <= 2_000
+    assert report.stream.response_bytes <= 3_000
+    if failure == "response_limit":
+        assert calls[-1].response_bytes == (2_000 if stage < 2 else 3_000)
+    assert report.outcome == "inconclusive"
+
+
+@pytest.mark.parametrize("expired_at", [0, 1, 2, 3])
+def test_one_child_alarm_covers_id_read_and_all_requests(
+    expired_at: int, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original = signal.setitimer
+    timers: list[float] = []
+    calls = 0
+
+    def timer(which: int, seconds: float) -> tuple[float, float]:
+        timers.append(seconds)
+        return original(which, seconds)
+
+    def read_id(_path: str) -> str:
+        assert signal.getitimer(signal.ITIMER_REAL)[0] > 0
+        if expired_at == 0:
+            signal.raise_signal(signal.SIGALRM)
+        return FAKE_ID
+
+    def exchange(_target: str, _transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert timers == [117]
+        if calls == expired_at:
+            signal.raise_signal(signal.SIGALRM)
+        return document() if metadata else b""
+
+    monkeypatch.setattr(subject.signal, "setitimer", timer)
+    monkeypatch.setattr(subject, "read_id", read_id)
+    monkeypatch.setattr(subject, "exchange", exchange)
+    assert subject.run_child("synthetic-path") == 1
+    assert calls == expired_at
+    assert timers == [117, 0]
+    assert json.loads(capsys.readouterr().out)["reason"] == "timeout"
+
+
+def test_safe_diagnostics_report_never_echoes_raw_fields(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def read_id(_path: str) -> str:
+        return FAKE_ID
+
+    monkeypatch.setattr(subject, "read_id", read_id)
+
+    def exchange(_target: str, _transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        assert metadata
+        return document(row(name=FAKE_ID), results_count="https://secret.test/" + FAKE_ID)
+
+    monkeypatch.setattr(subject, "exchange", exchange)
+    assert subject.run_child("synthetic-path") == 1
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert len(output.out) <= subject.REPORT_BYTES
+    for forbidden in (FAKE_ID, "secret.test", "Synthetic", "https://", "artist", "license"):
+        assert forbidden not in output.out
+    report = json.loads(output.out)
+    assert report["reason"] == "declared_count_type"
+    assert report["search_results"]["declared_count_type"] == "string"
+    assert report["search_results"]["list_count"] == 1
 
 
 class PlainTLS:
@@ -582,6 +883,7 @@ def test_real_supervisor_synthetic_invalid_file_is_safe(
     assert subject.run_authorized(str(path)) == 1
     result = json.loads(capsys.readouterr().out)
     assert result["reason"] == "application_id_file"
+    assert result["search"]["requests_attempted"] == 0
     assert result["metadata"]["requests_attempted"] == 0
     assert result["stream"]["requests_attempted"] == 0
 
