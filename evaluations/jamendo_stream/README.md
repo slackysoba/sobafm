@@ -5,8 +5,12 @@ Prepared for [#184](https://github.com/slackysoba/sobafm/issues/184), following
 permission is granted by this code or walkthrough.** Default invocation reads no
 Client ID, starts no child and makes no request. The coordinator owns review,
 merge, the separate go-ahead and any eventual execution. The successful earlier
-metadata check and first stream-check invocation consumed their permissions;
-neither grants another request or retry.
+metadata check and all four inconclusive stream-check invocations consumed their
+permissions; none grants another request or retry. This offline correction for
+[#199](https://github.com/slackysoba/sobafm/issues/199) needs independent review
+and merge before the coordinator scopes one invocation under the
+[standing necessary-test authorization](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6798078261).
+The author must not run the live CLI or test unreviewed changes against Jamendo.
 
 This is a transient access/framing experiment using **one fresh listing**, not
 catalog admission, complete-recording validation, decoding or playback. Current
@@ -15,7 +19,8 @@ permission. [ADR 0013](../../docs/decisions/0013-jamendo-discovery-streaming.md)
 separately accepts provisional production admission with its own checks. This
 experiment implements no production admission or playback. No
 additional product/source-policy acceptance is assumed to authorize the narrowly
-described experiment; the fresh explicit live go-ahead remains necessary.
+described experiment; the coordinator must record the concrete invocation scope
+and its applicable maintainer authorization before execution.
 
 ## Request and source boundaries
 
@@ -25,11 +30,13 @@ Official documentation rechecked on 2026-11-11, with documentation reads only:
   singles/album tracks, the distinct `audio` stream field and `audiodownload`
   download field, and `mp32` VBR MP3. First use one HTTPS GET on
   `api.jamendo.com:443`, `/v3.0/tracks/`, with `limit=10`, `order=id_desc`,
-  `format=json`, `type=single albumtrack`, `audioformat=mp32` and the operator's
+  `format=json`, `type=single albumtrack`, `audioformat=mp32`, `ccnc=true`,
+  `durationbetween=1_480` and the operator's
   runtime-only ID. No fixed track ID, featured filter, musical query, pagination
   or full-catalog count. Select the first row in returned order passing every
   existing metadata/stream-route gate below. Refresh that one ID with one GET to
-  the same endpoint and common fields, `id=<selected ID>`, `limit=1`, no `order`.
+  the same endpoint and common fields, `id=<selected ID>`, `limit=1`, no `order`,
+  `ccnc` or `durationbetween`.
 - The [artists/tracks example](https://developer.jamendo.com/v3.0/artists/tracks)
   publishes the stream URL shape on `prod-1.storage.jamendo.com`, distinct from
   its download path. Accept only the refreshed `audio` URL with HTTPS, this exact
@@ -48,11 +55,25 @@ Official documentation rechecked on 2026-11-11, with documentation reads only:
   from an offline library. No audio or raw metadata artifact is retained here.
   API access, a CC URL and the download flag do not establish playback rights.
 
+The documented non-commercial license and duration filters narrow only this
+probe's listing to a source-claimed subset of its already recognized policy.
+They cannot establish eligibility or replace any local gate, exact refresh
+binding or selected-track stream check. No `include=licenses` fix is assumed.
+The experiment asks whether that subset supplies a candidate passing all
+unchanged gates, or classifies the remaining safe refusal more precisely. Only
+a passing candidate proceeds to bounded refresh/audio. Another all-refused
+listing ends the experiment for evidence assessment, never an automatic retry.
+The 1–480-second screen is evaluator sizing, not a production duration policy.
+
 Metadata must contain a nonempty bounded title and artist name, numeric artist
 identity, a consistent album/single shape, a 1–480-second integer duration, a
 recognized CC license URL and the exact candidate's Jamendo backlink. If `type`
 is returned, it must agree with that shape. The API need not return a type field;
-album shape is only a consistency check, not proof of a whole recording. The
+album shape is only a consistency check, not proof of a whole recording. For a
+single, either or both optional album fields may be absent or empty strings.
+Null/non-string fields, a partially populated album, invalid album identity,
+or a conflicting explicit type still refuse the row. An album track requires
+both a positive numeric album ID and a nonempty bounded album name. The
 duration ceiling is a conservative sizing screen (480 seconds at 320 kbit/s
 is 19.2 MB); it is not a bitrate, size or completeness guarantee. The actual
 byte/deadline limits always win. The download flag must be Boolean, but either
@@ -73,8 +94,26 @@ does not matter. Even an incidental changed field stops conservatively. This
 small access probe does not reconcile changes or certify notice completeness.
 The evidence digest and raw rows/URLs are neither reported nor persisted.
 
-The six standard CC families and versions 1.0/2.0/2.5/3.0/4.0 are recognized
-only as metadata evidence for this non-public access check. Missing/unrecognized
+The finite CC formats match the existing [production normalization](../../docs/jamendo-catalog.md#validation-and-evidence):
+BY, BY-SA, BY-ND, BY-NC, BY-NC-SA and BY-NC-ND at 2.0/2.5/3.0/4.0;
+1.0 uses historical BY-ND-NC instead of BY-NC-ND. The only supported ports
+are US 3.0 and France 2.0, for the same six families at those versions.
+The exact lowercase family/version/jurisdiction path must follow `/licenses/`,
+with zero or one trailing slash. No percent-decoding, case folding of paths,
+unknown combinations or public-domain instruments are accepted.
+
+As in production, the authority must be exactly `creativecommons.org`, without
+credentials, an explicit port (even `:443`/`:80`), a trailing dot or host-case
+variation. The known lowercase `http://creativecommons.org/` prefix is accepted;
+HTTPS scheme case follows the standard parser. Uppercase HTTP does not match
+that existing production upgrade. Query/fragment delimiters are refused even
+when empty, preserving the probe's stricter prior boundary. Whitespace, controls
+and backslashes refuse before parsing. These are format checks only; no CC URL
+is fetched, and the raw license field remains in the conservative whole-row
+refresh binding. Even an accepted spelling change between listing and refresh
+stops before streaming.
+
+Licenses are recognized only as metadata evidence for this non-public access check. Missing/unrecognized
 rights or credit fields stop before audio. This does not certify complete
 notices, ownership, provenance, integrity, licensing or admission. No raw fields
 are printed or published. Unexpected host/query/license shapes are inconclusive;
@@ -92,7 +131,7 @@ review them separately without trying another route.
 | Time | One supervisor deadline covers startup, ID-file read, DNS, TLS, all three requests and parsing. Work stops by 117 seconds, leaving three seconds within the proposed 120-second total for cleanup. A child alarm independently covers its work, never reset between requests. On timeout/interrupt the parent kills its one child. |
 | Cleanup debt | Every reap wait is bounded. The original three-second cleanup cutoff is never reset, including repeated interruption. If the OS delays reaping beyond it, the supervisor retains ownership until actual settlement and reports failed cleanup; elapsed time can then exceed 120 seconds. This is failed cleanup, never permission to keep requesting, retry or abandon the child. No claim guarantees kernel release. |
 | Credential | Only the opted-in child opens a dedicated regular file: no symlink/FIFO, at most 160 bytes, ASCII ID of 6–128 allowed characters. Suspended shared test ID rejected. No environment-file loading, client secret/OAuth or ID value in arguments. Minimal child environment; stderr discarded and core-file limit zero. |
-| Report | One sanitized ASCII JSON report, at most 100 KB. Fixed local reasons, safe selected numeric ID/count diagnostics, Boolean refresh-validation flag, numeric request/status/byte facts, framing/EOF and stream-body SHA-256 only. No raw metadata/audio, headers, URL, title, artist, license text, key or exception message. An accidental key substring suppresses the entire child report. Keep all retained evidence for the invocation within 100 KB. |
+| Report | One sanitized ASCII JSON report, at most 100 KB. Fixed local reasons, at most ten candidate first-refusal entries (ordinal, fixed gate/condition and optional fixed license component/text detail), safe selected numeric ID/count diagnostics, Boolean refresh-validation flag, numeric request/status/byte facts, framing/EOF and stream-body SHA-256 only. No raw metadata/audio, headers, URL, title, artist, license text, key or exception message. An accidental key substring suppresses the entire child report. Keep all retained evidence for the invocation within 100 KB. |
 
 The HTTP/1.0 choice follows the earlier [#175 review](https://github.com/slackysoba/sobafm/pull/175):
 [RFC 9112 §6.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.1) prohibits
@@ -132,13 +171,84 @@ and count/list disagreement. `selected_track_id` is null until selection;
 `rejected_candidates` counts only rows examined and rejected before selection.
 `metadata_validated` becomes true only after the refresh and consistency check.
 
+`candidate_refusals` retains only the first failed gate for each examined and
+refused listing row, in order, at most ten entries. `ordinal` is the one-based
+list position, never a source ID. `gate` is one of `row`, `identity`, `title`,
+`artist`, `album`, `duration`, `license`, `backlink`, `download_flag`,
+`stream_route`. `condition` is `missing` (absent required field), `type` (wrong
+JSON type), `shape` (empty/malformed/conflicting evidence), or `bound` (outside
+an existing length/range limit). A non-object row is `row/type`; an unclassified
+local candidate refusal is `row/shape`, without parsing its exception text.
+The shared field gates use fixed `candidate_<gate>_<condition>` reasons during
+refresh and do not add listing entries. Existing refresh identity/evidence
+and response-envelope reasons remain separate. These
+diagnostics contain no source values, IDs, URLs, value hashes, exceptions or
+secrets. They describe a local check, not a provider's reason or policy verdict.
+
+For `license/shape`, `license_component` identifies the first failing check in
+this order: `text_shape`, `scheme`, `authority`, `query_or_fragment`, `path_shape`,
+`family`, `version`, `jurisdiction`, `combination`. It is null for missing/type/bound
+license failures, other gates and unclassified failures. The final combination
+check rejects known parts used together in an unsupported family/version/port.
+Listing refusals carry the component in their ordinal entry; a terminal refresh
+license refusal carries it at report level, with the existing
+`candidate_license_shape` reason and no new listing entry. The report-level
+field is otherwise null. Only enum constants are emitted, never component
+contents, source IDs, value hashes or parser exception text.
+
+Only for `license/shape/text_shape`, `license_text_detail` gives the first
+failure in this deterministic order:
+
+1. `blank`: empty or entirely whitespace (`not value.strip()`). This check
+   classifies only; it never trims or changes the value used for validation.
+2. `whitespace`: any whitespace in a nonblank string, including whitespace
+   controls such as tab/newline. This wins over other controls or backslashes.
+3. `control`: any Unicode category C character, including ASCII controls/DEL,
+   format characters, surrogates, private-use and unassigned characters. This
+   wins over backslash, regardless of their positions in the string.
+4. `backslash`: a backslash with none of the earlier failures.
+
+The detail accompanies the component in listing entries or at report level for
+a terminal refresh refusal; otherwise it is null. Missing/type/bound checks
+still precede text shape. No string length, codepoint, source value, value hash,
+URL or arbitrary error is retained. The rejection set and subsequent component
+precedence are unchanged; there is no trimming, double-unescaping, invented
+license or expanded rights recognition.
+
 The [first stream-check assessment](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6794455477)
 preserves an **inconclusive** single-candidate count gate, zero audio exchange
 and safe cleanup. Its report did not distinguish count type/value from container
 shape/list count. Candidate 168's absence and the precise cause are unknown;
 free streaming was not proven. Keep that attempt and its consumed permission.
-This revision improves the next separately approved attempt; it does not
-reinterpret the old result or authorize a retry.
+The [second stream-check assessment](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6795405761)
+preserves an **inconclusive** ten-row listing, ten local refusals, no selection,
+zero refresh/audio requests and safe cleanup. No raw rows or per-row refusal
+reasons survived. Existing saved reports cannot recover the historical refusal
+causes. The optional-album omission gap was demonstrated synthetically; it is
+**not the established cause** of those ten refusals. Keep both attempts unchanged,
+with their consumed permissions. This revision improves only a future separately
+authorized attempt after independent review and merge; it neither reinterprets
+those results nor authorizes a retry.
+
+The [third stream-check assessment and independent compatibility review](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6796833709)
+preserves an **inconclusive** ten-row listing with ten `license/shape` refusals,
+no selection, zero refresh/audio requests and safe cleanup. The actual license
+values were not retained; the exact mismatch remains unknown. HTTP and HTTPS
+already passed the old regex. Offline comparisons established missing US 3.0,
+France 2.0, historical BY-ND-NC 1.0 and no-trailing-slash recognition, plus
+incorrect acceptance of BY-NC-ND 1.0. None is an established a3 cause. This
+revision corrects only those finite formats and safe diagnostics; a1/a2/a3 stay
+unchanged, unsuccessful and permission-consumed. It establishes neither stream
+access nor production admission, media validity or release readiness.
+
+The [fourth stream-check assessment](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6798145415)
+preserves an **inconclusive** ten-row listing: nine first refusals at
+`license/shape/text_shape` and one at `duration/bound`, with no selection,
+refresh or audio request. Its text diagnostic cannot distinguish blank,
+whitespace, control/category-C or backslash, and no raw value survived. No
+parser defect or historical cause is established. The new text detail and
+listing subset apply only to a future reviewed invocation; a1/a2/a3/a4 and
+their consumed permissions remain intact.
 
 ## Operator walkthrough after review and merge
 
@@ -152,17 +262,18 @@ reinterpret the old result or authorize a retry.
    only the opted-in runtime reads contents. Never use a Client Secret, OAuth
    token, environment file, Discord or Gemini credential file. Do not paste the
    ID into chat, GitHub or a command. Give only its private Linux-visible path.
-3. The coordinator obtains and records the fresh go-ahead below, tied to the
-   reviewed commit. Preparation and the previous metadata permission are not
-   substitutes. The operator uses an existing locked Linux environment; no live
-   invocation installs packages or changes the host.
+3. The coordinator records one concrete invocation as described below, tied to
+   the reviewed merged commit and the standing necessary-test authorization.
+   Preparation and earlier consumed permissions are not substitutes. The
+   operator uses an existing locked Linux environment; no live invocation
+   installs packages or changes the host.
 4. Default demonstration, requiring no ID and no network:
 
    ```sh
    .venv/bin/python -I -B evaluations/jamendo_stream/probe.py
    ```
 
-   Only after the fresh go-ahead, the command shape is:
+   Only after the coordinator's recorded scope, the command shape is:
 
    ```sh
    .venv/bin/python -I -B evaluations/jamendo_stream/probe.py \
@@ -178,26 +289,18 @@ reinterpret the old result or authorize a retry.
    a timeout is not proof of release. The coordinator reports the exact result
    and preserves any failed verdict. No audio is retained to clean up.
 
-### Proposed next go-ahead — not permission already received
+### Next invocation scope — coordinator-owned after review and merge
 
-> I authorize one invocation of the reviewed and merged #184 Jamendo stream
-> evaluator at source commit `<exact reviewed commit>`, using my existing
-> dedicated operator-owned Client ID file without showing the ID to the agent.
-> Allow one HTTPS current listing of at most ten singles/album tracks ordered
-> by descending ID, deterministic selection of its first acceptable row, one
-> by-ID refresh of only that candidate, and only if all gates and evidence
-> consistency pass, one ordinary mp32 stream GET. Use only api.jamendo.com and
-> the exact prod-1.storage.jamendo.com route described here, at most three
-> requests/connections. Limit each metadata response to 256,000 decrypted HTTP
-> bytes and the stream to 20,000,000 bytes, with 117 seconds of total work and three
-> seconds for cleanup within 120 seconds. If cleanup misses its deadline,
-> preserve the failure and retain ownership until the child is reaped; make no
-> further request. No retries, redirects, range/resume, alternate candidate,
-> proxy, disguised client, decoding, playback, retained audio, model or Discord
-> calls. Keep only the sanitized report and invocation evidence, at most 100 KB.
-> Stop on refusal, warning, authentication/rate-limit error, unexpected URL,
-> invalid metadata/framing or any bound. This authorizes no spending, admission,
-> source-policy change, production integration or second invocation.
+Record the exact reviewed merged #199 source commit and one invocation using
+the existing dedicated operator-owned Client ID file, without exposing its
+contents. Bind the standing authorization to the listing's `ccnc=true` and
+`durationbetween=1_480` subset, at most ten singles/album tracks ordered by
+descending ID, selection of the first locally acceptable row, one refresh of
+only that candidate, and one ordinary mp32 stream only after every gate and
+whole-row consistency check passes. The hosts, routes, three-request ceiling,
+byte/time/cleanup/report limits and all prohibitions above remain exact. The
+purpose is access/refusal evidence only, not admission or release qualification.
+Record the result and stop; no result authorizes a second invocation.
 
 ## Offline checks
 
@@ -213,8 +316,13 @@ uv run pytest -q evaluations/jamendo_stream
 
 Synthetic bytes/files, fake deadlines/children and loopback peers test request
 order, fixed destinations, no retries/redirects/address fallback, actual header
-parsing and prior framing failures, byte limits, invalid metadata, redaction,
-timeouts and retained cleanup debt. Loopback transport uses a TLS stand-in;
+parsing and prior framing failures, byte limits, optional single album fields,
+contradictory album evidence, the supported/unsupported license matrix through
+listing and refresh compared with production semantics, spelling/authority
+boundaries, fixed bounded first-refusal component diagnostics, invalid
+metadata, exact encoded subset parameters, ignored-filter local refusals,
+text-detail precedence, redaction, timeouts and retained cleanup debt. Loopback transport uses
+a TLS stand-in;
 real TLS-context defaults are checked separately. Nothing here establishes
 actual provider/account/TLS/media behavior. No live request has been made by
 this preparation.
