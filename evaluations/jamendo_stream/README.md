@@ -5,9 +5,9 @@ Prepared for [#184](https://github.com/slackysoba/sobafm/issues/184), following
 permission is granted by this code or walkthrough.** Default invocation reads no
 Client ID, starts no child and makes no request. The coordinator owns review,
 merge, the separate go-ahead and any eventual execution. The successful earlier
-metadata check and all four inconclusive stream-check invocations consumed their
-permissions; none grants another request or retry. This offline correction for
-[#199](https://github.com/slackysoba/sobafm/issues/199) needs independent review
+metadata check and all five inconclusive stream-check invocations consumed their
+permissions; none grants another request or retry. This offline diagnostic change for
+[#201](https://github.com/slackysoba/sobafm/issues/201) needs independent review
 and merge before the coordinator scopes one invocation under the
 [standing necessary-test authorization](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6798078261).
 The author must not run the live CLI or test unreviewed changes against Jamendo.
@@ -215,6 +215,43 @@ URL or arbitrary error is retained. The rejection set and subsequent component
 precedence are unchanged; there is no trimming, double-unescaping, invented
 license or expanded rights recognition.
 
+For `stream_route/shape` only, `route_diagnostic` holds a fixed record for the
+already bounded string (at most 1,024 characters). It is null for missing/type/bound
+failures, earlier gates, accepted routes and unclassified failures. Listing
+refusals carry it in their ordinal entry; a terminal refresh refusal carries it
+at report level with the unchanged `candidate_stream_route_shape` reason.
+
+| Field | Fixed classifications |
+| --- | --- |
+| `non_ascii`, `whitespace`, `control`, `backslash` | `present` / `absent`; whitespace uses Unicode whitespace, controls are ASCII 0–31 and DEL, non-ASCII is separate |
+| `url_parser` | `success` / `failure` |
+| `scheme` | `https` / `http` / `empty` / `other` |
+| `authority` | `exact` / `userinfo` / `port` / `userinfo_and_port` / `other`; only `exact` means the entire authority matched |
+| `path` | `root` / `empty` / `other` |
+| `fragment` | `present` / `absent`, including an empty fragment delimiter |
+| `query_parser` | `success` / `field_limit` / `syntax`; the existing three-field limit precedes syntax |
+| `query_keys` | `exact` / `mismatch` |
+| `missing_keys`, `extra_keys`, `duplicate_keys` | Independent `present` / `absent` facts, so simultaneous key-set failures remain visible |
+| `track_id`, `format`, `application_binding` | `match` / `mismatch` against the selected ID, mp32 and expected application binding |
+
+Dependent fields are explicitly `not_evaluated` after parser failure; value
+comparisons are also `not_evaluated` for missing or duplicate corresponding keys.
+A failed query parse still permits scheme/authority/path/fragment diagnostics.
+Text and raw fragment classes remain available after URL parser failure.
+Bounded text failures may still be parsed for diagnostics: these fields describe
+the standard parser's interpretation, including its own character stripping,
+without changing or repairing the input used by the acceptance gate.
+
+`first_component` preserves deterministic original-check precedence:
+`text_shape`, `url_parser`, `query_parser`, `scheme`, `authority`, `path`,
+`fragment`, `query_keys`, `track_id`, `format`, `application_binding`.
+Text shape still rejects non-ASCII, ASCII characters 0–32 and DEL; backslash is
+an independent diagnostic fact, not a new acceptance predicate. Multiple later
+mismatches remain visible. No raw values, query names, credentials, IDs, lengths,
+codepoints, value hashes or exception messages enter this record. The ten-entry
+and 100,000-byte report caps and whole-report credential-substring suppression
+remain. No trimming, extra unescaping, alternative URL or request is introduced.
+
 The [first stream-check assessment](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6794455477)
 preserves an **inconclusive** single-candidate count gate, zero audio exchange
 and safe cleanup. Its report did not distinguish count type/value from container
@@ -249,6 +286,13 @@ whitespace, control/category-C or backslash, and no raw value survived. No
 parser defect or historical cause is established. The new text detail and
 listing subset apply only to a future reviewed invocation; a1/a2/a3/a4 and
 their consumed permissions remain intact.
+
+The [independent fifth-attempt review](https://github.com/slackysoba/sobafm/issues/2#issuecomment-6798969703)
+found no evidenced request/parser defect. The result remains inconclusive;
+actual source strings and exact simultaneous mismatches are unknown. This
+diagnostic-only change preserves a1–a5 and their consumed permissions. It makes
+a future separately scoped experiment informative without expanding any route,
+rights, credential, identity, refresh or request predicate.
 
 ## Operator walkthrough after review and merge
 
@@ -291,7 +335,7 @@ their consumed permissions remain intact.
 
 ### Next invocation scope — coordinator-owned after review and merge
 
-Record the exact reviewed merged #199 source commit and one invocation using
+Record the exact reviewed merged #201 source commit and one invocation using
 the existing dedicated operator-owned Client ID file, without exposing its
 contents. Bind the standing authorization to the listing's `ccnc=true` and
 `durationbetween=1_480` subset, at most ten singles/album tracks ordered by
@@ -321,7 +365,10 @@ contradictory album evidence, the supported/unsupported license matrix through
 listing and refresh compared with production semantics, spelling/authority
 boundaries, fixed bounded first-refusal component diagnostics, invalid
 metadata, exact encoded subset parameters, ignored-filter local refusals,
-text-detail precedence, redaction, timeouts and retained cleanup debt. Loopback transport uses
+text-detail precedence, every route diagnostic dimension and mixed failures,
+parser-dependent not-evaluated states, unchanged route acceptance/reconstruction,
+listing/refresh propagation, worst-case report size and credential-like marker
+suppression, redaction, timeouts and retained cleanup debt. Loopback transport uses
 a TLS stand-in;
 real TLS-context defaults are checked separately. Nothing here establishes
 actual provider/account/TLS/media behavior. No live request has been made by
