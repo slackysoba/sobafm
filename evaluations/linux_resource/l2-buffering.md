@@ -105,7 +105,8 @@ PCM and frames are discarded in memory.
   and caps, five ordered successful pair rows with both refunds and in-bound measurements,
   the ten-session/five-renewal summary, client exit zero, no OOM, verified cleanup and
   wrapper exit zero. Partial client records are retained as evidence on failure.
-  Allow at most 64 KiB of retained JSON and one 64 KiB rolling log per temporary container.
+  Allow at most 64 KiB of retained JSON and one 64 KiB rolling log per temporary container,
+  using the local driver with `max-size=64k`, `max-file=1` and `compress=false`.
   The client-record input is limited to eight rows and 16 KiB. No audio, prompts, keys,
   environment dumps or private paths belong in the result.
 
