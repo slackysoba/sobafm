@@ -1,6 +1,6 @@
 # Product requirements
 
-This specification defines product behavior and acceptance criteria. The three-source permission and prompt-selection decisions are accepted. Offline metadata selection is implemented; source integrations, audio playback and release qualification remain incomplete. No listening evaluation is claimed.
+This specification defines product behavior and acceptance criteria. Source permission, prompt selection and [Jamendo discovery with checked streaming](decisions/0013-jamendo-discovery-streaming.md) are accepted designs. The production catalog path ranks admitted local FMA recordings and plays local files; dynamic Jamendo discovery and streaming are not implemented. One reviewed Jamendo metadata request succeeded; no audio request occurred. Source integration and release qualification remain incomplete. No listening evaluation is claimed.
 
 ## Product and engineering intent
 
@@ -15,7 +15,7 @@ Implement the specified behaviors without importing unrelated platform code or u
 ## Scope
 
 - Linux/Docker is the only deployment target. Windows may host an editor; there is no Windows runtime, native package, compatibility layer, CI target or installation guide.
-- `/play` prioritizes complete recordings with more strongly supported prompt matches, comparing every prepared source partition before choosing. Length is a secondary preference. Listening comparisons are optional deferred evidence, not an implementation prerequisite.
+- `/play` prioritizes complete recordings with more strongly supported prompt matches, pooling admitted candidates from enabled sources before choosing. Jamendo has the explicit provisional first-play exception below. Length is a secondary preference. Listening comparisons are optional deferred evidence, not an implementation prerequisite.
 - Use a short outcome-based roadmap with explicit acceptance evidence.
 - Scheduled agent automation requires explicit maintainer approval.
 
@@ -25,17 +25,17 @@ Linux amd64 is the first release target. Native arm64 is on hold until after the
 
 Provide a curated, richly described selection from the enabled sources. The maintainer confirmed direct permission for Jamendo, ccMixter and Free Music Archive with attribution, no commercialization or monetization, and donations permitted. [ccMixter is not an enabled audio source](#first-source-evaluation). Recording identity, complete credits, service access and permitted storage still require evidence. No entire catalog is assumed to provide superior quality.
 
-Build around a catalog prepared ahead of playback: admit eligible recordings with provenance and credits, curate their quality, retain useful descriptors, search locally, rank for request fit and variety, then retrieve audio under each source's permitted policy. Expensive analysis belongs in ingestion, not between a slash command and first audio. Keep this a small application capability, not a general data platform.
+Keep FMA's admitted, operator-hosted library prepared ahead of playback under [ADR 0007](decisions/0007-fma-dataset-batch-catalog.md). For Jamendo, [ADR 0013](decisions/0013-jamendo-discovery-streaming.md) accepts validated musical intent, bounded search across the permitted source catalog and ranking alongside admitted untried FMA recordings. Refills reuse intent. Singles and album tracks are eligible; do not restrict discovery to featured tracks. Retain provenance, credits and useful descriptors, with source-specific admission and retrieval. Expensive analysis belongs in ingestion, not between a slash command and first audio. Keep this a small application capability, not a general data platform.
 
 ### First source evaluation
 
-The [accepted selection decision](decisions/0002-prompt-catalog-selection.md) follows the maintainer's direction to progress without listening tests. Compare all supplied source metadata in one pool; never stop after a match from the first source. Report missing, partial, unavailable and empty partitions explicitly. A complete prepared snapshot is a bounded subset, not a claim to have searched a provider's entire catalog.
+The [initial selection decision](decisions/0002-prompt-catalog-selection.md), as narrowly superseded for Jamendo by [ADR 0013](decisions/0013-jamendo-discovery-streaming.md), follows the maintainer's direction to progress without listening tests. Compare admitted candidates in one pool; never stop after a match from the first source. Report missing, partial, unavailable, disabled and empty partitions explicitly. A complete prepared snapshot is a bounded subset. Source-wide Jamendo search describes its reach, not exhaustive global ranking; an empty bounded window does not establish catalog exhaustion. FMA may still supply a match when Jamendo is unavailable.
 
 Use deterministic regressions to establish validation and failure behavior; [matching quality](decisions/0006-gemini-play-matching.md) needs opt-in evaluation against the real provider. The [earlier comparison protocol](catalog-evaluation.md) remains available for optional future human enjoyment, fit and fidelity evidence. It is deferred, supplies no invented ratings, and is not a gate for this slice. Audio acquisition, source integration and deployment retain their separate authorization and qualification requirements.
 
 | Candidate | Intended contribution | Retrieval and qualification boundary |
 | --- | --- | --- |
-| Editorial Jamendo | Improved coverage using featured selections, relevance-preserving popularity boosts and artist diversity | The official tracks API supports `featured`, `boost`, `groupby=artist_id` and richer metadata. Its default `mp31` is 96 kbps; evaluate `mp32` VBR for fidelity and reliability rather than assuming the lowest-bitrate default is appropriate. [API documentation](https://developer.jamendo.com/v3.0/tracks) |
+| Jamendo | Source-wide discovery, including singles and album tracks, with bounded pooled ranking and no featured-only restriction | The accepted path uses checked transient streaming under ADR 0013. Evaluate `mp32` VBR for fidelity and reliability; do not assume the default `mp31` at 96 kbps is appropriate. One metadata request succeeded; no audio request occurred. [API documentation](https://developer.jamendo.com/v3.0/tracks) |
 | ccMixter | **Not enabled; see below.** A complementary curated pool with editorial picks, vocals and instrumentals | Its public query API explicitly supports third-party applications, but its media route refuses non-browser clients. [Application/API statement](https://ccmixter.org/about) |
 | Free Music Archive | Hand-picked albums, artists and genres in an operator-hosted library | FMA's API is closed; hotlinking is disallowed. Apps must host permitted copies themselves. Forwarding user searches to scrape FMA needs explicit approval. Use controlled ingestion, not live scraping from `/play`. [App-developer policy](https://freemusicarchive.org/app-developers). The current catalog is prepared from the [FMA research dataset](https://github.com/mdeff/fma), under the limits in [decision 0007](decisions/0007-fma-dataset-batch-catalog.md). |
 | Incompetech, Musopen and directly opted-in artists/labels | Specialist instrumental/classical coverage or deliberately chosen music | These candidates require source-specific qualification. Verify recording-specific rights, source access and operational fit before adoption. Composition age alone does not establish recording rights. |
@@ -48,13 +48,23 @@ Do not assume Pixabay's standalone-use restrictions or video-focused NCS/other c
 
 Keep a stable source identity, recording identity, title/creators, provenance, license/notices, permitted retrieval/storage policy, availability, duration/format and curation state. Keep authored descriptors and their confidence/provenance distinguishable from source tags. Deduplicate imported recordings where identifiable.
 
-[Gemini ranks the admitted recordings](decisions/0006-gemini-play-matching.md) a program hasn't played against the request, [a few at a time](decisions/0011-program-refill.md), using everything known about each: title, creators, duration, descriptors and retained source details such as tags, tempo and album. Require complete recordings; reject previews, excerpts, stems, loops and sample packs rather than padding them. Duration alone never establishes completeness. Explicit duration, exact identity and exclusion wording informs the ranking and isn't a hard filter.
+[Gemini ranks admitted recordings](decisions/0006-gemini-play-matching.md) a program hasn't played or tried against the request, [eight at a time](decisions/0011-program-refill.md), using title, creators, duration, descriptors and retained source details such as tags, tempo and album. Require complete recordings subject only to the Jamendo provisional rule below; reject identified previews, excerpts, snippets, stems, loops and sample packs rather than padding them. Duration alone never establishes completeness. Explicit duration, exact identity and exclusion wording informs the ranking and isn't a hard filter.
 
-Preserve source-bound immutable credits and provenance. Provider/model metadata cannot approve itself: a separate trusted review binds credit completeness and access readiness to the exact metadata digest. Source details are matching hints outside that digest and cannot grant admission. Metadata fit is not an enjoyment or fidelity score. Recent-history diversity and exploration belong to a later continuous-station slice. A skip is weak evidence of dislike, and favorite/dislike commands remain a later enhancement.
+Preserve source-bound immutable credits and provenance. Provider/model metadata cannot approve itself. FMA keeps separate trusted reviews binding credit completeness and access readiness to the exact metadata digest; its source details remain matching hints outside that digest. Jamendo instead requires the operator-enabled local policy and both digest bindings below. Metadata fit is not an enjoyment or fidelity score. Recent-history diversity and exploration belong to a later continuous-station slice. A skip is weak evidence of dislike, and favorite/dislike commands remain a later enhancement.
 
 Screen corrupt or incomplete files, unintended long silence and severe clipping separately from musical taste. Intentional lo-fi texture is not automatically a defect. Add automated instrument/vocal/tempo/energy descriptions or text/audio embeddings only if a bounded comparison demonstrates better matching that justifies dependency, compute and maintenance costs. Do not require CLAP, a vector database, GPU service or an LLM analysis call per track by default.
 
 A musical request always gets the nearest admitted recording, and the reply says how close it is: the named recording, a close match or the nearest available. Where the catalog lacks a requested artist or title, play the nearest fit and say so; never present a substitute as the requested recording or promise mainstream catalog coverage. Catalog lookup must not inherit generated-music artist-imitation restrictions accidentally.
+
+### Jamendo checked first-play admission
+
+Apply [ADR 0013's full `jamendo-stream-1` rule](decisions/0013-jamendo-discovery-streaming.md#jamendo-only-admission-jamendo-stream-1), disabled unless the operator enables it. This Jamendo-only exception accepts an ordinary identified listing and normal stream with known duration and no contrary evidence as a provisional presumption, not proof of completeness or undisclosed rights. The maintainer accepted that the source may be wrong or omit a credit and that some audio may be heard before a later failure is detected. FMA's exact admitted list and manual reviews remain unchanged.
+
+Require matching stable identity, nonempty title and creator, a validated source backlink, positive finite duration, a recognized Creative Commons license with exact version/jurisdiction and the ordinary streaming route. Reject known incomplete or non-recording forms, missing/invalid required identity, rights or credits, unreadable required notices and unresolved composition/sample-rights conflicts. Preserve all supplied creators, Jamendo provider credit, backlink, license and required notices without truncation. Missing optional album data for a single is allowed; no arbitrary 1–15-minute eligibility filter is adopted.
+
+Bind each local decision to its recording key, canonical metadata digest, policy-evidence digest covering every admission input (including relevant source details and notices), policy version, reason and refresh time. Search-time decisions allow ranking only. Immediately before every audio open, refresh by ID and re-evaluate, even on a cache hit. Changed metadata/evidence/policy invalidates the old decision; a changed valid recording gets a new immutable decision and credits. Material identity/content changes discard the stale ranked choice. Failed refresh, removal or known rights conflict permits no audio.
+
+Inspect bounded leading embedded tags before readiness and later notices as they arrive. Additional required notices or conflicts invalidate approval and stop the attempt rather than rewriting heard credits; unknown or oversized unreconcilable notices fail closed. Bind prepared audio and rendered credits to the refreshed decision. Only its actual source switch changes `/now`. This records application of the accepted policy, not independent source truth or legal assurance.
 
 ### Source-specific audio storage
 
@@ -62,9 +72,9 @@ Use transient streaming buffers for Jamendo, with only operationally necessary c
 
 For sources permitting copies, support either bounded temporary acquisition followed by deletion or an operator-managed curated library, chosen according to the source and deployment. FMA-style imports require hosted copies; repeated download/play/delete is not a workaround for its no-hotlinking policy. Deleting a file never expands permission to use it.
 
-Durable catalog metadata is expected. Persist audio only where the chosen source and actual recording permit it, with a configured storage limit, validation, eviction/removal policy and clearly documented volume. Recheck availability or rights changes according to source obligations. Do not store permanent signed/credential-bearing URLs. No listener-facing download, offline player or replay-cache product is included.
+Retain prepared FMA metadata. Jamendo starts with program-scoped candidate windows and only necessary decisions/credit provenance in a documented bounded journal, with no raw-response archive or mandatory new metadata database. Persist audio only where the chosen source and actual recording permit it, with a configured storage limit, validation, eviction/removal policy and clearly documented volume. Recheck availability or rights changes according to source obligations. Do not store durable Jamendo stream URLs or permanent signed/credential-bearing URLs. No listener-facing download, offline player or replay-cache product is included.
 
-Operator-side audio persistence is limited to qualified imported sources. Record the enabled-source and storage decision before implementation. Unknown or conflicting rights make a recording ineligible.
+Operator-side audio persistence is limited to qualified imported sources. Record the enabled-source and storage decision before implementation. Missing required rights evidence or conflicting rights make a recording ineligible; the Jamendo rule's provisional reliance on published evidence does not certify undisclosed rights.
 
 ## Commands and access
 
@@ -95,7 +105,7 @@ Each server has one connected player and at most one desired program. There is n
 
 A failed or cancelled replacement preserves current playable audio where possible. Rapid requests settle deterministically. Stale callbacks cannot replace the newer request's state, release its cooldown or announce its credits.
 
-Generated programs last the configured duration, restarting that duration on a new accepted generated request. Catalog programs continue until stopped, replaced, voice is lost, listener grace expires, every admitted recording has been played or tried, or Gemini doesn't supply more within [a finite bound](decisions/0011-program-refill.md).
+Generated programs last the configured duration, restarting that duration on a new accepted generated request. Catalog programs continue until stopped, replaced, voice is lost, listener grace expires, or selection reaches its finite recovery, history, cycle or quota bound. Exhausting a fixed prepared catalog may end a program; exhausting one Jamendo search window is not source-catalog exhaustion. Preserve [ADR 0011's refill behavior](decisions/0011-program-refill.md) with [ADR 0013's discovery bounds](decisions/0013-jamendo-discovery-streaming.md#search-ranking-and-bounded-continuation).
 
 End the program 60 seconds after the last listener leaves. A listener is neither a bot nor deafened. Cancel the grace period if a listener returns. Stay connected and silent after the program ends.
 
@@ -105,9 +115,11 @@ Generated music is instrumental, optionally with wordless vocals. Catalog music 
 
 Bound catalog selection attempts, retries, prefetched work and no-repeat history. Keep at most the audible track and one prepared next track. Exhaustion produces a useful explanation and bounded recovery, not a hot search loop or automatic history clearing to repeat the same tracks.
 
+Each Jamendo selection attempt uses at most two sequential pages of 100 and a 1 MiB limit per metadata response, advancing a bounded cursor across refills and deduplicating stable IDs. Keep the 256-record/source envelope and 512,000-character matching ceiling; reject/degrade with explicit coverage rather than truncate credits. Keep eight choices per list and three refill attempts with the existing backoff; search counts inside each attempt, with no multiplied retry loops. End before evicting from the 768-key played/tried history, at 768 selection cycles, or after three no-progress attempts, with an honest reason. Count calls and bytes, honor actual account/provider restrictions and operator-configured limits. No 2 GB/day or 30,000-call/month allowance is accepted.
+
 ## Interpretation and selection
 
-Use Gemini to turn a request into a validated mode-specific plan: a ranked list of admitted recordings for catalog mode. One request starts with one interpretation call, not an agent conversation or chain of speculative calls. A catalog program makes [a further bounded call](decisions/0011-program-refill.md) only when the last recording on its list starts. Validate model output before it changes state or causes provider activity.
+Use Gemini to turn a request into a validated mode-specific plan. For Jamendo-enabled catalog mode, a new request uses one musical-intent interpretation, bounded source search and one ranking call over admitted Jamendo and FMA candidates. Refills reuse intent and search/rank when the last recording on the list starts, within the existing three-attempt/backoff rule. Keep one selection pipeline per station and the shared four-model-call semaphore, with existing per-call bounds. No agent conversation or arbitrary tool use is included. Validate output before it changes state or causes provider activity. The implemented local-FMA path still makes one ranking call initially and one per refill attempt.
 
 Generated plans include a short title, one to four weighted styles and supported optional tempo, key, density, brightness, drum and wordless-vocal controls. Use relative context only within the same mode; switching modes starts a fresh interpretation and explains that behavior where needed.
 
@@ -117,7 +129,7 @@ On generated interpretation failure, use the original musical request as a simpl
 
 Generated requests for an artist's style should be translated into descriptive musical characteristics. Existing-recording search follows the curated catalog policy above; do not prohibit legitimate artist/title lookup by reusing generative-music restrictions.
 
-Only send the request, necessary current musical context and, for catalog mode, descriptive metadata about admitted recordings to the model provider. Do not send Discord identities. Keep provider credentials out of model prompts. Disable provider storage of interactions where the API allows it.
+Only send the request, necessary current musical context or validated intent and, for catalog ranking, descriptive metadata about admitted recordings to the model provider. Jamendo receives validated musical query fields, without Discord identity; disclose this additional musical search and the repeated source/model calls during refill. Do not send audio, Discord identities, credit snapshots or credentials in model prompts. Keep `store=false`; it does not remove Google's unpaid data use or human review. Existing provider, privacy, audience and no-spend choices remain in [provider access](provider-access.md).
 
 Pin a supported current model/API after checking official documentation and performing the applicable opt-in evaluation. Treat dated model names, timeouts and provider observations as assumptions requiring relevant validation. Avoid changing models without rechecking behavior.
 
@@ -142,6 +154,8 @@ Decode incrementally away from the event loop and the voice callback. The callba
 Readiness means sufficiently buffered, admitted playable audio. The initial readiness target is six seconds of pre-roll; a shorter recording requires verified completion before admission. Document any source-specific change rather than weakening readiness implicitly.
 
 Track transfer completion, decoder completion, valid PCM and audible drain separately. Clean transport completion and successful decoder termination do not alone prove all expected audio was received. Conversely, inaccurate metadata must not become an unquestioned duration oracle. Establish a finite completion policy from the chosen source's guarantees and test truncated, corrupt, oversized, stalled and cancelled streams.
+
+Jamendo's provisional first play preserves six-second readiness and completed verification for shorter recordings. Its transport slice must fix finite encoded/PCM/time/notice bounds and conservative duration tolerance before becoming Ready, covering HTTP framing, MP3 validity, decoded-duration consistency and bounded silence/clipping checks. A later integrity, severe-defect or rights/notice failure stops emission and discards that stream's buffered audio, retains failure and cleanup ownership, marks the attempt failed/tried and uses bounded continuation. No automatic restart, padding, looping or claim of full playback is allowed. Quarantine semantic/rights conflicts until corrected evidence or operator review; transient failures are retryable only through later bounded attempts without clearing program history. Preserve other playable audio when a replacement fails before switching and preserve local-file size/hash verification.
 
 Use hard finite bounds for input, output, queues, metadata, operations, concurrency and retries. Reserve payload capacity before allocation or transfer. Child processes must not outlive their accountable owners unnoticed.
 
@@ -171,7 +185,7 @@ Under the narrow decoder-PTY decision, a subsequent pair may be admitted only af
 
 Show the connected player's heard source. A pending replacement must not change heard-source title, credit history or `/now` output prematurely.
 
-Catalog admission requires a source-bound immutable credit snapshot containing the recording title, supplied creators, provider/backlink and all notices and license information required by the actual source. Validate provenance and resolve conflicting or missing required information before playback. Do not equate an API flag with complete permission.
+Catalog admission requires a source-bound immutable credit snapshot containing the recording title, supplied creators, provider/backlink and all notices and license information required by the actual source. Validate provenance and resolve conflicting or missing required information before playback. Jamendo's sole exception provisionally relies on the checked listing and available notices under `jamendo-stream-1`, with later notice failures stopping playback as specified above. Do not equate an API flag or local policy decision with complete permission.
 
 Private `/now` makes full credits available to ordinary listeners. Keep credit rendering, pagination and retained views bounded, caller-bound and expiring. Never silently truncate legally required notices. If complete safe credits exceed supported bounds, reject the candidate. Do not add a public-message fallback or new Send Messages permission just to display credits.
 
@@ -203,7 +217,7 @@ Prove behavior on the deployment target, not only through fakes.
 
 | Area | Release evidence |
 | --- | --- |
-| Catalog selection | Deterministic evidence establishes output validation, complete-recording admission, disclosed fit and honest coverage of each source. Opt-in provider evaluation establishes that real requests rank sensibly. Actual availability and file integrity require source integration evidence. Subjective enjoyment and fidelity remain unmeasured until an optional authorized listening evaluation; preserve poor matches and unavailable cases. |
+| Catalog selection | Deterministic evidence establishes output validation, source-specific admission (including the explicit Jamendo provisional exception), disclosed fit and honest coverage. Opt-in provider evaluation establishes that real requests rank sensibly. Actual availability, stream semantics and integrity require source integration evidence. Subjective enjoyment and fidelity remain unmeasured until an optional authorized listening evaluation; preserve poor matches and unavailable cases. |
 | Command/access behavior | Both modes, all controls, cooldown ownership, manager overrides and regular-listener now-playing access work as specified. |
 | Continuity | A 60-minute program has at most two seconds of total underrun under normal service conditions. Measure both applicable modes. |
 | Latency | Median request-to-audible music is at most 15 seconds for generated playback and admitted catalog play requests; measure catalog skip separately against the same target. Report admitted failures/timeouts separately. |
