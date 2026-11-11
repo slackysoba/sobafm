@@ -260,11 +260,12 @@ def test_invalid_or_unsupported_http_framing_never_reports_metadata(
 
 
 @pytest.mark.parametrize("with_length", [False, True])
+@pytest.mark.parametrize("version", ["HTTP/1.0", "HTTP/1.1"])
 def test_valid_content_length_and_eof_delimited_controls(
-    monkeypatch: pytest.MonkeyPatch, with_length: bool
+    monkeypatch: pytest.MonkeyPatch, with_length: bool, version: str
 ) -> None:
     body = json.dumps(document()).encode()
-    header = b"HTTP/1.1 200 Synthetic\r\nContent-Type: application/json\r\n"
+    header = f"{version} 200 Synthetic\r\nContent-Type: application/json\r\n".encode()
     if with_length:
         header += f"Content-Length: {len(body)}\r\n".encode()
     report = evaluate(monkeypatch, header + b"\r\n" + body)
@@ -337,6 +338,7 @@ def test_real_socket_one_query_no_redirect_or_retry(
         report = subject.probe(FAKE_ID)
     assert len(requests) == 1
     first = requests[0].split(b"\r\n")[0].decode()
+    assert first.startswith("GET ") and first.endswith(" HTTP/1.0")
     target = first.split(" ")[1]
     query = parse_qs(urlsplit(target).query)
     assert query == {
@@ -347,6 +349,8 @@ def test_real_socket_one_query_no_redirect_or_retry(
         "include": ["licenses musicinfo"],
     }
     assert target.startswith("/v3.0/tracks/?")
+    assert b"\r\nHost: api.jamendo.com\r\n" in requests[0]
+    assert b"\r\nUser-Agent: sobafm-jamendo-access/1\r\n" in requests[0]
     assert b"Referer:" not in requests[0] and b"Authorization:" not in requests[0]
     assert report.requests_attempted == report.connection_attempts == 1
     assert report.outcome == ("metadata_received" if status == 200 else "failed")
@@ -429,11 +433,16 @@ def test_exact_ten_second_timer_and_handler_restored(monkeypatch: pytest.MonkeyP
     assert signal.getsignal(signal.SIGALRM) == previous
 
 
-def test_tls_checks_and_no_environment_key_logging(
+def test_tls_checks_without_alpn_or_environment_key_logging(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     path = tmp_path / "must-not-be-created"
     monkeypatch.setenv("SSLKEYLOGFILE", str(path))
+
+    def forbid_alpn(_context: ssl.SSLContext, _protocols: list[str]) -> None:
+        pytest.fail("HTTP/1.0 probe must not advertise HTTP/1.1 through ALPN")
+
+    monkeypatch.setattr(ssl.SSLContext, "set_alpn_protocols", forbid_alpn)
     context = subject.tls_context()
     assert context.check_hostname
     assert context.verify_mode == ssl.CERT_REQUIRED

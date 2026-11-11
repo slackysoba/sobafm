@@ -62,11 +62,19 @@ source/admission decision. This directory does not change source policy.
 ## Fixed request and limits
 
 The destination is the HTTPS tracks method on `api.jamendo.com`, port 443. The
-fixed GET uses `format=json`, `limit=10`, `type=single albumtrack` and
+fixed HTTP/1.0 GET uses `format=json`, `limit=10`, `type=single albumtrack` and
 `include=licenses musicinfo`, plus the privately supplied `client_id`. No search
 text, pagination, full-count query or audio URL is followed. The
 [tracks reference](https://developer.jamendo.com/v3.0/tracks) documents these
 parameters and separates the stream and download fields.
+
+HTTP/1.0 is intentional: [RFC 9112 section 6.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.1)
+prohibits a server from sending transfer encoding unless the request indicates
+HTTP/1.1 or later. `Connection: close` alone concerns connection teardown
+([section 9.6](https://www.rfc-editor.org/rfc/rfc9112.html#section-9.6)); it does
+not prohibit chunks on an HTTP/1.1 response. Keep the Host header, honest
+User-Agent, verified TLS and SNI, but do not advertise HTTP/1.1 through ALPN.
+This protocol choice does not relax the strict rejection of transfer encoding.
 
 | Boundary | Behavior |
 | --- | --- |
@@ -137,6 +145,8 @@ new production transport framework.
 6. Keep only the sanitized report and exit status, bound to the commit. Exit 0
    with `metadata_received` establishes only a validated metadata response; zero
    results is still possible. Exit 1 means stop and discuss the fixed reason.
+   `unsupported_transfer_encoding` means an inconclusive evaluator limitation,
+   not an account or source refusal: no access conclusion follows from it.
    Neither outcome permits another request. Do not paste the ID file or a raw
    provider response into evidence. A failure does not justify header changes,
    another shared ID, a proxy, a browser workaround or an automatic rerun.

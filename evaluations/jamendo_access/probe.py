@@ -130,7 +130,7 @@ def exchange(application_id: str, report: Report) -> bytes:
         }
     )
     request = (
-        f"GET /v3.0/tracks/?{query} HTTP/1.1\r\n"
+        f"GET /v3.0/tracks/?{query} HTTP/1.0\r\n"
         f"Host: {HOST}\r\n"
         "User-Agent: sobafm-jamendo-access/1\r\n"
         "Accept: application/json\r\n"
@@ -164,7 +164,6 @@ def tls_context() -> ssl.SSLContext:
     # Explicit secure defaults avoid create_default_context's SSLKEYLOGFILE output.
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.load_default_certs()
-    context.set_alpn_protocols(["http/1.1"])
     return context
 
 
