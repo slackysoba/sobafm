@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import math
 import socket
 import ssl
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from fractions import Fraction
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
@@ -21,7 +24,7 @@ from aiohttp.client_proto import ResponseHandler
 from sobafm import jamendo_transport as module
 from sobafm.jamendo_admission import Policy
 from sobafm.jamendo_catalog import Query, Refreshed, Refusal, Request, SearchWindow
-from sobafm.jamendo_journal import Journal, Quota, atomic_write
+from sobafm.jamendo_journal import Channel, Journal, Quota, atomic_write
 from sobafm.jamendo_transport import (
     CheckedResolver,
     JamendoTransport,
@@ -639,6 +642,9 @@ def test_audio_owned_length_stream_and_no_api_credential(
             assert await owner.read() == b"synthetic"
             assert await owner.read() == b"" and owner.transfer_complete
             await owner.close()
+            assert owner.report.kind is None
+            assert scope.last_report == owner.report
+            assert journal.snapshot.audio.failures == 0
             assert owner.report.body_bytes == 9
             assert journal.snapshot.audio.body_bytes == 9
             assert b"api-placeholder" not in requests[0]
@@ -668,6 +674,330 @@ def test_duration_and_retry_after_bounds() -> None:
         retry_after((now + timedelta(seconds=60)).strftime("%a, %d %b %Y %H:%M:%S GMT"), now)
         is not None
     )
+
+
+@pytest.mark.parametrize(
+    "duration", [1, 2, 4, 8, 16, 19, 20, 21, 199, 200, 201, 2999, 3000, 3001, 86400]
+)
+def test_duration_encoded_cap_uses_exact_accepted_formula(duration: int) -> None:
+    tolerance = min(Fraction(30), max(Fraction(2), Fraction(duration, 100)), Fraction(duration, 10))
+    limits = StreamLimits.for_duration(duration)
+    assert limits.encoded_bytes == math.ceil(41_000 * (duration + tolerance)) + 262_144
+    assert limits.tolerance_seconds == pytest.approx(float(tolerance))
+    assert limits.wall_seconds == 2 * (duration + limits.tolerance_seconds) + 60
+
+
+@asynccontextmanager
+async def audio_operation(
+    tmp_path: Path, *, duration: int = 1, clock: Callable[[], float] = time.monotonic
+) -> AsyncGenerator[module._Operation]:  # pyright: ignore[reportPrivateUsage] -- exercise the shared HTTP boundary directly
+    journal = await Journal.open(tmp_path / "journal.json")
+    client = JamendoTransport("placeholder", journal, clock=clock)
+    operation = module._Operation(  # pyright: ignore[reportPrivateUsage]
+        client, Channel.AUDIO, StreamLimits.for_duration(duration).encoded_bytes
+    )
+    try:
+        yield operation
+    finally:
+        if operation.finished_at is None:
+            await operation.close()
+        await client.close()
+        await journal.close()
+
+
+@pytest.mark.parametrize(
+    "duration,maximum", [(1, 307244), (2, 352344), (8, 622944), (86400, 3543892144)]
+)
+@pytest.mark.parametrize("extra", [0, 1])
+def test_audio_declared_exact_cap_and_one_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, duration: int, maximum: int, extra: int
+) -> None:
+    async def run() -> None:
+        payload = wire(b"", f"Content-Length: {maximum + extra}\r\n".encode(), audio=True)
+        async with (
+            peer(monkeypatch, response_script(payload)),
+            audio_operation(tmp_path, duration=duration) as operation,
+        ):
+            if extra:
+                with pytest.raises(TransportError, match="oversized"):
+                    await operation.open("https://prod-1.storage.jamendo.com/", audio=True)
+            else:
+                assert (
+                    await operation.open("https://prod-1.storage.jamendo.com/", audio=True)
+                    == maximum
+                )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "duration,maximum", [(1, 307244), (2, 352344), (8, 622944), (86400, 3543892144)]
+)
+@pytest.mark.parametrize("extra", [0, 1])
+def test_audio_running_exact_cap_and_one_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, duration: int, maximum: int, extra: int
+) -> None:
+    async def run() -> None:
+        async with (
+            peer(monkeypatch, response_script(wire(b"x", b"Content-Length: 1\r\n", audio=True))),
+            audio_operation(tmp_path, duration=duration) as operation,
+        ):
+            length = await operation.open("https://prod-1.storage.jamendo.com/", audio=True)
+            assert length == 1 and operation.response is not None
+            # Seed the public received-byte counter to exercise large running
+            # totals without allocating/transferring multi-gigabyte fixtures.
+            operation.response.content.total_bytes = maximum + extra
+            deadline = asyncio.get_running_loop().time() + 60
+            owner = module.OwnedAudio(operation, length, deadline, deadline, lambda: None)
+            if extra:
+                with pytest.raises(TransportError, match="oversized"):
+                    await owner.read()
+            else:
+                assert await owner.read() == b"x"
+                assert await owner.read() == b""
+            await owner.close()
+            assert owner.report.kind == (Kind.OVERSIZED if extra else None)
+            assert owner.report.body_bytes == maximum + extra
+            assert operation.client.journal.snapshot.audio.body_bytes == maximum + extra
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cancel_at", [None, "eof", "close"])
+def test_audio_eof_before_caller_resume_and_delayed_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel_at: str | None
+) -> None:
+    async def run() -> None:
+        closing, release = asyncio.Event(), asyncio.Event()
+        now = 10.0
+        released = 0
+
+        class Resolver(CheckedResolver):
+            async def close(self) -> None:
+                closing.set()
+                await release.wait()
+                await super().close()
+
+        def settled() -> None:
+            nonlocal released
+            released += 1
+
+        monkeypatch.setattr(module, "CheckedResolver", Resolver)
+        async with (
+            peer(monkeypatch, response_script(wire(b"x", b"Content-Length: 1\r\n", audio=True))),
+            audio_operation(tmp_path, clock=lambda: now) as operation,
+        ):
+            assert await operation.open("https://prod-1.storage.jamendo.com/", audio=True) == 1
+            deadline = asyncio.get_running_loop().time() + 60
+            owner = module.OwnedAudio(operation, 1, deadline, deadline, settled)
+            assert await owner.read() == b"x"
+            eof = asyncio.create_task(owner.read())
+            await owner.stopped.wait()
+            assert owner.transfer_complete and not eof.done()
+            assert owner.report.completed_at == owner.report.stopped_at == 10.0
+            if cancel_at == "eof":
+                eof.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await eof
+            else:
+                assert await eof == b""
+            await closing.wait()
+            assert owner.report.kind == (Kind.CANCELLED if cancel_at == "eof" else None)
+            first_close = asyncio.create_task(owner.close())
+            await tick()
+            if cancel_at == "close":
+                owner.cancel(9.0)
+                first_close.cancel()
+                await tick()
+                first_close.cancel()
+            second_close = asyncio.create_task(owner.close())
+            await tick()
+            now = 14.0
+            assert not first_close.done() and not second_close.done() and released == 0
+            assert operation.client.journal.snapshot.reservations
+            assert owner.report.settled_at is None and owner.report.cleanup_expired
+            release.set()
+            if cancel_at == "close":
+                with pytest.raises(asyncio.CancelledError):
+                    await first_close
+            else:
+                await first_close
+            await second_close
+            await owner.close()
+            assert released == 1
+            assert owner.report.kind == (Kind.CANCELLED if cancel_at else None)
+            assert owner.report.completed_at == 10.0
+            assert owner.report.stopped_at == (9.0 if cancel_at == "close" else 10.0)
+            assert owner.report.settled_at == 14.0 and owner.report.cleanup_expired
+            assert owner.report.body_bytes == 1
+            assert not operation.client.journal.snapshot.reservations
+            assert operation.client.journal.snapshot.audio.failures == int(cancel_at is not None)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("ending", ["cancel", "close", "truncated"])
+def test_audio_pending_read_and_failure_keep_original_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    async def run() -> None:
+        pending, finish = asyncio.Event(), asyncio.Event()
+        original = aiohttp.StreamReader.read
+
+        async def read(reader: aiohttp.StreamReader, n: int = -1) -> bytes:
+            if reader.total_raw_bytes == 1:
+                pending.set()
+            return await original(reader, n)
+
+        async def script(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            writer.write(wire(b"x", b"Content-Length: 2\r\n", audio=True))
+            await writer.drain()
+            await finish.wait()
+
+        monkeypatch.setattr(aiohttp.StreamReader, "read", read)
+        async with peer(monkeypatch, script), audio_operation(tmp_path) as operation:
+            assert await operation.open("https://prod-1.storage.jamendo.com/", audio=True) == 2
+            deadline = asyncio.get_running_loop().time() + 60
+            owner = module.OwnedAudio(operation, 2, deadline, deadline, lambda: None)
+            assert await owner.read() == b"x"
+            pending.clear()
+            task = asyncio.create_task(owner.read())
+            await pending.wait()
+            assert not task.done()
+            close: asyncio.Task[None] | None = None
+            if ending == "cancel":
+                owner.cancel()
+                owner.cancel()
+            elif ending == "close":
+                close = asyncio.create_task(owner.close())
+            else:
+                finish.set()
+            with pytest.raises((asyncio.CancelledError, TransportError)):
+                await task
+            await owner.close()
+            if close is not None:
+                await close
+            assert not owner.transfer_complete and owner.report.completed_at is None
+            assert owner.report.kind == (
+                Kind.MALFORMED if ending == "truncated" else Kind.CANCELLED
+            )
+            assert owner.report.body_bytes == 1 and owner.report.settled_at is not None
+            assert operation.client.journal.snapshot.audio.failures == 1
+            assert not operation.client.journal.snapshot.reservations
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("headers", [b"", b"Content-Length: 0\r\n"])
+def test_audio_empty_reader_refusal_settles_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, headers: bytes
+) -> None:
+    async def run() -> None:
+        journal = await Journal.open(tmp_path / "journal.json")
+        client = JamendoTransport("placeholder", journal)
+        scope = client.reserve_station()
+        original = candidate()
+        fresh = replace(
+            original, decision=replace(original.decision, refreshed_at=datetime.now(UTC))
+        )
+        attempt = await journal.reserve_attempt(fresh)
+        locator = Locator(
+            Refreshed(fresh, True, "https://prod-1.storage.jamendo.com/?trackid=123&format=mp32"),
+            client.clock(),
+        )
+        bank = PcmBankPool().acquire()
+        owner: module.OwnedAudio | None = None
+        async with peer(
+            monkeypatch, response_script(wire(b"" if headers else b"ignored", headers, audio=True))
+        ):
+            with pytest.raises(TransportError, match="malformed"):
+                owner = await scope.open_audio(locator, attempt=attempt, bank=bank)
+                await owner.read()
+            if owner is not None:
+                await owner.close()
+                assert not owner.transfer_complete
+                assert owner.report.kind == Kind.MALFORMED and owner.report.body_bytes is None
+                assert owner.report.settled_at is not None
+        await client.close()
+        assert scope.settled
+        assert journal.snapshot.audio.dispatches == journal.snapshot.audio.failures == 1
+        reservation = journal.snapshot.reservations[0]
+        assert (
+            reservation.body_bytes
+            == StreamLimits.for_duration(180).encoded_bytes + module.RECEIVE_QUEUE_BYTES
+        )
+        assert reservation.dispatches == 1
+        bank.cancel()
+        assert bank.release()
+        await journal.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("write_fails", [False, True])
+def test_unknown_audio_counter_keeps_debt_through_late_close_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_fails: bool
+) -> None:
+    async def run() -> None:
+        closing, release = asyncio.Event(), asyncio.Event()
+        now = 10.0
+
+        class Resolver(CheckedResolver):
+            async def close(self) -> None:
+                closing.set()
+                await release.wait()
+                await super().close()
+
+        monkeypatch.setattr(module, "CheckedResolver", Resolver)
+        async with (
+            peer(monkeypatch, response_script(wire(b"unobservable", audio=True))),
+            audio_operation(tmp_path, clock=lambda: now) as operation,
+        ):
+            with pytest.raises(TransportError) as refused:
+                await operation.open("https://prod-1.storage.jamendo.com/", audio=True)
+            operation.kind = refused.value.kind
+            assert operation.kind == Kind.MALFORMED
+            assert operation.report().body_bytes is None and operation.report().responses == 1
+            journal = operation.client.journal
+            before = journal.snapshot.reservations[0]
+
+            def writer(path: Path, payload: bytes) -> None:
+                raise OSError("synthetic accounting write failure")
+
+            if write_fails:
+                monkeypatch.setattr(journal, "_writer", writer)
+            close = asyncio.create_task(operation.close())
+            await closing.wait()
+            close.cancel()
+            await tick()
+            close.cancel()
+            now = 14.0
+            assert not close.done() and operation.report().settled_at is None
+            assert operation.report().cleanup_expired
+            assert journal.snapshot.reservations == (before,)
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await close
+            assert operation.report().settled_at == 14.0
+            assert operation.report().stopped_at == 10.0 and operation.report().cleanup_expired
+            assert operation.report().body_bytes is None
+            assert operation.report().kind == (Kind.JOURNAL if write_fails else Kind.MALFORMED)
+            if write_fails:
+                monkeypatch.setattr(journal, "_writer", atomic_write)
+                await journal.restore()
+            snapshot = journal.snapshot
+            assert snapshot.reservations[0].body_bytes == before.body_bytes
+            if not write_fails:
+                assert snapshot.audio.dispatches == snapshot.audio.failures == 1
+                await operation.close()
+                assert journal.snapshot == snapshot
+            restarted = await Journal.open(tmp_path / "journal.json")
+            assert restarted.snapshot.reservations == snapshot.reservations
+            with pytest.raises(module.JournalError, match="quota"):
+                await restarted.reserve_usage(Channel.AUDIO, 1, Quota(body_bytes=before.body_bytes))
+            await restarted.close()
+
+    asyncio.run(run())
 
 
 def test_tls_receive_bounds_and_raw_counter(
