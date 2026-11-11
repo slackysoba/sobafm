@@ -23,7 +23,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from types import FrameType
-from typing import cast
+from typing import Literal, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 API_HOST = "api.jamendo.com"
@@ -84,6 +84,42 @@ class LicenseTextDetail(StrEnum):
     BACKSLASH = "backslash"
 
 
+type Presence = Literal["present", "absent", "not_evaluated"]
+type Match = Literal["match", "mismatch", "not_evaluated"]
+type RouteComponent = Literal[
+    "text_shape", "url_parser", "query_parser", "scheme", "authority", "path",
+    "fragment", "query_keys", "track_id", "format", "application_binding",
+]
+
+
+@dataclass
+class RouteDiagnostic:
+    """Fixed classifications only; never retain any part of the supplied URL."""
+
+    first_component: RouteComponent | None = None
+    non_ascii: Presence = "not_evaluated"
+    whitespace: Presence = "not_evaluated"
+    control: Presence = "not_evaluated"
+    backslash: Presence = "not_evaluated"
+    url_parser: Literal["success", "failure", "not_evaluated"] = "not_evaluated"
+    scheme: Literal["https", "http", "empty", "other", "not_evaluated"] = "not_evaluated"
+    authority: Literal[
+        "exact", "userinfo", "port", "userinfo_and_port", "other", "not_evaluated"
+    ] = "not_evaluated"
+    path: Literal["root", "empty", "other", "not_evaluated"] = "not_evaluated"
+    fragment: Presence = "not_evaluated"
+    query_parser: Literal[
+        "success", "field_limit", "syntax", "not_evaluated"
+    ] = "not_evaluated"
+    query_keys: Literal["exact", "mismatch", "not_evaluated"] = "not_evaluated"
+    missing_keys: Presence = "not_evaluated"
+    extra_keys: Presence = "not_evaluated"
+    duplicate_keys: Presence = "not_evaluated"
+    track_id: Match = "not_evaluated"
+    format: Match = "not_evaluated"
+    application_binding: Match = "not_evaluated"
+
+
 class CandidateRefused(Stopped):
     """Typed first gate failure, with no source value or exception text."""
 
@@ -93,6 +129,7 @@ class CandidateRefused(Stopped):
         condition: Condition,
         license_component: LicenseComponent | None = None,
         license_text_detail: LicenseTextDetail | None = None,
+        route_diagnostic: RouteDiagnostic | None = None,
     ) -> None:
         self.gate = Gate(gate)
         self.condition = Condition(condition)
@@ -102,6 +139,7 @@ class CandidateRefused(Stopped):
         self.license_text_detail = (
             LicenseTextDetail(license_text_detail) if license_text_detail is not None else None
         )
+        self.route_diagnostic = route_diagnostic
         super().__init__(f"candidate_{self.gate}_{self.condition}")
 
 
@@ -112,6 +150,7 @@ class Refusal:
     condition: Condition
     license_component: LicenseComponent | None = None
     license_text_detail: LicenseTextDetail | None = None
+    route_diagnostic: RouteDiagnostic | None = None
 
 
 @dataclass
@@ -149,6 +188,7 @@ class Report:
     reason: str | None = None
     license_component: LicenseComponent | None = None
     license_text_detail: LicenseTextDetail | None = None
+    route_diagnostic: RouteDiagnostic | None = None
     search: Transfer = field(default_factory=Transfer)
     metadata: Transfer = field(default_factory=Transfer)
     stream: Transfer = field(default_factory=Transfer)
@@ -463,6 +503,108 @@ def album_shape(row: dict[str, object]) -> None:
 
 
 def stream_target(value: object, application_id: str, track_id: str) -> str:
+    try:
+        return checked_stream_target(value, application_id, track_id)
+    except CandidateRefused as error:
+        # Missing/type/bound failures and earlier candidate gates have no URL
+        # diagnostics. Classification never participates in acceptance or repair.
+        if error.condition == Condition.SHAPE and isinstance(value, str):
+            error.route_diagnostic = diagnose_route(value, application_id, track_id)
+        raise
+
+
+def diagnose_route(value: str, application_id: str, track_id: str) -> RouteDiagnostic:
+    """Classify a bounded refused string, including independent mixed failures.
+
+    Parsing here describes the standard parser's interpretation, even when the
+    original text gate rejects characters that parser would strip. No parsed
+    value survives in this record or replaces the original validation input.
+    """
+    assert len(value) <= 1024
+    diagnostic = RouteDiagnostic()
+
+    def presence(found: bool) -> Presence:
+        return "present" if found else "absent"
+
+    def first(component: RouteComponent, failed: bool) -> None:
+        if failed and diagnostic.first_component is None:
+            diagnostic.first_component = component
+
+    diagnostic.non_ascii = presence(not value.isascii())
+    diagnostic.whitespace = presence(any(char.isspace() for char in value))
+    diagnostic.control = presence(any(ord(char) < 32 or ord(char) == 127 for char in value))
+    diagnostic.backslash = presence("\\" in value)
+    diagnostic.fragment = presence("#" in value)
+    first("text_shape", not value.isascii() or any(ord(c) <= 32 or ord(c) == 127 for c in value))
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        diagnostic.url_parser = "failure"
+        first("url_parser", True)
+        return diagnostic
+    diagnostic.url_parser = "success"
+    diagnostic.scheme = (
+        "https" if parts.scheme == "https" else "http" if parts.scheme == "http"
+        else "empty" if not parts.scheme else "other"
+    )
+    authority = parts.netloc
+    host_port = authority.rsplit("@", 1)[-1]
+    userinfo = "@" in authority
+    # A bracketed IPv6 address's internal colons are not a port delimiter.
+    port = ":" in (host_port.partition("]")[2] if host_port.startswith("[") else host_port)
+    diagnostic.authority = (
+        "exact" if authority == STREAM_HOST else "userinfo_and_port" if userinfo and port
+        else "userinfo" if userinfo else "port" if port else "other"
+    )
+    diagnostic.path = "root" if parts.path == "/" else "empty" if not parts.path else "other"
+    # Match parse_qsl's field-limit-before-syntax precedence without inspecting
+    # its exception text or relaxing its three-field bound for diagnostics.
+    pairs: list[tuple[str, str]] | None = None
+    if parts.query and 1 + parts.query.count("&") > 3:
+        diagnostic.query_parser = "field_limit"
+    else:
+        try:
+            pairs = parse_qsl(
+                parts.query, keep_blank_values=True, strict_parsing=True, max_num_fields=3
+            )
+        except ValueError:
+            diagnostic.query_parser = "syntax"
+        else:
+            diagnostic.query_parser = "success"
+    first("query_parser", pairs is None)
+    first("scheme", parts.scheme != "https")
+    first("authority", authority != STREAM_HOST)
+    first("path", parts.path != "/")
+    first("fragment", bool(parts.fragment) or "#" in value)
+    if pairs is None:
+        return diagnostic
+    expected = {"trackid": track_id, "format": "mp32", "from": f"app-{application_id}"}
+    keys = {key for key, _ in pairs}
+    missing = bool(expected.keys() - keys)
+    extra = bool(keys - expected.keys())
+    duplicate = len(keys) != len(pairs)
+    diagnostic.missing_keys = presence(missing)
+    diagnostic.extra_keys = presence(extra)
+    diagnostic.duplicate_keys = presence(duplicate)
+    diagnostic.query_keys = "mismatch" if missing or extra or duplicate else "exact"
+
+    def match(key: str) -> Match:
+        values = [item for name, item in pairs if name == key]
+        if len(values) != 1:
+            return "not_evaluated"
+        return "match" if values[0] == expected[key] else "mismatch"
+
+    diagnostic.track_id = match("trackid")
+    diagnostic.format = match("format")
+    diagnostic.application_binding = match("from")
+    first("query_keys", diagnostic.query_keys != "exact")
+    first("track_id", diagnostic.track_id == "mismatch")
+    first("format", diagnostic.format == "mismatch")
+    first("application_binding", diagnostic.application_binding == "mismatch")
+    return diagnostic
+
+
+def checked_stream_target(value: object, application_id: str, track_id: str) -> str:
     """Validate the fresh audio field, then build only that exact allowed request."""
     if not isinstance(value, str):
         raise CandidateRefused(Gate.STREAM_ROUTE, Condition.TYPE)
@@ -612,12 +754,14 @@ def select_candidate(data: bytes, application_id: str, report: Report) -> Candid
                 gate, condition = Gate.ROW, Condition.SHAPE
                 component = None
                 detail = None
+                route = None
                 if isinstance(error, CandidateRefused):
                     gate, condition = error.gate, error.condition
                     component = error.license_component
                     detail = error.license_text_detail
+                    route = error.route_diagnostic
                 report.candidate_refusals.append(
-                    Refusal(ordinal, gate, condition, component, detail)
+                    Refusal(ordinal, gate, condition, component, detail, route)
                 )
             continue
         report.selected_track_id = candidate.track_id
@@ -680,6 +824,7 @@ def run_child(application_id_path: str) -> int:
         if isinstance(error, CandidateRefused):
             report.license_component = error.license_component
             report.license_text_detail = error.license_text_detail
+            report.route_diagnostic = error.route_diagnostic
     except TimeoutError:
         report.reason = "timeout"
     except KeyboardInterrupt:
