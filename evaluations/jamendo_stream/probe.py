@@ -20,6 +20,7 @@ import unicodedata
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from types import FrameType
@@ -247,6 +248,8 @@ class Report:
     diagnostic_steps: list[DiagnosticStep] = field(default_factory=list[DiagnosticStep])
     refresh_diagnosis: Literal["mp32_found", "default_only_found", "both_empty"] | None = None
     evidence_changes: dict[EvidenceCategory, Change] | None = None
+    admission_refusals: list[tuple[int, str]] = field(default_factory=list[tuple[int, str]])
+    previous_decision_matches: bool | None = None
 
 
 @contextmanager
@@ -945,8 +948,115 @@ def diagnose_empty_refresh(application_id: str, report: Report) -> None:
     report.outcome = "metadata_diagnosed"
 
 
+def admission_categories(value: object) -> tuple[str, ...]:
+    """Structural diagnostics only, after production has validated this whole row.
+
+    Preserve every field and the full locator, sorting only opaque query pairs.
+    Production normalization and admission are deliberately independent of this.
+    """
+    row = object_value(value)
+    audio = cast(str, row["audio"])
+    prefix, query = audio.split("?", 1)
+    return category_fingerprints(
+        {**row, "audio": prefix + "?" + "&".join(sorted(query.split("&")))}
+    )
+
+
+def qualify_metadata(application_id: str, report: Report) -> None:
+    """Two metadata GETs at most; fresh production admission never opens audio."""
+    # Load the reviewed checkout, not a potentially older installed application.
+    # The isolated child imports no sobafm module before this point. Pure modules
+    # below use only the standard library; no runtime environment is installed.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+    from sobafm.jamendo_admission import (
+        AdmissionInputError,
+        Policy,
+        Purpose,
+        evaluate,
+        parse_listing,
+    )
+    from sobafm.jamendo_admission import (
+        Candidate as AdmittedCandidate,
+    )
+    from sobafm.jamendo_catalog import (
+        _COMMON,  # pyright: ignore[reportPrivateUsage]
+        Request,
+        _rows,  # pyright: ignore[reportPrivateUsage]
+        refresh,
+        refresh_request,
+    )
+    from sobafm.jamendo_catalog import (
+        Refusal as AdmissionRefusal,
+    )
+
+    policy = Policy(enabled=True)
+    listing_request = Request(
+        _COMMON
+        + (
+            ("limit", str(SEARCH_RESULTS)),
+            ("order", "id_desc"),
+            ("ccnc", "true"),
+            ("durationbetween", "1_480"),
+        )
+    )
+
+    def get(request: Request, transfer: Transfer) -> bytes:
+        query = urlencode((("client_id", checked_id(application_id)), *request.parameters))
+        return exchange(urlsplit(request.endpoint).path + "?" + query, transfer, metadata=True)
+
+    data = get(listing_request, report.search)
+    # Retain fixed envelope observations, but production remains the authority.
+    metadata_rows(data, report.search_results, SEARCH_RESULTS)
+    rows = _rows(data, SEARCH_RESULTS)
+    if isinstance(rows, AdmissionRefusal):
+        raise Stopped(rows.reason.value)
+    selected: AdmittedCandidate | None = None
+    categories: tuple[str, ...] = ()
+    for ordinal, row in enumerate(rows, start=1):
+        try:
+            listing = parse_listing(row)
+            decision = evaluate(listing, policy, datetime.now(UTC), Purpose.RANKING)
+            if decision.admitted:
+                selected = AdmittedCandidate(listing.recording, decision, listing.content_digest)
+                categories = admission_categories(row)
+                break
+            reason = decision.reason
+        except AdmissionInputError as error:
+            reason = error.reason
+        report.rejected_candidates += 1
+        report.admission_refusals.append((ordinal, reason.value))
+    if selected is None:
+        raise Stopped("no_acceptable_candidate")
+    del data, rows
+    request = refresh_request(selected.recording.key, policy)
+    if isinstance(request, AdmissionRefusal):
+        raise Stopped(request.reason.value)
+    data = get(request, report.metadata)
+    metadata_rows(data, report.refresh_results, 1)
+    result = refresh(request, data, selected, policy, datetime.now(UTC))
+    if isinstance(result, AdmissionRefusal):
+        raise Stopped(result.reason.value)
+    # refresh has already parsed the full response and made a fresh immutable
+    # decision. Whole-row categories cannot overrule it or authorize any audio.
+    refreshed_rows = _rows(data, 1)
+    assert not isinstance(refreshed_rows, AdmissionRefusal)
+    report.evidence_changes = {
+        category: "unchanged" if old == new else "changed"
+        for category, old, new in zip(
+            EvidenceCategory, categories, admission_categories(refreshed_rows[0]), strict=True
+        )
+    }
+    report.previous_decision_matches = result.previous_decision_matches
+    report.metadata_validated = True
+    report.outcome = "metadata_admitted"
+
+
 def run_child(
-    application_id_path: str, diagnostic: bool = False, *, metadata_only: bool = False
+    application_id_path: str,
+    diagnostic: bool = False,
+    *,
+    metadata_only: bool = False,
+    admission: bool = False,
 ) -> int:
     report = Report()
     application_id = ""
@@ -954,7 +1064,9 @@ def run_child(
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         with deadline():
             application_id = read_id(application_id_path)
-            if diagnostic:
+            if admission:
+                qualify_metadata(application_id, report)
+            elif diagnostic:
                 diagnose_empty_refresh(application_id, report)
             elif metadata_only:
                 probe(application_id, report, metadata_only=True)
@@ -978,7 +1090,7 @@ def run_child(
         report.reason = "internal"
     if report.reason is not None:
         report.outcome = "inconclusive"
-    if metadata_only:
+    if metadata_only or admission:
         # Also cover interruption immediately after selection, before probe can
         # clear the legacy stream-mode identity field.
         report.selected_track_id = None
@@ -992,7 +1104,10 @@ def run_child(
         report.outcome = "inconclusive"
     print(encoded)
     return (
-        0 if report.outcome in ("stream_received", "metadata_diagnosed", "metadata_compared") else 1
+        0
+        if report.outcome
+        in ("stream_received", "metadata_diagnosed", "metadata_compared", "metadata_admitted")
+        else 1
     )
 
 
@@ -1017,7 +1132,11 @@ def settle(child: subprocess.Popen[bytes]) -> bool:
 
 
 def supervise(
-    application_id_path: str, diagnostic: bool = False, *, metadata_only: bool = False
+    application_id_path: str,
+    diagnostic: bool = False,
+    *,
+    metadata_only: bool = False,
+    admission: bool = False,
 ) -> int:
     started = time.monotonic()
     child: subprocess.Popen[bytes] | None = None
@@ -1037,10 +1156,17 @@ def supervise(
                     "-c",
                     "import runpy,sys; m=runpy.run_path(sys.argv[1]); "
                     "sys.exit(m['run_child'](sys.argv[2], sys.argv[3] == 'diagnostic', "
-                    "metadata_only=sys.argv[3] == 'metadata'))",
+                    "metadata_only=sys.argv[3] == 'metadata', "
+                    "admission=sys.argv[3] == 'admission'))",
                     str(Path(__file__).resolve()),
                     application_id_path,
-                    "diagnostic" if diagnostic else "metadata" if metadata_only else "stream",
+                    "admission"
+                    if admission
+                    else "diagnostic"
+                    if diagnostic
+                    else "metadata"
+                    if metadata_only
+                    else "stream",
                 ],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -1101,14 +1227,20 @@ def supervise(
 
 
 def run_authorized(
-    application_id_path: str, diagnostic: bool = False, *, metadata_only: bool = False
+    application_id_path: str,
+    diagnostic: bool = False,
+    *,
+    metadata_only: bool = False,
+    admission: bool = False,
 ) -> int:
     def interrupted(_signum: int, _frame: FrameType | None) -> None:
         raise KeyboardInterrupt
 
     previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
-        return supervise(application_id_path, diagnostic, metadata_only=metadata_only)
+        return supervise(
+            application_id_path, diagnostic, metadata_only=metadata_only, admission=admission
+        )
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
@@ -1122,11 +1254,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (
         len(args) != 2
         or args[0]
-        not in ("--send-to-jamendo", "--diagnose-empty-refresh", "--diagnose-metadata-changes")
+        not in (
+            "--send-to-jamendo",
+            "--diagnose-empty-refresh",
+            "--diagnose-metadata-changes",
+            "--qualify-metadata",
+        )
         or not args[1]
     ):
         print('{"outcome":"inconclusive","reason":"arguments"}')
         return 2
+    if args[0] == "--qualify-metadata":
+        return run_authorized(args[1], admission=True)
     if args[0] == "--diagnose-metadata-changes":
         return run_authorized(args[1], metadata_only=True)
     return run_authorized(args[1], diagnostic=args[0] == "--diagnose-empty-refresh")
