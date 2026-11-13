@@ -1,6 +1,6 @@
 """The first-slice decode producer: one stock mpg123 child feeding one PCM bank.
 
-One ``DecodeProducer`` owns one decode: the verified local input, a fresh
+One ``DecodeProducer`` owns one decode: verified local or checked stream input, a fresh
 decoder process in its own process group, its stdin/stdout pipes, a feeder and
 a reader thread, and one ``pcm.py`` bank lease, or a bank its caller already
 leased and keeps. The decoder starts before this
@@ -19,8 +19,11 @@ environment. Exec keeps the other limits, so ``prlimit`` sets them after ``Popen
 returns. It sets the stack limit too, which reports one that can't be set as
 ``decoder_limits`` before any input.
 
-The feeder streams the input in fixed chunks, checking its exact size and
-SHA-256, and closes the decoder's stdin only at exact verified EOF. On any input
+The local feeder checks exact size and SHA-256 in fixed chunks. The separately
+typed ``VerifiedStreamInput`` receives only checked bytes from its owned bridge,
+uses its finite encoded bound and the bridge's verified EOF, and screens PCM
+on the same reader before bank commit. Neither path invents local identity for
+a stream. The feeder closes the decoder's stdin only at verified EOF. On any input
 failure stdin stays open until the decoder is reaped, so the decoder never sees
 end of input for a bad file. The reader fills the bank through ``reserve_write``
 and ``commit_write`` up to the caller's finite PCM limit.
@@ -68,7 +71,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
-from sobafm.pcm import GLOBAL_PCM_BANKS, PcmBank, PcmBankPool, PcmError, PcmFacts, PcmStateError
+from sobafm.pcm import (
+    FRAME_BYTES,
+    GLOBAL_PCM_BANKS,
+    PcmBank,
+    PcmBankPool,
+    PcmError,
+    PcmFacts,
+    PcmStateError,
+)
 
 CLEANUP_SECONDS = 3.0
 INPUT_CHUNK_BYTES = 16_384
@@ -126,6 +137,7 @@ type DecodeFailure = Literal[
     "pcm_capacity",
     "empty_pcm",
     "partial_final_frame",
+    "stream_check",
 ]
 type CleanupVerdict = Literal["pending", "clean", "expired"]
 
@@ -162,6 +174,24 @@ class DecodeInput:
             raise ValueError("sha256 must be 64 lowercase hex digits")
         if self.pcm_limit < 1:
             raise ValueError("pcm_limit must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedStreamInput:
+    """One checked handoff, with no invented local identity or expected hash.
+
+    The owner supplies EOF only after verified transfer/envelope completion.
+    Checks run on the existing decoder reader/finisher before publication/end.
+    ``stop`` wakes a blocked feeder; it must not wait or perform network I/O.
+    """
+
+    raw: RawInput
+    encoded_limit: int
+    pcm_limit: int
+    screen: Callable[[memoryview], None]
+    complete_pcm: Callable[[int], None]
+    stop: Callable[[], None]
+    progress: Callable[[int], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,11 +242,13 @@ class DecodeProducer:
     ``finish`` blocks until the decode ends or is cancelled and cleanup is done
     or expired, so run it away from the event loop. ``cancel`` never blocks.
     ``release`` returns the bank lease once everything else has settled.
+    A supplied checked stream additionally owns its readiness/completion policy;
+    this decoder never acquires a second bank or creates a checker thread.
     """
 
     def __init__(
         self,
-        source: DecodeInput,
+        source: DecodeInput | VerifiedStreamInput,
         *,
         command: DecoderCommand | None = None,
         pool: PcmBankPool = GLOBAL_PCM_BANKS,
@@ -282,7 +314,11 @@ class DecodeProducer:
         if self._cleanup_requested.is_set():
             return  # cancelled before start: launch nothing
         try:
-            self._input = self._open_input(self._source.path)
+            self._input = (
+                self._source.raw
+                if isinstance(self._source, VerifiedStreamInput)
+                else self._open_input(self._source.path)
+            )
         except OSError:
             self._fail("input_open")
             return
@@ -347,16 +383,15 @@ class DecodeProducer:
             self._bank.cancel()
         return True
 
-    def cancel(self) -> None:
+    def cancel(self, first_stop: float | None = None) -> None:
         """Stop the decode. Only the first call sets the time and the deadline.
 
         A caller-held bank that its owner already cancelled keeps that earlier
         time as the original clock.
         """
-        now = self._original(self._clock())
+        now = self._original(self._clock() if first_stop is None else first_stop)
         with self._lock:
-            if self._cancelled_at is None:
-                self._cancelled_at = now
+            self._cancelled_at = now if self._cancelled_at is None else min(now, self._cancelled_at)
         self._begin_cleanup(now, terminate=True)
 
     def finish(self) -> DecodeReport:
@@ -371,16 +406,25 @@ class DecodeProducer:
         start, deadline = self._cleanup_started_at, self._deadline
         assert start is not None and deadline is not None
         if self._process is not None:
-            if self._signalled is None and not self._wait_exit(start + self._window / 3):
+            if self._signalled is None and not self._wait_stage(1 / 3):
                 self._fail("decoder_stalled")
-            if not self._wait_exit(start + 2 * self._window / 3):
+            if not self._wait_stage(2 / 3):
                 self._signal(signal.SIGKILL)
-            if self._wait_exit(deadline):
+            if self._wait_stage(1):
                 self._reap()
         for thread in self._threads:
-            thread.join(max(0.0, deadline - self._clock()))
+            if isinstance(self._source, VerifiedStreamInput):
+                while thread.is_alive():
+                    assert self._deadline is not None
+                    remaining = self._deadline - self._clock()
+                    if remaining <= 0:
+                        break
+                    thread.join(min(0.01, remaining))
+            else:
+                thread.join(max(0.0, deadline - self._clock()))
         settled = self._settle()
-        within = self._clock() <= deadline
+        assert self._deadline is not None
+        within = self._clock() <= self._deadline
         self._judge()
         with self._lock:
             self._verdict = "clean" if settled and within else "expired"
@@ -432,12 +476,13 @@ class DecodeProducer:
         stdin = process.stdin
         assert isinstance(stdin, io.FileIO)
         digest = hashlib.sha256()
+        size = source.encoded_limit if isinstance(source, VerifiedStreamInput) else source.size
         chunk = bytearray(INPUT_CHUNK_BYTES)
         try:
             with memoryview(chunk) as whole:
                 while True:
                     # Read one byte past the expected size to detect growth.
-                    want = min(INPUT_CHUNK_BYTES, source.size + 1 - self._input_bytes)
+                    want = min(INPUT_CHUNK_BYTES, size + 1 - self._input_bytes)
                     try:
                         count = raw.readinto(whole[:want]) or 0
                     except OSError:
@@ -445,7 +490,7 @@ class DecodeProducer:
                         return
                     if count == 0:
                         break
-                    if self._input_bytes + count > source.size:
+                    if self._input_bytes + count > size:
                         self._fail("input_oversized")
                         return
                     with whole[:count] as data:
@@ -454,9 +499,9 @@ class DecodeProducer:
                             return
                     with self._lock:
                         self._input_bytes += count
-            if self._input_bytes != source.size:
+            if isinstance(source, DecodeInput) and self._input_bytes != source.size:
                 self._fail("input_truncated")
-            elif digest.hexdigest() != source.sha256:
+            elif isinstance(source, DecodeInput) and digest.hexdigest() != source.sha256:
                 self._fail("input_hash")
             else:
                 try:
@@ -489,6 +534,10 @@ class DecodeProducer:
         assert isinstance(stdout, io.FileIO)
         remaining = self._source.pcm_limit
         try:
+            if isinstance(self._source, VerifiedStreamInput):
+                self._read_screened(stdout, bank, self._source)
+                self._begin_cleanup(self._clock(), terminate=False)
+                return
             while True:
                 if remaining == 0:
                     if stdout.readinto(bytearray(1)):
@@ -526,6 +575,38 @@ class DecodeProducer:
             return
         self._begin_cleanup(self._clock(), terminate=False)
 
+    def _read_screened(self, stdout: io.FileIO, bank: PcmBank, source: VerifiedStreamInput) -> None:
+        """One partial frame only; validate a complete frame before bank publication."""
+        frame = bytearray(FRAME_BYTES)
+        used = total = 0
+        with memoryview(frame) as whole:
+            while True:
+                want = min(FRAME_BYTES - used, source.pcm_limit + 1 - total)
+                count = stdout.readinto(whole[used : used + want]) or 0
+                total += count
+                used += count
+                source.progress(total)
+                if total > source.pcm_limit:
+                    self._fail("output_overrun")
+                    return
+                if used == FRAME_BYTES:
+                    try:
+                        source.screen(whole)
+                    except ValueError:
+                        self._fail("stream_check")
+                        return
+                if used == FRAME_BYTES or not count:
+                    offset = 0
+                    while offset < used:
+                        accepted = bank.write(whole[offset:used])
+                        offset += accepted
+                        if offset < used:
+                            bank.wait_writable()
+                    source.progress(total)
+                    used = 0
+                if not count:
+                    return
+
     # Ownership.
 
     def _fail(self, failure: DecodeFailure) -> None:
@@ -546,10 +627,12 @@ class DecodeProducer:
     def _begin_cleanup(self, now: float, *, terminate: bool) -> None:
         now = self._original(now)
         with self._lock:
-            if self._cleanup_started_at is None:
+            if self._cleanup_started_at is None or now < self._cleanup_started_at:
                 self._cleanup_started_at = now
                 self._deadline = now + self._window
         if terminate:
+            if isinstance(self._source, VerifiedStreamInput):
+                self._source.stop()
             self._signal(signal.SIGTERM)
             if self._bank is not None:
                 self._bank.cancel()
@@ -588,6 +671,22 @@ class DecodeProducer:
         poller = select.poll()
         poller.register(pidfd, select.POLLIN)
         return bool(poller.poll(max(0, int((until - self._clock()) * 1000) + 1)))
+
+    def _wait_stage(self, fraction: float) -> bool:
+        """A stream can reveal an earlier HTTP stop while normal EOF is settling.
+
+        Recheck that earlier deadline on the existing finisher, with no new
+        thread or wakeup descriptor. Local-file waits retain their old schedule.
+        """
+        while True:
+            assert self._cleanup_started_at is not None
+            until = self._cleanup_started_at + fraction * self._window
+            if not isinstance(self._source, VerifiedStreamInput):
+                return self._wait_exit(until)
+            if self._wait_exit(min(until, self._clock() + 0.01)):
+                return True
+            if self._clock() >= until:
+                return False
 
     def _reap(self) -> None:
         process = self._process
@@ -650,6 +749,12 @@ class DecodeProducer:
             )
         if not earned or returncode != 0:
             return
+        if isinstance(self._source, VerifiedStreamInput):
+            try:
+                self._source.complete_pcm(bank.facts().written_bytes)
+            except ValueError:
+                self._fail("stream_check")
+                return
         try:
             bank.end_pcm()
         except PcmStateError:

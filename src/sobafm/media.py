@@ -10,6 +10,10 @@ names are relative to the manifest's directory and may not leave it.
 the blocking decode in a worker thread, and returns or raises only after the
 decoder process, its threads and descriptors have actually settled, including
 after cancellation. The adapter keeps the lease and releases it.
+
+``stream`` dispatches an immutable Jamendo Candidate to an injected checked
+stream factory. Its refreshed preparation and final bank/journal release remain
+explicit operations for station integration; a Recording cannot supply them.
 """
 
 from __future__ import annotations
@@ -24,6 +28,8 @@ from typing import cast
 
 from sobafm.catalog import Recording, RecordingKey, Source
 from sobafm.decode import DecodeInput, DecodeProducer, DecoderCommand, DecodeReport
+from sobafm.jamendo_admission import Candidate
+from sobafm.jamendo_stream import JamendoStream, StreamFactory
 from sobafm.pcm import BYTES_PER_SECOND, FRAME_BYTES, PcmBank
 
 log = logging.getLogger(__name__)
@@ -140,9 +146,26 @@ def load_media(path: Path) -> dict[RecordingKey, DecodeInput]:
 class MediaProducer:
     """The adapter's ``Producer``: one stock decoder per track into the leased bank."""
 
-    def __init__(self, media: Media, *, command: DecoderCommand | None = None) -> None:
+    def __init__(
+        self,
+        media: Media,
+        *,
+        command: DecoderCommand | None = None,
+        stream_factory: StreamFactory | None = None,
+    ) -> None:
         self._media = media
         self._command = command
+        self._stream_factory = stream_factory
+
+    def stream(self, candidate: Candidate, bank: PcmBank) -> JamendoStream:
+        """Prepare a source candidate through its owned refreshed-stream interface.
+
+        Integration must use this handle's refreshed Prepared before switching;
+        a Recording alone cannot authorize a source request or stream open.
+        """
+        if candidate.recording.key.source != Source.JAMENDO or self._stream_factory is None:
+            raise MediaMissingError("recording has no stream producer")
+        return self._stream_factory(candidate, bank)
 
     async def produce(self, recording: Recording, bank: PcmBank) -> None:
         source = self._media.get(recording.key)

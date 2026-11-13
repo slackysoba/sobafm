@@ -312,6 +312,7 @@ class PcmBank:
         self._read = 0
         self._ended = False
         self._ready = False
+        self._readiness_held = False
         self._pcm_valid = False
         self._drained = False
         self._failure: PcmFailure | None = None
@@ -364,8 +365,31 @@ class PcmBank:
             if self._cancelled_at is not None:
                 return
             self._written += count
-            if not self._ready and self._written - self._read >= READY_BYTES:
+            if (
+                not self._readiness_held
+                and not self._ready
+                and self._written - self._read >= READY_BYTES
+            ):
                 self._ready = True
+
+    def hold_readiness(self) -> None:
+        """Hold a fresh bank before streaming checks; never revoke audible readiness."""
+        with self._lock:
+            self._accepting_backing()
+            if self._written or self._ready:
+                raise PcmStateError("readiness must be held before writing")
+            self._readiness_held = True
+
+    def allow_readiness(self) -> None:
+        """Release the stream owner's gate after its required preparation checks."""
+        with self._lock:
+            self._require_unreleased()
+            if self._cancelled_at is not None:
+                raise PcmStateError("the PCM stream was cancelled")
+            self._readiness_held = False
+            if self._pcm_valid or self._written - self._read >= READY_BYTES:
+                self._ready = True
+            self._update_drain()
 
     def wait_writable(self, timeout: float | None = None) -> bool:
         """Wait until a write could proceed or fail at once.
@@ -412,7 +436,7 @@ class PcmBank:
                 self._failure = "empty_pcm"
             else:
                 self._pcm_valid = True
-                self._ready = True
+                self._ready = not self._readiness_held
             self._update_drain()
 
     def ready_now(self) -> bool:
