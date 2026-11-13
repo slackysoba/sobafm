@@ -1,5 +1,11 @@
 # One bounded Jamendo stream access check
 
+For #213's separate metadata-only diagnosis, see the
+[empty-refresh comparison protocol](EMPTY_REFRESH.md). It has its own explicit
+flag, at most two metadata requests, and no audio path. Neither mode is authorized
+merely by reading this file; independent protocol review and coordinator assignment
+precede live execution under the standing necessary-test authorization.
+
 Prepared for [#184](https://github.com/slackysoba/sobafm/issues/184), following
 [#178](https://github.com/slackysoba/sobafm/issues/178). **No live
 permission is granted by this code or walkthrough.** Default invocation reads no

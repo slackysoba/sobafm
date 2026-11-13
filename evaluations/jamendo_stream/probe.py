@@ -38,6 +38,7 @@ CLEANUP_SECONDS = 3
 WORK_SECONDS = TOTAL_SECONDS - CLEANUP_SECONDS
 REPORT_BYTES = 100_000
 ID_FILE_BYTES = 160
+DIAGNOSTIC_TRACK_ID = "999986"  # The safe numeric identity recorded by a8; not a new selection.
 SUSPENDED_ID = "709fa152"  # pragma: allowlist secret
 
 
@@ -188,6 +189,14 @@ class Candidate:
 
 
 @dataclass
+class DiagnosticStep:
+    variant: Literal["mp32", "default"]
+    transfer: Transfer = field(default_factory=Transfer)
+    results: Results = field(default_factory=Results)
+    identity: Match = "not_evaluated"
+
+
+@dataclass
 class Report:
     outcome: str = "inconclusive"
     reason: str | None = None
@@ -203,6 +212,8 @@ class Report:
     rejected_candidates: int = 0
     candidate_refusals: list[Refusal] = field(default_factory=list[Refusal])
     metadata_validated: bool = False
+    diagnostic_steps: list[DiagnosticStep] = field(default_factory=list[DiagnosticStep])
+    refresh_diagnosis: Literal["mp32_found", "default_only_found", "both_empty"] | None = None
 
 
 @contextmanager
@@ -832,14 +843,53 @@ def probe(application_id: str, report: Report) -> None:
     report.outcome = "stream_received"
 
 
-def run_child(application_id_path: str) -> int:
+def diagnose_empty_refresh(application_id: str, report: Report) -> None:
+    """At most two fixed-ID metadata requests; never select or open audio.
+
+    Only a valid empty mp32 response permits the comparison without audioformat.
+    A returned identity is an observation, not admission or refreshed evidence.
+    """
+    common = {
+        "client_id": checked_id(application_id),
+        "format": "json",
+        "type": "single albumtrack",
+        "audioformat": "mp32",
+        "id": DIAGNOSTIC_TRACK_ID,
+        "limit": "1",
+    }
+    for variant in ("mp32", "default"):
+        step = DiagnosticStep(variant)
+        report.diagnostic_steps.append(step)
+        parameters = dict(common)
+        if variant == "default":
+            del parameters["audioformat"]
+        data = exchange("/v3.0/tracks/?" + urlencode(parameters), step.transfer, metadata=True)
+        rows = metadata_rows(data, step.results, 1)
+        del data
+        if rows:
+            row = object_value(rows[0])
+            if row.get("id") != DIAGNOSTIC_TRACK_ID:
+                step.identity = "mismatch"
+                raise Stopped("candidate_identity")
+            step.identity = "match"
+            report.refresh_diagnosis = "mp32_found" if variant == "mp32" else "default_only_found"
+            break
+    else:
+        report.refresh_diagnosis = "both_empty"
+    report.outcome = "metadata_diagnosed"
+
+
+def run_child(application_id_path: str, diagnostic: bool = False) -> int:
     report = Report()
     application_id = ""
     try:
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         with deadline():
             application_id = read_id(application_id_path)
-            probe(application_id, report)
+            if diagnostic:
+                diagnose_empty_refresh(application_id, report)
+            else:
+                probe(application_id, report)
     except Stopped as error:
         report.reason = str(error)
         if isinstance(error, CandidateRefused):
@@ -867,7 +917,7 @@ def run_child(application_id_path: str) -> int:
         encoded = '{"outcome":"inconclusive","reason":"report_limit"}'
         report.outcome = "inconclusive"
     print(encoded)
-    return 0 if report.outcome == "stream_received" else 1
+    return 0 if report.outcome in ("stream_received", "metadata_diagnosed") else 1
 
 
 def settle(child: subprocess.Popen[bytes]) -> bool:
@@ -890,7 +940,7 @@ def settle(child: subprocess.Popen[bytes]) -> bool:
             continue
 
 
-def supervise(application_id_path: str) -> int:
+def supervise(application_id_path: str, diagnostic: bool = False) -> int:
     started = time.monotonic()
     child: subprocess.Popen[bytes] | None = None
     output = b""
@@ -908,9 +958,10 @@ def supervise(application_id_path: str) -> int:
                     "-B",
                     "-c",
                     "import runpy,sys; m=runpy.run_path(sys.argv[1]); "
-                    "sys.exit(m['run_child'](sys.argv[2]))",
+                    "sys.exit(m['run_child'](sys.argv[2], sys.argv[3] == 'diagnostic'))",
                     str(Path(__file__).resolve()),
                     application_id_path,
+                    "diagnostic" if diagnostic else "stream",
                 ],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -970,13 +1021,13 @@ def supervise(application_id_path: str) -> int:
     return 0 if cleanup_met and child is not None and child.returncode == 0 else 1
 
 
-def run_authorized(application_id_path: str) -> int:
+def run_authorized(application_id_path: str, diagnostic: bool = False) -> int:
     def interrupted(_signum: int, _frame: FrameType | None) -> None:
         raise KeyboardInterrupt
 
     previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
-        return supervise(application_id_path)
+        return supervise(application_id_path, diagnostic)
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
@@ -987,10 +1038,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args:
         print('{"outcome":"disabled","reason":"explicit_opt_in_required"}')
         return 0
-    if len(args) != 2 or args[0] != "--send-to-jamendo" or not args[1]:
+    if (
+        len(args) != 2
+        or args[0] not in ("--send-to-jamendo", "--diagnose-empty-refresh")
+        or not args[1]
+    ):
         print('{"outcome":"inconclusive","reason":"arguments"}')
         return 2
-    return run_authorized(args[1])
+    return run_authorized(args[1], diagnostic=args[0] == "--diagnose-empty-refresh")
 
 
 if __name__ == "__main__":
