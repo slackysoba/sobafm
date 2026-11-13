@@ -8,7 +8,7 @@ import socket
 import ssl
 import subprocess
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -197,8 +197,7 @@ def test_exact_requests_first_eligible_and_original_alarm(
         ("include", "musicinfo licenses"),
     ]
     assert [parse_qsl(urlsplit(call).query) for call in calls] == [
-        common
-        + [("limit", "10"), ("order", "id_desc"), ("ccnc", "true"), ("durationbetween", "1_480")],
+        common + [("search", "jazz"), ("limit", "10"), ("offset", "0")],
         common + [("id", "168"), ("limit", "1")],
     ]
     assert all(urlsplit(call).path == "/v3.0/tracks/" for call in calls)
@@ -207,6 +206,80 @@ def test_exact_requests_first_eligible_and_original_alarm(
     assert report["selected_track_id"] is None
     assert report["stream"] == asdict(subject.Transfer())
     assert report["search"]["response_bytes"] + report["metadata"]["response_bytes"] < 512_000
+
+
+def test_listing_copies_first_production_request_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = responses(monkeypatch, [document(), document()])
+    parameters = jamendo_catalog.Query.parameters
+    request = jamendo_catalog.SearchWindow.request
+    issued: list[jamendo_catalog.Request] = []
+
+    def query_parameters(query: jamendo_catalog.Query) -> tuple[tuple[str, str], ...]:
+        assert query == jamendo_catalog.Query(search="jazz")
+        # A synthetic builder addition must survive: no parallel request builder.
+        return parameters(query) + (("builder-marker", "synthetic"),)
+
+    def first_request(window: jamendo_catalog.SearchWindow) -> jamendo_catalog.Request:
+        assert not issued
+        result = request(window)
+        assert isinstance(result, jamendo_catalog.Request)
+        assert dict(result.parameters)["limit"] == "100"
+        assert dict(result.parameters)["offset"] == "0"
+        issued.append(result)
+        return result
+
+    def no_receive(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("The bounded copy must not be supplied to SearchWindow.receive")
+
+    monkeypatch.setattr(jamendo_catalog.Query, "parameters", query_parameters)
+    monkeypatch.setattr(jamendo_catalog.SearchWindow, "request", first_request)
+    monkeypatch.setattr(jamendo_catalog.SearchWindow, "receive", no_receive)
+    subject.qualify_metadata(FAKE_ID, subject.Report())
+    assert len(issued) == 1 and len(calls) == 2
+    expected = replace(
+        issued[0],
+        parameters=tuple(
+            (key, "10" if key == "limit" else value) for key, value in issued[0].parameters
+        ),
+    )
+    assert parse_qsl(urlsplit(calls[0]).query) == [("client_id", FAKE_ID), *expected.parameters]
+    assert urlsplit(calls[0]).path == urlsplit(expected.endpoint).path
+    assert dict(issued[0].parameters)["limit"] == "100"
+
+
+@pytest.mark.parametrize(
+    "reason", [jamendo_catalog.Failure.DISABLED, jamendo_catalog.Failure.REQUEST]
+)
+def test_builder_refusal_stops_before_transport(
+    reason: jamendo_catalog.Failure,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = responses(monkeypatch, [])
+
+    def refuse(_window: jamendo_catalog.SearchWindow) -> jamendo_catalog.Refusal:
+        return jamendo_catalog.Refusal(reason)
+
+    monkeypatch.setattr(jamendo_catalog.SearchWindow, "request", refuse)
+    assert subject.run_child("synthetic", admission=True) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["reason"] == reason.value
+    assert calls == [] and not report["metadata_validated"]
+    assert report["search"] == report["metadata"] == report["stream"] == asdict(subject.Transfer())
+
+
+@pytest.mark.parametrize("count", [10, 11])
+def test_listing_keeps_ten_row_cap(count: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = responses(monkeypatch, [listing([row()] * count), document()])
+    report = subject.Report()
+    if count == 10:
+        subject.qualify_metadata(FAKE_ID, report)
+        assert report.metadata_validated and len(calls) == 2
+    else:
+        with pytest.raises(subject.Stopped):
+            subject.qualify_metadata(FAKE_ID, report)
+        assert not report.metadata_validated and len(calls) == 1
+    assert report.stream == subject.Transfer()
 
 
 @pytest.mark.parametrize("stage", [1, 2])

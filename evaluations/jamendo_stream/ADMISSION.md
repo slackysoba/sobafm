@@ -9,11 +9,18 @@ a fresh valid decision and immutable credits while refusing changed material
 content. This new mode applies that existing production contract. It does not
 change production policy, the older modes, or any historical result.
 
+The prospective [#235](https://github.com/slackysoba/sobafm/issues/235) revision uses
+the accepted production musical-search builder with a fixed trusted jazz query.
+It tests request construction and metadata admission, not Gemini interpretation
+or ranking. Production source, policy and diagnostic modes remain unchanged.
+
 Preparation is offline. Independent implementation/protocol review and merge
 precede a separately assigned invocation under the standing necessary-test
 authorization. No invocation belongs to this implementation. The earlier a11
-empty listing remains inconclusive and unexplained; this change cannot make an
-empty response nonempty or identify a prior changed field.
+empty listing and a15/a16 empty diagnostic-subset listings remain inconclusive;
+their causes and a14's refusal cause remain unknown. This change cannot guarantee
+a nonempty response, identify a prior changed field or establish live content-ID
+compatibility. Historical results and their source bindings remain unchanged.
 
 ## Exact prospective invocation
 
@@ -39,23 +46,30 @@ At most two sequential HTTPS GETs to `api.jamendo.com:443`, `/v3.0/tracks/`:
 
 | Request | Exact ordered query parameters |
 | --- | --- |
-| Listing | runtime-only `client_id`, `format=json`, `type=single albumtrack`, `audioformat=mp32`, `include=musicinfo licenses`, `limit=10`, `order=id_desc`, `ccnc=true`, `durationbetween=1_480` |
+| Listing | runtime-only `client_id`, `format=json`, `type=single albumtrack`, `audioformat=mp32`, `include=musicinfo licenses`, `search=jazz`, `limit=10`, `offset=0` |
 | Refresh | runtime-only `client_id`, `format=json`, `type=single albumtrack`, `audioformat=mp32`, `include=musicinfo licenses`, `id=<first admitted ID>`, `limit=1` |
 
-The listing uses production `Request` and the exact `_COMMON` tuple shared by
-`SearchWindow.request` and `refresh_request`. Its four fixed filters remain the
-historical evaluator's finite subset; it is not production's validated musical
-query or two-page search. Production has no public unfiltered-listing builder, so
-the evaluator deliberately reuses that internal tuple rather than copying it or
-inventing a musical query. The refresh uses `refresh_request` unchanged. Both
-requests add **`include=musicinfo licenses`**, absent from the historical modes.
-No other query change is made. Metadata transport still uses the existing bounded
-TLS/HTTP exchange, not production's larger transport limits.
+The listing constructs trusted fixed `Query(search="jazz")`, obtains the first
+`SearchWindow.request()` at offset zero with the locally enabled policy, and
+propagates any refusal before transport. It copies that production request with
+only `limit` reduced from 100 to 10. It neither builds a parallel parameter list
+nor requests another page. The copied request is never passed to
+`SearchWindow.receive`, which requires its original request object. Complete-row
+admission below remains authoritative. The refresh uses `refresh_request`
+unchanged. Both requests include **`include=musicinfo licenses`**.
+
+This is the already accepted production musical request, not a source-access
+workaround or a relaxation of license/notice checks. It replaces the qualification
+mode's diagnostic-only order, CC and duration selectors; no production filter or
+permission changes. Envelope and admission-diagnostic modes retain their historical
+requests, including those selectors. Metadata transport still uses the existing
+bounded TLS/HTTP exchange, not production's larger transport limits.
 
 1. Receive one listing with at most ten rows. Keep fixed envelope/count diagnostics
    and use production's `_rows` envelope parser without dropping fields. Reuse its
-   internal parser because no public unfiltered response parser exists; the two
-   narrow private imports keep one policy/envelope implementation and are covered
+   internal parser to enforce the evaluator's ten-row bound independently of the
+   production window's 100-row page. The narrow private imports for this parser
+   and historical diagnostic requests keep one implementation and are covered
    by explicit evaluator typing and regression checks.
 2. In returned order, pass each complete row to `parse_listing`, then `evaluate`
    with the locally enabled policy, current UTC observation time and `RANKING`
@@ -137,7 +151,8 @@ Synthetic regressions exercise the real production parse/evaluate/refresh bounda
 fresh immutable credits, allowed incidental changes, normalization equivalence,
 material changes, conflicting rights/notices, unsupported evidence, malformed input,
 invalid routes, unreadable credits, empty results, first eligible selection, exact
-request parameters, safe output, original alarm, byte caps, interruption and retained
+production builder reuse, exact fixed request parameters, ten-row cap, builder
+refusal before transport, safe output, original alarm, byte caps, interruption and retained
 late-reaping failure. Success and failure paths both assert zero audio. Existing
 historical-mode, redirect, transport and ownership regressions remain applicable.
 Evaluator tests remain outside ordinary CI and make no source/provider calls.

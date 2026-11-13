@@ -19,7 +19,7 @@ import time
 import unicodedata
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -1002,7 +1002,9 @@ def qualify_metadata(
     from sobafm.jamendo_catalog import (
         _COMMON,  # pyright: ignore[reportPrivateUsage]
         EnvelopeDiagnostic,
+        Query,
         Request,
+        SearchWindow,
         _rows,  # pyright: ignore[reportPrivateUsage]
         refresh,
         refresh_request,
@@ -1012,15 +1014,29 @@ def qualify_metadata(
     )
 
     policy = Policy(enabled=True)
-    listing_request = Request(
-        _COMMON
-        + (
-            ("limit", str(SEARCH_RESULTS)),
-            ("order", "id_desc"),
-            ("ccnc", "true"),
-            ("durationbetween", "1_480"),
+    if envelope_only or admission_diagnostic:
+        listing_request = Request(
+            _COMMON
+            + (
+                ("limit", str(SEARCH_RESULTS)),
+                ("order", "id_desc"),
+                ("ccnc", "true"),
+                ("durationbetween", "1_480"),
+            )
         )
-    )
+    else:
+        # Trusted fixture intent, not raw listener text or model interpretation.
+        request = SearchWindow(Query(search="jazz"), policy, offset=0).request()
+        if isinstance(request, AdmissionRefusal):
+            raise Stopped(request.reason.value)
+        # One bounded listing only; the copy never enters SearchWindow.receive.
+        listing_request = replace(
+            request,
+            parameters=tuple(
+                (key, str(SEARCH_RESULTS) if key == "limit" else value)
+                for key, value in request.parameters
+            ),
+        )
 
     def get(request: Request, transfer: Transfer) -> bytes:
         query = urlencode((("client_id", checked_id(application_id)), *request.parameters))
