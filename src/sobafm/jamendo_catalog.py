@@ -166,7 +166,6 @@ class EnvelopeCondition(StrEnum):
     ROOT_SHAPE = "root_shape"
     ROOT_KEYS = "unexpected_root_keys"
     HEADER_SHAPE = "header_shape"
-    HEADER_KEYS = "unexpected_header_keys"
     PROVIDER = "provider"
     WARNING = "warning"
     RESULTS_SHAPE = "results_shape"
@@ -236,14 +235,14 @@ def _rows(
                 else EnvelopeCondition.ROOT_SHAPE
             )
         fields = {"status", "code", "error_message", "warnings", "results_count"}
-        try:
-            headers = object_fields(data["headers"], fields | {"results_fullcount"}, fields)
-        except AdmissionInputError as error:
-            return refuse(
-                EnvelopeCondition.HEADER_KEYS
-                if error.reason == Reason.UNSUPPORTED
-                else EnvelopeCondition.HEADER_SHAPE
-            )
+        # Additive envelope metadata is compatible, but remains subject to the
+        # whole-response bounds above. Only the required fields and optional
+        # total below are interpreted; recording/notice objects stay closed.
+        if not isinstance(data["headers"], dict):
+            return refuse(EnvelopeCondition.HEADER_SHAPE)
+        headers = cast(dict[str, object], data["headers"])
+        if not fields <= headers.keys():
+            return refuse(EnvelopeCondition.HEADER_SHAPE)
         if (
             type(headers["code"]) is not int
             or headers["status"] != "success"

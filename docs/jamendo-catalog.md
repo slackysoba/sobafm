@@ -45,11 +45,25 @@ Each response is at most 1 MiB of UTF-8 JSON, with duplicate keys, nonfinite lit
 numbers, excessive nesting and inconsistent result counts rejected. API errors and
 nonempty warnings fail the page without copying their potentially sensitive text.
 
+The root envelope accepts only `headers` and `results`. The JSON `headers` object
+requires `status`, `code`, `error_message`, `warnings` and `results_count`: status
+must remain `success`, code integer zero (not bool), both message fields empty
+strings, and count an integer exactly matching the returned list. Optional
+`results_fullcount` must be an integer (not bool) at least that list's length.
+Under [#226](https://github.com/slackysoba/sobafm/issues/226), additional header
+members alone do not refuse the response. The entire response, including those
+members, still rejects duplicate keys and enforces depth <=8, <=64 members per
+object, <=64 characters per key, <=100 items per list and <=32,768 characters per
+string. Extra header metadata is not copied into results, logged, hashed, followed
+as links, used to derive requests or used as admission evidence. This is an
+explicit compatibility boundary, not proof that a future extension cannot carry
+new semantics. Search and by-ID refresh share this production parser.
+
 Identity, primary creator, title, source backlink, positive whole-second duration
 (within the existing 86,400-second catalog bound), exact license and ordinary
 stream route are required. Optional album fields may be absent or empty for singles.
 There is no 1–15-minute filter. Missing/unknown credit structures and unsupported
-fields fail closed; provider `approved`, policy or review fields cannot grant
+recording fields fail closed; provider `approved`, policy or review fields cannot grant
 admission. Known previews, excerpts, snippets, stems, loops and sample packs reject
 in title, type, descriptions, details, tags and notices. Explicit warning lists,
 rights-conflict wording and conflicting source/license links reject. Text-only

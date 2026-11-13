@@ -50,8 +50,28 @@ def forbid_later_work(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
         (
             response([{}], **{"private-header": "private-value"}),
-            "unexpected_header_keys",
+            None,
+            None,
+        ),
+        (
+            response([{}], **{"private-header": {"private-key": [True, None, "private-value"]}}),
+            None,
+            None,
+        ),
+        (
+            response([{}], **{"private-header": nested(7)}),
+            "depth",
             "malformed_response",
+        ),
+        (
+            response([{}], **{"private-header": "private-value", "code": 5}),
+            "provider",
+            "provider_failure",
+        ),
+        (
+            response([{}], **{"private-header": "private-value", "warnings": "private-warning"}),
+            "warning",
+            "provider_warning",
         ),
         (response([{}], results_fullcount=True), "total_type", "malformed_response"),
         (response([{}], results_fullcount=0), "total_value", "malformed_response"),
