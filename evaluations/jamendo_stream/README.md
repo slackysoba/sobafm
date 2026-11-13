@@ -1,5 +1,11 @@
 # One bounded Jamendo stream access check
 
+For #222's separate production-contract metadata qualification, see
+[metadata admission protocol](ADMISSION.md). Its `--qualify-metadata` mode reuses
+production admission and fresh immutable decisions, retains structural diagnostics,
+and always stops before audio. The historical modes described below keep their
+original semantics; none of these protocols authorizes an invocation by itself.
+
 For #219's listing/refresh mismatch diagnostic, see the
 [fixed-category metadata comparison protocol](METADATA_CHANGES.md). Its explicit
 mode stops after metadata even when equal, with no audio request. Stream mode
