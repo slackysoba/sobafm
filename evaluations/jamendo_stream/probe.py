@@ -24,8 +24,11 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from types import FrameType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit
+
+if TYPE_CHECKING:
+    from sobafm.jamendo_admission import Reason, UnknownRowKeys, UnsupportedBoundary
 
 API_HOST = "api.jamendo.com"
 STREAM_HOST = "prod-1.storage.jamendo.com"
@@ -230,6 +233,14 @@ class DiagnosticStep:
 
 
 @dataclass
+class AdmissionObservation:
+    ordinal: int
+    reason: Reason
+    boundary: UnsupportedBoundary | None
+    unknown_row_keys: UnknownRowKeys | None
+
+
+@dataclass
 class Report:
     outcome: str = "inconclusive"
     reason: str | None = None
@@ -251,6 +262,9 @@ class Report:
     admission_refusals: list[tuple[int, str]] = field(default_factory=list[tuple[int, str]])
     previous_decision_matches: bool | None = None
     envelope_condition: str | None = None
+    admission_diagnostics: list[AdmissionObservation] = field(
+        default_factory=list[AdmissionObservation]
+    )
 
 
 @contextmanager
@@ -963,13 +977,20 @@ def admission_categories(value: object) -> tuple[str, ...]:
     )
 
 
-def qualify_metadata(application_id: str, report: Report, *, envelope_only: bool = False) -> None:
-    """Production parser; envelope-only stops after its single listing request."""
+def qualify_metadata(
+    application_id: str,
+    report: Report,
+    *,
+    envelope_only: bool = False,
+    admission_diagnostic: bool = False,
+) -> None:
+    """Production parser; diagnostic modes stop after their single listing."""
     # Load the reviewed checkout, not a potentially older installed application.
     # The isolated child imports no sobafm module before this point. Pure modules
     # below use only the standard library; no runtime environment is installed.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
     from sobafm.jamendo_admission import (
+        AdmissionDiagnostic,
         AdmissionInputError,
         Policy,
         Purpose,
@@ -1007,7 +1028,7 @@ def qualify_metadata(application_id: str, report: Report, *, envelope_only: bool
         return exchange(urlsplit(request.endpoint).path + "?" + query, transfer, metadata=True)
 
     data = get(listing_request, report.search)
-    if envelope_only:
+    if envelope_only or admission_diagnostic:
         # No historical pre-parser: the first production refusal is authoritative.
         # In particular, no row is admitted even when the entire envelope passes.
         diagnostic = EnvelopeDiagnostic()
@@ -1015,7 +1036,23 @@ def qualify_metadata(application_id: str, report: Report, *, envelope_only: bool
         report.envelope_condition = diagnostic.condition
         if isinstance(rows, AdmissionRefusal):
             raise Stopped(rows.reason.value)
-        report.outcome = "envelope_passed"
+        if envelope_only:
+            report.outcome = "envelope_passed"
+            return
+        for ordinal, row in enumerate(rows, start=1):
+            observation = AdmissionDiagnostic()
+            try:
+                listing = parse_listing(row, diagnostic=observation)
+                reason = evaluate(listing, policy, datetime.now(UTC), Purpose.RANKING).reason
+            except AdmissionInputError as error:
+                reason = error.reason
+            report.admission_diagnostics.append(
+                AdmissionObservation(
+                    ordinal, reason, observation.boundary, observation.unknown_row_keys
+                )
+            )
+        # Diagnosis completion is not qualification. Never select even a passing row.
+        report.outcome = "admission_diagnosed"
         return
     # Retain fixed envelope observations, but production remains the authority.
     metadata_rows(data, report.search_results, SEARCH_RESULTS)
@@ -1070,6 +1107,7 @@ def run_child(
     metadata_only: bool = False,
     admission: bool = False,
     envelope_only: bool = False,
+    admission_diagnostic: bool = False,
 ) -> int:
     report = Report()
     application_id = ""
@@ -1077,7 +1115,9 @@ def run_child(
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         with deadline():
             application_id = read_id(application_id_path)
-            if envelope_only:
+            if admission_diagnostic:
+                qualify_metadata(application_id, report, admission_diagnostic=True)
+            elif envelope_only:
                 qualify_metadata(application_id, report, envelope_only=True)
             elif admission:
                 qualify_metadata(application_id, report)
@@ -1105,7 +1145,7 @@ def run_child(
         report.reason = "internal"
     if report.reason is not None:
         report.outcome = "inconclusive"
-    if metadata_only or admission or envelope_only:
+    if metadata_only or admission or envelope_only or admission_diagnostic:
         # Also cover interruption immediately after selection, before probe can
         # clear the legacy stream-mode identity field.
         report.selected_track_id = None
@@ -1127,6 +1167,7 @@ def run_child(
             "metadata_compared",
             "metadata_admitted",
             "envelope_passed",
+            "admission_diagnosed",
         )
         else 1
     )
@@ -1159,6 +1200,7 @@ def supervise(
     metadata_only: bool = False,
     admission: bool = False,
     envelope_only: bool = False,
+    admission_diagnostic: bool = False,
 ) -> int:
     started = time.monotonic()
     child: subprocess.Popen[bytes] | None = None
@@ -1180,10 +1222,13 @@ def supervise(
                     "sys.exit(m['run_child'](sys.argv[2], sys.argv[3] == 'diagnostic', "
                     "metadata_only=sys.argv[3] == 'metadata', "
                     "admission=sys.argv[3] == 'admission', "
-                    "envelope_only=sys.argv[3] == 'envelope'))",
+                    "envelope_only=sys.argv[3] == 'envelope', "
+                    "admission_diagnostic=sys.argv[3] == 'admission_diagnostic'))",
                     str(Path(__file__).resolve()),
                     application_id_path,
-                    "envelope"
+                    "admission_diagnostic"
+                    if admission_diagnostic
+                    else "envelope"
                     if envelope_only
                     else "admission"
                     if admission
@@ -1258,6 +1303,7 @@ def run_authorized(
     metadata_only: bool = False,
     admission: bool = False,
     envelope_only: bool = False,
+    admission_diagnostic: bool = False,
 ) -> int:
     def interrupted(_signum: int, _frame: FrameType | None) -> None:
         raise KeyboardInterrupt
@@ -1270,6 +1316,7 @@ def run_authorized(
             metadata_only=metadata_only,
             admission=admission,
             envelope_only=envelope_only,
+            admission_diagnostic=admission_diagnostic,
         )
     finally:
         for sig, handler in previous.items():
@@ -1290,11 +1337,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             "--diagnose-metadata-changes",
             "--qualify-metadata",
             "--diagnose-envelope",
+            "--diagnose-admission",
         )
         or not args[1]
     ):
         print('{"outcome":"inconclusive","reason":"arguments"}')
         return 2
+    if args[0] == "--diagnose-admission":
+        return run_authorized(args[1], admission_diagnostic=True)
     if args[0] == "--diagnose-envelope":
         return run_authorized(args[1], envelope_only=True)
     if args[0] == "--qualify-metadata":

@@ -1,5 +1,10 @@
 # One bounded Jamendo stream access check
 
+For #229's first unsupported recording boundary, see the
+[single-listing admission diagnostic protocol](ADMISSION_DIAGNOSTICS.md).
+`--diagnose-admission` observes production admission once per complete row and
+always stops before selection, refresh or audio, including when rows pass.
+
 For #224's single-listing envelope diagnosis, see the
 [envelope-only protocol](ENVELOPE.md). `--diagnose-envelope` reports the first
 existing production envelope refusal and stops before candidate admission,
