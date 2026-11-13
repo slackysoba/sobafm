@@ -912,7 +912,8 @@ def test_admission_diagnostic_resets_and_ignores_earlier_invalid_objects() -> No
     diagnostic = AdmissionDiagnostic(UnsupportedBoundary.ROW_FIELDS, UnknownRowKeys.DOCUMENTED_ONLY)
     missing = row(content_id_free=True)
     del missing["id"]
-    for value in (missing, {**row(), 1: "private-value"}, [], None):
+    values: tuple[object, ...] = (missing, {**row(), 1: "private-value"}, [], None)
+    for value in values:
         with pytest.raises(AdmissionInputError) as error:
             parse_listing(value, diagnostic=diagnostic)
         assert error.value.reason == Reason.INVALID
@@ -943,7 +944,9 @@ def test_observer_never_changes_decisions_credits_or_evidence(change: dict[str, 
             before = evaluate(plain, policy, NOW, purpose)
             after = evaluate(observed, policy, NOW, purpose)
             assert asdict(after) == asdict(before)
-            assert decision_matches(before, plain, policy) == decision_matches(after, observed, policy)
+            assert decision_matches(before, plain, policy) == decision_matches(
+                after, observed, policy
+            )
 
 
 @pytest.mark.parametrize("extras", [{"content_id_free"}, {"content_id_free", "private-key"}])
@@ -965,10 +968,11 @@ def test_unknown_row_classification_never_reads_values(extras: set[str]) -> None
 def test_musicinfo_insertion_order_and_late_credit_refusal_stay_authoritative() -> None:
     diagnostic = AdmissionDiagnostic()
     # Within musicinfo the original iteration order determines which failure wins.
-    for music, expected in (
+    cases: tuple[tuple[dict[str, object], UnsupportedBoundary | None], ...] = (
         ({"lang": "bad\u202e", "tags": {"private-key": []}}, None),
         ({"tags": {"private-key": []}, "lang": "bad\u202e"}, UnsupportedBoundary.TAG_GROUPS),
-    ):
+    )
+    for music, expected in cases:
         with pytest.raises(AdmissionInputError) as error:
             parse_listing(row(musicinfo=music), diagnostic=diagnostic)
         assert error.value.reason == (Reason.CREDITS if expected is None else Reason.UNSUPPORTED)

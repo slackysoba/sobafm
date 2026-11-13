@@ -5,16 +5,26 @@ from __future__ import annotations
 import json
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from evaluations.jamendo_stream import probe as subject
 from evaluations.jamendo_stream.test_admission import responses
-from evaluations.jamendo_stream.test_probe import FAKE_ID, Child, document, listing, row
+from evaluations.jamendo_stream.test_probe import (
+    FAKE_ID,
+    Child,
+    Receiver,
+    document,
+    listing,
+    row,
+    wire,
+)
 from sobafm import jamendo_admission, jamendo_catalog
 
 
@@ -34,7 +44,7 @@ def forbid_later_work(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_all_boundaries_complete_rows_once_and_safe_output(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rows = [
+    rows: list[object] = [
         row(content_id_free={"private-value": "https://private.invalid/secret"}),
         row(**{"content_id_free": False, "private-key": "private-value"}),
         row(**{"private-key": "private-value"}),
@@ -130,7 +140,16 @@ def test_empty_or_bad_envelope_never_enters_row_parser(
 def test_exact_byte_cap_and_original_alarm(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    calls = responses(monkeypatch, [b"x" * subject.METADATA_BYTES])
+    calls = responses(monkeypatch, [])
+    receiver = Receiver(wire(b"x" * subject.METADATA_BYTES, metadata=True, headers=b""))
+
+    def exchange(target: str, transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        assert metadata and not calls
+        calls.append(target)
+        transfer.connection_attempts = transfer.requests_attempted = 1
+        return subject.receive(cast(ssl.SSLSocket, receiver), transfer, metadata=True)
+
+    monkeypatch.setattr(subject, "exchange", exchange)
     timers: list[float] = []
     original = signal.setitimer
 
@@ -144,6 +163,7 @@ def test_exact_byte_cap_and_original_alarm(
     assert len(calls) == 1 and timers == [117, 0]
     assert report["reason"] == "response_limit"
     assert report["search"]["response_bytes"] == 256_000
+    assert receiver.offset == 256_000 and sum(receiver.read_sizes) == 256_000
     assert report["admission_diagnostics"] == []
     assert report["metadata"] == report["stream"] == asdict(subject.Transfer())
 
@@ -171,7 +191,9 @@ def test_interrupt_and_exception_text_are_not_reported(
     assert report["metadata"] == report["stream"] == asdict(subject.Transfer())
 
 
-def test_cli_keeps_supervision_and_reaps(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_keeps_supervision_and_reaps(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     path = tmp_path / "synthetic-id.txt"
     path.write_text("invalid!")
     assert subject.main(["--diagnose-admission", str(path)]) == 1

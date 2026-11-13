@@ -492,7 +492,10 @@ def parse_listing(
         for name, item in music.items():
             if name == "tags":
                 groups = fields(
-                    item, {"genres", "instruments", "vartags"}, set(), UnsupportedBoundary.TAG_GROUPS
+                    item,
+                    {"genres", "instruments", "vartags"},
+                    set(),
+                    UnsupportedBoundary.TAG_GROUPS,
                 )
                 tags = {key: _texts(values, 32, 100) for key, values in groups.items()}
                 normalized_music[name] = tags

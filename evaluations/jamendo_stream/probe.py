@@ -1030,7 +1030,7 @@ def qualify_metadata(
     data = get(listing_request, report.search)
     if envelope_only or admission_diagnostic:
         # No historical pre-parser: the first production refusal is authoritative.
-        # In particular, no row is admitted even when the entire envelope passes.
+        # Neither diagnostic mode selects a row even when the envelope passes.
         diagnostic = EnvelopeDiagnostic()
         rows = _rows(data, SEARCH_RESULTS, diagnostic=diagnostic)
         report.envelope_condition = diagnostic.condition
