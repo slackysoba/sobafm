@@ -100,9 +100,12 @@ class StreamLimits:
     def for_duration(cls, duration: int) -> StreamLimits:
         if type(duration) is not int or not 1 <= duration <= 86_400:
             raise TransportError(Kind.MALFORMED)
+        # Whole-second durations make the accepted tolerance exact in hundredths.
+        # Avoid a float ceil admitting one extra encoded byte (for example D=1).
+        hundredths = min(3000, max(200, duration), 10 * duration)
         tolerance = min(30.0, max(2.0, 0.01 * duration), 0.1 * duration)
         return cls(
-            math.ceil(41_000 * (duration + tolerance)) + 262_144,
+            410 * (100 * duration + hundredths) + 262_144,
             2 * (duration + tolerance) + 60,
             tolerance,
         )
@@ -544,6 +547,16 @@ class _Operation:
             self.closing = asyncio.create_task(self._close())
         await _join(self.closing)
 
+    def received_bytes(self) -> int | None:
+        if self.response is None:
+            return 0 if not self.dispatches else None
+        try:
+            return self.response.content.total_raw_bytes
+        except AttributeError:
+            # aiohttp's empty reader may lack the raw counter; it does not
+            # establish that a refused/ignored response body consumed zero bytes.
+            return None
+
     async def _close(self) -> None:
         if self.finished_at is not None:
             return
@@ -552,22 +565,14 @@ class _Operation:
         if self.protocol is not None and self.protocol.closed is not None:
             await self.protocol.closed
         await self.resolver.close()
-        self._raw_bytes = (
-            self.response.content.total_raw_bytes
-            if self.response is not None
-            else 0
-            if not self.dispatches
-            else None
-        )
         try:
-            if self.reservation is not None and (self.response is not None or not self.dispatches):
+            self._raw_bytes = self.received_bytes()
+            if self.reservation is not None and self._raw_bytes is not None:
                 await self.client.journal.settle_usage(
                     self.reservation,
                     dispatches=self.dispatches,
                     responses=int(self.response is not None),
-                    body_bytes=0
-                    if self.response is None
-                    else self.response.content.total_raw_bytes,
+                    body_bytes=self._raw_bytes,
                     failed=self.kind is not None,
                 )
             elif self.reservation is not None:
@@ -588,13 +593,7 @@ class _Operation:
             self.finished_at = self.client.clock()
 
     def report(self) -> Report:
-        raw = (
-            self.response.content.total_raw_bytes
-            if self.response is not None
-            else self._raw_bytes
-            if self.finished_at is not None
-            else (0 if not self.dispatches else None)
-        )
+        raw = self._raw_bytes if self.finished_at is not None else self.received_bytes()
         now = self.client.clock()
         return Report(
             self.kind,
@@ -662,7 +661,10 @@ class OwnedAudio:
                 min(self._deadline, asyncio.get_running_loop().time() + GAP_SECONDS)
             ):
                 chunk = await response.content.read(READ_BYTES)
-            if response.content.total_raw_bytes > self._operation.maximum:
+            received = self._operation.received_bytes()
+            if received is None:
+                raise TransportError(Kind.MALFORMED)
+            if received > self._operation.maximum:
                 raise TransportError(Kind.OVERSIZED)
             self.consumed_bytes += len(chunk)
             if not chunk:
@@ -706,7 +708,7 @@ class OwnedAudio:
 
     async def close(self) -> None:
         if not self.transfer_complete:
-            self._operation.kind = self._operation.kind or Kind.CANCELLED
+            self.cancel()
         self._operation.stop()
         self.stopped.set()
         self._begin_close()
@@ -717,7 +719,10 @@ class OwnedAudio:
         self._watchdog.cancel()
         read = self._read
         if read is not None:
-            self.cancel()
+            # EOF schedules this close before read() resumes to clear its owner.
+            # Join that completed read without turning success into cancellation.
+            if not read.done():
+                self.cancel()
             with suppress(asyncio.CancelledError, TransportError, aiohttp.ClientError):
                 await _join(read)
         try:

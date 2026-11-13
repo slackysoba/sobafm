@@ -122,9 +122,9 @@ source admission, and valid JSON alone is not a successful Jamendo envelope.
 | `scope.last_report`, `scope.failed_cleanups` | Safe last-operation category, dispatch/response counts, raw body bytes or explicit unknown, numeric HTTP status, response completion and original stop/settlement times. Failed cleanup count survives a subsequent report. Do not log an aiohttp exception or request. |
 | `Locator(refreshed: Refreshed, completed_at: float)` | Ephemeral non-repr wrapper. Use the successful refresh fetch's `last_report.completed_at`, not the later cleanup time. The locator consumes itself on its first attempted open and expires after five seconds; its candidate must have an admitted refresh decision with current UTC time. |
 | `await scope.open_audio(locator: Locator, *, attempt: Attempt, bank: PcmBank, deadline: float \| None = None) -> OwnedAudio` | Requires the exact durable, pinned, unused attempt and an already leased uncancelled bank. At most two HTTP audio owners per station. Consume the journal attempt once; constructing another locator cannot reuse it. Caller retains the bank/decoder ownership independently. |
-| `StreamLimits.for_duration(duration: int) -> StreamLimits` | Validates 1–86400 seconds; derives `T=min(30,max(2,.01*D),.1*D)`, encoded cap `ceil(41000*(D+T))+262144` and absolute wall budget `2*(D+T)+60`. These are counters/deadlines, not allocations or traffic entitlements. |
+| `StreamLimits.for_duration(duration: int) -> StreamLimits` | Validates 1–86400 integer seconds; derives `T=min(30,max(2,.01*D),.1*D)`, encoded cap `ceil(41000*(D+T))+262144` and absolute wall budget `2*(D+T)+60`. The encoded cap uses exact integer hundredths (`h=min(3000,max(200,D),10*D)`, cap `410*(100*D+h)+262144`), avoiding an extra byte from floating-point rounding. These are counters/deadlines, not allocations or traffic entitlements. |
 | `await owner.read() -> bytes` | Exactly one reader, at most 16384 bytes per return. Five-second gap timer runs only while requesting bytes. Empty bytes mean verified HTTP length completion only, not MP3/decoder/PCM completion. Caller must keep only its one bounded handoff. |
-| `owner.ready_deadline`, `owner.stopped`, `owner.report` | The following stream producer must enforce the unchanged 15-second readiness deadline and watch the stopped event to discard PCM on failure. The HTTP wall-deadline timer continues during backpressure. `report.stopped_at` lets the producer adopt the earliest HTTP/bank/decoder cleanup clock. |
+| `owner.ready_deadline`, `owner.stopped`, `owner.report` | The following stream producer must enforce the unchanged 15-second readiness deadline and watch the stopped event to discard PCM on failure. The HTTP wall-deadline timer continues during backpressure. Clean HTTP EOF closes its own owner with `transfer_complete=True` and `report.kind=None`; it does not cancel viable downstream decoding. Actual failure/cancellation/expired cleanup propagates the earliest applicable `report.stopped_at` into stream cleanup. |
 | `owner.cancel(first_stop: float \| None = None)` / `await owner.close()` | Stop reads, abort transport without a drain, join a pending read, real connection-close notification, DNS and journal reconciliation. Repeat cancellation cannot reset the first stop or free capacity early. A close after the original three seconds remains expired after settlement. |
 | `scope.cancel(first_stop: float \| None = None)` / `await scope.close()` / `await client.close()` | Stop every affected operation and audio owner before joining any cleanup, including across all stations on client shutdown. Each owner retains the earliest stop clock. Never reopen a closed client. Close the shared journal only after transport and stream owners finish. |
 
@@ -142,6 +142,14 @@ numeric storage-host grammar reaches it. Checked addresses go directly to the
 connector, with caching disabled. Cancelled DNS work is joined before release.
 Audio retains only the refreshed ordinary mp32 route and optional opaque locator
 values; it receives no API client ID/header from the metadata transport.
+
+Automatic EOF cleanup joins an already completed read without cancelling it.
+Pending reads still cancel and join; explicit cancellation remains a failure even
+if it arrives after EOF. Repeated close/cancel retains the earliest stop and an
+expired cleanup verdict after late settlement. An unavailable raw-body counter
+(including aiohttp's empty reader on a refused response) remains unknown. Cleanup
+still settles the HTTP owner and records known dispatches while retaining the
+full uncertain quota reservation through restart; it never infers zero usage.
 
 Before constructing a JSON tree, metadata validates strict UTF-8, depth <=8,
 <=32768 lexical tokens and <=65536 decoded UTF-8 bytes per string, including
