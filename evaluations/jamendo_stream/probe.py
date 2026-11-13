@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 if TYPE_CHECKING:
-    from sobafm.jamendo_admission import Reason, UnknownRowKeys, UnsupportedBoundary
+    from sobafm.jamendo_admission import Reason, UnsupportedBoundary
 
 API_HOST = "api.jamendo.com"
 STREAM_HOST = "prod-1.storage.jamendo.com"
@@ -237,7 +237,6 @@ class AdmissionObservation:
     ordinal: int
     reason: Reason
     boundary: UnsupportedBoundary | None
-    unknown_row_keys: UnknownRowKeys | None
 
 
 @dataclass
@@ -1047,9 +1046,7 @@ def qualify_metadata(
             except AdmissionInputError as error:
                 reason = error.reason
             report.admission_diagnostics.append(
-                AdmissionObservation(
-                    ordinal, reason, observation.boundary, observation.unknown_row_keys
-                )
+                AdmissionObservation(ordinal, reason, observation.boundary)
             )
         # Diagnosis completion is not qualification. Never select even a passing row.
         report.outcome = "admission_diagnosed"

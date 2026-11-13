@@ -65,22 +65,11 @@ class UnsupportedBoundary(StrEnum):
     RECORDING_TYPE = "recording_type"
 
 
-class UnknownRowKeys(StrEnum):
-    DOCUMENTED_ONLY = "documented_only"
-    DOCUMENTED_AND_OTHER = "documented_and_other"
-    OTHER_ONLY = "other_only"
-
-
 @dataclass
 class AdmissionDiagnostic:
-    """First unsupported boundary only; no supplied key, value or fingerprint.
-
-    The row classification compares unknown names with content_id_free only.
-    It never reads that field's value or grants it admission.
-    """
+    """First unsupported boundary only; no supplied key, value or fingerprint."""
 
     boundary: UnsupportedBoundary | None = None
-    unknown_row_keys: UnknownRowKeys | None = None
 
 
 class Purpose(StrEnum):
@@ -396,7 +385,6 @@ def parse_listing(
     """
     if diagnostic is not None:
         diagnostic.boundary = None
-        diagnostic.unknown_row_keys = None
 
     def fields(
         supplied: object, allowed: set[str], required: set[str], boundary: UnsupportedBoundary
@@ -407,22 +395,15 @@ def parse_listing(
         except AdmissionInputError as error:
             if diagnostic is not None and error.reason == Reason.UNSUPPORTED:
                 diagnostic.boundary = boundary
-                if boundary == UnsupportedBoundary.ROW_FIELDS:
-                    # The helper already established a dict with string keys and
-                    # all required fields. Inspect keys only, including on refusal.
-                    unknown = cast(dict[str, object], supplied).keys() - allowed
-                    diagnostic.unknown_row_keys = (
-                        UnknownRowKeys.DOCUMENTED_ONLY
-                        if unknown == {"content_id_free"}
-                        else UnknownRowKeys.DOCUMENTED_AND_OTHER
-                        if "content_id_free" in unknown
-                        else UnknownRowKeys.OTHER_ONLY
-                    )
             raise
 
     row = fields(
         value,
-        _REQUIRED | _TEXT_FIELDS | _LIST_FIELDS | _IGNORED | {"album_id", "musicinfo", "licenses"},
+        _REQUIRED
+        | _TEXT_FIELDS
+        | _LIST_FIELDS
+        | _IGNORED
+        | {"album_id", "musicinfo", "licenses", "content_id_free"},
         _REQUIRED,
         UnsupportedBoundary.ROW_FIELDS,
     )
@@ -446,6 +427,13 @@ def parse_listing(
         "license_ccurl": license_url,
         "stream_route": "jamendo-storage-track-mp32",
     }
+    if "content_id_free" in row:
+        content_id_free = row["content_id_free"]
+        if type(content_id_free) is not bool:
+            raise AdmissionInputError(Reason.INVALID)
+        # A provider assertion, not permission or a claim-free guarantee. Omission
+        # stays distinct from either supplied boolean in the canonical evidence.
+        evidence["content_id_free"] = content_id_free
     for name in _TEXT_FIELDS:
         if name in row:
             evidence[name] = "" if row[name] == "" else text(row[name], 1024, links=True)
@@ -587,6 +575,7 @@ def parse_listing(
             "warnings",
             "rights_warnings",
             "stream_route",
+            "content_id_free",
         }
     }
     return Listing(recording, serialized, _digest(_json(content)), reason, stream)
