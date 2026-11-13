@@ -19,7 +19,6 @@ from sobafm.jamendo_admission import (
     Policy,
     Purpose,
     Reason,
-    UnknownRowKeys,
     UnsupportedBoundary,
     decision_matches,
     evaluate,
@@ -393,6 +392,101 @@ def test_disabled_policy_never_constructs_a_request() -> None:
     assert not evaluate(parse_listing(row()), Policy(), NOW, Purpose.RANKING).admitted
     with pytest.raises(AdmissionInputError):
         Policy(enabled=cast(bool, "true"))
+
+
+@pytest.mark.parametrize("extra", [{}, {"content_id_free": True}, {"content_id_free": False}])
+def test_content_id_is_optional_evidence_without_changing_music_or_credits(
+    extra: dict[str, object],
+) -> None:
+    baseline = parse_listing(row())
+    listing = parse_listing(row(**extra))
+    assert json.loads(listing.evidence) == {**json.loads(baseline.evidence), **extra}
+    assert listing.recording == baseline.recording
+    assert listing.content_digest == baseline.content_digest
+    assert render_credits(listing.recording) == render_credits(baseline.recording)
+    window = SearchWindow(Query(search="piano"), ON)
+    request = window.request()
+    assert isinstance(request, Request)
+    result = window.receive(request, response([row(**extra)]), NOW)
+    assert not result.refusals and result.candidates == (candidate(row(**extra)),)
+    for purpose in Purpose:
+        assert evaluate(listing, ON, NOW, purpose).reason == Reason.PROVISIONAL
+        disabled = evaluate(listing, Policy(), NOW, purpose)
+        assert disabled.reason == Reason.DISABLED
+        assert not decision_matches(disabled, listing, ON)
+    ranked = result.candidates[0]
+    by_id = refresh_request(ranked.recording.key, ON)
+    assert isinstance(by_id, Request)
+    assert refresh(by_id, response([row(**extra)]), ranked, Policy(), NOW) == Refusal(
+        Failure.DISABLED
+    )
+
+
+@pytest.mark.parametrize("before", [{}, {"content_id_free": True}, {"content_id_free": False}])
+@pytest.mark.parametrize("after", [{}, {"content_id_free": True}, {"content_id_free": False}])
+def test_content_id_refresh_rebinds_all_three_states_without_discarding_ranked_music(
+    before: dict[str, object], after: dict[str, object]
+) -> None:
+    ranked = candidate(row(**before))
+    original = asdict(ranked)
+    listing = parse_listing(row(**after))
+    assert decision_matches(ranked.decision, listing, ON) == (before == after)
+    current = refreshed(row(**after), ranked)
+    assert isinstance(current, Refreshed)
+    assert current.previous_decision_matches == (before == after)
+    decision = current.candidate.decision
+    assert (decision.evidence_digest == ranked.decision.evidence_digest) == (before == after)
+    assert decision.metadata_digest == ranked.decision.metadata_digest
+    assert decision == evaluate(listing, ON, NOW + timedelta(seconds=1), Purpose.REFRESH)
+    assert current.candidate.recording == ranked.recording
+    assert current.candidate.content_digest == ranked.content_digest
+    assert asdict(ranked) == original
+
+
+@pytest.mark.parametrize(
+    "value", [None, "true", "false", "", 0, 1, -1, 0.0, 1.0, [], [True], {}, {"value": True}]
+)
+def test_supplied_content_id_requires_an_exact_json_boolean(value: object) -> None:
+    diagnostic = AdmissionDiagnostic(UnsupportedBoundary.ROW_FIELDS)
+    with pytest.raises(AdmissionInputError, match="^invalid_metadata$"):
+        parse_listing(row(content_id_free=value), diagnostic=diagnostic)
+    assert diagnostic == AdmissionDiagnostic()
+    assert_search_and_refresh_refuse(response([row(content_id_free=value)]), Reason.INVALID)
+
+
+@pytest.mark.parametrize("content_id_free", [True, False])
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ({"license_ccurl": None}, Reason.LICENSE),
+        ({"license_ccurl": "https://creativecommons.org/licenses/by/9.0/"}, Reason.LICENSE),
+        ({"licenses": {"ccnc": False}}, Reason.RIGHTS),
+        ({"notices": ["All rights reserved"]}, Reason.RIGHTS),
+        ({"notices": ["https://creativecommons.org/licenses/by/4.0/"]}, Reason.RIGHTS),
+        ({"warnings": ["pending"]}, Reason.RIGHTS),
+        ({"rights_warnings": ["pending"]}, Reason.RIGHTS),
+        ({"notices": {"unknown": "notice"}}, Reason.CREDITS),
+        ({"creators": ["x" * 201]}, Reason.CREDITS),
+        ({"shareurl": "https://www.jamendo.com/track/999"}, Reason.IDENTITY),
+        ({"audio": "https://prod-1.storage.jamendo.com/?trackid=123&format=mp31"}, Reason.ROUTE),
+        ({"name": "Preview"}, Reason.EXCLUDED),
+        ({"private-key": "private-value"}, Reason.UNSUPPORTED),
+        ({"musicinfo": {"private-key": True}}, Reason.UNSUPPORTED),
+    ],
+)
+def test_content_id_cannot_override_existing_admission_refusals(
+    content_id_free: bool, change: dict[str, object], reason: Reason
+) -> None:
+    assert_search_and_refresh_refuse(
+        response([row(content_id_free=content_id_free, **change)]), reason
+    )
+
+
+@pytest.mark.parametrize("content_id_free", [True, False])
+def test_content_id_cannot_supply_a_missing_license(content_id_free: bool) -> None:
+    value = row(content_id_free=content_id_free)
+    del value["license_ccurl"]
+    assert_search_and_refresh_refuse(response([value]), Reason.INVALID)
 
 
 def test_requests_are_explicit_bounded_and_include_singles() -> None:
@@ -824,25 +918,23 @@ def test_generic_one_point_zero_does_not_invent_a_license_uri() -> None:
 
 
 @pytest.mark.parametrize(
-    ("change", "boundary", "keys"),
+    ("change", "boundary"),
     [
-        ({"content_id_free": True}, "row_fields", "documented_only"),
         (
             {"content_id_free": False, "private-key": "private-value"},
             "row_fields",
-            "documented_and_other",
         ),
-        ({"private-key": "private-value"}, "row_fields", "other_only"),
-        ({"musicinfo": {"private-key": "private-value"}}, "musicinfo_fields", None),
-        ({"musicinfo": {"tags": {"private-key": []}}}, "tag_groups", None),
-        ({"licenses": {"private-key": True}}, "license_fields", None),
-        ({"details": ["x" * 161]}, "details_bound", None),
-        ({"musicinfo": {"tags": {"genres": ["piano"] * 25}}}, "details_bound", None),
-        ({"type": "unrecognized"}, "recording_type", None),
+        ({"private-key": "private-value"}, "row_fields"),
+        ({"musicinfo": {"private-key": "private-value"}}, "musicinfo_fields"),
+        ({"musicinfo": {"tags": {"private-key": []}}}, "tag_groups"),
+        ({"licenses": {"private-key": True}}, "license_fields"),
+        ({"details": ["x" * 161]}, "details_bound"),
+        ({"musicinfo": {"tags": {"genres": ["piano"] * 25}}}, "details_bound"),
+        ({"type": "unrecognized"}, "recording_type"),
     ],
 )
 def test_admission_diagnostic_labels_and_unchanged_outcome(
-    change: dict[str, object], boundary: str, keys: str | None
+    change: dict[str, object], boundary: str
 ) -> None:
     value = row(**change)
     original = json.dumps(value)
@@ -863,7 +955,7 @@ def test_admission_diagnostic_labels_and_unchanged_outcome(
             parse_listing(value, diagnostic=diagnostic)
         assert observed_error.value.reason == plain_error.value.reason == Reason.UNSUPPORTED
         assert str(observed_error.value) == str(plain_error.value) == "unsupported_evidence"
-    assert diagnostic.boundary == boundary and diagnostic.unknown_row_keys == keys
+    assert diagnostic.boundary == boundary
     assert json.dumps(value) == original
     assert "private" not in json.dumps(asdict(diagnostic))
 
@@ -872,7 +964,8 @@ def test_admission_diagnostic_labels_and_unchanged_outcome(
     ("change", "boundary", "reason"),
     [
         # The original object helper checks required fields before unknown keys.
-        ({"content_id_free": True, "id": None}, "row_fields", Reason.UNSUPPORTED),
+        ({"private-key": True, "id": None}, "row_fields", Reason.UNSUPPORTED),
+        ({"content_id_free": True, "id": None}, None, Reason.IDENTITY),
         ({"id": None, "musicinfo": {"private-key": True}}, None, Reason.IDENTITY),
         ({"notices": ["bad\u202e"], "musicinfo": {"private-key": True}}, None, Reason.CREDITS),
         (
@@ -909,7 +1002,7 @@ def test_admission_diagnostic_preserves_first_failure(
 
 
 def test_admission_diagnostic_resets_and_ignores_earlier_invalid_objects() -> None:
-    diagnostic = AdmissionDiagnostic(UnsupportedBoundary.ROW_FIELDS, UnknownRowKeys.DOCUMENTED_ONLY)
+    diagnostic = AdmissionDiagnostic(UnsupportedBoundary.ROW_FIELDS)
     missing = row(content_id_free=True)
     del missing["id"]
     values: tuple[object, ...] = (missing, {**row(), 1: "private-value"}, [], None)
@@ -924,6 +1017,8 @@ def test_admission_diagnostic_resets_and_ignores_earlier_invalid_objects() -> No
     "change",
     [
         {},
+        {"content_id_free": True},
+        {"content_id_free": False},
         {"details": ["x" * 160]},
         {"musicinfo": {"tags": {"genres": ["piano"] * 24}}},
         {"notices": ["Additional artist credit"], "type": "single"},
@@ -934,7 +1029,7 @@ def test_admission_diagnostic_resets_and_ignores_earlier_invalid_objects() -> No
 def test_observer_never_changes_decisions_credits_or_evidence(change: dict[str, object]) -> None:
     value = row(**change)
     plain = parse_listing(value)
-    diagnostic = AdmissionDiagnostic(UnsupportedBoundary.ROW_FIELDS, UnknownRowKeys.OTHER_ONLY)
+    diagnostic = AdmissionDiagnostic(UnsupportedBoundary.ROW_FIELDS)
     observed = parse_listing(value, diagnostic=diagnostic)
     assert diagnostic == AdmissionDiagnostic()
     assert asdict(observed) == asdict(plain)
@@ -949,8 +1044,8 @@ def test_observer_never_changes_decisions_credits_or_evidence(change: dict[str, 
             )
 
 
-@pytest.mark.parametrize("extras", [{"content_id_free"}, {"content_id_free", "private-key"}])
-def test_unknown_row_classification_never_reads_values(extras: set[str]) -> None:
+@pytest.mark.parametrize("extras", [{"private-key"}, {"content_id_free", "private-key"}])
+def test_unknown_row_refusal_never_reads_values(extras: set[str]) -> None:
     class UnreadableRow(dict[str, object]):
         def __getitem__(self, key: str) -> object:
             pytest.fail("Row refusal must not inspect any value or continue validation")
@@ -960,9 +1055,6 @@ def test_unknown_row_classification_never_reads_values(extras: set[str]) -> None
     with pytest.raises(AdmissionInputError, match="^unsupported_evidence$"):
         parse_listing(value, diagnostic=diagnostic)
     assert diagnostic.boundary == UnsupportedBoundary.ROW_FIELDS
-    assert diagnostic.unknown_row_keys == (
-        UnknownRowKeys.DOCUMENTED_ONLY if len(extras) == 1 else UnknownRowKeys.DOCUMENTED_AND_OTHER
-    )
 
 
 def test_musicinfo_insertion_order_and_late_credit_refusal_stay_authoritative() -> None:

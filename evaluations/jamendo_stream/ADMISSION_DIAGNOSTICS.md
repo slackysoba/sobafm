@@ -8,15 +8,18 @@ Its first recording boundary is unknown. The separate
 [static triage](https://github.com/slackysoba/sobafm/issues/228#issuecomment-6851353549)
 identified six possible boundaries and a documentation/allowlist discrepancy for
 `content_id_free`; it did not establish that the field appeared in a14 or caused
-any refusal. This diagnostic does not change that historical evidence or admit
-the named field. [#230](https://github.com/slackysoba/sobafm/issues/230) owns
-independent documentation research and is not an unmerged code dependency.
+any refusal. Historical source-bound reports remain unchanged.
+[#230's accepted research](https://github.com/slackysoba/sobafm/issues/230#issuecomment-6851557753)
+supports [#231's typed compatibility correction](https://github.com/slackysoba/sobafm/issues/231):
+production now accepts the optional named field only as an exact JSON boolean,
+retains it in policy evidence and gives neither value independent permission or
+refusal authority. This does not establish a14's cause or source qualification.
 
-Preparation and regression verification are offline. Independent implementation
-and protocol review and merge precede one separately assigned invocation under
-the standing necessary-test authorization. This implementation assignment grants
-no live execution, credential read, provider/Discord request, build or native
-execution. The issue remains open for the separately reviewed diagnostic result.
+Preparation and regression verification are offline. Any future invocation needs
+a separate assignment bound to the then-reviewed merged source and protocol.
+Issue #231 authorizes no live retry, credential read, provider/Discord request, build
+or native execution. Earlier executions keep their exact historical bindings;
+this correction cannot change their results or establish an unobserved cause.
 
 ## Prospective invocation and binding
 
@@ -66,8 +69,8 @@ stops immediately with the existing safe reason and envelope enum.
 For each returned row in order, call `parse_listing` exactly once with the complete
 row and a fresh `AdmissionDiagnostic`. On a returned listing, call `evaluate` with
 the locally enabled policy, current UTC observation time and `RANKING` purpose.
-Record only ordinal, the existing reason and the two optional fixed diagnostic
-enums below. Catch the existing `AdmissionInputError` without retrying, filtering
+Record only ordinal, the existing reason and the optional fixed diagnostic
+boundary below. Catch the existing `AdmissionInputError` without retrying, filtering
 fields or continuing validation of that refused row. Continue to the next row,
 up to ten. Never retain the source row or a decision in the report.
 
@@ -90,8 +93,9 @@ substitution or paid fallback occurs on any outcome.
 
 `AdmissionDiagnostic` resets at the start of each production parse. Normal callers
 omit it. The shared `object_fields` acceptance and the parser's order, reasons,
-allowlists, bounds, rights/notice checks, returned listings and evidence remain
-unchanged. The observer annotates the existing helper's four caller boundaries;
+allowlists, bounds, rights/notice checks, returned listings and evidence are the
+current production rules, including #231's typed content-ID support. The observer
+annotates the existing helper's four caller boundaries;
 it never implements a parallel parser or determines acceptance.
 
 | `boundary` | First encountered unsupported check |
@@ -111,21 +115,16 @@ may still refuse. In that case `boundary=recording_type` records the encountered
 unsupported branch, while `reason` retains the final credit refusal. Neither
 field implies unvisited checks passed or identifies any later failures.
 
-Only at `row_fields`, `unknown_row_keys` describes the unsupported key set:
+The obsolete `unknown_row_keys` classification is removed from current reports:
+`content_id_free` is now supported, so distinguishing it from other unknown keys
+has no remaining purpose. Historical reports retain their original schema and
+source bindings. Other unknown keys still refuse at `row_fields` before any
+row value is read. A malformed content-ID value produces `invalid_metadata`,
+with no unsupported boundary unless an earlier unsupported check refused first.
+The diagnostic never implements a separate acceptance path or skips a field.
 
-| Enum | Meaning |
-| --- | --- |
-| `documented_only` | Exactly the documented `content_id_free` name |
-| `documented_and_other` | That name plus at least one other unsupported name |
-| `other_only` | Unsupported names excluding that documented name |
-
-All other boundaries leave this field null. Comparison inspects keys only after
-the original helper refuses; it never reads the named field's value. These enum
-labels are not supplied names and make no assertion about the flag's semantics,
-rights, completeness or truth. No field is ignored, approved or newly accepted.
-
-The new report entries contain only fixed `ordinal`, `reason`, `boundary` and
-`unknown_row_keys` fields. No actual unknown keys, values, paths, key/detail
+Current report entries contain only fixed `ordinal`, `reason` and `boundary`
+fields. No actual unknown keys, values, paths, key/detail
 lengths/counts, source fingerprints, exception text, credits, URLs, identities or
 credentials are emitted. Existing HTTP transfer accounting (consumed byte counts,
 status and framing) remains; envelope count/type fields stay null. Credential
@@ -163,11 +162,11 @@ uv run pyright --pythonversion 3.14 --pythonplatform Linux --level error \
   evaluations/jamendo_stream
 ```
 
-Synthetic cases cover all six labels/three key classifications, exact limits,
+Synthetic cases cover all six labels, typed content-ID values, exact limits,
 first-failure ordering, unchanged reasons/listings/decisions/evidence/credits,
 hostile-key/value redaction and unread values, complete rows parsed once, exact
 request, zero selection/refresh/audio even on passing rows, envelope refusal,
 isolated source binding, the original byte/alarm limits, interruption and retained
 late-reaping failure. These checks do not identify a14's actual cause. Required
 author checks, the exact pushed-commit helper, CI and independent review precede
-squash merge; the separately assigned diagnostic remains outstanding after merge.
+squash merge. Source execution and result review remain separate assignments.

@@ -41,8 +41,9 @@ def forbid_later_work(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(subject, name, forbidden)
 
 
+@pytest.mark.parametrize("content_id_free", [True, False])
 def test_all_boundaries_complete_rows_once_and_safe_output(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    content_id_free: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     rows: list[object] = [
         row(content_id_free={"private-value": "https://private.invalid/secret"}),
@@ -53,7 +54,7 @@ def test_all_boundaries_complete_rows_once_and_safe_output(
         row(licenses={"private-key": "private-value"}),
         row(details=["x" * 161]),
         row(type="unrecognized"),
-        row(),  # Even a passing row cannot select, fingerprint, refresh or open audio.
+        row(content_id_free=content_id_free),  # Passing rows still cannot select or refresh.
         row(type="preview"),
     ]
     calls = responses(monkeypatch, [listing(rows)])
@@ -81,20 +82,20 @@ def test_all_boundaries_complete_rows_once_and_safe_output(
         + "&limit=10&order=id_desc&ccnc=true&durationbetween=1_480"
     )
     expected = [
-        ("unsupported_evidence", "row_fields", "documented_only"),
-        ("unsupported_evidence", "row_fields", "documented_and_other"),
-        ("unsupported_evidence", "row_fields", "other_only"),
-        ("unsupported_evidence", "musicinfo_fields", None),
-        ("unsupported_evidence", "tag_groups", None),
-        ("unsupported_evidence", "license_fields", None),
-        ("unsupported_evidence", "details_bound", None),
-        ("unsupported_evidence", "recording_type", None),
-        ("provisional_listing", None, None),
-        ("excluded_recording_form", None, None),
+        ("invalid_metadata", None),
+        ("unsupported_evidence", "row_fields"),
+        ("unsupported_evidence", "row_fields"),
+        ("unsupported_evidence", "musicinfo_fields"),
+        ("unsupported_evidence", "tag_groups"),
+        ("unsupported_evidence", "license_fields"),
+        ("unsupported_evidence", "details_bound"),
+        ("unsupported_evidence", "recording_type"),
+        ("provisional_listing", None),
+        ("excluded_recording_form", None),
     ]
     assert report["admission_diagnostics"] == [
-        {"ordinal": n, "reason": reason, "boundary": boundary, "unknown_row_keys": keys}
-        for n, (reason, boundary, keys) in enumerate(expected, start=1)
+        {"ordinal": n, "reason": reason, "boundary": boundary}
+        for n, (reason, boundary) in enumerate(expected, start=1)
     ]
     assert report["outcome"] == "admission_diagnosed" and report["reason"] is None
     assert report["metadata"] == report["stream"] == asdict(subject.Transfer())

@@ -76,6 +76,19 @@ This conservative text screening can refuse legitimate titles; it does not prove
 the absence of undisclosed conflicts or recognize every possible natural-language
 rights statement.
 
+The optional named `content_id_free` field accepts only exact JSON booleans.
+Supplied null, strings, numbers and collections fail as `invalid_metadata`.
+Absence, true and false remain distinct in canonical policy evidence; none changes
+the recording's musical details, credits or material-content digest. Neither
+boolean independently allows or denies playback, substitutes for a license or
+notice check, supplies a ranking hint, or certifies freedom from claims.
+[#230's official-source research](https://github.com/slackysoba/sobafm/issues/230#issuecomment-6851557753)
+documents that Content ID participation can coexist with a CC license, while the
+flag's precise operational guarantee and response-presence rules are unspecified.
+Accepting absence is a local compatibility choice. [#231](https://github.com/slackysoba/sobafm/issues/231)
+adds this typed boundary under the existing policy; it establishes no cause for
+historical diagnostic refusals and grants no permission or notice exception.
+
 The finite license set follows the [Creative Commons license list](https://creativecommons.org/licenses/):
 BY, BY-SA, BY-ND, BY-NC, BY-NC-SA and BY-NC-ND at generic 2.0/2.5,
 unported 3.0 and international 4.0; generic 1.0 uses BY-ND-NC rather than
@@ -93,9 +106,9 @@ provider/composition notices; reject rather than truncate. Matching details keep
 the existing 24 by 160-character limit. Unsupported markup, controls and links
 with credentials, queries or fragments are refused in retained text.
 
-The evidence digest covers every normalized identity, credit, descriptive and
-license-flag input, and the validated ordinary-route category. Changes to tags or
-other `Recording.details` invalidate it even when the older `metadata_digest`
+The evidence digest covers every normalized identity, credit, descriptive,
+license-flag and supplied content-ID input, and the validated ordinary-route
+category. Changes to tags or other `Recording.details` invalidate it even when the older `metadata_digest`
 stays the same. Known transport-only media/image links, waveform/statistics,
 position and the download flag do not authorize admission and are not retained
 or hashed. The ordinary route is currently the documented HTTPS
@@ -106,6 +119,9 @@ not DNS, redirect, access or actual-stream qualification.
 
 Refresh re-evaluates policy and both bindings. Changed valid notices or licenses
 produce new credits and a new decision, with `previous_decision_matches=False`.
+A content-ID change, including appearance or disappearance, also requires a new
+decision with that comparison false, while unchanged music and credits remain
+eligible for the same ranked choice. No prior decision authorizes another open.
 Identity or descriptive/content changes refuse the old ranked choice for bounded
 continuation; the earlier immutable snapshot is never rewritten. Policy-version
 changes similarly cannot inherit approval. `decision_matches` only compares
