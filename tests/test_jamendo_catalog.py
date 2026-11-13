@@ -9,6 +9,7 @@ from typing import cast
 
 import pytest
 
+from sobafm import jamendo_catalog as subject
 from sobafm.catalog import RecordingKey, RecordingKind, Source, metadata_digest
 from sobafm.credits import render_credits
 from sobafm.jamendo_admission import (
@@ -37,6 +38,143 @@ from sobafm.jamendo_catalog import (
 
 NOW = datetime(2026, 11, 11, tzinfo=UTC)
 ON = Policy(enabled=True)
+
+
+def nested(levels: int) -> object:
+    value: object = "leaf"
+    for _ in range(levels):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize(
+    ("accepted", "refused", "condition"),
+    [
+        (nested(5), nested(6), subject.EnvelopeCondition.DEPTH),
+        (
+            {str(n): None for n in range(64)},
+            {str(n): None for n in range(65)},
+            subject.EnvelopeCondition.OBJECT_MEMBERS,
+        ),
+        ({"k" * 64: None}, {"k" * 65: None}, subject.EnvelopeCondition.KEY_LENGTH),
+        ([None] * 100, [None] * 101, subject.EnvelopeCondition.LIST_LENGTH),
+        ("v" * 32_768, "v" * 32_769, subject.EnvelopeCondition.STRING_LENGTH),
+    ],
+)
+def test_envelope_structural_boundaries(
+    accepted: object, refused: object, condition: subject.EnvelopeCondition
+) -> None:
+    diagnostic = subject.EnvelopeDiagnostic()
+    for value, expected in ((refused, condition), (accepted, None)):
+        payload = response([{"private-key": value}])
+        plain = subject._rows(payload, 10)  # pyright: ignore[reportPrivateUsage]
+        observed = subject._rows(payload, 10, diagnostic=diagnostic)  # pyright: ignore[reportPrivateUsage]
+        assert observed == plain
+        assert diagnostic.condition == expected
+        assert isinstance(observed, Refusal) == (expected is not None)
+
+
+@pytest.mark.parametrize(
+    ("payload", "condition", "failure"),
+    [
+        (b" " * (MAX_RESPONSE_BYTES + 1), "payload_size", Failure.OVERSIZED),
+        (b"invalid", "json", Failure.MALFORMED),
+        (b"\xff", "json", Failure.MALFORMED),
+        (b'{"private-key":1,"private-key":2}', "json", Failure.MALFORMED),
+        (b'{"private-key":NaN}', "json", Failure.MALFORMED),
+        (b"[]", "root_shape", Failure.MALFORMED),
+        (
+            b'{"headers":{},"results":[],"private-key":null}',
+            "unexpected_root_keys",
+            Failure.MALFORMED,
+        ),
+        (b'{"headers":{},"results":[]}', "header_shape", Failure.MALFORMED),
+    ],
+)
+def test_earlier_envelope_failures_are_safe(
+    payload: bytes, condition: str, failure: Failure
+) -> None:
+    diagnostic = subject.EnvelopeDiagnostic()
+    assert subject._rows(payload, 10, diagnostic=diagnostic) == Refusal(failure)  # pyright: ignore[reportPrivateUsage]
+    assert diagnostic.condition == condition
+    assert "private" not in repr(diagnostic)
+
+
+def test_parser_recursion_error_has_no_invented_structural_diagnosis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Do not depend on the interpreter JSON decoder's nesting implementation.
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        raise RecursionError("private-parser-detail")
+
+    monkeypatch.setattr(subject.json, "loads", refuse)
+    diagnostic = subject.EnvelopeDiagnostic()
+    assert subject._rows(b"[]", 10, diagnostic=diagnostic) == Refusal(Failure.MALFORMED)  # pyright: ignore[reportPrivateUsage]
+    assert diagnostic.condition == subject.EnvelopeCondition.JSON
+    assert "private" not in repr(diagnostic)
+
+
+@pytest.mark.parametrize(
+    ("header", "condition", "failure"),
+    [
+        ({"private-header": "private-value"}, "unexpected_header_keys", Failure.MALFORMED),
+        ({"status": "succeed"}, "provider", Failure.PROVIDER),
+        ({"code": True}, "provider", Failure.PROVIDER),
+        ({"warnings": "private-value"}, "warning", Failure.WARNING),
+        ({"results_count": True}, "results_count", Failure.MALFORMED),
+        ({"results_count": 2}, "results_count", Failure.MALFORMED),
+        ({"results_fullcount": True}, "total_type", Failure.MALFORMED),
+        ({"results_fullcount": "1"}, "total_type", Failure.MALFORMED),
+        ({"results_fullcount": 1.0}, "total_type", Failure.MALFORMED),
+        ({"results_fullcount": None}, "total_type", Failure.MALFORMED),
+        ({"results_fullcount": 0}, "total_value", Failure.MALFORMED),
+        ({"results_fullcount": -1}, "total_value", Failure.MALFORMED),
+    ],
+)
+def test_envelope_header_conditions_preserve_verdict(
+    header: dict[str, object], condition: str, failure: Failure
+) -> None:
+    payload = response([row()], **header)
+    diagnostic = subject.EnvelopeDiagnostic()
+    assert subject._rows(payload, 10, diagnostic=diagnostic) == Refusal(failure)  # pyright: ignore[reportPrivateUsage]
+    assert subject._rows(payload, 10) == Refusal(failure)  # pyright: ignore[reportPrivateUsage]
+    assert diagnostic.condition == condition
+
+
+def test_envelope_first_refusal_order_and_count_boundaries() -> None:
+    diagnostic = subject.EnvelopeDiagnostic()
+    # The existing traversal checks the whole structure before envelope fields,
+    # with dictionary insertion order and member count before key length.
+    cases: list[tuple[bytes, str | None]] = [
+        (response([{"k" * 65: None, **{str(n): None for n in range(64)}}]), "object_members"),
+        (
+            response([{"first": "x" * 32_769, "second": [None] * 101}], status="bad"),
+            "string_length",
+        ),
+        (response([{"second": [None] * 101, "first": "x" * 32_769}]), "list_length"),
+        (response([{}], warnings="bad", results_fullcount=False), "warning"),
+        (response([{}], results_count=2, results_fullcount=False), "results_count"),
+        (response([{}], results_fullcount=1), None),
+        (response([], results_fullcount=0), None),
+        (response([{}] * 10), None),
+        (response([{}] * 11), "results_count"),
+        (
+            b'{"headers":{"status":"success","code":0,"warnings":"",'
+            b'"error_message":"","results_count":0},"results":{}}',
+            "results_shape",
+        ),
+        # Missing required keys wins before unknown keys in object_fields.
+        (b'{"private-key":null}', "root_shape"),
+    ]
+    for payload, condition in cases:
+        result = subject._rows(payload, 10, diagnostic=diagnostic)  # pyright: ignore[reportPrivateUsage]
+        assert diagnostic.condition == condition
+        assert result == subject._rows(payload, 10)  # pyright: ignore[reportPrivateUsage]
+    # Exact byte cap is still parsed; only cap+1 gives OVERSIZED.
+    payload = response([])
+    payload += b" " * (MAX_RESPONSE_BYTES - len(payload))
+    assert subject._rows(payload, 10, diagnostic=diagnostic) == ()  # pyright: ignore[reportPrivateUsage]
+    assert diagnostic.condition is None
 
 
 def row(identity: str = "123", /, **changes: object) -> dict[str, object]:
