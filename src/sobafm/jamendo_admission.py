@@ -56,6 +56,33 @@ class AdmissionInputError(ValueError):
         self.reason = reason
 
 
+class UnsupportedBoundary(StrEnum):
+    ROW_FIELDS = "row_fields"
+    MUSICINFO_FIELDS = "musicinfo_fields"
+    TAG_GROUPS = "tag_groups"
+    LICENSE_FIELDS = "license_fields"
+    DETAILS_BOUND = "details_bound"
+    RECORDING_TYPE = "recording_type"
+
+
+class UnknownRowKeys(StrEnum):
+    DOCUMENTED_ONLY = "documented_only"
+    DOCUMENTED_AND_OTHER = "documented_and_other"
+    OTHER_ONLY = "other_only"
+
+
+@dataclass
+class AdmissionDiagnostic:
+    """First unsupported boundary only; no supplied key, value or fingerprint.
+
+    The row classification compares unknown names with content_id_free only.
+    It never reads that field's value or grants it admission.
+    """
+
+    boundary: UnsupportedBoundary | None = None
+    unknown_row_keys: UnknownRowKeys | None = None
+
+
 class Purpose(StrEnum):
     RANKING = "ranking"
     REFRESH = "refresh"
@@ -356,16 +383,48 @@ def _notice_conflicts(value: object, license_url: str, backlink: str) -> bool:
     return re.search(r"\b(?:CC[ -]+BY|Creative Commons)\b", without_links, re.I) is not None
 
 
-def parse_listing(value: object, expected_id: str | None = None) -> Listing:
+def parse_listing(
+    value: object,
+    expected_id: str | None = None,
+    *,
+    diagnostic: AdmissionDiagnostic | None = None,
+) -> Listing:
     """Normalize the complete supplied row; unsupported evidence fails closed.
 
     This is separate from the historical saved-metadata importer, which deliberately
     drops unknown fields and cannot furnish admission evidence for this policy.
     """
-    row = object_fields(
+    if diagnostic is not None:
+        diagnostic.boundary = None
+        diagnostic.unknown_row_keys = None
+
+    def fields(
+        supplied: object, allowed: set[str], required: set[str], boundary: UnsupportedBoundary
+    ) -> dict[str, object]:
+        # Observe only the original helper's refusal, never retry or filter input.
+        try:
+            return object_fields(supplied, allowed, required)
+        except AdmissionInputError as error:
+            if diagnostic is not None and error.reason == Reason.UNSUPPORTED:
+                diagnostic.boundary = boundary
+                if boundary == UnsupportedBoundary.ROW_FIELDS:
+                    # The helper already established a dict with string keys and
+                    # all required fields. Inspect keys only, including on refusal.
+                    unknown = cast(dict[str, object], supplied).keys() - allowed
+                    diagnostic.unknown_row_keys = (
+                        UnknownRowKeys.DOCUMENTED_ONLY
+                        if unknown == {"content_id_free"}
+                        else UnknownRowKeys.DOCUMENTED_AND_OTHER
+                        if "content_id_free" in unknown
+                        else UnknownRowKeys.OTHER_ONLY
+                    )
+            raise
+
+    row = fields(
         value,
         _REQUIRED | _TEXT_FIELDS | _LIST_FIELDS | _IGNORED | {"album_id", "musicinfo", "licenses"},
         _REQUIRED,
+        UnsupportedBoundary.ROW_FIELDS,
     )
     identity = track_id(row["id"])
     if expected_id is not None and identity != track_id(expected_id):
@@ -416,7 +475,7 @@ def parse_listing(value: object, expected_id: str | None = None) -> Listing:
     if evidence.get("album_name"):
         details.append(f"album: {evidence['album_name']}")
     if "musicinfo" in row:
-        music = object_fields(
+        music = fields(
             row["musicinfo"],
             {
                 "tags",
@@ -427,11 +486,17 @@ def parse_listing(value: object, expected_id: str | None = None) -> Listing:
                 "lang",
             },
             set(),
+            UnsupportedBoundary.MUSICINFO_FIELDS,
         )
         normalized_music: dict[str, object] = {}
         for name, item in music.items():
             if name == "tags":
-                groups = object_fields(item, {"genres", "instruments", "vartags"}, set())
+                groups = fields(
+                    item,
+                    {"genres", "instruments", "vartags"},
+                    set(),
+                    UnsupportedBoundary.TAG_GROUPS,
+                )
                 tags = {key: _texts(values, 32, 100) for key, values in groups.items()}
                 normalized_music[name] = tags
                 details.extend(f"{key}: {v}" for key, values in tags.items() for v in values)
@@ -441,8 +506,11 @@ def parse_listing(value: object, expected_id: str | None = None) -> Listing:
                     details.append(f"{name}: {normalized_music[name]}")
         evidence["musicinfo"] = normalized_music
     if "licenses" in row:
-        licenses = object_fields(
-            row["licenses"], {"ccnc", "ccnd", "ccsa", "prolicensing", "probackground"}, set()
+        licenses = fields(
+            row["licenses"],
+            {"ccnc", "ccnd", "ccsa", "prolicensing", "probackground"},
+            set(),
+            UnsupportedBoundary.LICENSE_FIELDS,
         )
         normalized_licenses: dict[str, bool] = {}
         for name, flag in licenses.items():
@@ -457,6 +525,8 @@ def parse_listing(value: object, expected_id: str | None = None) -> Listing:
                 raise AdmissionInputError(Reason.RIGHTS)
         evidence["licenses"] = normalized_licenses
     if len(details) > MAX_DETAILS or any(len(d) > MAX_DETAIL_CHARACTERS for d in details):
+        if diagnostic is not None:
+            diagnostic.boundary = UnsupportedBoundary.DETAILS_BOUND
         raise AdmissionInputError(Reason.UNSUPPORTED)
     serialized = _json(evidence)
     # Scan values, not field names ("sample_pack" in a supplied value still rejects).
@@ -481,6 +551,8 @@ def parse_listing(value: object, expected_id: str | None = None) -> Listing:
         and reason == Reason.PROVISIONAL
     ):
         reason = Reason.UNSUPPORTED
+        if diagnostic is not None:
+            diagnostic.boundary = UnsupportedBoundary.RECORDING_TYPE
     credit_data = _json((title, creators, link, license_url, notices))
     recording = Recording(
         RecordingKey(Source.JAMENDO, identity),
