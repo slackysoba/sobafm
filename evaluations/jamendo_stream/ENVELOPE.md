@@ -4,9 +4,19 @@ Prepared for [#224](https://github.com/slackysoba/sobafm/issues/224) from
 `afc2156977d946e51995975b2c1a2d0d3d2e75c7`, following the independent
 [a12 result review](https://github.com/slackysoba/sobafm/issues/222#issuecomment-6849181182).
 A12 refused before candidate admission; its actual failed condition is unknown.
-This patch diagnoses the first existing refusal, without changing acceptance
-policy, limits, field allowlists, search/refresh behavior or historical results.
-It neither guesses a cause nor justifies a relaxed gate or blind retry.
+The original diagnostic changed no acceptance policy. The independently reviewed
+[a13 result](https://github.com/slackysoba/sobafm/issues/224#issuecomment-6850607683)
+at `48d044320aaf7099e961994028c96370b53e9e7a` remains an inconclusive
+`malformed_response` / `unexpected_header_keys`, exit 1. It established neither
+the extra key, provider application success nor actual row count.
+
+[#226](https://github.com/slackysoba/sobafm/issues/226) now permits bounded additive
+JSON header metadata under the documented [envelope boundary](../../docs/jamendo-catalog.md#validation-and-evidence).
+Required header checks, whole-response bounds and closed root/recording/notice
+validation remain. This diagnostic observes the current production parser;
+`unexpected_header_keys` is historical only and is no longer emitted. No old
+failure becomes a pass, and this change does not predict a later result or
+authorize a retry.
 
 Preparation and synthetic verification are offline. Independent implementation
 and protocol review and merge precede one separately assigned invocation under
@@ -82,21 +92,24 @@ substitution or paid fallback occurs, regardless of outcome.
 observer and keep the same `Refusal`/tuple return. It resets on each call. No
 diagnostic enters the product user flow. The labels and existing order are:
 
-| Stage | Fixed labels and unchanged conditions |
+| Stage | Fixed labels and conditions |
 | --- | --- |
 | Payload/JSON | `payload_size` above 1,048,576 production bytes; `json` for UTF-8/JSON, duplicate-key, constant or parser recursion refusal. These earlier failures do not imply a structural diagnosis. The prospective transport cap is smaller. |
 | Recursive structure | `depth` above 8; `object_members` above 64, then `key_length` above 64 characters; `list_length` above 100; `string_length` above 32,768 characters |
-| Envelope objects | `root_shape` or `header_shape` for wrong type/missing required keys; `unexpected_root_keys` or `unexpected_header_keys` from the existing unsupported-field refusal |
+| Envelope objects | `root_shape` or `header_shape` for wrong type/missing required keys; `unexpected_root_keys` for unsupported root fields. Bounded extra header members alone do not refuse. |
 | Provider | `provider` for the existing status/code failure; `warning` for nonempty warnings/errors |
 | Rows | `results_shape` for non-list results; `results_count` for more than ten rows or invalid/mismatched declared count |
 | Optional total | `total_type` for non-integer (including bool); `total_value` for a value below the returned row count |
 
 Structure is visited before envelope field validation, depth first in JSON object
 insertion/list order; object member count precedes key length, and missing required
-keys precedes unknown keys. The first failing condition stops traversal. Exact
+root keys precedes unknown root keys. The first failing condition stops traversal. Exact
 limits pass this structural stage; a later gate may still refuse. Unknown row
 fields are still structurally visited; the envelope never grants row admission.
-The original `_pairs`, `_constant` and `object_fields` checks remain authoritative.
+The original `_pairs`, `_constant` and recursive bounds remain authoritative.
+The shared `object_fields` helper remains strict for root and recording evidence;
+the header separately requires an object containing every mandatory member.
+Extra header data is never reported or used for admission.
 
 The diagnostic retains only a fixed enum label, never source-controlled field
 names, paths, values, field lengths, raw text or response fingerprints. The
@@ -137,9 +150,10 @@ uv run pyright --pythonversion 3.14 --pythonplatform Linux --level error \
   evaluations/jamendo_stream
 ```
 
-Synthetic cases exercise exact recursive boundaries, unknown root/header keys,
+Synthetic cases exercise exact recursive boundaries including header additions,
+accepted scalar/object header metadata, missing/invalid required fields, unknown root keys,
 invalid optional totals, earlier parser failures, deterministic first refusal,
 unchanged public outcomes, one exact request, safe output, no admission even on
 envelope success, isolated import binding, original alarm, byte caps and retained
 late-reaping failure. The evaluator suite remains opt-in and outside ordinary CI.
-Offline evidence does not identify what happened in a12.
+Offline evidence does not identify what happened in a12 or a13's unknown key.

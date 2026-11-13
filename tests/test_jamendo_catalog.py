@@ -75,6 +75,84 @@ def test_envelope_structural_boundaries(
 
 
 @pytest.mark.parametrize(
+    ("accepted", "refused", "condition"),
+    [
+        ({"extra": nested(6)}, {"extra": nested(7)}, subject.EnvelopeCondition.DEPTH),
+        (
+            {str(n): None for n in range(59)},
+            {str(n): None for n in range(60)},
+            subject.EnvelopeCondition.OBJECT_MEMBERS,
+        ),
+        (
+            {"extra": {str(n): None for n in range(64)}},
+            {"extra": {str(n): None for n in range(65)}},
+            subject.EnvelopeCondition.OBJECT_MEMBERS,
+        ),
+        ({"k" * 64: None}, {"k" * 65: None}, subject.EnvelopeCondition.KEY_LENGTH),
+        (
+            {"extra": [None] * 100},
+            {"extra": [None] * 101},
+            subject.EnvelopeCondition.LIST_LENGTH,
+        ),
+        (
+            {"extra": "v" * 32_768},
+            {"extra": "v" * 32_769},
+            subject.EnvelopeCondition.STRING_LENGTH,
+        ),
+    ],
+)
+def test_additive_headers_keep_recursive_bounds(
+    accepted: dict[str, object],
+    refused: dict[str, object],
+    condition: subject.EnvelopeCondition,
+) -> None:
+    diagnostic = subject.EnvelopeDiagnostic()
+    for header, expected in ((refused, condition), (accepted, None)):
+        payload = response([], **header)
+        result = subject._rows(payload, 10, diagnostic=diagnostic)  # pyright: ignore[reportPrivateUsage]
+        assert result == (Refusal(Failure.MALFORMED) if expected is not None else ())
+        assert diagnostic.condition == expected
+        assert subject._rows(payload, 10) == result  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        '"code":0',
+        '"extra":1,"extra":2',
+        '"extra":{"nested":1,"nested":2}',
+        '"extra":NaN',
+    ],
+)
+def test_additive_headers_cannot_bypass_json_refusal(members: str) -> None:
+    payload = (
+        '{"headers":{"status":"success","code":0,"warnings":"",'
+        '"error_message":"","results_count":0,' + members + '},"results":[]}'
+    ).encode()
+    diagnostic = subject.EnvelopeDiagnostic()
+    assert subject._rows(payload, 10, diagnostic=diagnostic) == Refusal(Failure.MALFORMED)  # pyright: ignore[reportPrivateUsage]
+    assert diagnostic.condition == subject.EnvelopeCondition.JSON
+
+
+@pytest.mark.parametrize("field", ["status", "code", "error_message", "warnings", "results_count"])
+def test_additive_headers_cannot_replace_required_fields(field: str) -> None:
+    header: dict[str, object] = {
+        "status": "success",
+        "code": 0,
+        "warnings": "",
+        "error_message": "",
+        "results_count": 0,
+        "private-extra": {field: "private-value"},
+    }
+    del header[field]
+    payload = json.dumps({"headers": header, "results": []}).encode()
+    diagnostic = subject.EnvelopeDiagnostic()
+    assert subject._rows(payload, 10, diagnostic=diagnostic) == Refusal(Failure.MALFORMED)  # pyright: ignore[reportPrivateUsage]
+    assert diagnostic.condition == subject.EnvelopeCondition.HEADER_SHAPE
+    assert "private" not in repr(diagnostic)
+
+
+@pytest.mark.parametrize(
     ("payload", "condition", "failure"),
     [
         (b" " * (MAX_RESPONSE_BYTES + 1), "payload_size", Failure.OVERSIZED),
@@ -89,6 +167,8 @@ def test_envelope_structural_boundaries(
             Failure.MALFORMED,
         ),
         (b'{"headers":{},"results":[]}', "header_shape", Failure.MALFORMED),
+        (b'{"headers":[],"results":[]}', "header_shape", Failure.MALFORMED),
+        (b'{"headers":null,"results":[]}', "header_shape", Failure.MALFORMED),
     ],
 )
 def test_earlier_envelope_failures_are_safe(
@@ -98,6 +178,7 @@ def test_earlier_envelope_failures_are_safe(
     assert subject._rows(payload, 10, diagnostic=diagnostic) == Refusal(failure)  # pyright: ignore[reportPrivateUsage]
     assert diagnostic.condition == condition
     assert "private" not in repr(diagnostic)
+    assert_search_and_refresh_refuse(payload, failure)
 
 
 def test_parser_recursion_error_has_no_invented_structural_diagnosis(
@@ -117,11 +198,17 @@ def test_parser_recursion_error_has_no_invented_structural_diagnosis(
 @pytest.mark.parametrize(
     ("header", "condition", "failure"),
     [
-        ({"private-header": "private-value"}, "unexpected_header_keys", Failure.MALFORMED),
         ({"status": "succeed"}, "provider", Failure.PROVIDER),
+        ({"status": None}, "provider", Failure.PROVIDER),
         ({"code": True}, "provider", Failure.PROVIDER),
+        ({"code": 5}, "provider", Failure.PROVIDER),
+        ({"code": "0"}, "provider", Failure.PROVIDER),
         ({"warnings": "private-value"}, "warning", Failure.WARNING),
+        ({"warnings": []}, "warning", Failure.WARNING),
+        ({"error_message": "private-value"}, "warning", Failure.WARNING),
+        ({"error_message": None}, "warning", Failure.WARNING),
         ({"results_count": True}, "results_count", Failure.MALFORMED),
+        ({"results_count": "1"}, "results_count", Failure.MALFORMED),
         ({"results_count": 2}, "results_count", Failure.MALFORMED),
         ({"results_fullcount": True}, "total_type", Failure.MALFORMED),
         ({"results_fullcount": "1"}, "total_type", Failure.MALFORMED),
@@ -134,11 +221,13 @@ def test_parser_recursion_error_has_no_invented_structural_diagnosis(
 def test_envelope_header_conditions_preserve_verdict(
     header: dict[str, object], condition: str, failure: Failure
 ) -> None:
-    payload = response([row()], **header)
+    payload = response([row()], **{"private-header": {"private-key": "private-value"}, **header})
     diagnostic = subject.EnvelopeDiagnostic()
     assert subject._rows(payload, 10, diagnostic=diagnostic) == Refusal(failure)  # pyright: ignore[reportPrivateUsage]
     assert subject._rows(payload, 10) == Refusal(failure)  # pyright: ignore[reportPrivateUsage]
     assert diagnostic.condition == condition
+    assert "private" not in repr(diagnostic)
+    assert_search_and_refresh_refuse(payload, failure)
 
 
 def test_envelope_first_refusal_order_and_count_boundaries() -> None:
@@ -223,6 +312,73 @@ def refreshed(value: dict[str, object], ranked: Candidate | None = None) -> Refr
     request = refresh_request(ranked.recording.key, ON)
     assert isinstance(request, Request)
     return refresh(request, response([value]), ranked, ON, NOW + timedelta(seconds=1))
+
+
+def assert_search_and_refresh_refuse(payload: bytes, reason: Failure | Reason) -> None:
+    window = SearchWindow(Query(search="piano"), ON)
+    request = window.request()
+    assert isinstance(request, Request)
+    result = window.receive(request, payload, NOW)
+    assert not result.candidates
+    assert result.refusals == (Refusal(reason),)
+    assert result.coverage == Coverage.UNAVAILABLE
+    ranked = candidate()
+    by_id = refresh_request(ranked.recording.key, ON)
+    assert isinstance(by_id, Request)
+    assert refresh(by_id, payload, ranked, ON, NOW) == Refusal(reason)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        None,
+        True,
+        42,
+        1.5,
+        "private-value",
+        {"private-key": [None, True, 42, {"url": "https://unvisited.example/private-value"}]},
+    ],
+)
+def test_additive_headers_do_not_change_search_or_refresh_evidence(extra: object) -> None:
+    payload = response([row()], **{"private-header": extra, "results_fullcount": 1})
+    window = SearchWindow(Query(search="piano"), ON)
+    request = window.request()
+    assert isinstance(request, Request)
+    result = window.receive(request, payload, NOW)
+    ranked = candidate()
+    assert result.candidates == (ranked,)
+    assert not result.refusals
+    assert result.pages_issued == 1 and result.response_bytes == len(payload)
+    by_id = refresh_request(ranked.recording.key, ON)
+    assert isinstance(by_id, Request)
+    current = refresh(by_id, payload, ranked, ON, NOW)
+    baseline = refresh(by_id, response([row()]), ranked, ON, NOW)
+    assert isinstance(current, Refreshed) and isinstance(baseline, Refreshed)
+    assert current == baseline
+    assert current.stream_url == baseline.stream_url
+    assert "private" not in repr((result, current))
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (
+            response([row()], **{"private-header": None})[:-1] + b',"private-root":null}',
+            Failure.MALFORMED,
+        ),
+        (response([row(private_recording="private-value")], extra=True), Reason.UNSUPPORTED),
+        (
+            response([row(notices={"private-notice": "private-value"})], extra=True),
+            Reason.CREDITS,
+        ),
+        (response([row(licenses={"approved": True})], extra=True), Reason.UNSUPPORTED),
+        (response([row(notices=["All rights reserved"])], extra=True), Reason.RIGHTS),
+    ],
+)
+def test_additive_headers_do_not_open_root_recordings_or_notices(
+    payload: bytes, reason: Failure | Reason
+) -> None:
+    assert_search_and_refresh_refuse(payload, reason)
 
 
 def test_disabled_policy_never_constructs_a_request() -> None:
