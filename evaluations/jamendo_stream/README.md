@@ -1,5 +1,10 @@
 # One bounded Jamendo stream access check
 
+For #219's listing/refresh mismatch diagnostic, see the
+[fixed-category metadata comparison protocol](METADATA_CHANGES.md). Its explicit
+mode stops after metadata even when equal, with no audio request. Stream mode
+keeps its conservative whole-row refusal and adds the same fixed category labels.
+
 For #213's separate metadata-only diagnosis, see the
 [empty-refresh comparison protocol](EMPTY_REFRESH.md). It has its own explicit
 flag, at most two metadata requests, and no audio path. Neither mode is authorized
