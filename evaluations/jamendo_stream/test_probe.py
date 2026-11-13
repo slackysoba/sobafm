@@ -276,7 +276,7 @@ def test_metadata_response_cap_is_separate(monkeypatch: pytest.MonkeyPatch) -> N
 )
 def test_metadata_gate_rejects_invalid_candidate(changes: dict[str, object]) -> None:
     with pytest.raises(subject.Stopped):
-        subject.validate_candidate(row(**changes), FAKE_ID)
+        subject.validate_candidate(row(**changes))
 
 
 @pytest.mark.parametrize(
@@ -314,8 +314,8 @@ def test_bad_json(data: bytes) -> None:
 def test_candidate_controls_are_not_admission(changes: dict[str, object]) -> None:
     report = subject.Report()
     data = document(row(**changes))
-    selected = subject.select_candidate(data, FAKE_ID, report)
-    assert subject.validate_refresh(data, FAKE_ID, selected, report) == (
+    selected = subject.select_candidate(data, report)
+    assert subject.validate_refresh(data, selected, report) == (
         "/?trackid=168&format=mp32&from=app-" + FAKE_ID
     )
     assert report.metadata_validated
@@ -338,8 +338,8 @@ def test_single_optional_album_omissions_pass_listing_and_refresh(
         record["type"] = "single"
     report = subject.Report()
     data = document(record)
-    selected = subject.select_candidate(data, FAKE_ID, report)
-    assert subject.validate_refresh(data, FAKE_ID, selected, report) == selected.target
+    selected = subject.select_candidate(data, report)
+    assert subject.validate_refresh(data, selected, report) == selected.target
     assert report.metadata_validated
     assert report.candidate_refusals == []
 
@@ -369,7 +369,7 @@ def test_optional_album_fields_do_not_accept_conflicting_evidence(
     del record["album_id"], record["album_name"]
     record.update(album)
     with pytest.raises(subject.CandidateRefused) as refused:
-        subject.validate_candidate(record, FAKE_ID)
+        subject.validate_candidate(record)
     assert refused.value.gate == subject.Gate.ALBUM
 
 
@@ -378,7 +378,7 @@ def test_coherent_album_track_still_passes(explicit_type: bool) -> None:
     record = row()
     if explicit_type:
         record["type"] = "albumtrack"
-    assert subject.validate_candidate(record, FAKE_ID).track_id == "168"
+    assert subject.validate_candidate(record).track_id == "168"
 
 
 @pytest.mark.parametrize(
@@ -413,7 +413,7 @@ def test_coherent_album_track_still_passes(explicit_type: bool) -> None:
 def test_fixed_first_refusal_diagnostics(record: object, gate: str, condition: str) -> None:
     report = subject.Report()
     with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
-        subject.select_candidate(listing([record]), FAKE_ID, report)
+        subject.select_candidate(listing([record]), report)
     assert json.loads(json.dumps(asdict(report)))["candidate_refusals"] == [
         {
             "ordinal": 1,
@@ -446,7 +446,7 @@ def test_required_omissions_have_safe_missing_diagnostics(key: str, gate: str) -
     record = row()
     del record[key]
     with pytest.raises(subject.CandidateRefused) as refused:
-        subject.validate_candidate(record, FAKE_ID)
+        subject.validate_candidate(record)
     assert refused.value.gate == gate
     assert refused.value.condition == subject.Condition.MISSING
     assert refused.value.license_text_detail is None
@@ -475,7 +475,7 @@ def test_ten_first_refusals_only_and_no_refresh_or_audio(monkeypatch: pytest.Mon
     assert len(json.dumps(asdict(report))) < subject.REPORT_BYTES
     # An invalid oversized listing never produces an eleventh entry.
     with pytest.raises(subject.Stopped, match="^declared_count_value$"):
-        subject.select_candidate(listing([row(name="")] * 11), FAKE_ID, report)
+        subject.select_candidate(listing([row(name="")] * 11), report)
     assert len(report.candidate_refusals) == 10
 
 
@@ -490,7 +490,7 @@ def test_refusal_report_never_retains_source_or_exception_text(
         assert metadata
         return listing([record] * 10)
 
-    def refuse(_value: object, _key: str) -> subject.Candidate:
+    def refuse(_value: object) -> subject.Candidate:
         raise subject.Stopped(hostile)
 
     def read_id(_path: str) -> str:
@@ -543,13 +543,13 @@ def test_refusal_report_never_retains_source_or_exception_text(
         f"https://{subject.STREAM_HOST}/?trackid=168&format=mp31&from=app-{FAKE_ID}",
         f"https://{subject.STREAM_HOST}/?trackid=168&format=mp32&from=app-{FAKE_ID}#",
         f"https://{subject.STREAM_HOST}/?trackid=168&format=mp32&from=app-{FAKE_ID}&extra=x",
-        f"https://{subject.STREAM_HOST}/?trackid=168&format=mp32&from=app-wrong",
+        f"https://{subject.STREAM_HOST}/?trackid=168&from=one&from=two",
         f"https://{subject.STREAM_HOST}/?trackid=168&format=mp32&format=mp32",
     ],
 )
 def test_stream_url_is_fixed(url: str) -> None:
     with pytest.raises((subject.Stopped, ValueError)):
-        subject.stream_target(url, FAKE_ID, "168")
+        subject.stream_target(url, "168")
 
 
 @pytest.mark.parametrize("scheme", ["http", "https"])
@@ -575,10 +575,8 @@ def test_license_matrix_through_listing_and_refresh_matches_production(
     record = row(license_ccurl=f"{scheme}://creativecommons.org{path}")
     report = subject.Report()
     if family in families and (not jurisdiction or jurisdiction == port):
-        selected = subject.select_candidate(document(record), FAKE_ID, report)
-        assert (
-            subject.validate_refresh(document(record), FAKE_ID, selected, report) == selected.target
-        )
+        selected = subject.select_candidate(document(record), report)
+        assert subject.validate_refresh(document(record), selected, report) == selected.target
         assert report.metadata_validated and report.candidate_refusals == []
         credits = parse_listing(record).recording.credits
         assert credits is not None
@@ -596,13 +594,13 @@ def test_license_matrix_through_listing_and_refresh_matches_production(
         assert credits.license_label == f"CC {family.upper()} {version} {label}"
     else:
         with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
-            subject.select_candidate(document(record), FAKE_ID, report)
+            subject.select_candidate(document(record), report)
         assert len(report.candidate_refusals) == 1
         refusal = report.candidate_refusals[0]
         assert (refusal.gate, refusal.condition) == (subject.Gate.LICENSE, subject.Condition.SHAPE)
-        selected = subject.validate_candidate(row(), FAKE_ID)
+        selected = subject.validate_candidate(row())
         with pytest.raises(subject.CandidateRefused) as refreshed:
-            subject.validate_refresh(document(record), FAKE_ID, selected, report)
+            subject.validate_refresh(document(record), selected, report)
         assert refreshed.value.license_component == refusal.license_component
         assert not report.metadata_validated
         with pytest.raises(AdmissionInputError):
@@ -630,18 +628,18 @@ def test_license_spelling_and_authority_match_production(
     record = row(license_ccurl=f"{authority}/licenses/{path}{slash}")
     report = subject.Report()
     if accepted:
-        selected = subject.select_candidate(document(record), FAKE_ID, report)
-        subject.validate_refresh(document(record), FAKE_ID, selected, report)
+        selected = subject.select_candidate(document(record), report)
+        subject.validate_refresh(document(record), selected, report)
         assert report.metadata_validated
         credits = parse_listing(record).recording.credits
         assert credits is not None and credits.license_url is not None
         assert urlsplit(credits.license_url).path == f"/licenses/{path}{slash}"
     else:
         with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
-            subject.select_candidate(document(record), FAKE_ID, report)
-        selected = subject.validate_candidate(row(), FAKE_ID)
+            subject.select_candidate(document(record), report)
+        selected = subject.validate_candidate(row())
         with pytest.raises(subject.CandidateRefused):
-            subject.validate_refresh(document(record), FAKE_ID, selected, report)
+            subject.validate_refresh(document(record), selected, report)
         with pytest.raises(AdmissionInputError):
             parse_listing(record)
 
@@ -683,7 +681,7 @@ def test_first_license_component_is_fixed_and_same_on_refresh(value: str, compon
     report = subject.Report()
     record = row(license_ccurl=value, shareurl="also invalid")
     with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
-        subject.select_candidate(document(record), FAKE_ID, report)
+        subject.select_candidate(document(record), report)
     assert asdict(report.candidate_refusals[0]) == {
         "ordinal": 1,
         "gate": "license",
@@ -692,9 +690,9 @@ def test_first_license_component_is_fixed_and_same_on_refresh(value: str, compon
         "license_text_detail": None,
         "route_diagnostic": None,
     }
-    selected = subject.validate_candidate(row(), FAKE_ID)
+    selected = subject.validate_candidate(row())
     with pytest.raises(subject.CandidateRefused, match="^candidate_license_shape$") as refused:
-        subject.validate_refresh(document(record), FAKE_ID, selected, report)
+        subject.validate_refresh(document(record), selected, report)
     assert refused.value.license_component == component
     assert refused.value.license_text_detail is None
     assert report.selected_track_id is None and not report.metadata_validated
@@ -706,7 +704,7 @@ def test_first_license_component_is_fixed_and_same_on_refresh(value: str, compon
 )
 def test_license_nonshape_refusal_has_no_component(value: object, condition: str) -> None:
     with pytest.raises(subject.CandidateRefused) as refused:
-        subject.validate_candidate(row(license_ccurl=value), FAKE_ID)
+        subject.validate_candidate(row(license_ccurl=value))
     assert refused.value.condition == condition
     assert refused.value.license_component is None
     assert refused.value.license_text_detail is None
@@ -740,7 +738,7 @@ def test_license_text_detail_precedence_preserves_listing_and_refresh_refusal(
     report = subject.Report()
     record = row(license_ccurl=value, shareurl="also invalid")
     with pytest.raises(subject.Stopped, match="^no_acceptable_candidate$"):
-        subject.select_candidate(document(record), FAKE_ID, report)
+        subject.select_candidate(document(record), report)
     assert asdict(report.candidate_refusals[0]) == {
         "ordinal": 1,
         "gate": "license",
@@ -749,9 +747,9 @@ def test_license_text_detail_precedence_preserves_listing_and_refresh_refusal(
         "license_text_detail": detail,
         "route_diagnostic": None,
     }
-    selected = subject.validate_candidate(row(), FAKE_ID)
+    selected = subject.validate_candidate(row())
     with pytest.raises(subject.CandidateRefused, match="^candidate_license_shape$") as refused:
-        subject.validate_refresh(document(record), FAKE_ID, selected, report)
+        subject.validate_refresh(document(record), selected, report)
     assert refused.value.license_component == "text_shape"
     assert refused.value.license_text_detail == detail
     assert report.selected_track_id is None and not report.metadata_validated
@@ -760,8 +758,8 @@ def test_license_text_detail_precedence_preserves_listing_and_refresh_refusal(
 def test_json_slash_escape_needs_no_text_correction() -> None:
     data = document().replace(b"/", b"\\/")
     report = subject.Report()
-    selected = subject.select_candidate(data, FAKE_ID, report)
-    assert subject.validate_refresh(data, FAKE_ID, selected, report) == selected.target
+    selected = subject.select_candidate(data, report)
+    assert subject.validate_refresh(data, selected, report) == selected.target
     assert report.metadata_validated
     assert report.candidate_refusals == []
 
@@ -769,12 +767,12 @@ def test_json_slash_escape_needs_no_text_correction() -> None:
 @pytest.mark.parametrize("suffix", ["", "/us/", "?", "#"])
 def test_license_spelling_change_still_invalidates_whole_row_refresh(suffix: str) -> None:
     report = subject.Report()
-    selected = subject.select_candidate(document(), FAKE_ID, report)
+    selected = subject.select_candidate(document(), report)
     changed = row(license_ccurl="https://creativecommons.org/licenses/by-nc-sa/3.0" + suffix)
     with pytest.raises(
         subject.Stopped, match="^(refresh_evidence_changed|candidate_license_shape)$"
     ):
-        subject.validate_refresh(document(changed), FAKE_ID, selected, report)
+        subject.validate_refresh(document(changed), selected, report)
     assert not report.metadata_validated
 
 
@@ -1055,6 +1053,12 @@ def test_non_json_numbers_stop_before_selection(literal: bytes) -> None:
             "refresh_evidence_changed",
         ),
         (document(row(audio="https://unexpected.test/")), "candidate_stream_route_shape"),
+        (
+            document(
+                row(audio=f"https://{subject.STREAM_HOST}/?trackid=168&format=mp32&from=other")
+            ),
+            "refresh_evidence_changed",
+        ),
         (listing([]), "refresh_empty"),
         (document(warnings=FAKE_ID), "application_status_or_warning"),
     ],
@@ -1082,14 +1086,16 @@ def test_refresh_refusal_cannot_choose_alternative(
 
 def test_refresh_normalizes_only_duration_and_checked_stream_query() -> None:
     report = subject.Report()
-    selected = subject.select_candidate(document(), FAKE_ID, report)
+    selected = subject.select_candidate(document(), report)
     refreshed = document(
         row(
             duration="180",
             audio=f"https://{subject.STREAM_HOST}/?from=app-{FAKE_ID}&format=mp32&trackid=168",
         )
     )
-    assert subject.validate_refresh(refreshed, FAKE_ID, selected, report) == selected.target
+    assert subject.validate_refresh(refreshed, selected, report) == (
+        f"/?from=app-{FAKE_ID}&format=mp32&trackid=168"
+    )
 
 
 @pytest.mark.parametrize("stage", [0, 1, 2])
