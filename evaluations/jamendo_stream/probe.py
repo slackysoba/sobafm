@@ -250,6 +250,7 @@ class Report:
     evidence_changes: dict[EvidenceCategory, Change] | None = None
     admission_refusals: list[tuple[int, str]] = field(default_factory=list[tuple[int, str]])
     previous_decision_matches: bool | None = None
+    envelope_condition: str | None = None
 
 
 @contextmanager
@@ -962,8 +963,8 @@ def admission_categories(value: object) -> tuple[str, ...]:
     )
 
 
-def qualify_metadata(application_id: str, report: Report) -> None:
-    """Two metadata GETs at most; fresh production admission never opens audio."""
+def qualify_metadata(application_id: str, report: Report, *, envelope_only: bool = False) -> None:
+    """Production parser; envelope-only stops after its single listing request."""
     # Load the reviewed checkout, not a potentially older installed application.
     # The isolated child imports no sobafm module before this point. Pure modules
     # below use only the standard library; no runtime environment is installed.
@@ -980,6 +981,7 @@ def qualify_metadata(application_id: str, report: Report) -> None:
     )
     from sobafm.jamendo_catalog import (
         _COMMON,  # pyright: ignore[reportPrivateUsage]
+        EnvelopeDiagnostic,
         Request,
         _rows,  # pyright: ignore[reportPrivateUsage]
         refresh,
@@ -1005,6 +1007,16 @@ def qualify_metadata(application_id: str, report: Report) -> None:
         return exchange(urlsplit(request.endpoint).path + "?" + query, transfer, metadata=True)
 
     data = get(listing_request, report.search)
+    if envelope_only:
+        # No historical pre-parser: the first production refusal is authoritative.
+        # In particular, no row is admitted even when the entire envelope passes.
+        diagnostic = EnvelopeDiagnostic()
+        rows = _rows(data, SEARCH_RESULTS, diagnostic=diagnostic)
+        report.envelope_condition = diagnostic.condition
+        if isinstance(rows, AdmissionRefusal):
+            raise Stopped(rows.reason.value)
+        report.outcome = "envelope_passed"
+        return
     # Retain fixed envelope observations, but production remains the authority.
     metadata_rows(data, report.search_results, SEARCH_RESULTS)
     rows = _rows(data, SEARCH_RESULTS)
@@ -1057,6 +1069,7 @@ def run_child(
     *,
     metadata_only: bool = False,
     admission: bool = False,
+    envelope_only: bool = False,
 ) -> int:
     report = Report()
     application_id = ""
@@ -1064,7 +1077,9 @@ def run_child(
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         with deadline():
             application_id = read_id(application_id_path)
-            if admission:
+            if envelope_only:
+                qualify_metadata(application_id, report, envelope_only=True)
+            elif admission:
                 qualify_metadata(application_id, report)
             elif diagnostic:
                 diagnose_empty_refresh(application_id, report)
@@ -1090,7 +1105,7 @@ def run_child(
         report.reason = "internal"
     if report.reason is not None:
         report.outcome = "inconclusive"
-    if metadata_only or admission:
+    if metadata_only or admission or envelope_only:
         # Also cover interruption immediately after selection, before probe can
         # clear the legacy stream-mode identity field.
         report.selected_track_id = None
@@ -1106,7 +1121,13 @@ def run_child(
     return (
         0
         if report.outcome
-        in ("stream_received", "metadata_diagnosed", "metadata_compared", "metadata_admitted")
+        in (
+            "stream_received",
+            "metadata_diagnosed",
+            "metadata_compared",
+            "metadata_admitted",
+            "envelope_passed",
+        )
         else 1
     )
 
@@ -1137,6 +1158,7 @@ def supervise(
     *,
     metadata_only: bool = False,
     admission: bool = False,
+    envelope_only: bool = False,
 ) -> int:
     started = time.monotonic()
     child: subprocess.Popen[bytes] | None = None
@@ -1157,10 +1179,13 @@ def supervise(
                     "import runpy,sys; m=runpy.run_path(sys.argv[1]); "
                     "sys.exit(m['run_child'](sys.argv[2], sys.argv[3] == 'diagnostic', "
                     "metadata_only=sys.argv[3] == 'metadata', "
-                    "admission=sys.argv[3] == 'admission'))",
+                    "admission=sys.argv[3] == 'admission', "
+                    "envelope_only=sys.argv[3] == 'envelope'))",
                     str(Path(__file__).resolve()),
                     application_id_path,
-                    "admission"
+                    "envelope"
+                    if envelope_only
+                    else "admission"
                     if admission
                     else "diagnostic"
                     if diagnostic
@@ -1232,6 +1257,7 @@ def run_authorized(
     *,
     metadata_only: bool = False,
     admission: bool = False,
+    envelope_only: bool = False,
 ) -> int:
     def interrupted(_signum: int, _frame: FrameType | None) -> None:
         raise KeyboardInterrupt
@@ -1239,7 +1265,11 @@ def run_authorized(
     previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
         return supervise(
-            application_id_path, diagnostic, metadata_only=metadata_only, admission=admission
+            application_id_path,
+            diagnostic,
+            metadata_only=metadata_only,
+            admission=admission,
+            envelope_only=envelope_only,
         )
     finally:
         for sig, handler in previous.items():
@@ -1259,11 +1289,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             "--diagnose-empty-refresh",
             "--diagnose-metadata-changes",
             "--qualify-metadata",
+            "--diagnose-envelope",
         )
         or not args[1]
     ):
         print('{"outcome":"inconclusive","reason":"arguments"}')
         return 2
+    if args[0] == "--diagnose-envelope":
+        return run_authorized(args[1], envelope_only=True)
     if args[0] == "--qualify-metadata":
         return run_authorized(args[1], admission=True)
     if args[0] == "--diagnose-metadata-changes":

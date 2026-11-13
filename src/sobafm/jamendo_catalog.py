@@ -153,62 +153,125 @@ def _constant(value: str) -> object:
     raise ValueError("nonfinite JSON number")
 
 
+class EnvelopeCondition(StrEnum):
+    """Fixed first-refusal labels for offline diagnosis, never source data."""
+
+    PAYLOAD_SIZE = "payload_size"
+    JSON = "json"
+    DEPTH = "depth"
+    OBJECT_MEMBERS = "object_members"
+    KEY_LENGTH = "key_length"
+    LIST_LENGTH = "list_length"
+    STRING_LENGTH = "string_length"
+    ROOT_SHAPE = "root_shape"
+    ROOT_KEYS = "unexpected_root_keys"
+    HEADER_SHAPE = "header_shape"
+    HEADER_KEYS = "unexpected_header_keys"
+    PROVIDER = "provider"
+    WARNING = "warning"
+    RESULTS_SHAPE = "results_shape"
+    RESULTS_COUNT = "results_count"
+    TOTAL_TYPE = "total_type"
+    TOTAL_VALUE = "total_value"
+
+
+@dataclass
+class EnvelopeDiagnostic:
+    """Optional observer of _rows; does not affect its public refusal result."""
+
+    condition: EnvelopeCondition | None = None
+
+
+class _EnvelopeError(ValueError):
+    def __init__(self, condition: EnvelopeCondition) -> None:
+        self.condition = condition
+        super().__init__(condition.value)
+
+
 def _bounded(value: object, depth: int = 0) -> None:
     if depth > 8:
-        raise ValueError("nesting limit")
+        raise _EnvelopeError(EnvelopeCondition.DEPTH)
     if isinstance(value, dict):
         data = cast(dict[str, object], value)
-        if len(data) > 64 or any(len(key) > 64 for key in data):
-            raise ValueError("object limit")
+        if len(data) > 64:
+            raise _EnvelopeError(EnvelopeCondition.OBJECT_MEMBERS)
+        if any(len(key) > 64 for key in data):
+            raise _EnvelopeError(EnvelopeCondition.KEY_LENGTH)
         for item in data.values():
             _bounded(item, depth + 1)
     elif isinstance(value, list):
         items = cast(list[object], value)
         if len(items) > PAGE_SIZE:
-            raise ValueError("list limit")
+            raise _EnvelopeError(EnvelopeCondition.LIST_LENGTH)
         for item in items:
             _bounded(item, depth + 1)
     elif isinstance(value, str) and len(value) > 32_768:
-        raise ValueError("string limit")
+        raise _EnvelopeError(EnvelopeCondition.STRING_LENGTH)
 
 
-def _rows(payload: bytes, maximum: int) -> tuple[object, ...] | Refusal:
+def _rows(
+    payload: bytes, maximum: int, *, diagnostic: EnvelopeDiagnostic | None = None
+) -> tuple[object, ...] | Refusal:
+    if diagnostic is not None:
+        diagnostic.condition = None
+
+    def refuse(condition: EnvelopeCondition, failure: Failure = Failure.MALFORMED) -> Refusal:
+        if diagnostic is not None:
+            diagnostic.condition = condition
+        return Refusal(failure)
+
     if len(payload) > MAX_RESPONSE_BYTES:
-        return Refusal(Failure.OVERSIZED)
+        return refuse(EnvelopeCondition.PAYLOAD_SIZE, Failure.OVERSIZED)
     try:
         raw: object = json.loads(
             payload.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_constant
         )
         _bounded(raw)
-        data = object_fields(raw, {"headers", "results"}, {"headers", "results"})
+        try:
+            data = object_fields(raw, {"headers", "results"}, {"headers", "results"})
+        except AdmissionInputError as error:
+            return refuse(
+                EnvelopeCondition.ROOT_KEYS
+                if error.reason == Reason.UNSUPPORTED
+                else EnvelopeCondition.ROOT_SHAPE
+            )
         fields = {"status", "code", "error_message", "warnings", "results_count"}
-        headers = object_fields(data["headers"], fields | {"results_fullcount"}, fields)
+        try:
+            headers = object_fields(data["headers"], fields | {"results_fullcount"}, fields)
+        except AdmissionInputError as error:
+            return refuse(
+                EnvelopeCondition.HEADER_KEYS
+                if error.reason == Reason.UNSUPPORTED
+                else EnvelopeCondition.HEADER_SHAPE
+            )
         if (
             type(headers["code"]) is not int
             or headers["status"] != "success"
             or headers["code"] != 0
         ):
-            return Refusal(Failure.PROVIDER)
+            return refuse(EnvelopeCondition.PROVIDER, Failure.PROVIDER)
         if headers["warnings"] != "" or headers["error_message"] != "":
-            return Refusal(Failure.WARNING)
+            return refuse(EnvelopeCondition.WARNING, Failure.WARNING)
         results = data["results"]
         if not isinstance(results, list):
-            return Refusal(Failure.MALFORMED)
+            return refuse(EnvelopeCondition.RESULTS_SHAPE)
         rows = cast(list[object], results)
         if (
             len(rows) > maximum
             or type(headers["results_count"]) is not int
             or headers["results_count"] != len(rows)
         ):
-            return Refusal(Failure.MALFORMED)
-        if "results_fullcount" in headers and (
-            type(headers["results_fullcount"]) is not int
-            or headers["results_fullcount"] < len(rows)
-        ):
-            return Refusal(Failure.MALFORMED)
+            return refuse(EnvelopeCondition.RESULTS_COUNT)
+        if "results_fullcount" in headers:
+            if type(headers["results_fullcount"]) is not int:
+                return refuse(EnvelopeCondition.TOTAL_TYPE)
+            if headers["results_fullcount"] < len(rows):
+                return refuse(EnvelopeCondition.TOTAL_VALUE)
         return tuple(rows)
+    except _EnvelopeError as error:
+        return refuse(error.condition)
     except ValueError, RecursionError, UnicodeError:
-        return Refusal(Failure.MALFORMED)
+        return refuse(EnvelopeCondition.JSON)
 
 
 class SearchWindow:

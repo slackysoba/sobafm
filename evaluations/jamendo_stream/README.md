@@ -1,5 +1,10 @@
 # One bounded Jamendo stream access check
 
+For #224's single-listing envelope diagnosis, see the
+[envelope-only protocol](ENVELOPE.md). `--diagnose-envelope` reports the first
+existing production envelope refusal and stops before candidate admission,
+refresh or audio, including when the envelope passes.
+
 For #222's separate production-contract metadata qualification, see
 [metadata admission protocol](ADMISSION.md). Its `--qualify-metadata` mode reuses
 production admission and fresh immutable decisions, retains structural diagnostics,
