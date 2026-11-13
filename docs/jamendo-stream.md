@@ -3,8 +3,9 @@
 This implements slice C of [#198](https://github.com/slackysoba/sobafm/issues/198)
 and the [adopted engineering contract](https://github.com/slackysoba/sobafm/issues/188#issuecomment-6795394426).
 It consumes the merged metadata/admission, HTTP transport and journal. It does
-not enable the local policy, wire a station, call a model, lease capacity or
-authorize a source request. Current-main/source/Discord qualification remains
+not itself enable policy, call a model, lease capacity or authorize a source
+request. The station integration wires this handle under explicit operator
+configuration; see [operations](operations.md#jamendo-discovery-and-checked-streaming). Current-main/source/Discord qualification remains
 pending. The refused live route remains inconclusive for stream access.
 
 ## Interfaces for station integration

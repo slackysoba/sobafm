@@ -15,7 +15,6 @@ current plan and the program's bounded no-repeat history (ADR 0011).
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
@@ -57,6 +56,12 @@ class EndReason(StrEnum):
     RECORDING_START = "recording_start"
     GENERATION_FAILED = "generation_failed"
     NO_LISTENERS = "no_listeners"  # the listener grace period expired
+    HISTORY = "history_limit"
+    CYCLES = "cycle_limit"
+    NO_PROGRESS = "no_progress"
+    CURSOR = "cursor_limit"
+    SOURCE_QUOTA = "source_quota"
+    SOURCE_ACCESS = "source_access"
 
 
 @dataclass(frozen=True)
@@ -106,7 +111,7 @@ class _Progress:
 
     # Validated recordings for its request, best first. Later tracks come from here.
     plan: tuple[Recording, ...] = ()
-    history: deque[RecordingKey] = field(default_factory=lambda: deque(maxlen=HISTORY_LIMIT))
+    history: set[RecordingKey] = field(default_factory=set[RecordingKey])
     started: bool = False  # some of its audio has been heard
     ending: EndReason | None = None  # no track follows the one heard
 
@@ -283,7 +288,10 @@ class Station:
         """
         if not self._preparing or program != self._desired:
             return Outcome.STALE
-        self._state(program).history.append(recording.key)
+        history = self._state(program).history
+        if recording.key in history or len(history) >= HISTORY_LIMIT:
+            return Outcome.REJECTED
+        history.add(recording.key)
         try:
             credits = render_credits(recording)
         except CreditRejected:
@@ -291,6 +299,22 @@ class Station:
         self._preparing = False
         self._ready = Audio(program, recording, credits)
         return Outcome.ACCEPTED
+
+    def refreshed(
+        self, source: Audio, recording: Recording, credits: RenderedCredits
+    ) -> Audio | None:
+        """Bind a waiting switch to the stream's exact immutable refresh result.
+
+        This does not report hearing audio. The caller offers this object only
+        after checked readiness, and the voice callback still owns the switch.
+        """
+        if self._switching is not source or self._desired is not source.program:
+            return None
+        if recording.key != source.recording.key or render_credits(recording) != credits:
+            return None
+        audio = Audio(source.program, recording, credits)
+        self._switching = audio
+        return audio
 
     def generated(self, program: Program, plan: GeneratedPlan) -> Outcome:
         """Offer the validated plan. Only the callback can report its first audio."""

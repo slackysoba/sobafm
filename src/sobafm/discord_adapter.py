@@ -87,6 +87,7 @@ from disnake.ext import commands
 
 from sobafm.catalog import (
     MAX_CATALOG_BYTES,
+    AdmissionReview,
     Catalog,
     CatalogInputError,
     Recording,
@@ -95,6 +96,15 @@ from sobafm.catalog import (
     eligible,
     parse_catalog,
     parse_reviews,
+)
+from sobafm.catalog_search import (
+    CatalogSearch,
+    End,
+    ProgramBudget,
+    Selection,
+)
+from sobafm.catalog_search import (
+    RefillBudget as SearchRefillBudget,
 )
 from sobafm.cooldown import Claim, Cooldown
 from sobafm.credits import (
@@ -118,6 +128,12 @@ from sobafm.gemini_match import (
     checked_request,
     valid_api_key,
 )
+from sobafm.jamendo_admission import Candidate, Policy
+from sobafm.jamendo_catalog import Failure, Request
+from sobafm.jamendo_catalog import Refusal as SourceRefusal
+from sobafm.jamendo_journal import Cleanup, Journal, JournalError, Quota
+from sobafm.jamendo_stream import JamendoStream, RefreshCandidate
+from sobafm.jamendo_transport import JamendoTransport, Locator, Report, StationTransport
 from sobafm.lyria import (
     CROSSFADE_FRAMES,
     FADE_OUT_FRAMES,
@@ -171,6 +187,9 @@ GEMINI_KEY_VARIABLE = "SOBAFM_GEMINI_API_KEY"
 LYRIA_KEY_VARIABLE = "SOBAFM_LYRIA_API_KEY"
 CATALOG_VARIABLE = "SOBAFM_CATALOG"
 REVIEWS_VARIABLE = "SOBAFM_REVIEWS"
+JAMENDO_POLICY_VARIABLE = "SOBAFM_JAMENDO_ENABLED"
+JAMENDO_ID_VARIABLE = "SOBAFM_JAMENDO_CLIENT_ID"
+JAMENDO_JOURNAL_VARIABLE = "SOBAFM_JAMENDO_JOURNAL"
 MAX_REVIEWS_BYTES = 256_000
 # Bound on how long a command reply waits for retirements before answering.
 SETTLE_SECONDS = 5.0
@@ -256,6 +275,12 @@ GENERATED_ENDINGS = (
     EndReason.DURATION,
 )
 ENDED = {
+    EndReason.SOURCE_QUOTA: "the source reached a rate or configured quota limit",
+    EndReason.SOURCE_ACCESS: "source access was refused; ask the operator to check permission",
+    EndReason.HISTORY: "the program reached its recording history limit",
+    EndReason.CYCLES: "the program reached its discovery cycle limit",
+    EndReason.NO_PROGRESS: "three discovery attempts made no progress",
+    EndReason.CURSOR: "the bounded source search reached its cursor limit",
     EndReason.DURATION: "the generated duration elapsed",
     EndReason.FILTERED: "the music provider filtered the direction. Try a different description",
     EndReason.GENERATION_REJECTED: (
@@ -276,11 +301,11 @@ ENDED = {
         "the recording has no media manifest entry. Ask the operator to check the catalog"
     ),
     EndReason.RECORDING_START: (
-        "the first recording could not be played. Ask the operator to check the media"
+        "the first recording could not be played. Ask the operator to check the source or media"
     ),
     EndReason.GENERATION_FAILED: "generated audio could not continue. Try again later",
     EndReason.EXHAUSTED: "every recording in the catalog has been played or tried",
-    EndReason.REFILL_FAILED: "Gemini did not supply more recordings within the retry limit",
+    EndReason.REFILL_FAILED: "discovery did not supply more recordings within the retry limit",
     EndReason.CAPACITY_WAIT: "no audio bank became available in time. Try again shortly",
     EndReason.UNAVAILABLE: "the next recording could not be prepared within the retry limit",
     EndReason.NO_LISTENERS: "no listeners remained",
@@ -345,6 +370,12 @@ class Config:
     matcher: GeminiMatcher | None
     interpreter: PlanInterpreter | None = None
     lyria_key: str = field(default="", repr=False)
+    catalog: Catalog | None = None
+    reviews: tuple[AdmissionReview, ...] = ()
+    jamendo_enabled: bool = False
+    jamendo_id: str = field(default="", repr=False)
+    jamendo_journal: Path | None = None
+    jamendo_quota: Quota = Quota()
 
     @classmethod
     def from_environ(cls) -> Config:
@@ -352,6 +383,25 @@ class Config:
         token = os.environ.pop(TOKEN_VARIABLE, "").strip()
         api_key = os.environ.pop(GEMINI_KEY_VARIABLE, "").strip()
         lyria_key = os.environ.pop(LYRIA_KEY_VARIABLE, "").strip()
+        client_id = os.environ.pop(JAMENDO_ID_VARIABLE, "").strip()
+        # No Client Secret belongs in this application or a decoder environment.
+        secret = os.environ.pop("SOBAFM_JAMENDO_CLIENT_SECRET", "")
+        enabled = os.environ.get(JAMENDO_POLICY_VARIABLE, "false")
+        if enabled not in ("true", "false"):
+            raise ConfigError(f"{JAMENDO_POLICY_VARIABLE} must be true or false")
+        if secret:
+            raise ConfigError("Jamendo Client Secret is unsupported; use a dedicated Client ID")
+        if client_id and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", client_id) is None:
+            raise ConfigError(f"{JAMENDO_ID_VARIABLE} contains unsupported characters")
+        journal = os.environ.get(JAMENDO_JOURNAL_VARIABLE, "")
+        if enabled == "true" and (not client_id or not journal):
+            raise ConfigError("Enabled Jamendo requires a dedicated Client ID and journal path")
+        quota_values: list[int | None] = []
+        for name in ("SOBAFM_JAMENDO_MAX_REQUESTS", "SOBAFM_JAMENDO_MAX_BODY_BYTES"):
+            value = os.environ.get(name, "")
+            if value and (not value.isascii() or not value.isdecimal() or len(value) > 18):
+                raise ConfigError(f"{name} must be a nonnegative integer")
+            quota_values.append(int(value) if value else None)
         if lyria_key and not valid_api_key(lyria_key):
             raise ConfigError(f"{LYRIA_KEY_VARIABLE} contains unsupported characters")
         if lyria_key and not valid_api_key(api_key):
@@ -361,29 +411,42 @@ class Config:
         if not token:
             raise ConfigError(f"{TOKEN_VARIABLE} is required")
         paths = [os.environ.get(name, "") for name in (CATALOG_VARIABLE, REVIEWS_VARIABLE)]
-        if not any(paths):
+        if not any(paths) and enabled == "false":
             return cls(
                 token,
                 None,
                 PlanInterpreter(GeminiClient(api_key)) if lyria_key else None,
                 lyria_key,
             )
-        if not all(paths):
+        if any(paths) and not all(paths):
             raise ConfigError(f"{CATALOG_VARIABLE} and {REVIEWS_VARIABLE} must be set together")
         if not api_key:
             raise ConfigError(f"{GEMINI_KEY_VARIABLE} is required with {CATALOG_VARIABLE}")
         if not valid_api_key(api_key):
             raise ConfigError(f"{GEMINI_KEY_VARIABLE} contains unsupported characters")
         try:
-            catalog = parse_catalog(_read(Path(paths[0]), MAX_CATALOG_BYTES))
-            reviews = parse_reviews(_read(Path(paths[1]), MAX_REVIEWS_BYTES))
+            catalog = (
+                parse_catalog(_read(Path(paths[0]), MAX_CATALOG_BYTES))
+                if paths[0]
+                else Catalog(False, ())
+            )
+            reviews = parse_reviews(_read(Path(paths[1]), MAX_REVIEWS_BYTES)) if paths[1] else ()
             admitted = eligible(catalog, reviews)
             matcher = GeminiMatcher(admitted, api_key)
         except (CatalogInputError, OSError, UnicodeError) as exc:
             raise ConfigError("catalog snapshot or reviews could not be loaded") from exc
         _log_coverage(catalog, admitted)
         return cls(
-            token, matcher, PlanInterpreter(matcher.client) if lyria_key else None, lyria_key
+            token,
+            matcher,
+            PlanInterpreter(matcher.client) if lyria_key else None,
+            lyria_key,
+            catalog,
+            reviews,
+            enabled == "true",
+            client_id,
+            Path(journal) if journal else None,
+            Quota(*quota_values),
         )
 
 
@@ -429,6 +492,9 @@ class Track(_Playback):
     audio: Audio
     bank: PcmBank
     task: asyncio.Task[EndReason | None]
+    stream: JamendoStream | None = None
+    guild_id: int | None = None
+    cleanup_counted: bool = False
 
 
 @dataclass(eq=False)
@@ -722,6 +788,93 @@ class RefillBudget:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+class DisabledMetadata:
+    """Disabled policy never dispatches source work, including FMA-only installs."""
+
+    last_report: Report | None = None
+
+    async def fetch(
+        self, request: Request, *, deadline: float | None = None
+    ) -> bytes | SourceRefusal:
+        return SourceRefusal(Failure.DISABLED)
+
+
+@dataclass
+class CatalogSession:
+    search: CatalogSearch
+    scope: StationTransport | None
+    metadata_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+@dataclass
+class Discovery:
+    selection: Selection
+    budget: ProgramBudget
+    refill: SearchRefillBudget = field(default_factory=SearchRefillBudget)
+    retry_at: float = 0.0
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+class CatalogRuntime:
+    """One shared model client and source transport; one search scope per reserved pair."""
+
+    def __init__(self, config: Config, transport: JamendoTransport | None) -> None:
+        self.config = config
+        self.transport = transport
+        self.sessions: dict[int, CatalogSession] = {}
+
+    def session(self, guild_id: int) -> CatalogSession:
+        if guild_id not in self.sessions:
+            assert self.config.catalog is not None and self.config.matcher is not None
+            scope = None if self.transport is None else self.transport.reserve_station()
+            self.sessions[guild_id] = CatalogSession(
+                CatalogSearch(
+                    self.config.catalog,
+                    self.config.reviews,
+                    client=self.config.matcher.client,
+                    metadata=scope or DisabledMetadata(),
+                    policy=Policy(self.config.jamendo_enabled),
+                ),
+                scope,
+            )
+        return self.sessions[guild_id]
+
+    def release(self, guild_id: int) -> bool:
+        session = self.sessions.get(guild_id)
+        if session is not None:
+            if session.scope is not None:
+                if not session.scope.settled:
+                    return False
+                assert self.transport is not None
+                self.transport.release_station(session.scope)
+            del self.sessions[guild_id]
+        return True
+
+    def stream(self, guild_id: int, candidate: Candidate, bank: PcmBank) -> JamendoStream:
+        session = self.session(guild_id)
+        assert session.scope is not None and self.transport is not None
+        refresh = RefreshCandidate(session.scope, Policy(self.config.jamendo_enabled))
+
+        async def refreshed(candidate: Candidate) -> Locator | SourceRefusal:
+            async with session.metadata_lock:
+                result = await refresh(candidate)
+                log.info(
+                    "catalog refresh: admitted=%s refusal=%s transport=%s",
+                    not isinstance(result, SourceRefusal),
+                    result.reason if isinstance(result, SourceRefusal) else "none",
+                    refresh.transport.last_report,
+                )
+                return result
+
+        return JamendoStream(
+            candidate,
+            bank,
+            refresh_candidate=refreshed,
+            journal=self.transport.journal,
+            open_audio=session.scope.open_audio,
+        )
+
+
 @dataclass(eq=False)
 class GuildPlayer:
     guild_id: int
@@ -758,6 +911,9 @@ class GuildPlayer:
     closing: bool = False
     # `_disconnect` has run; a second call must not touch a newer player or voice client.
     disconnected: bool = False
+    discoveries: dict[Program, Discovery] = field(default_factory=dict[Program, Discovery])
+    searching: asyncio.Task[Selection] | None = None
+    preparing_stream: Track | None = None
 
 
 class WatchedVoiceClient(disnake.VoiceClient):
@@ -954,8 +1110,13 @@ class Adapter:
         pool: PcmBankPool = GLOBAL_PCM_BANKS,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
+        catalog_runtime: CatalogRuntime | None = None,
     ) -> None:
         self.matcher = matcher
+        self.catalog_runtime = catalog_runtime
+        self.search_tasks: set[asyncio.Task[Selection]] = set()
+        self.stream_debt: list[Track] = []
+        self._debt_retry: asyncio.Task[None] | None = None
         self.interpreter = interpreter
         self._lyria_key = lyria_key
         self.voice_status: VoiceStatuses | None = None
@@ -1226,9 +1387,44 @@ class Adapter:
         accepted = False
         player.matching = True
         silenced = player.silenced
+        discovery: Discovery | None = None
         try:
             try:
-                plan = await self.matcher.match(text)
+                if self.catalog_runtime is None:
+                    plan = await self.matcher.match(text)
+                else:
+                    session = self.catalog_runtime.session(player.guild_id)
+                    budget = ProgramBudget()
+
+                    def current() -> bool:
+                        return (
+                            not self.stopping.is_set()
+                            and not player.closing
+                            and player.silenced == silenced
+                        )
+
+                    async def search() -> Selection:
+                        async with session.metadata_lock:
+                            return await session.search.start(text, budget=budget, current=current)
+
+                    work = asyncio.create_task(search())
+                    player.searching = work
+                    self.search_tasks.add(work)
+                    try:
+                        selection = await work
+                    except asyncio.CancelledError:
+                        return STOPPED_WHILE_MATCHING
+                    finally:
+                        self.search_tasks.discard(work)
+                        if player.searching is work:
+                            player.searching = None
+                    if not current():
+                        return STOPPED_WHILE_MATCHING
+                    self._log_selection(selection)
+                    if not selection.choices:
+                        return self._selection_failure(selection)
+                    discovery = Discovery(selection, budget)
+                    plan = Matched(tuple(Ranked(c.recording, c.fit) for c in selection.choices))
             except MatchFailed as exc:
                 if exc.kind == NO_RECORDINGS:
                     return NOTHING_ADMITTED
@@ -1250,6 +1446,10 @@ class Adapter:
                 if station.ready is not None:
                     self._capacity_changed()  # the replacement supersedes this deferred start
                 program = station.request(text, tuple(c.recording for c in plan.ranked)).program
+                if self.catalog_runtime is not None and player.continuation is not None:
+                    player.continuation.cancel()
+                if discovery is not None:
+                    player.discoveries[program] = discovery
                 self._cancel_refill(player)  # the replaced program's; `_resume` covers a failure
                 player.attempts = 0
                 player.skip_requested = False
@@ -1258,7 +1458,8 @@ class Adapter:
                     (
                         choice
                         for choice in plan.ranked
-                        if station.prepared(program, choice.recording) is Outcome.ACCEPTED
+                        if self._prepare_choice(player, program, choice.recording)
+                        is Outcome.ACCEPTED
                     ),
                     None,
                 )
@@ -1272,11 +1473,60 @@ class Adapter:
                     return failure
                 player.interpreting = None
                 accepted = True
-            return _accepted(chosen)
+            coverage = (
+                ""
+                if discovery is None
+                else (
+                    f" Coverage — Jamendo: {discovery.selection.coverage.jamendo.value}; "
+                    f"FMA: {discovery.selection.coverage.fma.value}."
+                )
+            )
+            return _accepted(chosen) + coverage
         finally:
             if not accepted:
                 self._give_back(player, claim)
                 self._resume(player)  # a failed replacement hands the place back to the program
+
+    @staticmethod
+    def _log_selection(selection: Selection) -> None:
+        log.info(
+            "catalog selection: jamendo=%s fma=%s choices=%d reason=%s evidence=%s",
+            selection.coverage.jamendo.value,
+            selection.coverage.fma.value,
+            len(selection.choices),
+            selection.reason.value if selection.reason else "none",
+            selection.evidence,
+        )
+
+    @staticmethod
+    def _selection_failure(selection: Selection) -> str:
+        if selection.reason == End.REFUSED or selection.evidence.model_blocked:
+            return NOT_A_MUSIC_REQUEST
+        problems = {
+            page.report.kind for page in selection.evidence.pages if page.report is not None
+        }
+        if any(str(kind) in ("quota", "rate_limited") for kind in problems):
+            return "The source reached a rate or configured quota limit. Current audio continues."
+        if any(str(kind) in ("access_denied", "configuration") for kind in problems):
+            return (
+                "Source access is unavailable. "
+                "Ask the operator to check configuration and permission."
+            )
+        return (
+            "No usable match was found in this bounded search. "
+            f"Jamendo: {selection.coverage.jamendo.value}; FMA: {selection.coverage.fma.value}. "
+            "Current audio continues; this does not mean the source catalog is exhausted."
+        )
+
+    @staticmethod
+    def _prepare_choice(player: GuildPlayer, program: Program, recording: Recording) -> Outcome:
+        discovery = player.discoveries.get(program)
+        if discovery is not None and (
+            recording.key in discovery.budget.tried or discovery.budget.mark_tried(recording.key)
+        ):
+            player.station.exhausted(program, EndReason.HISTORY)
+            return Outcome.REJECTED
+        return player.station.prepared(program, recording)
 
     async def _generate(self, player: GuildPlayer, request: str) -> str:
         assert self.interpreter is not None
@@ -1325,6 +1575,8 @@ class Adapter:
                 if station.ready is not None:
                     self._capacity_changed()
                 station.accept(program)
+                if self.catalog_runtime is not None and player.continuation is not None:
+                    player.continuation.cancel()
                 self._cancel_refill(player)
                 player.skip_requested = False
                 player.waiting_claim = claim
@@ -1393,7 +1645,8 @@ class Adapter:
             self._defer_start(player, ready)
 
     def _displace(self, player: GuildPlayer) -> asyncio.Task[None] | None:
-        displaced = player.source.take_pending()
+        displaced = player.preparing_stream or player.source.take_pending()
+        player.preparing_stream = None
         if displaced is None:
             return None
         player.station.switch_failed(displaced.audio)
@@ -1484,6 +1737,43 @@ class Adapter:
             stream.start(bank)
             self._own(asyncio.create_task(self._watch_preroll(player, track)))
         else:
+            discovery = player.discoveries.get(audio.program)
+            choice = (
+                None
+                if discovery is None
+                else next(
+                    (
+                        c
+                        for c in discovery.selection.choices
+                        if c.recording.key == audio.recording.key
+                    ),
+                    None,
+                )
+            )
+            if choice is not None and choice.candidate is not None:
+                assert self.catalog_runtime is not None
+                handle = self.catalog_runtime.stream(player.guild_id, choice.candidate, bank)
+
+                # The task cannot run until this synchronous ownership handoff finishes.
+                async def produce_stream() -> EndReason | None:
+                    return await self._stream_track(player, stream_track)
+
+                task = asyncio.create_task(produce_stream())
+                stream_track = Track(
+                    audio,
+                    bank,
+                    task,
+                    stream=handle,
+                    guild_id=player.guild_id,
+                    cut=cut,
+                    claim=player.waiting_claim,
+                )
+                player.preparing_stream = stream_track
+                self._station_requests[player.guild_id] = (
+                    self._station_requests.get(player.guild_id, 0) + 1
+                )
+                player.waiting_claim = None
+                return None
             task = asyncio.create_task(self._produce(audio.recording, bank))
             track = Track(audio, bank, task, cut=cut, claim=player.waiting_claim)
         idle = player.source.offer(track)
@@ -1499,6 +1789,65 @@ class Adapter:
                 return "The voice player could not start. Check the voice connection and try again."
         player.waiting_claim = None
         return None
+
+    async def _stream_track(self, player: GuildPlayer, track: Track) -> EndReason | None:
+        """Prepare away from the player lock; only refreshed audio reaches voice."""
+        source, stream = track.audio, track.stream
+        assert stream is not None
+        if player.preparing_stream is not track:
+            return EndReason.RECORDING_START
+        try:
+            prepared = await stream.prepare()
+            while (
+                prepared is not None
+                and not player.voice.is_connected()
+                and not self.stopping.is_set()
+                and not player.closing
+                and player.preparing_stream is track
+            ):
+                await self._await_capacity(self._capacity_waiter(), None)
+            async with player.lock:
+                if (
+                    prepared is None
+                    or self.stopping.is_set()
+                    or player.closing
+                    or player.preparing_stream is not track
+                ):
+                    if player.preparing_stream is track:
+                        player.preparing_stream = None
+                        self._settle(player.guild_id, "failed", track)
+                    return EndReason.RECORDING_START
+                audio = player.station.refreshed(
+                    source, prepared.candidate.recording, prepared.credits
+                )
+                if audio is None:
+                    player.preparing_stream = None
+                    self._retire(track)
+                    return EndReason.RECORDING_START
+                track.audio = audio
+                player.preparing_stream = None
+                idle = player.source.offer(track)
+                if idle or not player.voice.is_playing():
+                    try:
+                        player.voice.stop()
+                        player.voice.play(player.output)
+                    except Exception:
+                        if player.source.take_pending() is track:
+                            self._settle(player.guild_id, "failed", track)
+                        return EndReason.VOICE_START
+            report = await stream.run()
+            return EndReason.RECORDING_START if report.failure is not None else None
+        except asyncio.CancelledError:
+            stream.cancel()
+            raise
+        except Exception as exc:
+            log.warning("checked stream failed: %s", type(exc).__name__)
+            stream.cancel()
+            async with player.lock:
+                if player.preparing_stream is track:
+                    player.preparing_stream = None
+                    self._settle(player.guild_id, "failed", track)
+            return EndReason.RECORDING_START
 
     async def _produce(self, recording: Recording, bank: PcmBank) -> EndReason | None:
         try:
@@ -1570,12 +1919,28 @@ class Adapter:
                     if select_next(station.plan(program), station.history(program)) is None:
                         self._start_refill(player, program)
                         return
+                    discovery = player.discoveries.get(program)
+                    if discovery is not None and len(discovery.budget.tried) >= 768:
+                        station.exhausted(program, EndReason.HISTORY)
+                        return
                     if not player.voice.is_connected():
                         # A reconnect the library is handling, which ends within a bound in
                         # `_voice_ready` or `_lose_voice`; an explicit `_disconnect` also
                         # wakes this. Nothing can start, so this uses up no attempt or
                         # recording, and the wait for a bank starts again afterwards.
                         deadline = None
+                        waiter = self._capacity_waiter()
+                    elif (
+                        discovery is not None
+                        and not player.skip_requested
+                        and self._seconds_left(player, program) > 30
+                        and any(
+                            c.candidate is not None
+                            and c.recording.key not in station.history(program)
+                            for c in discovery.selection.choices
+                        )
+                    ):
+                        timeout = self._seconds_left(player, program) - 30
                         waiter = self._capacity_waiter()
                     elif not self._bank_free(player):
                         if not self._audible(player):
@@ -1602,7 +1967,7 @@ class Adapter:
                                 station.preparation_failed(program)
                                 self._start_refill(player, program)
                                 return
-                            if station.prepared(program, recording) is Outcome.ACCEPTED:
+                            if self._prepare_choice(player, program, recording) is Outcome.ACCEPTED:
                                 break
                         else:
                             station.preparation_failed(program)
@@ -1649,6 +2014,9 @@ class Adapter:
         ends after its heard track, or at once if nothing is heard. A refill isn't a
         member action, so it takes no change cooldown.
         """
+        if program in player.discoveries:
+            await self._discover_more(player, program)
+            return
         assert self.matcher is not None
         station = player.station
         task = asyncio.current_task()
@@ -1715,6 +2083,87 @@ class Adapter:
             self._capacity_changed()  # a bank this program yielded may now go elsewhere
             self._review_listeners(player)  # the program may have ended
 
+    async def _discover_more(self, player: GuildPlayer, program: Program) -> None:
+        assert self.catalog_runtime is not None
+        discovery = player.discoveries[program]
+        session = self.catalog_runtime.session(player.guild_id)
+        task = asyncio.current_task()
+
+        def current() -> bool:
+            return (
+                not self.stopping.is_set()
+                and not player.closing
+                and player.station.desired is program
+                and player.refill is not None
+                and player.refill.task is task
+            )
+
+        async with discovery.lock:
+            while current():
+                reason = discovery.budget.end
+                if reason is not None or discovery.refill.attempts >= MAX_REFILL_ATTEMPTS:
+                    ending = {
+                        End.HISTORY: EndReason.HISTORY,
+                        End.CYCLES: EndReason.CYCLES,
+                        End.NO_PROGRESS: EndReason.NO_PROGRESS,
+                    }.get(reason or End.REFILL, EndReason.REFILL_FAILED)
+                    self._end_after_heard(player, program, ending)
+                    return
+                wait = discovery.retry_at - self._clock()
+                if wait > 0:
+                    await self._sleep(wait)
+                if not current():
+                    return
+                intent = discovery.selection.intent
+                assert intent is not None
+                try:
+                    async with session.metadata_lock:
+                        if not current():
+                            return
+                        selection = await session.search.refill(
+                            intent,
+                            discovery.selection.next_offset,
+                            budget=discovery.budget,
+                            refill=discovery.refill,
+                            current=current,
+                        )
+                finally:
+                    delay = discovery.refill.delay(self._seconds_left(player, program))
+                    if delay is not None:
+                        discovery.retry_at = self._clock() + delay
+                if not current():
+                    return
+                self._log_selection(selection)
+                discovery.selection = selection  # retain cursor even for an empty window
+                async with player.lock:
+                    if not current():
+                        return
+                    if (
+                        player.station.refilled(
+                            program, tuple(c.recording for c in selection.choices)
+                        )
+                        is Outcome.ACCEPTED
+                    ):
+                        discovery.refill = SearchRefillBudget()
+                        discovery.retry_at = 0
+                        self._schedule_continue(player)
+                        return
+                    if selection.reason == End.CURSOR:
+                        self._end_after_heard(player, program, EndReason.CURSOR)
+                        return
+                    kinds = {
+                        p.report.kind for p in selection.evidence.pages if p.report is not None
+                    }
+                    if any(str(k) in ("quota", "access_denied") for k in kinds):
+                        self._end_after_heard(
+                            player,
+                            program,
+                            EndReason.SOURCE_QUOTA
+                            if any(str(k) == "quota" for k in kinds)
+                            else EndReason.SOURCE_ACCESS,
+                        )
+                        return
+
     @staticmethod
     def _seconds_left(player: GuildPlayer, program: Program) -> float:
         """About how long ``program``'s heard track has left, or 0 if nothing says.
@@ -1749,6 +2198,20 @@ class Adapter:
         return player.reservation is not None and player.reservation.leased < BANKS_PER_STATION
 
     def _release_idle_reservations(self) -> None:
+        # Prune even while an audible stream keeps its station request charged.
+        # Otherwise repeated replacements could retain every old selection forever.
+        for player in self.players.values():
+            station = player.station
+            live = {
+                a.program
+                for a in (station.heard, station.ready, station.switching)
+                if a is not None
+            }
+            if station.desired is not None:
+                live.add(station.desired)
+            player.discoveries = {p: d for p, d in player.discoveries.items() if p in live}
+        if self.stream_debt and (self._debt_retry is None or self._debt_retry.done()):
+            self._debt_retry = self._own(asyncio.create_task(self._retry_stream_debt()))
         self.debt = [bank for bank in self.debt if not bank.release()]
         # A generated bank return can synchronously call `_capacity_changed`.
         # Detach the list first so reentrant observation cannot retry the same debt.
@@ -1766,6 +2229,8 @@ class Adapter:
                     continue
             # Native/session work holds banks until settlement; voice frames hold
             # credits even after disconnect. Neither a stop nor a timeout frees them.
+            if self.catalog_runtime is not None and not self.catalog_runtime.release(owner):
+                continue
             if self._pool.release(owner) and player is not None:
                 player.reservation = None
                 player.output.use_reservation(None)
@@ -1840,12 +2305,17 @@ class Adapter:
                 return "Nothing from the current program is audible to skip."
             if player.source.cut_pending(claim):
                 return SKIPPING  # the prepared or still-preparing next track
+            if player.preparing_stream is not None:
+                player.preparing_stream.cut = True
+                player.preparing_stream.claim = claim
+                return SKIPPING
             if (reason := station.ending) is not None:
                 return f"Nothing follows: {ENDED[reason]}. The current recording continues."
             if not station.needs_next:  # the next track's switch report is in flight
                 return "The next recording is already starting."
             player.skip_requested = True
             player.waiting_claim = claim
+            self._capacity_changed()  # wake the metadata-only prefetch wait immediately
             task = self._schedule_continue(player)
         # Bounded wait for the preparation; it stays owned by the adapter afterwards.
         await asyncio.wait({task}, timeout=SETTLE_SECONDS)
@@ -1917,6 +2387,10 @@ class Adapter:
             duration.timer.cancel()
         player.durations.clear()
         self._cancel_refill(player)
+        if player.searching is not None:
+            player.searching.cancel()
+        if self.catalog_runtime is not None and player.continuation is not None:
+            player.continuation.cancel()
         player.refill_budget = None
         player.interpreting = None
         player.silenced += 1
@@ -1924,6 +2398,9 @@ class Adapter:
         player.skip_requested = False
         player.waiting_claim = None  # its cooldown runs on; the stop is not its failure
         tracks = player.source.take_all()
+        if player.preparing_stream is not None:
+            tracks.append(player.preparing_stream)
+            player.preparing_stream = None
         if player.station.switching is not None:
             player.station.switch_failed(player.station.switching)
         if player.station.heard is not None:
@@ -2674,6 +3151,10 @@ class Adapter:
         if track.retirement is None:
             if isinstance(track, GeneratedTrack):
                 track.stream.cancel()  # the original stop clock starts at detachment
+            elif track.stream is not None and not (
+                track.stream.report().io_settled and track.bank.facts().audible_drain
+            ):
+                track.stream.cancel()
             track.retirement = self._own(asyncio.create_task(self._settle_track(track)))
             self.retirements.add(track.retirement)
             track.retirement.add_done_callback(self.retirements.discard)
@@ -2700,8 +3181,34 @@ class Adapter:
         done, _ = await asyncio.wait({track.task}, timeout=max(0.0, remaining))
         if not done:
             self.cleanup_failures += 1  # a failed verdict, whatever happens later
+            track.cleanup_counted = True
             log.error("audio producer missed its cleanup deadline; its bank stays leased")
             await asyncio.wait({track.task})
+        if track.stream is not None:
+            report = await track.stream.run()
+            if report.cleanup == Cleanup.EXPIRED and not track.cleanup_counted:
+                self.cleanup_failures += 1
+                track.cleanup_counted = True
+            released = await self._release_stream(track)
+            if not released:
+                self.stream_debt.append(track)
+            log.info(
+                "checked stream retired: recording=%s frames_handed_to_voice=%d "
+                "transfer_complete=%s envelope_complete=%s pcm_valid=%s audible_drain=%s "
+                "failure=%s refusal=%s cleanup=%s io_settled=%s released=%s",
+                _recording_label(track.audio.recording),
+                track.frames,
+                report.transfer_complete,
+                report.envelope_complete,
+                report.pcm.pcm_valid,
+                report.pcm.audible_drain,
+                report.failure or "none",
+                report.refusal.reason if report.refusal else "none",
+                report.cleanup,
+                report.io_settled,
+                released,
+            )
+            return
         facts = track.bank.facts()  # the retirement's settled facts, taken before release
         released = track.bank.release()
         if not released:
@@ -2721,6 +3228,28 @@ class Adapter:
             released,
             f"{time.monotonic() - cancelled_at:.3f}" if released else "none",
         )
+
+    async def _release_stream(self, track: Track) -> bool:
+        assert track.stream is not None and track.guild_id is not None
+        if track.stream.report().cleanup == Cleanup.EXPIRED and not track.cleanup_counted:
+            self.cleanup_failures += 1
+            track.cleanup_counted = True
+        if not track.stream.report().io_settled or not track.bank.release():
+            return False
+        try:
+            if not await track.stream.release():
+                return False
+        except JournalError:
+            log.error("stream journal settlement retained; operator restoration required")
+            return False
+        self._request_finished(track.guild_id)
+        return True
+
+    async def _retry_stream_debt(self) -> None:
+        debt, self.stream_debt = self.stream_debt, []
+        for track in debt:
+            if not await self._release_stream(track):
+                self.stream_debt.append(track)
 
     async def _observe_voice_cleanup(self, deadline: float) -> None:
         """Observe the original cutoff even while a disconnect or producer is stuck."""
@@ -2746,6 +3275,8 @@ class Adapter:
         cleanup deadline. The remembered channels stay, so the next start rejoins them.
         """
         self.stopping.set()
+        for search in self.search_tasks:
+            search.cancel()
         if self._voice_cleanup is None:
             deadline = time.monotonic() + CLEANUP_SECONDS
             self._voice_cleanup = asyncio.create_task(self._observe_voice_cleanup(deadline))
@@ -2764,11 +3295,13 @@ class Adapter:
             # A connect still under way leaves its client registered; closing the bot ends it.
             self._rejoins.cancel()
         self._capacity_changed()  # continuations waiting for a bank return at once
-        while self.players or self.tasks:
+        while self.players or self.tasks or self.search_tasks:
             for guild_id, player in list(self.players.items()):
                 await self._disconnect(guild_id, player)
             if self.tasks:
                 await asyncio.gather(*self.tasks, return_exceptions=True)
+            if self.search_tasks:
+                await asyncio.gather(*self.search_tasks, return_exceptions=True)
             # Gathering tasks that are all done does not yield, so a finished task
             # whose ``tasks.discard`` callback is still queued would spin this loop.
             await asyncio.sleep(0)
@@ -2776,7 +3309,8 @@ class Adapter:
         self.generated_debt = [
             stream for stream in self.generated_debt if not stream.release_debt()
         ]
-        if self.debt or self.generated_debt or self._pool.leased:
+        await self._retry_stream_debt()
+        if self.debt or self.generated_debt or self.stream_debt or self._pool.leased:
             log.error("%d PCM bank lease(s) remain at shutdown", self._pool.leased)
         await asyncio.shield(self._voice_cleanup)
         if self._credit_cleanup is not None:
@@ -2787,6 +3321,7 @@ class Adapter:
             log.error("%d cleanup deadline(s) were missed", self.cleanup_failures)
         released = (
             not self.debt
+            and not self.stream_debt
             and not self.generated_debt
             and not self._credit_sends
             and not self._pool.leased
@@ -2967,12 +3502,26 @@ def create_bot(adapter: Adapter) -> commands.InteractionBot:
 
 async def run(config: Config, producer: Producer, settings: SettingsStore) -> int:
     """Run until SIGTERM or SIGINT, then disconnect and exit once owners are released."""
+    journal: Journal | None = None
+    transport: JamendoTransport | None = None
+    if config.jamendo_enabled:
+        assert config.jamendo_journal is not None
+        try:
+            journal = await Journal.open(config.jamendo_journal)
+        except JournalError:
+            log.error("Jamendo journal refused startup; preserve state for operator recovery")
+            await settings.close()
+            if config.matcher is not None:
+                await config.matcher.close()
+            return 2
+        transport = JamendoTransport(config.jamendo_id, journal, quota=config.jamendo_quota)
     adapter = Adapter(
         config.matcher,
         producer,
         settings,
         interpreter=config.interpreter,
         lyria_key=config.lyria_key,
+        catalog_runtime=CatalogRuntime(config, transport) if config.jamendo_enabled else None,
     )
     bot = create_bot(adapter)
     loop = asyncio.get_running_loop()
@@ -2982,6 +3531,10 @@ async def run(config: Config, producer: Producer, settings: SettingsStore) -> in
     stopping = asyncio.create_task(adapter.stopping.wait())
     await asyncio.wait({client, stopping}, return_when=asyncio.FIRST_COMPLETED)
     released = await adapter.shutdown()
+    if transport is not None:
+        await transport.close()
+    if journal is not None:
+        await journal.close()
     if config.matcher is not None:
         await config.matcher.close()  # also ends any request still being matched
     elif config.interpreter is not None:

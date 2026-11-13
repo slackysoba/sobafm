@@ -1,6 +1,6 @@
 # Product requirements
 
-This specification defines product behavior and acceptance criteria. Source permission, prompt selection and [Jamendo discovery with checked streaming](decisions/0013-jamendo-discovery-streaming.md) are accepted designs. The production catalog path ranks admitted local FMA recordings and plays local files; dynamic Jamendo discovery and streaming are not implemented. One reviewed Jamendo metadata request succeeded; no audio request occurred. Source integration and release qualification remain incomplete. No listening evaluation is claimed.
+This specification defines product behavior and acceptance criteria. Source permission, prompt selection and [Jamendo discovery with checked streaming](decisions/0013-jamendo-discovery-streaming.md) are accepted designs. Production now wires bounded discovery, pooled ranking, checked streaming and prepared local FMA through the station. Jamendo remains default disabled. Source compatibility and current-image release qualification remain incomplete; no listening evaluation is claimed.
 
 ## Product and engineering intent
 
