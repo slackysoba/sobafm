@@ -64,6 +64,7 @@ from tests.test_discord_adapter import (
     matcher_of,
     next_id,
     offline,
+    prepared_next,
     program_harness,
     recording,
     run,
@@ -1920,31 +1921,34 @@ def test_a_refill_answered_during_a_reconnect_waits_for_the_connection(
 
     async def scenario() -> None:
         h, tagged, guild = silent_program("a", "b", "c", "d")
-        player = await heard_track_ended_with_a_refill_out(h, wire)
-        voice = player.voice
-        program = player.station.desired
-        room = h.room
+        try:
+            player = await heard_track_ended_with_a_refill_out(h, wire)
+            voice = player.voice
+            program = player.station.desired
+            room = h.room
 
-        wire.backoff_seconds = 0.05
-        wire.closes.put_nowait(4006)
-        await until_settled(lambda: not voice.is_connected())
+            wire.backoff_seconds = 0.05
+            wire.closes.put_nowait(4006)
+            await until_settled(lambda: not voice.is_connected())
 
-        gate = matcher_of(h).gate
-        assert gate is not None
-        gate.set()  # the answer arrives during the gap
-        await until_settled(lambda: player.refill is None or player.refill.task.done())
-        await settle()
-        assert tagged.started == ["a"] and player.attempts == 0  # no recording was used up
-        assert player.station.desired == program and player.station.ended is None
+            gate = matcher_of(h).gate
+            assert gate is not None
+            gate.set()  # the answer arrives during the gap
+            await until_settled(lambda: player.refill is None or player.refill.task.done())
+            await settle()
+            assert tagged.started == ["a"] and player.attempts == 0  # no recording was used up
+            assert player.station.desired == program and player.station.ended is None
 
-        await until_settled(lambda: voice.is_connected() and next_id(h) == "b")
-        assert tagged.started == ["a", "b"] and player.attempts == 1  # only the one that worked
-        assert player_of(h) is player and remembered(h) == room.id
-        await until_settled(lambda: "b" in tagged.banks)
-        await settle()
-        assert player.source.read() == tag("b")  # and it plays, after the reconnect
-        assert guild.state.clients[GUILD] is cast(Any, voice)
-        await wire_finish(h, wire)
+            await until_settled(lambda: voice.is_connected() and next_id(h) == "b")
+            await prepared_next(h, "b")  # claiming the track can precede its producer's first turn
+            assert tagged.started == ["a", "b"] and player.attempts == 1  # only the one that worked
+            assert player_of(h) is player and remembered(h) == room.id
+            await settle()
+            assert player.source.read() == tag("b")  # and it plays, after the reconnect
+            assert guild.state.clients[GUILD] is cast(Any, voice)
+            await wire_finish(h, wire)
+        finally:
+            await h.adapter.shutdown()
 
     asyncio.run(scenario())
 
@@ -1956,34 +1960,43 @@ def test_a_wait_for_a_bank_that_ends_during_a_reconnect_uses_no_attempt(
 
     async def scenario() -> None:
         h, tagged, _ = silent_program("a", "b", "c", "d")
-        matcher_of(h).batch = 4  # a next track is on its list, so no refill is involved
-        source = await h.join()
-        await h.play()
-        await settle()
-        blocker = h.pool.reserve(1).acquire()  # the next track has to wait for a bank
-        gate = tagged.holding["a"] = asyncio.Event()  # as does the heard track's retirement
-        assert source.read() == tag("a")
-        player = player_of(h)
-        voice = player.voice
-        await until_settled(lambda: player.station.heard is not None)
-        assert source.read() == b""
-        wire.player_stopped(voice)
-        await until_settled(lambda: player.station.heard is None)
-        assert tagged.started == ["a"] and h.pool.leased == 2
+        blocker = None
+        gate = asyncio.Event()
+        try:
+            matcher_of(h).batch = 4  # a next track is on its list, so no refill is involved
+            source = await h.join()
+            await h.play()
+            await settle()
+            blocker = h.pool.reserve(1).acquire()  # the next track has to wait for a bank
+            tagged.holding["a"] = gate  # as does the heard track's retirement
+            assert source.read() == tag("a")
+            player = player_of(h)
+            voice = player.voice
+            await until_settled(lambda: player.station.heard is not None)
+            assert source.read() == b""
+            wire.player_stopped(voice)
+            await until_settled(lambda: player.station.heard is None)
+            assert tagged.started == ["a"] and h.pool.leased == 2
 
-        wire.backoff_seconds = 0.05
-        wire.closes.put_nowait(4006)
-        await until_settled(lambda: not voice.is_connected())
-        assert blocker.release()
-        gate.set()  # a bank comes free during the gap, which wakes the wait
-        await until_settled(lambda: h.pool.leased == 0)
-        await settle()
-        assert tagged.started == ["a"] and player.attempts == 0
+            wire.backoff_seconds = 0.05
+            wire.closes.put_nowait(4006)
+            await until_settled(lambda: not voice.is_connected())
+            assert blocker.release()
+            gate.set()  # a bank comes free during the gap, which wakes the wait
+            await until_settled(lambda: h.pool.leased == 0)
+            await settle()
+            assert tagged.started == ["a"] and player.attempts == 0
 
-        await until_settled(lambda: voice.is_connected() and next_id(h) == "b")
-        assert tagged.started == ["a", "b"] and player.attempts == 1  # only the one that worked
-        assert player.station.ended is None and player.station.desired is not None
-        await wire_finish(h, wire)
+            await until_settled(lambda: voice.is_connected() and next_id(h) == "b")
+            await prepared_next(h, "b")
+            assert tagged.started == ["a", "b"] and player.attempts == 1  # only the one that worked
+            assert player.station.ended is None and player.station.desired is not None
+            await wire_finish(h, wire)
+        finally:
+            gate.set()
+            if blocker is not None:
+                blocker.release()
+            await h.adapter.shutdown()
 
     asyncio.run(scenario())
 
