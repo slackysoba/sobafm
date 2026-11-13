@@ -3521,7 +3521,7 @@ async def run(config: Config, producer: Producer, settings: SettingsStore) -> in
         settings,
         interpreter=config.interpreter,
         lyria_key=config.lyria_key,
-        catalog_runtime=CatalogRuntime(config, transport) if config.catalog is not None else None,
+        catalog_runtime=CatalogRuntime(config, transport) if config.jamendo_enabled else None,
     )
     bot = create_bot(adapter)
     loop = asyncio.get_running_loop()

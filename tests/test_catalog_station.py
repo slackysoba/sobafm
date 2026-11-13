@@ -9,22 +9,32 @@ import asyncio
 import logging
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from sobafm import __main__ as app
+from sobafm import discord_adapter
 from sobafm.catalog import Catalog, eligible
 from sobafm.catalog_search import CatalogSearch
-from sobafm.discord_adapter import CatalogRuntime, CatalogSession, Config, ConfigError, Track
+from sobafm.discord_adapter import (
+    Adapter,
+    CatalogRuntime,
+    CatalogSession,
+    Config,
+    ConfigError,
+    Track,
+)
 from sobafm.gemini_match import GeminiMatcher
 from sobafm.jamendo_admission import Candidate
 from sobafm.jamendo_catalog import Refreshed, Refusal, Request, refresh, refresh_request
-from sobafm.jamendo_journal import Attempt, Journal
+from sobafm.jamendo_journal import Attempt, Journal, Quota
 from sobafm.jamendo_stream import JamendoStream
 from sobafm.jamendo_transport import Locator
 from sobafm.pcm import PcmBank
+from sobafm.settings import SettingsStore
 from sobafm.station import HISTORY_LIMIT, Audio, EndReason, Outcome, Station
 from tests.test_catalog import catalog, partition, recording, reviews
 from tests.test_catalog_intent import KEY, intent
@@ -150,6 +160,59 @@ def configure(h: Harness, runtime: Runtime) -> None:
 
 def local_catalog() -> Catalog:
     return catalog(partition("fma", [recording("local", duration_seconds=180)]))
+
+
+@pytest.mark.parametrize("jamendo_enabled", [False, True])
+def test_startup_keeps_local_matching_unless_jamendo_is_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, jamendo_enabled: bool
+) -> None:
+    async def check() -> None:
+        local = local_catalog()
+        answers = (intent(), plan((0, "close"))) if jamendo_enabled else (plan((0, "close")),)
+        model = Model(*answers)
+        matcher = GeminiMatcher(eligible(local, reviews(local)), KEY, transport=model)
+        config = Config("placeholder", matcher, catalog=local, reviews=reviews(local))
+        assert not config.jamendo_enabled  # unchanged local installs use the default
+        if jamendo_enabled:
+            config = replace(
+                config,
+                jamendo_enabled=True,
+                jamendo_id="dedicated-placeholder",
+                jamendo_journal=tmp_path / "journal.json",
+                jamendo_quota=Quota(requests=0),  # unavailable source, no network dispatch
+            )
+        producer = Producer(end=False)
+        room = FakeChannel("room")
+        completed = False
+
+        class Bot:
+            def __init__(self, adapter: Adapter) -> None:
+                self.adapter = adapter
+
+            async def start(self, token: str) -> None:
+                nonlocal completed
+                await run(self.adapter.join, inter(room, manager=True))
+                await run(lambda i: self.adapter.play(i, "piano"), inter(room))
+                assert len(model.bodies) == (2 if jamendo_enabled else 1)
+                assert (self.adapter.catalog_runtime is not None) == jamendo_enabled
+                await settle()
+                player = self.adapter.players[1]
+                assert player.source.read()
+                await settle()
+                heard = player.station.heard
+                assert isinstance(heard, Audio)
+                assert heard.recording.key == eligible(local, reviews(local))[0].key
+                completed = True
+
+            async def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(discord_adapter, "create_bot", Bot)
+        settings = SettingsStore.open(tmp_path / "settings.db")
+        assert await discord_adapter.run(config, producer, settings) == 0
+        assert completed and model.closed
+
+    asyncio.run(check())
 
 
 def test_configuration_defaults_off_and_jamendo_only_requires_no_local_media(

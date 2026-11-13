@@ -4,7 +4,10 @@
 [ADR 0013](decisions/0013-jamendo-discovery-streaming.md) and the
 [adopted implementation contract](https://github.com/slackysoba/sobafm/issues/188#issuecomment-6795394426).
 It is wired into the station and Discord runtime by `CatalogRuntime` in
-`discord_adapter.py`, including FMA-only configurations. This module owns no player, decoder, audio acquisition,
+`discord_adapter.py` only when Jamendo is enabled. Default-disabled local FMA
+keeps its single initial ranking call and prepared-catalog refill path. Enabled
+Jamendo retains pooled FMA fallback when the source is unavailable.
+This module owns no player, decoder, audio acquisition,
 journal mutation, cooldown, retry timer or client shutdown. The a5 live evaluator
 remains inconclusive and does not qualify this implementation.
 
