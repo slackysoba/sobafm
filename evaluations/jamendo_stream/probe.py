@@ -85,6 +85,37 @@ class LicenseTextDetail(StrEnum):
     BACKSLASH = "backslash"
 
 
+class EvidenceCategory(StrEnum):
+    IDENTITY_CREDITS = "identity_credits"
+    ALBUM_TYPE = "album_type"
+    DURATION = "duration"
+    RIGHTS_NOTICES = "rights_notices"
+    DETAILS = "details"
+    STREAM_ROUTE = "stream_route"
+    DOWNLOAD = "download"
+    OTHER = "other"
+
+
+# Fixed top-level partitions, not a rights interpretation or source-key report.
+EVIDENCE_FIELDS: dict[EvidenceCategory, frozenset[str]] = {
+    EvidenceCategory.IDENTITY_CREDITS: frozenset(
+        {"id", "name", "artist_id", "artist_name", "artist_idstr", "creators", "shareurl"}
+    ),
+    EvidenceCategory.ALBUM_TYPE: frozenset({"album_id", "album_name", "type"}),
+    EvidenceCategory.DURATION: frozenset({"duration"}),
+    EvidenceCategory.RIGHTS_NOTICES: frozenset(
+        {"license_ccurl", "licenses", "credits", "notices", "warnings", "rights_warnings"}
+    ),
+    EvidenceCategory.DETAILS: frozenset(
+        {"description", "details", "musicinfo", "releasedate", "composition", "composer"}
+    ),
+    EvidenceCategory.STREAM_ROUTE: frozenset({"audio"}),
+    EvidenceCategory.DOWNLOAD: frozenset({"audiodownload", "audiodownload_allowed"}),
+}
+KNOWN_EVIDENCE_FIELDS: frozenset[str] = frozenset().union(*EVIDENCE_FIELDS.values())
+type Change = Literal["changed", "unchanged"]
+
+
 type Presence = Literal["present", "absent", "not_evaluated"]
 type Match = Literal["match", "mismatch", "not_evaluated"]
 type RouteComponent = Literal[
@@ -186,6 +217,7 @@ class Candidate:
     track_id: str
     target: str
     evidence: str
+    category_evidence: tuple[str, ...]
 
 
 @dataclass
@@ -214,6 +246,7 @@ class Report:
     metadata_validated: bool = False
     diagnostic_steps: list[DiagnosticStep] = field(default_factory=list[DiagnosticStep])
     refresh_diagnosis: Literal["mp32_found", "default_only_found", "both_empty"] | None = None
+    evidence_changes: dict[EvidenceCategory, Change] | None = None
 
 
 @contextmanager
@@ -728,6 +761,34 @@ def metadata_rows(data: bytes, diagnostics: Results, limit: int) -> list[object]
     return entries
 
 
+def evidence_digest(value: dict[str, object]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        ).encode("ascii")
+    ).hexdigest()
+
+
+def category_fingerprints(normalized: dict[str, object]) -> tuple[str, ...]:
+    # Each bounded row field belongs to exactly one partition. Nested objects
+    # remain intact; missing and null fields remain distinct. Only eight digests
+    # survive candidate parsing, never their raw subsets or source key names.
+    return tuple(
+        evidence_digest(
+            {
+                key: value
+                for key, value in normalized.items()
+                if (
+                    key not in KNOWN_EVIDENCE_FIELDS
+                    if category == EvidenceCategory.OTHER
+                    else key in EVIDENCE_FIELDS[category]
+                )
+            }
+        )
+        for category in EvidenceCategory
+    )
+
+
 def validate_candidate(value: object) -> Candidate:
     if not isinstance(value, dict):
         raise CandidateRefused(Gate.ROW, Condition.TYPE)
@@ -762,16 +823,8 @@ def validate_candidate(value: object) -> Candidate:
     # distinct percent-encoded markers must not collapse through parse_qsl's
     # replacement decoding. This transient digest is not a rights certificate.
     normalized_target = "/?" + "&".join(sorted(urlsplit(target).query.split("&")))
-    evidence = hashlib.sha256(
-        json.dumps(
-            {**row, "audio": normalized_target, "duration": duration},
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("ascii")
-    ).hexdigest()
-    return Candidate(track_id, target, evidence)
+    normalized = {**row, "audio": normalized_target, "duration": duration}
+    return Candidate(track_id, target, evidence_digest(normalized), category_fingerprints(normalized))
 
 
 def select_candidate(data: bytes, report: Report) -> Candidate:
@@ -809,13 +862,19 @@ def validate_refresh(data: bytes, selected: Candidate, report: Report) -> str:
     if row.get("id") != selected.track_id:
         raise Stopped("candidate_identity")
     refreshed = validate_candidate(row)
+    report.evidence_changes = {
+        category: "unchanged" if old == new else "changed"
+        for category, old, new in zip(
+            EvidenceCategory, selected.category_evidence, refreshed.category_evidence, strict=True
+        )
+    }
     if refreshed.evidence != selected.evidence:
         raise Stopped("refresh_evidence_changed")
     report.metadata_validated = True
     return refreshed.target
 
 
-def probe(application_id: str, report: Report) -> None:
+def probe(application_id: str, report: Report, *, metadata_only: bool = False) -> None:
     """Called only within the isolated child's one deadline."""
     common = {
         "client_id": checked_id(application_id),
@@ -834,11 +893,16 @@ def probe(application_id: str, report: Report) -> None:
     )
     data = exchange("/v3.0/tracks/?" + query, report.search, metadata=True)
     selected = select_candidate(data, report)
+    if metadata_only:
+        report.selected_track_id = None
     del data
     query = urlencode({**common, "id": selected.track_id, "limit": "1"})
     data = exchange("/v3.0/tracks/?" + query, report.metadata, metadata=True)
     target = validate_refresh(data, selected, report)
     del data
+    if metadata_only:
+        report.outcome = "metadata_compared"
+        return
     exchange(target, report.stream, metadata=False)
     report.outcome = "stream_received"
 
@@ -879,7 +943,9 @@ def diagnose_empty_refresh(application_id: str, report: Report) -> None:
     report.outcome = "metadata_diagnosed"
 
 
-def run_child(application_id_path: str, diagnostic: bool = False) -> int:
+def run_child(
+    application_id_path: str, diagnostic: bool = False, *, metadata_only: bool = False
+) -> int:
     report = Report()
     application_id = ""
     try:
@@ -888,6 +954,8 @@ def run_child(application_id_path: str, diagnostic: bool = False) -> int:
             application_id = read_id(application_id_path)
             if diagnostic:
                 diagnose_empty_refresh(application_id, report)
+            elif metadata_only:
+                probe(application_id, report, metadata_only=True)
             else:
                 probe(application_id, report)
     except Stopped as error:
@@ -917,7 +985,7 @@ def run_child(application_id_path: str, diagnostic: bool = False) -> int:
         encoded = '{"outcome":"inconclusive","reason":"report_limit"}'
         report.outcome = "inconclusive"
     print(encoded)
-    return 0 if report.outcome in ("stream_received", "metadata_diagnosed") else 1
+    return 0 if report.outcome in ("stream_received", "metadata_diagnosed", "metadata_compared") else 1
 
 
 def settle(child: subprocess.Popen[bytes]) -> bool:
@@ -940,7 +1008,9 @@ def settle(child: subprocess.Popen[bytes]) -> bool:
             continue
 
 
-def supervise(application_id_path: str, diagnostic: bool = False) -> int:
+def supervise(
+    application_id_path: str, diagnostic: bool = False, *, metadata_only: bool = False
+) -> int:
     started = time.monotonic()
     child: subprocess.Popen[bytes] | None = None
     output = b""
@@ -958,10 +1028,11 @@ def supervise(application_id_path: str, diagnostic: bool = False) -> int:
                     "-B",
                     "-c",
                     "import runpy,sys; m=runpy.run_path(sys.argv[1]); "
-                    "sys.exit(m['run_child'](sys.argv[2], sys.argv[3] == 'diagnostic'))",
+                    "sys.exit(m['run_child'](sys.argv[2], sys.argv[3] == 'diagnostic', "
+                    "metadata_only=sys.argv[3] == 'metadata'))",
                     str(Path(__file__).resolve()),
                     application_id_path,
-                    "diagnostic" if diagnostic else "stream",
+                    "diagnostic" if diagnostic else "metadata" if metadata_only else "stream",
                 ],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -1021,13 +1092,15 @@ def supervise(application_id_path: str, diagnostic: bool = False) -> int:
     return 0 if cleanup_met and child is not None and child.returncode == 0 else 1
 
 
-def run_authorized(application_id_path: str, diagnostic: bool = False) -> int:
+def run_authorized(
+    application_id_path: str, diagnostic: bool = False, *, metadata_only: bool = False
+) -> int:
     def interrupted(_signum: int, _frame: FrameType | None) -> None:
         raise KeyboardInterrupt
 
     previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
-        return supervise(application_id_path, diagnostic)
+        return supervise(application_id_path, diagnostic, metadata_only=metadata_only)
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
@@ -1040,11 +1113,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if (
         len(args) != 2
-        or args[0] not in ("--send-to-jamendo", "--diagnose-empty-refresh")
+        or args[0] not in (
+            "--send-to-jamendo", "--diagnose-empty-refresh", "--diagnose-metadata-changes"
+        )
         or not args[1]
     ):
         print('{"outcome":"inconclusive","reason":"arguments"}')
         return 2
+    if args[0] == "--diagnose-metadata-changes":
+        return run_authorized(args[1], metadata_only=True)
     return run_authorized(args[1], diagnostic=args[0] == "--diagnose-empty-refresh")
 
 
