@@ -255,6 +255,30 @@ def test_cli_propagates_mode_to_supervised_child(monkeypatch: pytest.MonkeyPatch
     assert "metadata_only=sys.argv[3] == 'metadata'" in commands[0][4]
 
 
+def test_interruption_after_selection_withholds_identity(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    select = subject.select_candidate
+
+    def interrupted(data: bytes, report: subject.Report) -> subject.Candidate:
+        select(data, report)
+        raise TimeoutError
+
+    def exchange(_target: str, _transfer: subject.Transfer, *, metadata: bool) -> bytes:
+        assert metadata
+        return document()
+
+    monkeypatch.setattr(subject, "read_id", synthetic_id)
+    monkeypatch.setattr(subject, "select_candidate", interrupted)
+    monkeypatch.setattr(subject, "exchange", exchange)
+    assert subject.run_child("synthetic", metadata_only=True) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["reason"] == "timeout"
+    assert result["selected_track_id"] is None
+    assert result["evidence_changes"] is None
+    assert result["stream"] == asdict(subject.Transfer())
+
+
 @pytest.mark.parametrize("stage", [1, 2])
 def test_metadata_cap_stops_without_audio(stage: int, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subject, "METADATA_BYTES", 2048)

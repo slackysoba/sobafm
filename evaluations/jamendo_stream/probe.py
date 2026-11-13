@@ -978,6 +978,10 @@ def run_child(
         report.reason = "internal"
     if report.reason is not None:
         report.outcome = "inconclusive"
+    if metadata_only:
+        # Also cover interruption immediately after selection, before probe can
+        # clear the legacy stream-mode identity field.
+        report.selected_track_id = None
     encoded = json.dumps(asdict(report), separators=(",", ":"), ensure_ascii=True)
     # Even accidental numeric/digest echoes never expose the ID.
     if application_id and application_id.lower() in encoded.lower():
