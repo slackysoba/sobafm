@@ -112,7 +112,7 @@ EVIDENCE_FIELDS: dict[EvidenceCategory, frozenset[str]] = {
     EvidenceCategory.STREAM_ROUTE: frozenset({"audio"}),
     EvidenceCategory.DOWNLOAD: frozenset({"audiodownload", "audiodownload_allowed"}),
 }
-KNOWN_EVIDENCE_FIELDS: frozenset[str] = frozenset().union(*EVIDENCE_FIELDS.values())
+KNOWN_EVIDENCE_FIELDS = frozenset[str]().union(*EVIDENCE_FIELDS.values())
 type Change = Literal["changed", "unchanged"]
 
 
@@ -824,7 +824,9 @@ def validate_candidate(value: object) -> Candidate:
     # replacement decoding. This transient digest is not a rights certificate.
     normalized_target = "/?" + "&".join(sorted(urlsplit(target).query.split("&")))
     normalized = {**row, "audio": normalized_target, "duration": duration}
-    return Candidate(track_id, target, evidence_digest(normalized), category_fingerprints(normalized))
+    return Candidate(
+        track_id, target, evidence_digest(normalized), category_fingerprints(normalized)
+    )
 
 
 def select_candidate(data: bytes, report: Report) -> Candidate:
@@ -985,7 +987,9 @@ def run_child(
         encoded = '{"outcome":"inconclusive","reason":"report_limit"}'
         report.outcome = "inconclusive"
     print(encoded)
-    return 0 if report.outcome in ("stream_received", "metadata_diagnosed", "metadata_compared") else 1
+    return (
+        0 if report.outcome in ("stream_received", "metadata_diagnosed", "metadata_compared") else 1
+    )
 
 
 def settle(child: subprocess.Popen[bytes]) -> bool:
@@ -1113,9 +1117,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if (
         len(args) != 2
-        or args[0] not in (
-            "--send-to-jamendo", "--diagnose-empty-refresh", "--diagnose-metadata-changes"
-        )
+        or args[0]
+        not in ("--send-to-jamendo", "--diagnose-empty-refresh", "--diagnose-metadata-changes")
         or not args[1]
     ):
         print('{"outcome":"inconclusive","reason":"arguments"}')
