@@ -107,6 +107,13 @@ def load_startup() -> Startup:
     if not database:
         raise ConfigError(f"{DATABASE_VARIABLE} is required")
     location = os.environ.get(MEDIA_VARIABLE, "")
+    if (
+        config.jamendo_enabled
+        and config.catalog is not None
+        and not config.catalog.partitions
+        and not location
+    ):
+        return Startup(config, {}, Path(database))
     if config.matcher is None:
         if location:
             raise ConfigError(f"{MEDIA_VARIABLE} requires {CATALOG_VARIABLE}")

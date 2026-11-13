@@ -3,8 +3,8 @@
 `catalog_search.py` implements the offline-tested search/ranking slice of
 [ADR 0013](decisions/0013-jamendo-discovery-streaming.md) and the
 [adopted implementation contract](https://github.com/slackysoba/sobafm/issues/188#issuecomment-6795394426).
-It is **not wired into the station or Discord runtime**. Production still uses
-the prepared FMA matcher. This module owns no player, decoder, audio acquisition,
+It is wired into the station and Discord runtime by `CatalogRuntime` in
+`discord_adapter.py`, including FMA-only configurations. This module owns no player, decoder, audio acquisition,
 journal mutation, cooldown, retry timer or client shutdown. The a5 live evaluator
 remains inconclusive and does not qualify this implementation.
 
@@ -136,8 +136,8 @@ credit/prompt/window bounds, privacy, stale completions, joined cancellation,
 shared model concurrency and exact continuation bounds. No provider, music
 source, Discord, media, native decoder or image request is part of these tests.
 
-Serial station integration must consume these interfaces after independent
-review/merge and checked-stream completion. Actual-image useful fit, source
+Station integration consumes these merged interfaces and the checked stream,
+with its ownership and budgets described in [architecture](architecture.md). Actual-image useful fit, source
 compatibility, music quality, attribution delivery, first-audio latency and
 continuous playback remain separately authorized qualification work. No numeric
 resource partition, original cleanup deadline, provider allowance or release
