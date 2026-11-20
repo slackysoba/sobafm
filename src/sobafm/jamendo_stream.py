@@ -26,7 +26,7 @@ from sobafm.jamendo_transport import (
     TransportError,
 )
 from sobafm.pcm import PcmBank, PcmFacts
-from sobafm.stream_checks import Envelope, PcmScreen, StreamCheckError
+from sobafm.stream_checks import Envelope, PcmScreen, Reason, StreamCheckError
 
 HANDOFF_BYTES = 16_384
 
@@ -108,6 +108,9 @@ class Completion:
     cleanup: Cleanup
     io_settled: bool
     settled: bool
+    # The fixed check and validated ID3 frame ID behind a check failure; never tag text.
+    check: Reason | None
+    check_frame: str | None
 
 
 class _Bridge:
@@ -212,6 +215,7 @@ class JamendoStream:
         self._failure: Outcome | None = None
         self._refusal: Refusal | None = None
         self._conflict: str | None = None
+        self._check: tuple[Reason, str | None] | None = None
         self._first_stop: float | None = None
         self._cleanup = Cleanup.PENDING
         self._io_settled = False
@@ -314,11 +318,12 @@ class JamendoStream:
             self._stop(Outcome.INTEGRITY, first)
 
     def _check_failure(self, error: StreamCheckError) -> None:
-        if self._failure in (None, Outcome.INTEGRITY):
+        if self._failure in (None, Outcome.INTEGRITY) or error.digest is not None:
+            # Keep the reason with whichever check failure the verdict reports.
             self._failure = error.outcome
+            self._check = (error.reason, error.frame_id)
         if error.digest is not None:
             self._conflict = error.digest
-            self._failure = error.outcome
         self._stop(error.outcome)
         if (
             self._conflict is not None
@@ -594,6 +599,8 @@ class JamendoStream:
             self._cleanup,
             self._io_settled,
             self._released,
+            self._check[0] if self._check is not None else None,
+            self._check[1] if self._check is not None else None,
         )
 
 

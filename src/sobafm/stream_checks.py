@@ -13,6 +13,7 @@ import struct
 import unicodedata
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import StrEnum
 from urllib.parse import urlsplit
 
 from sobafm.catalog import Recording
@@ -27,23 +28,78 @@ MAX_ID3_FRAMES = 256
 REMAINDER_BYTES = 16_384
 
 
-class StreamCheckError(ValueError):
-    """A fixed safe failure; the digest binds rejected evidence without retaining it."""
+class Reason(StrEnum):
+    """Which fixed check refused a stream. Safe to log: it never carries source text."""
 
-    def __init__(self, outcome: Outcome, digest: str | None = None) -> None:
+    # Notice outcomes.
+    MISSING_LICENSE = "missing_license"
+    CONTRADICTION = "contradiction"
+    LICENSE_LINK = "license_link"
+    MALFORMED_LINK = "malformed_link"
+    UNBOUND_TEXT = "unbound_text"
+    NOTICE_TEXT = "notice_text"
+    CONTROL_CHAR = "control_char"
+    FRAME_ID = "frame_id"
+    ENCODING = "encoding"
+    STRUCTURE = "structure"
+    BUDGET = "budget"
+    PICTURE = "picture"
+    # Framing outcomes.
+    MP3_HEADER = "mp3_header"
+    FORMAT_CHANGE = "format_change"
+    TAG_POSITION = "tag_position"
+    AFTER_END = "after_end"
+    TRUNCATED = "truncated"
+    # PCM outcomes.
+    PCM_FRAME = "pcm_frame"
+    PCM_LIMIT = "pcm_limit"
+    PCM_ALIGNMENT = "pcm_alignment"
+    PCM_COUNT = "pcm_count"
+    SILENCE = "silence"
+    CLIPPING = "clipping"
+    DURATION = "duration"
+
+
+_FRAME_ID = re.compile(r"[A-Z0-9]{4}")
+
+
+class StreamCheckError(ValueError):
+    """A fixed safe failure; the digest binds rejected evidence without retaining it.
+
+    ``reason`` names the check and ``frame_id`` the validated four-character ID3 frame
+    being checked, if any. Neither carries tag text, values, titles, URLs or identifiers.
+    """
+
+    def __init__(
+        self,
+        outcome: Outcome,
+        reason: Reason,
+        digest: str | None = None,
+        frame_id: str | None = None,
+    ) -> None:
         super().__init__(outcome.value)
         self.outcome = outcome
+        self.reason = reason
         self.digest = digest
+        self.frame_id = frame_id
 
 
-def _refuse(outcome: Outcome, evidence: bytes | memoryview = b"") -> StreamCheckError:
+def _refuse(
+    outcome: Outcome,
+    reason: Reason,
+    evidence: bytes | memoryview = b"",
+    *,
+    frame_id: str | None = None,
+) -> StreamCheckError:
     digest = hashlib.sha256(evidence).hexdigest() if outcome == Outcome.NOTICE else None
-    return StreamCheckError(outcome, digest)
+    if frame_id is not None and _FRAME_ID.fullmatch(frame_id) is None:
+        frame_id = None
+    return StreamCheckError(outcome, reason, digest, frame_id)
 
 
-def _synchsafe(data: memoryview) -> int:
+def _synchsafe(data: memoryview, frame_id: str | None = None) -> int:
     if any(v & 0x80 for v in data):
-        raise _refuse(Outcome.NOTICE, data)
+        raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, data, frame_id=frame_id)
     result = 0
     for value in data:
         result = result * 128 + value
@@ -73,13 +129,51 @@ def _normal(text: str) -> str:
     return value
 
 
+# Descriptive catalog frames (ADR 0014): not credits, licences or notices, so they are
+# not "additional required notice information" under ADR 0013 section 3. Their text
+# is budgeted and checked for contradictions and control characters like any other.
+# A value that is not bound evidence is accepted only when it is neutral: bounded,
+# with no link and no rights, notice or excluded-content wording.
+_DESCRIPTIVE_IDS = frozenset(
+    [
+        "TALB",
+        "TBPM",
+        "TCON",
+        "TDAT",
+        "TDOR",
+        "TDRC",
+        "TDRL",
+        "TENC",
+        "TIME",
+        "TLEN",
+        "TORY",
+        "TPOS",
+        "TRCK",
+        "TSSE",
+        "TYER",
+    ]
+)
+NEUTRAL_CHARACTERS = 160  # the existing bound on one retained descriptive detail
+# Applied to case-folded text: a scheme, "www." or any bare domain such as label.fm.
+_LINK = re.compile(r"://|\bwww\.|\b[a-z0-9-]+\.[a-z]{2,}\b")
+_NOTICE_WORDS = re.compile(
+    r"[©℗™®]|\([cp]\)|\b(?:copy(?:right|left)|licen[cs]\w*|rights?|"
+    r"reserved|permission|attribution|creative\s*commons|cc[\s_-]*by|public\s*domain|"
+    r"trademark|terms|notices?|unlicensed|uncleared|takedown|removed|samples?|covers?|"
+    r"previews?|excerpts?|snippets?|stems?|loops?)\b"
+)
+# ID3 TCON's "(CR)" / "CR" refinement means a cover, which admission treats as a
+# rights conflict.
+_COVER_GENRE = re.compile(r"\(CR\)|^CR$", re.I)
+
+
 class Notices:
     """Reconcile against the refreshed immutable projection, never append credits."""
 
     def __init__(self, recording: Recording) -> None:
         credits = recording.credits
         if credits is None or credits.license_url is None:
-            raise _refuse(Outcome.NOTICE)
+            raise _refuse(Outcome.NOTICE, Reason.MISSING_LICENSE)
         self.recording = recording
         self.license_url = credits.license_url
         self.text_bytes = 0
@@ -97,10 +191,18 @@ class Notices:
                 recording.composer or "",
             )
         )
+        # Admission retains descriptive details as "album: name" or "genres: rock".
+        # A descriptive frame carries the bare value, compared without case.
+        self._described = frozenset(
+            _normal(detail.partition(": ")[2]).casefold()
+            for detail in recording.details
+            if ": " in detail
+        )
         # Retained normalized evidence occupies the existing decoded-notice
         # subdivision, including CPython's widest Unicode representation.
-        if sum(4 * len(value) for value in self._known) > TAG_BYTES:
-            raise _refuse(Outcome.NOTICE)
+        retained = (*self._known, *self._described)
+        if sum(4 * len(value) for value in retained) > TAG_BYTES:
+            raise _refuse(Outcome.NOTICE, Reason.BUDGET)
 
     def text(
         self, value: str, evidence: memoryview, *, identity: str = "", count: bool = True
@@ -109,49 +211,78 @@ class Notices:
         if count:
             self.text_bytes += len(value.encode("utf-8"))
         if self.text_bytes > TEXT_BYTES:
-            raise _refuse(Outcome.NOTICE, evidence)
+            raise _refuse(Outcome.NOTICE, Reason.BUDGET, evidence)
         value = _normal(value)
         if not value:
             return
         if any(unicodedata.category(c).startswith("C") for c in value):
-            raise _refuse(Outcome.NOTICE, evidence)
+            raise _refuse(Outcome.NOTICE, Reason.CONTROL_CHAR, evidence)
         if tag_conflict([("embedded", value)], self.license_url) is not None:
-            raise _refuse(Outcome.NOTICE, evidence)
+            raise _refuse(Outcome.NOTICE, Reason.CONTRADICTION, evidence)
         for link in re.finditer(r"https?://[^\s]+", value, re.I):
             try:
                 parsed = urlsplit(link.group())
             except ValueError:
-                raise _refuse(Outcome.NOTICE, evidence) from None
+                raise _refuse(Outcome.NOTICE, Reason.MALFORMED_LINK, evidence) from None
             if parsed.hostname == "creativecommons.org" and (
                 parsed.path.rstrip("/") != urlsplit(self.license_url).path.rstrip("/")
             ):
-                raise _refuse(Outcome.NOTICE, evidence)
+                raise _refuse(Outcome.NOTICE, Reason.LICENSE_LINK, evidence)
         allowed = self._known
         if identity == "title":
             allowed = frozenset((_normal(self.recording.title),))
         elif identity == "creator":
             allowed = frozenset(_normal(c) for c in self.recording.creators)
-        if value not in allowed:
-            raise _refuse(Outcome.NOTICE, evidence)
+        if value in allowed:
+            return
+        if identity == "descriptive":
+            if value.casefold() in self._described:
+                return
+            if len(value) > NEUTRAL_CHARACTERS:
+                raise _refuse(Outcome.NOTICE, Reason.BUDGET, evidence)
+            folded = unicodedata.normalize("NFKC", value).casefold()
+            if _LINK.search(folded) or _NOTICE_WORDS.search(folded):
+                raise _refuse(Outcome.NOTICE, Reason.NOTICE_TEXT, evidence)
+            return
+        raise _refuse(Outcome.NOTICE, Reason.UNBOUND_TEXT, evidence)
 
     def frame(self, name: str, data: memoryview, version: int) -> None:
+        try:
+            self._frame(name, data, version)
+        except StreamCheckError as error:
+            if error.frame_id is None and _FRAME_ID.fullmatch(name):
+                error.frame_id = name
+            raise
+
+    def _frame(self, name: str, data: memoryview, version: int) -> None:
         self.frames += 1
         if self.frames > MAX_ID3_FRAMES:
-            raise _refuse(Outcome.NOTICE, data)
+            raise _refuse(Outcome.NOTICE, Reason.BUDGET, data)
         if name == "APIC":
             self._picture(data, version)
             return
-        if len(data) > TEXT_FRAME_BYTES or not data:
-            raise _refuse(Outcome.NOTICE, data)
+        if len(data) > TEXT_FRAME_BYTES:
+            raise _refuse(Outcome.NOTICE, Reason.BUDGET, data)
+        if not data:
+            raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, data)
         if name.startswith("T") and name != "TXXX":
             if name not in _TEXT_IDS:
-                raise _refuse(Outcome.NOTICE, data)
+                raise _refuse(Outcome.NOTICE, Reason.FRAME_ID, data)
             values = _decode(data[1:], data[0], version).rstrip("\0").split("\0")
-            identity = "title" if name == "TIT2" else "creator" if name in _PEOPLE_IDS else ""
+            if name == "TIT2":
+                identity = "title"
+            elif name in _PEOPLE_IDS:
+                identity = "creator"
+            elif name in _DESCRIPTIVE_IDS:
+                identity = "descriptive"
+            else:
+                identity = ""
             if name in ("TIPL", "TMCL"):
                 self._people(values, data)
             else:
                 for value in values:
+                    if name == "TCON" and _COVER_GENRE.search(value.strip()):
+                        raise _refuse(Outcome.NOTICE, Reason.NOTICE_TEXT, data)
                     if identity == "creator" and version == 3 and _normal(value) not in self._known:
                         for person in value.split("/"):
                             self.text(person, data, identity=identity)
@@ -162,12 +293,12 @@ class Notices:
         elif name == "TXXX":
             values = _decode(data[1:], data[0], version).rstrip("\0").split("\0")
             if len(values) < 2:
-                raise _refuse(Outcome.NOTICE, data)
+                raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, data)
             for value in values:
                 self.text(value, data)
         elif name.startswith("W"):
             if name not in _URL_IDS:
-                raise _refuse(Outcome.NOTICE, data)
+                raise _refuse(Outcome.NOTICE, Reason.FRAME_ID, data)
             if name == "WXXX":
                 description, remainder = _terminated(data[1:], data[0], version)
                 self.text(description, data)
@@ -177,7 +308,7 @@ class Notices:
             self.text(value, data)
         elif name in ("COMM", "USLT", "USER"):
             if len(data) < 4 or not bytes(data[1:4]).isalpha():
-                raise _refuse(Outcome.NOTICE, data)
+                raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, data)
             if name == "USER":
                 self.text(_decode(data[4:], data[0], version).rstrip("\0"), data)
             else:
@@ -185,11 +316,11 @@ class Notices:
                 self.text(description, data)
                 self.text(_decode(remainder, data[0], version).rstrip("\0"), data)
         else:
-            raise _refuse(Outcome.NOTICE, data)
+            raise _refuse(Outcome.NOTICE, Reason.FRAME_ID, data)
 
     def _people(self, values: list[str], evidence: memoryview) -> None:
         if len(values) % 2:
-            raise _refuse(Outcome.NOTICE, evidence)
+            raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, evidence)
         # A role/name pair must already be bound as a complete credit, including
         # the source's explicit "composer: name" notice. Never discard its role.
         for role, person in zip(values[::2], values[1::2], strict=True):
@@ -198,13 +329,13 @@ class Notices:
 
     def _picture(self, data: memoryview, version: int) -> None:
         if len(data) < 5:
-            raise _refuse(Outcome.NOTICE, data)
+            raise _refuse(Outcome.NOTICE, Reason.PICTURE, data)
         stop = next((i for i in range(1, min(len(data), 256)) if data[i] == 0), None)
         if stop is None or stop + 2 >= len(data):
-            raise _refuse(Outcome.NOTICE, data)
+            raise _refuse(Outcome.NOTICE, Reason.PICTURE, data)
         mime = bytes(data[1:stop])
         if mime not in (b"image/jpeg", b"image/png") or data[stop + 1] > 20:
-            raise _refuse(Outcome.NOTICE, data)
+            raise _refuse(Outcome.NOTICE, Reason.PICTURE, data)
         description, _image = _terminated(data[stop + 2 :], data[0], version)
         self.text(description, data)
 
@@ -269,13 +400,15 @@ _URL_IDS = frozenset(["WCOM", "WCOP", "WOAF", "WOAR", "WOAS", "WORS", "WPAY", "W
 
 
 def _decode(data: memoryview, encoding: int, version: int) -> str:
-    if len(data) > TEXT_FRAME_BYTES or encoding not in ((0, 1) if version == 3 else (0, 1, 2, 3)):
-        raise _refuse(Outcome.NOTICE, data)
+    if len(data) > TEXT_FRAME_BYTES:
+        raise _refuse(Outcome.NOTICE, Reason.BUDGET, data)
+    if encoding not in ((0, 1) if version == 3 else (0, 1, 2, 3)):
+        raise _refuse(Outcome.NOTICE, Reason.ENCODING, data)
     codecs = ("latin-1", "utf-16", "utf-16-be", "utf-8")
     try:
         return bytes(data).decode(codecs[encoding], errors="strict")
     except UnicodeError:
-        raise _refuse(Outcome.NOTICE, data) from None
+        raise _refuse(Outcome.NOTICE, Reason.ENCODING, data) from None
 
 
 def _terminated(data: memoryview, encoding: int, version: int) -> tuple[str, memoryview]:
@@ -283,7 +416,7 @@ def _terminated(data: memoryview, encoding: int, version: int) -> tuple[str, mem
     for index in range(0, min(len(data), TEXT_FRAME_BYTES), width):
         if len(data) >= index + width and all(v == 0 for v in data[index : index + width]):
             return _decode(data[:index], encoding, version), data[index + width :]
-    raise _refuse(Outcome.NOTICE, data)
+    raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, data)
 
 
 @dataclass(frozen=True)
@@ -296,7 +429,7 @@ class Mp3Frame:
 
 def mp3_frame(header: memoryview) -> Mp3Frame:
     if len(header) != 4:
-        raise _refuse(Outcome.FRAMING)
+        raise _refuse(Outcome.FRAMING, Reason.MP3_HEADER)
     bits = int.from_bytes(header)
     version = (bits >> 19) & 3
     bitrate = (bits >> 12) & 15
@@ -309,7 +442,7 @@ def mp3_frame(header: memoryview) -> Mp3Frame:
         or rate == 3
         or bits & 3 == 2
     ):
-        raise _refuse(Outcome.FRAMING)
+        raise _refuse(Outcome.FRAMING, Reason.MP3_HEADER)
     rates = (44_100, 48_000, 32_000)
     sample_rate = rates[rate] // (1 if version == 3 else 2 if version == 2 else 4)
     bitrates = (
@@ -345,11 +478,11 @@ class Envelope:
 
     def feed(self, data: memoryview) -> Iterator[memoryview]:
         if self.complete:
-            raise _refuse(Outcome.FRAMING)
+            raise _refuse(Outcome.FRAMING, Reason.AFTER_END)
         offset = 0
         while offset < len(data):
             if self._id3v1:
-                raise _refuse(Outcome.FRAMING)
+                raise _refuse(Outcome.FRAMING, Reason.AFTER_END)
             count = min(self._want - self._used, len(data) - offset)
             self._storage[self._used : self._used + count] = data[offset : offset + count]
             self._used += count
@@ -359,7 +492,7 @@ class Envelope:
             with memoryview(self._storage)[: self._used] as part:
                 if self._kind == "boundary":
                     if bytes(part) == b"APET":
-                        raise _refuse(Outcome.NOTICE, part)
+                        raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, part)
                     if bytes(part[:3]) == b"ID3":
                         self._kind, self._want = "tag_header", 10
                         continue
@@ -370,7 +503,7 @@ class Envelope:
                     frame = mp3_frame(part)
                     signature = (frame.version, frame.rate, frame.channels)
                     if self._format is not None and self._format != signature:
-                        raise _refuse(Outcome.FRAMING)
+                        raise _refuse(Outcome.FRAMING, Reason.FORMAT_CHANGE)
                     self._format = signature
                     self._kind, self._want = "frame", frame.length
                     continue
@@ -382,7 +515,7 @@ class Envelope:
                         or part[4] != 0
                         or part[5] & (0xFF if part[3] == 3 else 0xEF)
                     ):
-                        raise _refuse(Outcome.NOTICE, part)
+                        raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, part)
                     size = _synchsafe(part[6:10])
                     total = 10 + size + (10 if self._footer else 0)
                     self._charge_tag(total)
@@ -393,7 +526,7 @@ class Envelope:
                     self._tag(part)
                 elif self._kind == "id3v1":
                     if not self.frames:
-                        raise _refuse(Outcome.FRAMING)
+                        raise _refuse(Outcome.FRAMING, Reason.TAG_POSITION)
                     self._v1(part)
                     self._id3v1 = True
                 else:
@@ -409,44 +542,45 @@ class Envelope:
             self._leading += count
             total = self._leading
         if total > TAG_BYTES:
-            raise _refuse(Outcome.NOTICE)
+            raise _refuse(Outcome.NOTICE, Reason.BUDGET)
 
     def _tag(self, tag: memoryview) -> None:
         end = len(tag) - (10 if self._footer else 0)
         if self._footer and (bytes(tag[end : end + 3]) != b"3DI" or tag[end + 3 :] != tag[3:10]):
-            raise _refuse(Outcome.NOTICE, tag)
+            raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, tag)
         position = 10
         if end == position:
-            raise _refuse(Outcome.NOTICE, tag)
+            raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, tag)
         while position < end:
             if tag[position] == 0:
                 if position == 10 or self._footer or any(tag[position:end]):
-                    raise _refuse(Outcome.NOTICE, tag)
+                    raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, tag)
                 return
             if end - position < 10:
-                raise _refuse(Outcome.NOTICE, tag)
+                raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, tag)
             header = tag[position : position + 10]
-            name = bytes(header[:4])
+            raw = bytes(header[:4])
+            if re.fullmatch(rb"[A-Z0-9]{4}", raw) is None:
+                raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, header)
+            name = raw.decode("ascii")
             status_flags = 0xE0 if self._version == 3 else 0x70
-            if (
-                re.fullmatch(rb"[A-Z0-9]{4}", name) is None
-                or header[8] & ~status_flags
-                or header[9]
-            ):
-                raise _refuse(Outcome.NOTICE, header)
-            size = _synchsafe(header[4:8]) if self._version == 4 else int.from_bytes(header[4:8])
+            if header[8] & ~status_flags or header[9]:
+                raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, header, frame_id=name)
+            size = (
+                _synchsafe(header[4:8], name) if self._version == 4 else int.from_bytes(header[4:8])
+            )
             position += 10
             if size == 0 or size > end - position:
-                raise _refuse(Outcome.NOTICE, header)
-            self.notices.frame(name.decode("ascii"), tag[position : position + size], self._version)
+                raise _refuse(Outcome.NOTICE, Reason.STRUCTURE, header, frame_id=name)
+            self.notices.frame(name, tag[position : position + size], self._version)
             position += size
 
     def _v1(self, tag: memoryview) -> None:
         for start, end, identity in (
             (3, 33, "title"),
             (33, 63, "creator"),
-            (63, 93, ""),
-            (93, 97, ""),
+            (63, 93, "descriptive"),  # album
+            (93, 97, "descriptive"),  # year
         ):
             self.notices.text(
                 bytes(tag[start:end]).decode("latin-1").rstrip("\0 "), tag, identity=identity
@@ -458,8 +592,10 @@ class Envelope:
     def finish(self) -> None:
         if self._used or not self.frames:
             if self._kind in ("tag_header", "tag", "id3v1"):
-                raise _refuse(Outcome.NOTICE, memoryview(self._storage)[: self._used])
-            raise _refuse(Outcome.FRAMING)
+                raise _refuse(
+                    Outcome.NOTICE, Reason.TRUNCATED, memoryview(self._storage)[: self._used]
+                )
+            raise _refuse(Outcome.FRAMING, Reason.TRUNCATED)
         self.complete = True
 
 
@@ -478,30 +614,30 @@ class PcmScreen:
 
     def add(self, frame: memoryview) -> None:
         if len(frame) != FRAME_BYTES:
-            raise _refuse(Outcome.INTEGRITY)
+            raise _refuse(Outcome.INTEGRITY, Reason.PCM_FRAME)
         peak = clipped = 0
         for (sample,) in struct.iter_unpack("<h", frame):
             peak = max(peak, abs(sample))
             clipped += sample >= 32_767 or sample <= -32_768
         self.silence = self.silence + 1 if peak <= 16 else 0
         self.clipping = self.clipping + 1 if clipped >= 19 else 0
-        if self.silence > 1_500 or self.clipping > 50:
-            raise _refuse(Outcome.DEFECT)
+        if self.silence > 1_500:
+            raise _refuse(Outcome.DEFECT, Reason.SILENCE)
+        if self.clipping > 50:
+            raise _refuse(Outcome.DEFECT, Reason.CLIPPING)
         self.bytes += len(frame)
         if self.bytes > self.limit:
-            raise _refuse(Outcome.INTEGRITY)
+            raise _refuse(Outcome.INTEGRITY, Reason.PCM_LIMIT)
 
     def finish(self, total_bytes: int) -> None:
-        if (
-            total_bytes < FRAME_BYTES
-            or total_bytes % STEREO_SAMPLE_BYTES
-            or total_bytes > self.limit
-        ):
-            raise _refuse(Outcome.INTEGRITY)
+        if total_bytes < FRAME_BYTES or total_bytes % STEREO_SAMPLE_BYTES:
+            raise _refuse(Outcome.INTEGRITY, Reason.PCM_ALIGNMENT)
+        if total_bytes > self.limit:
+            raise _refuse(Outcome.INTEGRITY, Reason.PCM_LIMIT)
         # Compare integer stereo samples to avoid rounding away one-sample failures.
         samples = total_bytes // STEREO_SAMPLE_BYTES
         delta = abs(samples - self.duration * SAMPLE_RATE)
         if delta * 100 > self._hundredths * SAMPLE_RATE:
-            raise _refuse(Outcome.DURATION)
+            raise _refuse(Outcome.DURATION, Reason.DURATION)
         if self.bytes != total_bytes - total_bytes % FRAME_BYTES:
-            raise _refuse(Outcome.INTEGRITY)
+            raise _refuse(Outcome.INTEGRITY, Reason.PCM_COUNT)
