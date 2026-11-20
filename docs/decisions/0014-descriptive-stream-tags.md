@@ -40,10 +40,10 @@ not "additional required notice information" under ADR 0013 condition 3:
 
 A value in one of these frames passes when it matches the bound recording data
 (an existing bound value, or the bare album or tag value of a retained detail,
-compared without case) or is neutral: at most 160 characters, with no link and
-no rights, notice or excluded-content wording such as copyright, licence,
-rights, ©, ℗, (c), cover, sample, preview or loop, and not the ID3 `(CR)` cover
-genre. Anything else in these frames refuses the stream.
+compared without case) or is neutral: at most 160 characters, with no link
+(including a bare domain such as `label.fm`) and no rights, notice or
+excluded-content wording such as copyright, licence, rights, terms, notice, ©,
+℗, (c), cover, sample, preview or loop, and not the ID3 `(CR)` cover genre. Anything else in these frames refuses the stream.
 
 Unchanged:
 

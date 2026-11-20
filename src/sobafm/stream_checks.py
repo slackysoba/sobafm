@@ -154,16 +154,17 @@ _DESCRIPTIVE_IDS = frozenset(
     ]
 )
 NEUTRAL_CHARACTERS = 160  # the existing bound on one retained descriptive detail
-_LINK = re.compile(r"://|\bwww\.|\.(?:com|org|net)\b")
+# Applied to case-folded text: a scheme, "www." or any bare domain such as label.fm.
+_LINK = re.compile(r"://|\bwww\.|\b[a-z0-9-]+\.[a-z]{2,}\b")
 _NOTICE_WORDS = re.compile(
     r"[©℗™®]|\([cp]\)|\b(?:copy(?:right|left)|licen[cs]\w*|rights?|"
     r"reserved|permission|attribution|creative\s*commons|cc[\s_-]*by|public\s*domain|"
-    r"trademark|unlicensed|uncleared|takedown|removed|samples?|covers?|previews?|"
-    r"excerpts?|snippets?|stems?|loops?)\b"
+    r"trademark|terms|notices?|unlicensed|uncleared|takedown|removed|samples?|covers?|"
+    r"previews?|excerpts?|snippets?|stems?|loops?)\b"
 )
 # ID3 TCON's "(CR)" / "CR" refinement means a cover, which admission treats as a
 # rights conflict.
-_COVER_GENRE = re.compile(r"\(CR\)|^CR$")
+_COVER_GENRE = re.compile(r"\(CR\)|^CR$", re.I)
 
 
 class Notices:

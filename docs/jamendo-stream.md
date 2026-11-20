@@ -103,8 +103,8 @@ Under [ADR 0014](decisions/0014-descriptive-stream-tags.md), descriptive frames
 `TORY`, `TPOS`, `TRCK`, `TSSE`, `TYER` and the ID3v1 album and year) are not
 notice information. Their values pass when they match bound data, including the
 bare value of a retained `album:` or tag detail compared without case, or are
-neutral: at most 160 characters, with no link and no rights, notice or
-excluded-content wording, and not the `(CR)` cover genre. They still count
+neutral: at most 160 characters, with no link (including a bare domain) and no
+rights, terms, notice or excluded-content wording, and not the `(CR)` cover genre. They still count
 toward every budget. Existing notice conflict checks remain in every frame, with
 an additional exact license-path comparison that preserves jurisdiction. Empty
 text and equivalent duplicate notices add no credit.

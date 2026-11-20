@@ -576,6 +576,11 @@ def test_neutral_unbound_descriptive_data_passes() -> None:
         (b"TLEN", "licensed via label", Reason.NOTICE_TEXT),
         (b"TALB", "Preview", Reason.NOTICE_TEXT),
         (b"TCON", "CR", Reason.NOTICE_TEXT),
+        (b"TCON", "(cr)", Reason.NOTICE_TEXT),
+        (b"TALB", "Terms of use apply, see mylabel.fm/terms", Reason.NOTICE_TEXT),
+        (b"TENC", "mylabel.fm", Reason.NOTICE_TEXT),
+        (b"TENC", "label.io/terms", Reason.NOTICE_TEXT),
+        (b"TALB", "Notice: see the label", Reason.NOTICE_TEXT),
     ],
 )
 def test_descriptive_frames_with_contradictions_still_refuse(
