@@ -98,11 +98,28 @@ closed. Supplied text must reconcile with the refreshed immutable title,
 creators, backlink, exact license, notices or retained descriptions; title and
 creator fields additionally match their respective identities. A new required
 text field is refused rather than guessed to be harmless or appended to credits.
-This deliberately conservative subset may reject ordinary provider files whose
-embedded text is absent from the refreshed evidence. Such compatibility needs
-separately authorized evidence, not silent dropped fields. Existing notice
-conflict checks remain, with an additional exact license-path comparison that
-preserves jurisdiction. Empty text and equivalent duplicate notices add no credit.
+Under [ADR 0014](decisions/0014-descriptive-stream-tags.md), descriptive frames
+(`TALB`, `TBPM`, `TCON`, `TDAT`, `TDOR`, `TDRC`, `TDRL`, `TENC`, `TIME`, `TLEN`,
+`TORY`, `TPOS`, `TRCK`, `TSSE`, `TYER` and the ID3v1 album and year) are not
+notice information. Their values pass when they match bound data, including the
+bare value of a retained `album:` or tag detail compared without case, or are
+neutral: at most 160 characters, with no link and no rights, notice or
+excluded-content wording, and not the `(CR)` cover genre. They still count
+toward every budget. Existing notice conflict checks remain in every frame, with
+an additional exact license-path comparison that preserves jurisdiction. Empty
+text and equivalent duplicate notices add no credit.
+
+Every refusal carries a fixed `Reason` and, inside a frame, the validated
+four-character frame ID. `Completion.check` and `Completion.check_frame` keep
+them for the check failure the verdict reports, and the adapter's
+`checked stream retired` line logs them as `check=` and `check_frame=`. Notice
+reasons are `missing_license`, `contradiction`, `license_link`, `malformed_link`,
+`unbound_text`, `notice_text`, `control_char`, `frame_id`, `encoding`,
+`structure`, `budget`, `picture` and `truncated`; framing reasons are
+`mp3_header`, `format_change`, `tag_position`, `after_end` and `truncated`; PCM
+reasons are `pcm_frame`, `pcm_limit`, `pcm_alignment`, `pcm_count`, `silence`,
+`clipping` and `duration`. Neither field carries tag text, values, titles, URLs
+or identifiers.
 
 The existing decoder reader accumulates one 3840-byte PCM frame, screens it, then
 commits it to the bank. Peak <=16 is silence; the 1501st consecutive silent frame

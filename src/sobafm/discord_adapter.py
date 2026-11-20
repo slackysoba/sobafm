@@ -3195,7 +3195,8 @@ class Adapter:
             log.info(
                 "checked stream retired: recording=%s frames_handed_to_voice=%d "
                 "transfer_complete=%s envelope_complete=%s pcm_valid=%s audible_drain=%s "
-                "failure=%s refusal=%s cleanup=%s io_settled=%s released=%s",
+                "failure=%s check=%s check_frame=%s refusal=%s cleanup=%s io_settled=%s "
+                "released=%s",
                 _recording_label(track.audio.recording),
                 track.frames,
                 report.transfer_complete,
@@ -3203,6 +3204,8 @@ class Adapter:
                 report.pcm.pcm_valid,
                 report.pcm.audible_drain,
                 report.failure or "none",
+                report.check or "none",
+                report.check_frame or "none",
                 report.refusal.reason if report.refusal else "none",
                 report.cleanup,
                 report.io_settled,

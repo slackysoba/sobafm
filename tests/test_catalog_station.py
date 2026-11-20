@@ -54,7 +54,7 @@ from tests.test_discord_adapter import (
 from tests.test_gemini_match import plan
 from tests.test_jamendo_catalog import NOW, ON, response, row
 from tests.test_jamendo_stream_ownership import Audio as SourceAudio
-from tests.test_stream_checks import mp3
+from tests.test_stream_checks import mp3, tag
 
 
 async def until(condition: Callable[[], bool]) -> None:
@@ -84,6 +84,7 @@ class Runtime(CatalogRuntime):
         self.fail_refresh = False
         self.fresh_rows: dict[str, dict[str, object]] = {}
         self.opens = 0
+        self.payload: bytes | None = None
 
     def session(self, guild_id: int) -> CatalogSession:
         if guild_id not in self.sessions:
@@ -134,7 +135,7 @@ class Runtime(CatalogRuntime):
             locator.take(asyncio.get_running_loop().time())
             self.journal.claim_attempt(attempt)
             self.opens += 1
-            audio = SourceAudio(mp3())
+            audio = SourceAudio(mp3() if self.payload is None else self.payload)
             if self.close_gate is not None:
                 audio.close_allowed = self.close_gate
             return audio
@@ -655,6 +656,38 @@ def test_refused_window_preserves_safe_histogram_without_source_text(
         assert "Unlogged source title" not in caplog.text
         assert "Unlogged musical request" not in caplog.text
         assert not runtime.streams and runtime.opens == 0
+        assert await h.adapter.shutdown()
+        await journal.close()
+
+    asyncio.run(check())
+
+
+def test_retired_stream_logs_check_reason_and_frame_without_tag_text(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def check() -> None:
+        journal = await Journal.open(tmp_path / "journal.json")
+        model = Model(intent(), plan((0, "close")))
+        metadata = Metadata(response([row("123", duration=1)]))
+        runtime = Runtime(model, metadata, journal)
+        runtime.payload = tag(b"TCOP", b"Unlogged embedded notice") + mp3()
+        h = harness()
+        configure(h, runtime)
+        await h.join()
+        caplog.set_level(logging.INFO)
+        await h.play()
+        await until(lambda: "checked stream retired" in caplog.text)
+        line = next(
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith("checked stream retired")
+        )
+        assert "failure=notice check=unbound_text check_frame=TCOP" in line
+        assert "Unlogged embedded notice" not in caplog.text
+        report = runtime.streams[0].report()
+        assert (report.check, report.check_frame) == ("unbound_text", "TCOP")
+        assert runtime.opens == 1
         assert await h.adapter.shutdown()
         await journal.close()
 
